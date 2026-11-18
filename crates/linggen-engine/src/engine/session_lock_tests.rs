@@ -56,8 +56,6 @@ const LISTED: &[(&str, usize, &str)] = &[
         "tests",
     ),
     ("src/server/chat/light.rs", 1, "live models"),
-    ("src/server/chat/structured.rs", 2, "the plan"),
-    ("src/server/chat/plan_flow.rs", 3, "the plan"),
     ("src/server/chat/admin.rs", 2, "the thread"),
     // The thread's cache.
     ("src/server/chat/thread.rs", 3, "the thread module itself"),

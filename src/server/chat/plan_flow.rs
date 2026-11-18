@@ -30,7 +30,7 @@ pub(super) async fn run_plan_dispatch(ctx: &ChatRunCtx, engine: &mut crate::engi
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| ctx.clean_msg.trim());
 
-    engine.plan = None;
+    engine.forget_plan();
     let (thinking_tx, thinking_rx) = tokio::sync::mpsc::unbounded_channel();
     let mut run = crate::engine::turn_place::RunSetup::task(task_text)
         .planning()
@@ -422,14 +422,14 @@ async fn run_approved_plan_task(
     // left (its last words) is shown as this run's.
     engine.begin_turn(Default::default());
     let task = format!("Execute the approved plan: {}", plan.summary);
-    engine.plan = Some(plan);
+    engine.hold_plan(plan);
 
     // Where it runs, kept before anything of the run is written: in a day's
     // session its rows are the place it was made in (`turn_place::keep_in_day`).
     let place = plan_place(&manager, &sid_default, &stamp);
     let _place = super::turn_place::keep_in_day(&manager, &sid_default, &place);
     // Emit PlanUpdate SSE and rewrite the persisted plan message in-place.
-    let approved_snapshot = engine.plan.clone().unwrap();
+    let approved_snapshot = engine.plan().cloned().unwrap();
     engine
         .persist_and_emit_plan(approved_snapshot.clone())
         .await;
@@ -491,17 +491,16 @@ async fn complete_plan(
     root: &Path,
     (sid, agent_id, stamp): (&str, &str, &Stamp),
 ) {
-    let Some(ref mut plan) = engine.plan else {
+    let Some(mut completed_snapshot) = engine.plan().cloned() else {
         return;
     };
     if !matches!(
-        plan.status,
+        completed_snapshot.status,
         PlanStatus::Executing | PlanStatus::Approved | PlanStatus::Completed
     ) {
         return;
     }
-    plan.status = PlanStatus::Completed;
-    let completed_snapshot = plan.clone();
+    completed_snapshot.status = PlanStatus::Completed;
     engine
         .persist_and_emit_plan(completed_snapshot.clone())
         .await;

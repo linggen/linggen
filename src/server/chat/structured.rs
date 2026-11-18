@@ -65,11 +65,7 @@ pub(super) async fn run_structured_loop(ctx: &ChatRunCtx, engine: &mut crate::en
     send_thinking_status(ctx, "Thinking").await;
     // Drop a stale "planned" plan from a previous plan-mode run so it doesn't
     // block execution of the new structured loop.
-    if let Some(p) = &engine.plan {
-        if p.status == crate::engine::PlanStatus::Planned {
-            engine.plan = None;
-        }
-    }
+    engine.drop_planned_plan();
     release_plan_on_move_on(ctx).await;
     let (thinking_tx, thinking_rx) = tokio::sync::mpsc::unbounded_channel();
     // A kickoff that offers silence streams nothing: the reply is shown
@@ -155,7 +151,7 @@ pub(super) async fn run_structured_loop(ctx: &ChatRunCtx, engine: &mut crate::en
             engine.last_run_id.as_deref(),
         )
         .await;
-        engine.plan = Some(plan.clone());
+        engine.hold_plan(plan.clone());
         let task = engine
             .get_task()
             .unwrap_or_else(|| format!("Execute the approved plan: {}", plan.summary));

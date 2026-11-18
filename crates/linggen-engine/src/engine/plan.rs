@@ -79,11 +79,29 @@ impl AgentEngine {
         }
         info!("[plan] reply without ExitPlanMode → leaving plan mode, delivering as answer");
         self.plan_mode = false;
-        if self
-            .plan
-            .as_ref()
-            .is_some_and(|p| p.status == PlanStatus::Planned)
-        {
+        self.drop_planned_plan();
+    }
+
+    /// The session's plan, as this engine holds it.
+    pub fn plan(&self) -> Option<&Plan> {
+        self.plan.as_ref()
+    }
+
+    /// Hold `plan` as the session's, shown by nothing yet: an approved plan
+    /// about to run (`persist_and_emit_plan` shows it).
+    pub fn hold_plan(&mut self, plan: Plan) {
+        self.plan = Some(plan);
+    }
+
+    /// Hold no plan: a new plan-mode run starts from none.
+    pub fn forget_plan(&mut self) {
+        self.plan = None;
+    }
+
+    /// Drop a plan still waiting for approval (`Planned`), so it does not
+    /// stand in the way of a run that moved on from it.
+    pub fn drop_planned_plan(&mut self) {
+        if self.plan().is_some_and(|p| p.status == PlanStatus::Planned) {
             self.plan = None;
         }
     }

@@ -355,7 +355,7 @@ pub struct AgentEngine {
     pub(crate) inbox: Option<Inbox>,
     // Plan mode
     pub(crate) plan_mode: bool,
-    pub plan: Option<Plan>,
+    pub(crate) plan: Option<Plan>,
     /// Base64-encoded images to attach to the next user message.
     pub(crate) pending_images: Vec<String>,
     /// Mission kickoff items still waiting to fire as user turns. Drained
