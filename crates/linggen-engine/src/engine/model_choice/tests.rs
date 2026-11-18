@@ -153,3 +153,79 @@ fn a_retired_model_runs_and_pins_as_its_successor() {
     );
     assert_eq!(live(&m, Asker::Owner, "no-such-model"), Err(Why::NotHere));
 }
+
+/// A model replaced before the turn is told as one replaced during it: the
+/// same ModelFallback event, naming both models and why.
+#[tokio::test]
+async fn a_model_replaced_before_the_turn_is_told() {
+    use crate::engine::agent::{AgentEvent, AgentManager};
+    use crate::engine::{AgentEngine, AgentRole, EngineConfig, InterfaceMode};
+    let root = tempfile::tempdir().unwrap();
+    let config = crate::config::Config::default();
+    let cfg = EngineConfig::from_app_config(&config, root.path().into(), InterfaceMode::Web);
+    let mut engine = AgentEngine::new(
+        cfg,
+        std::sync::Arc::new(models()),
+        STANDING.into(),
+        AgentRole::Lead,
+    )
+    .unwrap();
+    engine.agent_id = Some("ling".into());
+    let (manager, mut events) = AgentManager::new(
+        config,
+        None,
+        std::sync::Arc::new(crate::engine::test_registries::Empty),
+        std::sync::Arc::new(crate::engine::test_registries::Empty),
+        std::sync::Arc::new(crate::engine::test_registries::Empty),
+        InterfaceMode::Web,
+    );
+    engine.set_manager_context(manager);
+    let told = |events: &mut tokio::sync::mpsc::UnboundedReceiver<_>| {
+        std::iter::from_fn(|| events.try_recv().ok())
+            .filter_map(|(event, _)| match event {
+                AgentEvent::ModelFallback {
+                    preferred_model,
+                    actual_model,
+                    reason,
+                    ..
+                } => Some((preferred_model, actual_model, reason)),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+
+    let replaced = resolve(
+        engine.model_manager.as_ref(),
+        Some("ghost"),
+        STANDING,
+        owner(true),
+    );
+    engine.run_on(&replaced, "test").await;
+    assert_eq!(
+        told(&mut events),
+        [(
+            "ghost".to_string(),
+            STANDING.to_string(),
+            Why::NotHere.says().to_string()
+        )]
+    );
+
+    let asked = resolve(
+        engine.model_manager.as_ref(),
+        Some("gpt-6-sol"),
+        STANDING,
+        owner(true),
+    );
+    engine.run_on(&asked, "test").await;
+    let kept = resolve(
+        engine.model_manager.as_ref(),
+        Some("ghost"),
+        STANDING,
+        owner(false),
+    );
+    engine.run_on(&kept, "test").await;
+    assert!(
+        told(&mut events).is_empty(),
+        "nothing replaced, nothing told"
+    );
+}

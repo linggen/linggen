@@ -221,10 +221,32 @@ pub fn next_down(
 
 impl AgentEngine {
     /// Run this turn on `choice`. The one writer of the turn's model before
-    /// it starts; `place` names the turn in the log.
+    /// it starts; `place` names the turn in the log. A replaced model is told
+    /// as one replaced during a call is: the ModelFallback event.
     pub async fn run_on(&mut self, choice: &Choice, place: &str) {
         log_choice(choice, place);
         self.model_id = choice.model.clone();
+        self.tell_replaced(choice).await;
+    }
+
+    async fn tell_replaced(&self, choice: &Choice) {
+        let (Outcome::Replaced(why), Some(asked)) = (choice.outcome, choice.asked.as_deref())
+        else {
+            return;
+        };
+        // Nothing shared runs nothing: the stream's refusal is what is told.
+        if why == Why::NothingShared {
+            return;
+        }
+        self.emit(crate::engine::agent::AgentEvent::ModelFallback {
+            agent_id: self.agent_id.clone().unwrap_or_else(|| "unknown".into()),
+            preferred_model: asked.to_string(),
+            actual_model: choice.model.clone(),
+            reason: why.says().to_string(),
+            run_id: self.run_id.clone(),
+            subagent: self.parent_run_id.is_some(),
+        })
+        .await;
     }
 }
 
