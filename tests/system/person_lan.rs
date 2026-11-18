@@ -150,6 +150,108 @@ async fn another_persons_phone_over_the_lan_gets_its_own_day_and_never_the_build
     assert!(wrong.is_empty(), "{wrong:#?}");
 }
 
+#[tokio::test]
+async fn a_signed_out_phone_can_only_read_and_write_its_own_day() {
+    use reqwest::Method;
+
+    let setup = Setup { lan: true, ..Setup::default() }
+        .script(Agent::Ling, vec![text("Owner reply."), text("Phone reply.")]);
+    let (w, _) = day_world_at(12, setup).await;
+    let lan = pair_signed_out_phone(&w).await;
+    let owner = w.api.get("/api/sessions/day").await["id"].as_str().unwrap().to_string();
+    let mark = w.mark();
+    say(&w, &owner, Some("dice"), "OWNER-DAY-WORDS").await;
+    w.finish_run(&owner, Agent::Ling, mark).await;
+    let owner_rows = w.raw_rows(&owner);
+
+    let (status, day) = lan.send(Method::GET, "/api/sessions/day?user_id=__local__", None).await;
+    assert_eq!(status, 200, "{day}");
+    assert_eq!(day["on"], true);
+    let phone = day["id"].as_str().unwrap();
+    let device_hex: String = b"device:phone-signed-out".iter().map(|b| format!("{b:02x}")).collect();
+    assert_eq!(phone, format!("{owner}-p-{device_hex}"));
+    let (status, list) = lan.send(Method::GET, "/api/skill-sessions?skill=dice", None).await;
+    assert_eq!(status, 200, "{list}");
+    assert_eq!(list["sessions"][0]["id"], phone);
+    assert!(!list.to_string().contains(&format!("\"{owner}\"")), "{list}");
+
+    let page = format!("/api/skill-sessions/state?skill=dice&session_id={owner}");
+    let (status, body) = lan.send(Method::GET, &page, None).await;
+    assert_eq!(status, 403, "{body}");
+    let chat = json!({"session_id": owner, "project_root": w.work(), "message": "PHONE-REFUSED", "skill_name": "dice"});
+    let (status, body) = lan.send(Method::POST, "/api/chat", Some(chat)).await;
+    assert_eq!(status, 403, "{body}");
+
+    let mark = w.mark();
+    let chat = json!({"project_root": w.work(), "message": "PHONE-OWN", "skill_name": "dice"});
+    let (status, body) = lan.send(Method::POST, "/api/chat", Some(chat)).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["session_id"], phone, "{body}");
+    w.finish_run(phone, Agent::Ling, mark).await;
+    assert!(w.raw_rows(phone).iter().any(|row| row["content"] == "PHONE-OWN"));
+    assert_eq!(w.raw_rows(&owner), owner_rows, "the owner's day was changed");
+}
+
+#[tokio::test]
+async fn a_signed_out_phone_is_not_given_the_owners_notes_facts_or_companion_thread() {
+    use ling_mem::memory::{Memory, MemoryStore, MemoryType, Origin, Tier};
+    use reqwest::Method;
+
+    let (w, _) = day_world_at(12, Setup { lan: true, ..Setup::default() }).await;
+    let home = w.home.linggen_home();
+    let notes = home.join("notes");
+    std::fs::create_dir_all(&notes).unwrap();
+    let book = json!({"next": 2, "notes": [{"id": "n1", "text": "OWNER-NOTE", "written_at": 0, "device": "mac"}]});
+    std::fs::write(notes.join("yinyue.json"), book.to_string()).unwrap();
+    // Seed a core fact directly so the fixture needs no embedding model.
+    let store = MemoryStore::open_semantic(&home).await.unwrap();
+    let mut fact = Memory::new("OWNER-FACT", MemoryType::Fact, Origin::User);
+    fact.tier = Tier::Core;
+    store.insert(&[fact]).await.unwrap();
+
+    let companion = "sess-yinyue-2020-01-01";
+    let thread = home.join("sessions").join(companion);
+    std::fs::create_dir_all(&thread).unwrap();
+    std::fs::write(thread.join("session.yaml"), format!("id: {companion}\ntitle: Companion\ncreated_at: 1\ncreator: agent\n")).unwrap();
+    let line = json!({"agent_id": "yinyue", "from_id": "yinyue", "to_id": "user", "content": "OWNER-COMPANION", "timestamp": 1, "is_observation": false});
+    std::fs::write(thread.join("messages.jsonl"), format!("{line}\n")).unwrap();
+
+    let notes_path = "/api/notes?agent=yinyue";
+    let memory_path = "/api/memory/session_start";
+    let thread_path = format!("/api/skill-sessions/state?skill=dice&session_id={companion}");
+    assert!(w.api.get(notes_path).await.to_string().contains("OWNER-NOTE"));
+    assert!(w.api.post(memory_path, json!({})).await.to_string().contains("OWNER-FACT"));
+    assert!(w.api.get(&thread_path).await.to_string().contains("OWNER-COMPANION"));
+
+    let lan = pair_signed_out_phone(&w).await;
+    let (status, notes) = lan.send(Method::GET, notes_path, None).await;
+    assert_eq!(status, 200, "{notes}");
+    assert_eq!(notes["notes"], json!([]));
+    let (status, memory) = lan.send(Method::POST, memory_path, Some(json!({}))).await;
+    assert_eq!(status, 200, "{memory}");
+    assert_eq!(memory["data"]["core"], json!([]), "{memory}");
+    let (status, body) = lan.send(Method::GET, &thread_path, None).await;
+    assert_eq!(status, 403, "{body}");
+    let (status, body) = lan.send(Method::POST, "/api/yinyue/chat", Some(json!({"text": "Phone words"}))).await;
+    assert_eq!(status, 403, "{body}");
+}
+
+async fn pair_signed_out_phone(w: &World) -> Lan {
+    let row = json!([{
+        "id": "phone-signed-out", "name": "Signed-out phone", "secret": TOKEN,
+        "created_at": 0, "kind": "phone", "contract": 1, "permission": "read",
+    }]);
+    std::fs::write(w.home.linggen_home().join("paired-devices.json"), row.to_string()).unwrap();
+    let lan = Lan::new(w);
+    assert_eq!(lan.status("/api/pair/me", None).await, 401, "not the LAN path");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while lan.status("/api/pair/me", Some(TOKEN)).await != 200 {
+        assert!(std::time::Instant::now() < deadline, "the phone is not known");
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    lan
+}
+
 /// With the setting off, plain HTTP from the LAN is as before: a body the
 /// gate cannot read is passed through untouched (the route refuses it as
 /// it always did, never an empty one in its place), and a phone of the
