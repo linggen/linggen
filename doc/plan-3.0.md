@@ -1,4 +1,4 @@
-# Linggen 3.0 — plan
+# Linggen plan — 2.3, 2.4, 2.5 (begun as the 3.0 plan)
 
 **Status: plan, work started 2026-11-15** (Hanli: 「先开吧」). Agreed in talk, Hanli
 and Claude, 2026-11-15. Claude plans and keeps the whole in hand; the work itself
@@ -7,24 +7,23 @@ the measurements and the talk that led here).
 
 **Version numbers, changed 2026-11-18** (Hanli: 「2.4 要发布一版, 2.5 也要等安度发. 3.0
 是暂定的, 可能会到2.9以后才发, 到时候再说. 3.0是长期目标」): the work this plan
-calls 2.4 and, in places written on 2026-11-16/17, "3.0" — everything in §5 —
-ships as **2.4**. **2.5** follows on its own schedule (first item: one MCP
-door). **3.0** is a long-term goal, perhaps after 2.9, half a year to a year
-out; what it holds is decided then. Where a section below still says "before
-3.0" or "with 3.0" about §5's work, read 2.4. The file keeps its name.
+calls 2.4 — everything in §5, which for two days (2026-11-16/17) was to ship as
+"3.0" — ships as **2.4**. **2.5** follows on its own schedule (first item: one
+MCP door). **3.0** is a long-term goal, perhaps after 2.9, half a year to a
+year out; what it holds is decided then. The file keeps its name.
 
 Every number is tagged **(measured)** — taken on his Mac on 2026-11-15 — or
 **(estimate)**.
 
-## 1. What 3.0 is
+## 1. What this work is
 
-- **One program.** `ling-mem` goes into `ling`: one binary, one process, one
-  port (9527), everything always on. The name `ling-mem` is retired; there is
-  only Linggen.
-- **Smaller.** The game's art leaves the package; the Mac app and the iPhone
-  app slim together.
-- **One Ling, one Yinyue.** Each is one person, the same in every app and every
-  session, and both see one world.
+- **One program** (2.3, published). `ling-mem` goes into `ling`: one binary,
+  one process, one port (9527), everything always on. The name `ling-mem` is
+  retired; there is only Linggen.
+- **Smaller** (2.3 on the Mac, published; the phone with 2.4). The game's art
+  leaves the package; the Mac app and the iPhone app slim together.
+- **One Ling, one Yinyue** (2.4). Each is one person, the same in every app
+  and every session, and both see one world.
 
 ## Progress
 
@@ -39,7 +38,7 @@ Every number is tagged **(measured)** — taken on his Mac on 2026-11-15 — or
 | 2.4 | On main since 2026-11-17 (engine, skills and phone), checks green. The activity log, the world block, notes and look-again, the guardrails, a turn's place; and the daily session, `agent.daily_session`, on by default since 2026-11-18: app chats, her moments and phone hand-offs in the daily session from 04:00, each turn in its page's place, other apps' stretches folded on a page. Reshaped on 2026-11-16/17 after review: a private app keeps a session of its own (one rule asked by every way into the day); a day is a person's, the person resolved from the device as memory resolves it; her stage and voice are held per person. The phone's side is on main too (hand-offs join the day; later chapters' art fetched by hash). Seen live once on his Mac with the setting on. Open: the setting on by default; the three scenarios seen live; the phone's art set on the storage and a build on a device |
 | Kinds of session (§5.1) | Designed and agreed 2026-11-17, on main the same day: every kind of session is described by one spec and applied in one place (`engine/session_spec/`), locked by a test; the `code` kind of work (one prompt section, a few lines per model family); the three ways to ask for it (creating a session, changing one, `agent_run` — on by default with a folder to write); the Coding switch in the web UI. A delegated run is seated by its session's own spec, so the run itself carries the section (a system test reads what the model was sent). `evals/code` is on main: sixteen small tasks with hidden checks, three ways (with the section, without, a Claude Code session), a dry run that shows every check pass and fail. First comparison, 2026-11-17, three models: the section does not change how often the work is right (the same total with it and without); with it the changes are a little smaller, tests are touched less, and the report has its three parts. Open: one task to rework; long work in a real repository; the switch seen in a browser |
 | A paired device's standing (§5.2) | Decided and designed 2026-11-17. Built on a branch, not on main: the relay vouches for a phone's account, one standing (person and level) at every check point, a class for every route with a lock test, skill tools judged by the caller's level, the level kept on the device's row and set only at this Mac, the contract number. In work on the branch: a session belongs to a person, a turn's ceiling, the choice in Settings. Goes live in one order: the relay, the phone, the engine |
-| Review and refactor before 3.0 (§5.3) | Engine and phone reviewed 2026-11-17 (read-only). On main: one copy of the small helpers; one locked way to change a session's file. Phone: its checks are green again; the release recipe builds 灵境's files first. The rest of §5.3 is open |
+| Review and refactor before 2.4 (§5.3) | Engine and phone reviewed 2026-11-17 (read-only). On main: one copy of the small helpers; one locked way to change a session's file. Phone: its checks are green again; the release recipe builds 灵境's files first. The rest of §5.3 is open |
 | The phone and the Mac in step (§5.4) | The phone asks through declared tools: done 2026-11-17 for all four apps (music, 灵境's book, health, money) — the phone sends the Mac no shell text. The contract number: built with §5.2, on its branch. Open: one wording for "the Mac is not there", the session choice on the Mac |
 | Asking less (§5.5) | The Bash gate reads a program's own file and a copy's source as read: on main 2026-11-17. A caller's preset of folders: on main. A coding session runs its work in its folder without asking, and a command that leaves the machine always asks, once: on main 2026-11-17, seen on a live delegated run. The list of build tools is gone |
 | When Yinyue raises a problem (§5.6) | On main 2026-11-17, Mac, phone and skills: said once (again only when worse or returned), never dropped; a problem is a record that carries its offers or the reason there are none; a tap runs a declared tool as the person's own button, behind its confirm when destructive; the answer is kept on the problem's record; the phone measures what Linggen itself holds. Open: seen with buttons on a real phone; a hand-off offer; health, money and mission faults still raised the old way |
@@ -295,10 +294,11 @@ what the owner may. Any other paired device gets a level set on the Mac;
 the default is read. A device at read keeps its own records (its chats, its
 saves).
 
-### 5.3 Review and refactor before 3.0
+### 5.3 Review and refactor before 2.4
 
-Hanli, 2026-11-17: 「3.0前还需要做一遍架构评审, 重构一下」. The second review
-looked for decisions made in more than one place. Before 3.0:
+Hanli, 2026-11-17: 「3.0前还需要做一遍架构评审, 重构一下」 (said while this work
+was numbered 3.0; it is 2.4 now). The second review looked for decisions made
+in more than one place. Before 2.4:
 
 - One copy of each small helper that had several.
 - One writer for a session file's changes.
@@ -308,7 +308,7 @@ looked for decisions made in more than one place. Before 3.0:
 - The store layer no longer reaches up into the engine.
 - Old-format readers for versions before 2.0 removed (no real users yet).
 
-Left for after 3.0: the further crate cuts, the event forwarder's rewrite,
+Left for after 2.4: the further crate cuts, the event forwarder's rewrite,
 typed turn errors, one way to start background work, skills declaring their
 own setup steps.
 
@@ -364,7 +364,7 @@ working, and the App Store's review keeps them apart for days.
   is published once it is approved; then the phone's release is tapped.
 - **Smaller.** The release recipe builds 灵境's files from the skills first
   (a stale folder ships every picture). Next: the hand-tracking model fetched
-  after install; code and art split in the board packs (after 3.0).
+  after install; code and art split in the board packs (after 2.4).
 
 ## 6. Before a step can ship
 
