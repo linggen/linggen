@@ -911,12 +911,22 @@ fn check_grants(
             let targets = command_target_levels(cmd, session_cwd);
             if !targets.is_empty() {
                 let mut judged = false;
+                let mut exempt_log = false;
                 for (arg_path, kind) in &targets {
-                    let tier = if *kind == TargetKind::Full {
+                    // A plain tail input is read even when another segment
+                    // raises the command to edit. Keep the edit check at cwd.
+                    let own_log_read = action_tier_override.is_none()
+                        && action_tier == PermissionMode::Edit
+                        && !lowered
+                        && *kind == TargetKind::TailInput
+                        && reads_own_dir(session_perms, PermissionMode::Read, arg_path);
+                    let full = matches!(kind, TargetKind::Full | TargetKind::TailInput);
+                    let tier = if full && !own_log_read {
                         action_tier
                     } else {
                         PermissionMode::Read
                     };
+                    exempt_log |= own_log_read;
                     if let Some(c) = ceiling.filter(|_| owners_alone(session_perms, (tier, ceiling), arg_path)) {
                         return beyond_ceiling(PermissionMode::Admin, c);
                     }
@@ -925,7 +935,7 @@ fn check_grants(
                     if is_under_temp(arg_path) || reads_own_dir(session_perms, tier, arg_path) {
                         continue;
                     }
-                    judged |= *kind == TargetKind::Full;
+                    judged |= full;
                     let mode = effective_mode_for_path(&session_perms.path_modes, arg_path);
                     if mode.is_none_or(|m| tier > m) {
                         return needs_prompt(
@@ -942,7 +952,7 @@ fn check_grants(
                 // `python3 -c … > /tmp/out`), it is judged where it runs,
                 // like a command with no path at all — and so is a program
                 // a coding session runs: it runs where the session may edit.
-                if judged || (action_tier < PermissionMode::Admin && !lowered) {
+                if !exempt_log && (judged || (action_tier < PermissionMode::Admin && !lowered)) {
                     return PermissionCheckResult::Allowed;
                 }
             }
@@ -1120,6 +1130,9 @@ enum TargetKind {
     Program,
     /// A source of a plain copy: read, never changed.
     Source,
+    /// Input to a plain task-log inspection. Uses the full level unless
+    /// the session's own-folder rule applies.
+    TailInput,
 }
 
 #[cfg(test)]
@@ -1228,6 +1241,7 @@ fn command_target_levels(cmd: &str, session_cwd: &Path) -> Vec<(PathBuf, TargetK
     let text = text_words(&tokens);
     let sources = copy_sources(&tokens);
     let mut sed_files_from = None;
+    let mut tail_input = None;
     for (index, (token, text)) in tokens.iter().zip(text).enumerate() {
         let w = match token {
             Token::Op(joint) => {
@@ -1251,6 +1265,14 @@ fn command_target_levels(cmd: &str, session_cwd: &Path) -> Vec<(PathBuf, TargetK
         let w = w.as_str();
         if at_command {
             sed_files_from = None;
+            tail_input = None;
+            if w == "tail" {
+                let end = tokens[index..]
+                    .iter()
+                    .position(|t| matches!(t, Token::Op(_)))
+                    .map_or(tokens.len(), |offset| index + offset);
+                tail_input = plain_tail_input(&tokens[index..end]).map(|offset| index + offset);
+            }
             if w == "sed" {
                 let segment: Vec<_> = tokens[index..]
                     .iter()
@@ -1301,6 +1323,8 @@ fn command_target_levels(cmd: &str, session_cwd: &Path) -> Vec<(PathBuf, TargetK
                 TargetKind::Program
             } else if sources.contains(&index) {
                 TargetKind::Source
+            } else if tail_input == Some(index) {
+                TargetKind::TailInput
             } else {
                 TargetKind::Full
             };
@@ -1318,6 +1342,21 @@ fn command_target_levels(cmd: &str, session_cwd: &Path) -> Vec<(PathBuf, TargetK
         at_command = false;
     }
     out
+}
+
+/// The file operand of `tail FILE`, `tail -N FILE` or `tail -n N FILE`.
+fn plain_tail_input(segment: &[Token]) -> Option<usize> {
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|c| c.is_ascii_digit());
+    let index = match segment {
+        [_, Token::Word(_)] => 1,
+        [_, Token::Word(n), Token::Word(_)] if n.strip_prefix('-').is_some_and(digits) => 2,
+        [_, Token::Word(flag), Token::Word(n), Token::Word(_)] if flag == "-n" && digits(n) => 3,
+        _ => return None,
+    };
+    let Token::Word(file) = &segment[index] else { return None };
+    let file = dequote(file);
+    (file.starts_with('/') && !file.contains(['$', '`', '*', '?', '[', '{', '}', '(', ')', '<', '>']))
+        .then_some(index)
 }
 
 /// The file each redirection operator inside `word` is glued to

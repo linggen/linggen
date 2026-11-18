@@ -1153,6 +1153,40 @@ mod tests {
     }
 
     #[test]
+    fn a_session_reads_its_task_log_alongside_workspace_commands() {
+        let cwd = Path::new("/permission-test/work");
+        let mut perms = SessionPermissions::load(Path::new("/permission-test/sessions/own"));
+        perms.path_modes = vec![PathMode { path: cwd.display().to_string(), mode: PermissionMode::Edit }];
+        let log = "/permission-test/sessions/own/tasks/sh-1.log";
+        let other = "/permission-test/sessions/other/tasks/sh-1.log";
+        for coding in [false, true] {
+            let check = |cmd: &str| {
+                check_permission_for("Bash", Some(cmd), None, cwd, &perms, None, coding, None)
+            };
+            for cmd in [
+                format!("tail -12 {log} ; git status --short"),
+                format!("tail -12 {log} ; mkdir output"),
+            ] {
+                let result = check(&cmd);
+                assert!(matches!(result, PermissionCheckResult::Allowed), "{cmd}: {result:?}");
+            }
+            for cmd in [
+                format!("tail -12 {other} ; git status --short"),
+                format!("tail -12 {other} ; mkdir output"),
+                format!("tail -12 {log} ; touch {log}"),
+                format!("tail -12 {log} > {log} ; git status --short"),
+            ] {
+                let result = check(&cmd);
+                assert!(matches!(result, PermissionCheckResult::NeedsPrompt(_)), "{cmd}: {result:?}");
+            }
+        }
+        perms.path_modes[0].mode = PermissionMode::Read;
+        let cmd = format!("tail -12 {log} ; git add output");
+        let result = check_permission("Bash", Some(&cmd), None, cwd, &perms, None);
+        assert!(matches!(result, PermissionCheckResult::NeedsPrompt(_)), "{cmd}: {result:?}");
+    }
+
+    #[test]
     fn heredoc_bodies_are_text_not_targets() {
         // The 2026-11-10 shapes: a body full of paths written to a file.
         let cmd = "cat > /tmp/notes.md <<'EOF'\nThe binary lives at /usr/local/bin/ling\nand state in ~/.linggen/sessions/x — don't move it.\nEOF\ngit status";
