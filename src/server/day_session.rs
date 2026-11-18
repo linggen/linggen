@@ -19,7 +19,7 @@ const LEAD: &str = "ling";
 
 /// Whether the setting is on.
 pub(crate) async fn enabled(manager: &AgentManager) -> bool {
-    manager.get_config_snapshot().await.agent.daily_session
+    manager.daily_session()
 }
 
 /// The day's session a chat from `app` (`None`: home — her own turns, the

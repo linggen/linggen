@@ -452,7 +452,7 @@ pub(crate) async fn run_delegation(
     // and grants are the parent's place's; a private app's subagent keeps
     // its talk there too (`exit_gate`).
     if let Some(place) = &parent_place {
-        let day_on = manager.get_config_snapshot().await.agent.daily_session;
+        let day_on = manager.daily_session();
         engine.tools.builtins.private_app = place.private_app(&*manager.skills, day_on).await;
     }
     engine.tools.builtins.stand_with_parent(parent_place);

@@ -42,7 +42,7 @@ suggest_followups: boolean,
 /**
  * Linggen's daily session (`doc/one-ling-spec.md` § Linggen's daily session): app
  * chats, Yinyue's unprompted moments and the phone's hand-offs are the daily session, Ling and Yinyue both seated, each turn in the place
- * of the page it came from. Off (the default): a session per app, as
- * before. Not written to the file while off.
+ * of the page it came from. Off: a session per app, as before.
+ * Absent means no choice was made; either explicit choice is saved.
  */
 daily_session?: boolean, };

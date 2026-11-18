@@ -337,10 +337,23 @@ pub struct AgentConfig {
     pub suggest_followups: bool,
     /// Linggen's daily session (`doc/one-ling-spec.md` § Linggen's daily session): app
     /// chats, Yinyue's unprompted moments and the phone's hand-offs are the daily session, Ling and Yinyue both seated, each turn in the place
-    /// of the page it came from. Off (the default): a session per app, as
-    /// before. Not written to the file while off.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub daily_session: bool,
+    /// of the page it came from. Off: a session per app, as before.
+    /// Absent means no choice was made; either explicit choice is saved.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(any(test, feature = "test-support"), ts(optional))]
+    pub daily_session: Option<bool>,
+}
+
+pub const DAILY_SESSION_DEFAULT: bool = false;
+
+impl AgentConfig {
+    pub fn daily_session_enabled(&self) -> bool {
+        self.daily_session_with_default(DAILY_SESSION_DEFAULT)
+    }
+
+    fn daily_session_with_default(&self, default: bool) -> bool {
+        self.daily_session.unwrap_or(default)
+    }
 }
 
 fn default_episodic_ttl_days() -> u64 {
@@ -639,7 +652,7 @@ impl Default for Config {
                 memory_inject_min_score: default_memory_inject_min_score(),
                 memory_recall_count: default_memory_recall_count(),
                 suggest_followups: true,
-                daily_session: false,
+                daily_session: None,
             },
             logging: LoggingConfig {
                 level: None,
@@ -1199,6 +1212,35 @@ mod tests {
         assert_eq!(parsed.models.len(), cfg.models.len());
         assert_eq!(parsed.server.addr(), cfg.server.addr());
         assert_eq!(parsed.agent.max_iters, cfg.agent.max_iters);
+    }
+
+    #[test]
+    fn explicit_daily_session_choices_survive_saving() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cfg = Config::default();
+        let mut save_and_read = |choice: Option<bool>| {
+            cfg.agent.daily_session = choice;
+            let path = cfg.save_runtime(Some(dir.path())).unwrap();
+            let text = fs::read_to_string(path).unwrap();
+            match choice {
+                Some(value) => assert!(
+                    text.contains(&format!("daily_session = {value}")),
+                    "explicit choice was omitted"
+                ),
+                None => assert!(!text.contains("daily_session")),
+            }
+            let saved: Config = toml::from_str(&text).unwrap();
+            assert_eq!(saved.agent.daily_session, choice);
+            saved.agent
+        };
+
+        let off = save_and_read(Some(false));
+        assert!(!off.daily_session_with_default(false));
+        assert!(!off.daily_session_with_default(true));
+        assert!(save_and_read(Some(true)).daily_session_with_default(false));
+        let unset = save_and_read(None);
+        assert!(!unset.daily_session_with_default(false));
+        assert!(unset.daily_session_with_default(true));
     }
 
     /// Memory is the store this engine hosts; there is no address to set. A

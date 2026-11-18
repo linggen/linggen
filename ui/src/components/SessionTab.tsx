@@ -73,7 +73,7 @@ export const SessionTab: React.FC<{
             </select>
           </Field>
           <Field label="Linggen's daily session" hint="Linggen keeps one conversation a day for app chats and Yinyue, from 4 am.">
-            <select className={inputCls} value={a.daily_session ? 'on' : 'off'} onChange={(e) => set({ daily_session: e.target.value === 'on' })}>
+            <select className={inputCls} value={(a.daily_session ?? config.daily_session_default) ? 'on' : 'off'} onChange={(e) => set({ daily_session: e.target.value === 'on' })}>
               <option value="off">Off</option>
               <option value="on">On</option>
             </select>

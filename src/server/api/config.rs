@@ -11,7 +11,17 @@ pub(crate) async fn get_config_api(State(state): State<Arc<ServerState>>) -> imp
     for model in &mut config.models {
         model.api_key = None;
     }
-    Json(config).into_response()
+    #[derive(serde::Serialize)]
+    struct ConfigView {
+        #[serde(flatten)]
+        config: Config,
+        // Keep the default separate so saving other settings makes no choice.
+        daily_session_default: bool,
+    }
+    Json(ConfigView {
+        config,
+        daily_session_default: crate::config::DAILY_SESSION_DEFAULT,
+    })
 }
 
 pub(crate) async fn update_config_api(

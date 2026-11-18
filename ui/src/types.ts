@@ -270,6 +270,8 @@ export interface OllamaPsResponse {
 
 export interface AppConfig {
   models: ModelConfigUI[];
+  /** Engine default, separate from the saved choice in agent.daily_session. */
+  daily_session_default?: boolean;
   /** BCP-47 tag ("en", "zh-Hans"); null/absent = Auto (follows the Mac). */
   language?: string | null;
   /** `url` is "host:port"; `host`/`port` are the legacy pair. Use lib/serverAddr. */

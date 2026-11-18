@@ -335,7 +335,7 @@ impl AgentManager {
         let (tx, rx) = mpsc::unbounded_channel();
         let models = Arc::new(ModelManager::new(config.models.clone()));
         let pet_muted = AtomicBool::new(config.pet.muted);
-        let daily_session = AtomicBool::new(config.agent.daily_session);
+        let daily_session = AtomicBool::new(config.agent.daily_session_enabled());
         crate::language::set_setting(config.language.clone());
         (
             Arc::new(Self {
@@ -858,7 +858,7 @@ impl AgentManager {
         crate::provider::set_first_event_timeout(new_config.routing.first_event_timeout_secs);
         *self.config.write().await = new_config.clone();
         self.daily_session.store(
-            new_config.agent.daily_session,
+            new_config.agent.daily_session_enabled(),
             std::sync::atomic::Ordering::Relaxed,
         );
         let was_muted = self

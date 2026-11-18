@@ -134,7 +134,7 @@ pub async fn question_kept_to(
             TurnPlace::of_session(meta.as_ref())
         }
     };
-    let day_on = manager.get_config_snapshot().await.agent.daily_session;
+    let day_on = manager.daily_session();
     place.private_app(&*manager.skills, day_on).await
 }
 
@@ -154,7 +154,7 @@ impl crate::engine::tools::Tools {
             return false;
         }
         match self.get_manager() {
-            Some(manager) => manager.get_config_snapshot().await.agent.daily_session,
+            Some(manager) => manager.daily_session(),
             None => true,
         }
     }
