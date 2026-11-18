@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+Ships as 2.4, on the Mac and the iPhone together.
+
 - **One Ling and one Yinyue across apps.** App chats, Yinyue's moments and
   the phone's hand-offs share one conversation a day — Linggen's daily
   session. It is on; Settings → Session turns it off.
@@ -190,7 +192,7 @@ The two major library groups held back from 2.3.0; nothing else changed.
   does not host memory renames `ling-mem.prev` over the stand-in before that
   engine starts, so it can start memory as before; rolling forward takes the
   store over again.
-- **Memory runs inside the engine** (3.0 plan, step 2.1). The memory code
+- **Memory runs inside the engine** (`doc/plan-3.0.md`, step 2.1). The memory code
   (`crates/linggen-memory`, from ling-mem 1.13.0) is part of the build; `ling`
   opens the store at start-up and serves memory on its own port —
   `/mem/api/memory/<verb>` and `/mcp/memory` for this machine, the phone's
