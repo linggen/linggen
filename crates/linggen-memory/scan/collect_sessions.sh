@@ -144,6 +144,21 @@ count_user_turns_openclaw() {
                        and (.message.role // "") == "user")] | length' "$1" 2>/dev/null || echo 0
 }
 
+# A top-level scalar of a session.yaml (`creator`, `skill`), unquoted.
+yaml_field() {
+  grep -m1 "^$2:" "$1" 2>/dev/null \
+    | sed -E "s/^$2:[[:space:]]*//; s/[[:space:]]*#.*\$//; s/^\"(.*)\"\$/\\1/; s/^'(.*)'\$/\\1/"
+}
+
+# Whether an app keeps its talk to itself: `private-talk: true` in its
+# SKILL.md's front matter. An app that is not installed is treated so too —
+# what cannot be asked is not handed on.
+keeps_its_talk() {
+  local skill_md="${HOME_DIR}/.linggen/skills/$1/SKILL.md"
+  [ -f "$skill_md" ] || return 0
+  sed -n '2,/^---[[:space:]]*$/p' "$skill_md" | grep -Eq '^private-talk:[[:space:]]*true[[:space:]]*$'
+}
+
 count_user_turns_linggen() {
   # `[HIDDEN]`-prefixed rows are the app shell talking to the agent, not the
   # person: skill pages fire a greeting/context trigger through the same send
@@ -260,31 +275,29 @@ if [ -d "$LING_DIR" ]; then
     past_watermark "Linggen" "$jsonl_file" || continue
 
     session_name=$(basename "$session_dir")
+    meta="${session_dir}session.yaml"
+    [ -f "$meta" ] || continue
 
-    # Named people's days are never in scope, regardless of creator.
+    # The rule: a session the person spoke in is read, whoever made it —
+    # their own chats, Linggen's daily session, the companion's thread, an
+    # app's own chat. Four kinds stay out:
+    #   - another person's day (a paired phone on another account);
+    #   - a mission's session and a session a host made through agent_run:
+    #     their `user` rows are the job's or the host's prompt, not a
+    #     person's words (what the person told that host is read from the
+    #     host's own logs);
+    #   - a private app's chat (`private-talk: true`), or an app that cannot
+    #     be found — its talk is kept to itself.
     [[ "$session_name" =~ ^sess-day-[0-9]{4}-[0-9]{2}-[0-9]{2}-p- ]] && continue
+    case "$(yaml_field "$meta" creator)" in mission|external) continue ;; esac
+    skill="$(yaml_field "$meta" skill)"
+    if [ -n "$skill" ] && keeps_its_talk "$skill"; then continue; fi
+    user_turns=$(count_user_turns_linggen "$jsonl_file")
+    [ "${user_turns:-0}" -gt 0 ] || continue
 
-    # Ordinary chats must be user-created. Only the exact owner day can
-    # also be agent-created; other agent, skill, and mission chats stay out.
-    owner_day=false
-    if [[ "$session_name" =~ ^sess-day-[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
-      owner_day=true
-    fi
-    [ -f "${session_dir}session.yaml" ] || continue
-    creator=$(grep -m1 '^creator:' "${session_dir}session.yaml" 2>/dev/null \
-      | sed -E 's/^creator:[[:space:]]*//; s/[[:space:]]*#.*$//; s/^"(.*)"$/\1/; s/^'"'"'(.*)'"'"'$/\1/')
-    [[ "$creator" = "user" || ( "$owner_day" = true && "$creator" = "agent" ) ]] || continue
-
-    session_title=""
-    if [ -f "${session_dir}session.yaml" ]; then
-      session_title=$(grep '^title:' "${session_dir}session.yaml" 2>/dev/null | sed 's/^title: *//' | head -1)
-    fi
+    session_title=$(grep '^title:' "$meta" 2>/dev/null | sed 's/^title: *//' | head -1)
     label="${session_title:-$session_name}"
     bytes=$(file_bytes "$jsonl_file")
-    user_turns=$(count_user_turns_linggen "$jsonl_file")
-    # An owner day with only automatic chatter is not a candidate, even
-    # if it is large enough to pass scan.sh's ordinary empty-chat filter.
-    [[ "$owner_day" = true && "${user_turns:-0}" -eq 0 ]] && continue
     emit_manifest "$jsonl_file" "Linggen" "$label" "${bytes:-0}" "${user_turns:-0}"
   done
 fi

@@ -662,3 +662,24 @@ async fn a_solve_run_asks_once_refuses_a_second_start_and_closes_the_item() {
         "still open: {open}"
     );
 }
+
+/// Which of Linggen's own sessions the scan reads: a session the person
+/// spoke in, whoever made it — never another person's day, a mission's or a
+/// host-made session, or a private app's chat. The fixture is a script
+/// beside this file (`memory_scan_day.sh`): the scan is shell, and so is
+/// its test.
+#[test]
+fn the_scan_reads_a_session_the_person_spoke_in() {
+    if !scan_tools() {
+        eprintln!("skipped: jq or perl missing");
+        return;
+    }
+    let script = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/system/memory_scan_day.sh");
+    let out = Command::new("bash").arg(script).output().expect("bash");
+    assert!(
+        out.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+}

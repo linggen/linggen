@@ -78,9 +78,10 @@ permission:
     ~/.codex/sessions, ~/.codex/archived_sessions, ~/.openclaw/agents and
     ~/.linggen/sessions — flattens them, drops secret-looking lines, and
     writes ~/.linggen/memory/.scan-output.jsonl; no network, no model.
-    Linggen candidates come from user-created chats and the owner's own
-    daily session if the owner spoke, never other people's days or
-    app-owned chats.
+    Linggen candidates are the sessions the person spoke in — their
+    chats, the daily session, the companion's thread, an app's chat —
+    never another person's day, a mission's or a host-made session, or a
+    private app's chat.
     The agent then reads only that file (it has no shell) and writes
     short-term memory rows through this machine's own memory, each
     carrying the session it came from, and stamps the day scanned. It

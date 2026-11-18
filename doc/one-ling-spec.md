@@ -145,9 +145,13 @@ the day existed. On (decided by the builder 2026-11-15/16):
   there included — a tool that carries words out is refused; a question
   waiting there reaches Yinyue only as that the app waits. Its world line
   stays.
-- **Memory scan** — the day's session is still made by `agent`. The scan
-  adds only the owner's exact `sess-day-YYYY-MM-DD` when it has a real
-  user turn; another person's `-p-…` day and private app chats stay out.
+- **Memory scan** — the nightly scan reads a session the person spoke in,
+  whoever made it: their own chats, the day's session, the companion's
+  thread, an app's own chat (decided by the builder 2026-11-18; before, it
+  read only sessions made by `user`, so the day was never read). Kept out:
+  another person's day (`…-p-…`), a mission's session and one a host made
+  through `agent_run` (their `user` rows are a job's or a host's prompt),
+  and a private app's chat.
 - **Her moments** run in the day's session too, standing in the app they
   came from; her line is a row there and lands nowhere else. A private
   app's moment runs at the app chat it names, never in a day; with none
