@@ -44,8 +44,17 @@ just sign in:
 ling account login  # Opens browser → sign in to linggen.dev
 ```
 
-The ChatGPT built-ins (`gpt-6.2-sol`, `gpt-6.1-terra`, `gpt-6-luna` — Luna is the default) are also present in every install and
+The ChatGPT built-ins — one per family, Sol, Terra and Luna (Luna is the default) — are also present in every install and
 need only a ChatGPT sign-in (Settings → Models → Sign in with ChatGPT).
+They update by themselves (`provider/models/chatgpt_catalog`): about once a
+day and at sign-in the engine reads the latest released Codex client version
+from the public listing (never below the compiled one), reads the backend's
+model list under it, and moves a family to its newest listed model once one
+tiny request on that model has answered. Defaults, the companion's model and
+paired phones follow the family; a session or mission pinned to an older id
+keeps it while the backend lists it. The Models tab says when a family moved
+and can stay on the previous model. Offline and signed out, the compiled
+models stand (`gpt-6.2-sol`, `gpt-6.1-terra`, `gpt-6-luna`).
 The same sign-in draws pictures: `GenerateImage` asks Luna with the
 Responses API's `image_generation` tool (about 30 s a picture, PNG). The
 plan's picture allowance is small and separate from chat; a refusal is
