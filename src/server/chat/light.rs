@@ -103,7 +103,7 @@ pub(crate) async fn line_now(state: Arc<ServerState>, session_id: &str, agent: &
 /// The engine as a turn of this member's would have it: live models, the
 /// member's model, its seat, and its place.
 async fn ready(ctx: &ChatRunCtx, engine: &mut crate::engine::AgentEngine) {
-    engine.model_manager = ctx.manager.models.read().await.clone();
+    engine.use_live_models(&ctx.manager).await;
     let sid = ctx.session_id.as_deref().unwrap_or("default");
     let members = super::members::of_session(&ctx.manager, sid).await;
     let pet = ctx.manager.get_config_snapshot().await.pet;

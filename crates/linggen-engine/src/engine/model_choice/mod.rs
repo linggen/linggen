@@ -220,6 +220,13 @@ pub fn next_down(
 }
 
 impl AgentEngine {
+    /// Choose among the machine's models as they are now: a model
+    /// registered after this engine was built (a room's proxy model, joined
+    /// mid-session) is one its turn can run on.
+    pub async fn use_live_models(&mut self, manager: &crate::engine::agent::AgentManager) {
+        self.model_manager = manager.models.read().await.clone();
+    }
+
     /// Run this turn on `choice`. The one writer of the turn's model before
     /// it starts; `place` names the turn in the log. A replaced model is told
     /// as one replaced during a call is: the ModelFallback event.

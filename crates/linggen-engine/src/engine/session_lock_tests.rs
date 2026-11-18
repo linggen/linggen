@@ -41,9 +41,8 @@ const LISTED: &[(&str, usize, &str)] = &[
     // A session's settings written by a door, not their owner.
     (
         "src/server/chat/handler.rs",
-        8,
-        "live models; the thread trimmed; \
-         ChatRequest's session and agent (5)",
+        7,
+        "the thread trimmed; ChatRequest's session and agent (5)",
     ),
     (
         "crates/linggen-engine/src/extensions/missions/enter.rs",
@@ -55,7 +54,6 @@ const LISTED: &[(&str, usize, &str)] = &[
         2,
         "tests",
     ),
-    ("src/server/chat/light.rs", 1, "live models"),
     ("src/server/chat/admin.rs", 2, "the thread"),
     // The thread's cache.
     ("src/server/chat/thread.rs", 3, "the thread module itself"),

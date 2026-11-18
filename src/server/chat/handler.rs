@@ -1392,7 +1392,7 @@ pub(crate) async fn start_turn(
         // Refresh the engine's model_manager from live state so it sees
         // models registered after engine creation — most notably proxy
         // models added when the user joins a room mid-session.
-        engine.model_manager = state.manager.models.read().await.clone();
+        engine.use_live_models(&state.manager).await;
 
         if let Some(queued_id) = queued_item_id.as_deref() {
             let still_wanted = dequeue_and_emit(
