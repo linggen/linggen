@@ -247,9 +247,20 @@ async fn seat_for_export(
         .find(|m| m.id == agent_id)
         .cloned()
         .unwrap_or_else(|| crate::state_fs::sessions::SessionMember::new(agent_id));
-    if let Some(model) = super::members::model_of(&state.manager, root, &member).await {
-        engine.model_id = model;
-    }
+    let Some(model) = super::members::model_of(&state.manager, root, &member).await else {
+        return;
+    };
+    // A preview, not a turn: the member's model as `model_of` names it.
+    let choice = crate::engine::model_choice::resolve(
+        &engine.model_manager,
+        Some(&model),
+        &engine.model_id,
+        crate::engine::model_choice::Rule {
+            asker: crate::engine::model_choice::Asker::Owner,
+            may_switch: true,
+        },
+    );
+    engine.run_on(&choice, "prompt preview").await;
 }
 
 /// The prompt and tools `engine` would send, as the export shows them.

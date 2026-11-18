@@ -12,6 +12,7 @@ mod foreground_task;
 pub mod event_bus;
 pub mod events;
 pub mod mission;
+pub mod model_choice;
 pub mod image_relevance;
 pub mod image_search;
 pub(crate) mod light_turn;

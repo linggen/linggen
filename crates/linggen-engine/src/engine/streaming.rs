@@ -450,7 +450,7 @@ impl AgentEngine {
         // A session that may not switch cannot be saved by the chain either:
         // a model this machine does not have fails here, named, instead of
         // as "Model x not found" from deep in a client.
-        if !session_switch && !self.model_manager.has_model(&model_id) {
+        if !session_switch && !crate::engine::model_choice::is_here(&self.model_manager, &model_id) {
             self.note_run_model(&model_id);
             return Err(crate::provider::error::no_fallback_error(
                 &model_id,
@@ -580,17 +580,7 @@ impl AgentEngine {
     /// only bail AUTH_REQUIRED would replace the real error (a BYOK rate
     /// limit, say) with a sign-in demand for a model the user never chose.
     fn next_fallback_model(&self, tried: &[String]) -> Option<String> {
-        let cloud = crate::provider::models::LINGGEN_CLOUD_MODEL_ID.to_string();
-        self.default_models
-            .iter()
-            .cloned()
-            .chain(std::iter::once(cloud))
-            .find(|m| {
-                !tried.contains(m)
-                    && self.model_manager.has_model(m)
-                    && self.model_manager.model_auth_ok(m)
-                    && !crate::provider::models::in_cooldown(m)
-            })
+        crate::engine::model_choice::next_down(&self.model_manager, &self.default_models, tried)
     }
 
     /// Record the model actually in use as this member's in the session, so

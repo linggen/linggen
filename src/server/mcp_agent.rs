@@ -200,7 +200,14 @@ pub async fn run(
     }
     let model = if let Some(model) = model {
         let models = state.manager.models.read().await;
-        let resolved = models.resolve_id(model);
+        // A delegated run never falls back: a model this machine lacks is
+        // refused here, before the run starts.
+        let resolved = crate::engine::model_choice::live(
+            &models,
+            crate::engine::model_choice::Asker::Owner,
+            model,
+        )
+        .ok();
         drop(models);
         let config = state.manager.get_config_snapshot().await;
         Some(validate_model(
@@ -530,7 +537,18 @@ async fn drive(
         .map_err(|e| format!("failed to create agent '{agent_id}': {e}"))?;
     let mut engine = agent.lock().await;
     if let Some(model) = model {
-        engine.model_id = model;
+        // Checked (or chosen by the agent's chain) already; a delegated run
+        // never switches models.
+        let choice = crate::engine::model_choice::resolve(
+            &engine.model_manager,
+            Some(&model),
+            &engine.model_id,
+            crate::engine::model_choice::Rule {
+                asker: crate::engine::model_choice::Asker::Owner,
+                may_switch: false,
+            },
+        );
+        engine.run_on(&choice, "agent_run").await;
     }
 
     let run_id = state
@@ -1516,7 +1534,9 @@ fn permission_mapping(mode: Option<&str>, has_dir: bool) -> Result<Option<Permis
 }
 
 fn format_models(models: &crate::provider::models::ModelManager, default: Option<&str>) -> String {
-    let default = default.and_then(|id| models.resolve_id(id));
+    let default = default.and_then(|id| {
+        crate::engine::model_choice::live(models, crate::engine::model_choice::Asker::Owner, id).ok()
+    });
     serde_json::json!({"models": models.list_models().iter().map(|m| serde_json::json!({
         "id": m.id, "provider": m.provider, "default": Some(m.id.as_str()) == default.as_deref()
     })).collect::<Vec<_>>()})

@@ -3,6 +3,7 @@ use crate::engine::agent::locks::LockManager;
 use crate::engine::agent::record::{AgentSpec, AgentSpecFile};
 use crate::engine::agent::registry::AgentRegistry;
 use crate::engine::mission::MissionRegistry;
+use crate::engine::model_choice;
 use crate::engine::skill::SkillRegistry;
 use crate::engine::{AgentEngine, AgentRole, EngineConfig, InterfaceMode, Plan};
 use crate::provider::models::ModelManager;
@@ -182,7 +183,7 @@ impl AgentManager {
         if let Some(choice) =
             Self::normalize_model_choice(Self::model_override_for_agent(config, agent_id))
         {
-            if let Some(live) = models.resolve_id(&choice) {
+            if let Ok(live) = model_choice::live(models, model_choice::Asker::Owner, &choice) {
                 return Ok(live);
             }
             warn!(
@@ -193,7 +194,7 @@ impl AgentManager {
 
         // 2. Frontmatter model
         if let Some(choice) = Self::normalize_model_choice(frontmatter_model) {
-            if let Some(live) = models.resolve_id(&choice) {
+            if let Ok(live) = model_choice::live(models, model_choice::Asker::Owner, &choice) {
                 return Ok(live);
             }
             warn!(
@@ -212,7 +213,7 @@ impl AgentManager {
         // sign-in message instead of "No models configured".
         let mut auth_dead_default: Option<String> = None;
         for dm in &config.routing.default_models {
-            if model_ids.contains(dm.as_str()) || models.has_model(dm) {
+            if model_ids.contains(dm.as_str()) || model_choice::is_here(models, dm) {
                 if !skip_dead_auth || models.model_auth_ok(dm) {
                     return Ok(dm.clone());
                 }

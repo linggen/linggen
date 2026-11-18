@@ -131,10 +131,12 @@ async fn her_soul(state: &Arc<ServerState>) -> Result<String, String> {
 async fn her_model(state: &Arc<ServerState>) -> Option<String> {
     let setting = state.manager.get_config_snapshot().await.pet.model.clone();
     let models = state.manager.models.read().await.clone();
-    if let Some(m) =
-        crate::server::resident::resolve_pet_model(&setting).and_then(|m| models.resolve_id(&m))
-    {
-        return Some(m);
+    let live = crate::server::resident::resolve_pet_model(&setting).and_then(|m| {
+        crate::engine::model_choice::live(&models, crate::engine::model_choice::Asker::Owner, &m)
+            .ok()
+    });
+    if live.is_some() {
+        return live;
     }
     state.manager.agent_model_id(&her_root(), COMPANION).await
 }

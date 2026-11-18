@@ -379,27 +379,27 @@ async fn apply_her_model(
         .find(|m| m.id == YINYUE_AGENT)
         .and_then(|m| m.model.clone());
     let wanted = kept.or_else(|| resolve_pet_model(&pet.model));
-    let Some(m) = wanted else {
-        return;
+    let may_switch = state
+        .manager
+        .global_sessions
+        .model_fallback_allowed(session_id);
+    let choice = her_choice(engine, wanted.as_deref(), may_switch);
+    engine.run_on(&choice, "[yinyue]").await;
+}
+
+/// Her model by the one rule (`model_choice::resolve`). Her standing model
+/// is the one she is on.
+fn her_choice(
+    engine: &crate::engine::AgentEngine,
+    wanted: Option<&str>,
+    may_switch: bool,
+) -> crate::engine::model_choice::Choice {
+    use crate::engine::model_choice::{resolve, Asker, Rule};
+    let rule = Rule {
+        asker: Asker::Owner,
+        may_switch,
     };
-    match engine.model_manager.resolve_id(&m) {
-        Some(live) => engine.model_id = live,
-        // A session that may not switch models fails on the one asked for.
-        None if !state
-            .manager
-            .global_sessions
-            .model_fallback_allowed(session_id) =>
-        {
-            tracing::warn!(
-                "[yinyue] model '{m}' unavailable; model switching is off, not falling back"
-            );
-            engine.model_id = m;
-        }
-        None => tracing::warn!(
-            "[yinyue] model '{m}' unavailable; using {}",
-            engine.model_id
-        ),
-    }
+    resolve(&engine.model_manager, wanted, &engine.model_id, rule)
 }
 
 /// Set her engine up for one turn. Idempotent — her engine outlives the

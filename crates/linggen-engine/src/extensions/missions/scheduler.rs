@@ -782,43 +782,26 @@ async fn dispatch_mission_prompt(
     engine.set_parent_agent(None);
     engine.set_run_id(Some(run_id.clone()));
 
-    // Apply the mission's configured model (frontmatter `model:` field) so
-    // missions run on the model the user chose in mission settings. Without
-    // this, the engine keeps whatever model_id it was last set to — usually
-    // the global default (e.g. gpt-5.5) — ignoring the per-mission choice.
-    // Falls back to default when the configured id isn't registered.
-    match mission.model.as_deref() {
-        Some(mid) if engine.model_manager.has_model(mid) => {
-            // A retired id (`model: gpt-6-sol`) runs on its successor.
-            engine.model_id = engine
-                .model_manager
-                .resolve_id(mid)
-                .unwrap_or_else(|| mid.to_string());
-        }
-        // A session that may not switch models runs on the one the mission
-        // names: the run fails on it, named, instead of answering on another.
-        Some(mid)
-            if session_id
-                .as_deref()
-                .is_some_and(|s| !manager.global_sessions.model_fallback_allowed(s)) =>
-        {
-            warn!(
-                "Mission '{}' requested model '{}' which is not configured — model switching is off, not falling back",
-                mission.id, mid
-            );
-            engine.model_id = mid.to_string();
-        }
-        Some(mid) => {
-            warn!(
-                "Mission '{}' requested model '{}' which is not configured — falling back to default '{}'",
-                mission.id, mid, engine.default_model_id
-            );
-            engine.model_id = engine.default_model_id.clone();
-        }
-        None => {
-            engine.model_id = engine.default_model_id.clone();
-        }
-    }
+    // The mission's configured model (frontmatter `model:`), by the one
+    // rule (`model_choice::resolve`): a retired id runs on its successor;
+    // one this machine lacks falls back to the agent's default — or, in a
+    // session that may not switch models, is kept so the run fails on it,
+    // named.
+    let may_switch = session_id
+        .as_deref()
+        .is_none_or(|s| manager.global_sessions.model_fallback_allowed(s));
+    let choice = crate::engine::model_choice::resolve(
+        &engine.model_manager,
+        mission.model.as_deref(),
+        &engine.default_model_id,
+        crate::engine::model_choice::Rule {
+            asker: crate::engine::model_choice::Asker::Owner,
+            may_switch,
+        },
+    );
+    engine
+        .run_on(&choice, &format!("mission '{}'", mission.id))
+        .await;
 
     // The mission body becomes the system prompt's runbook (not a user
     // turn), `allowed-tools` the tool scope, and a skill mission borrows

@@ -543,23 +543,6 @@ async fn persist_then_dequeue<F: std::future::Future>(
     true
 }
 
-/// The live id `mid` runs as (a retired id resolves to its successor), when
-/// this requester may use it: a consumer only a shared model, compared by
-/// live id on both sides.
-fn allowed_model(
-    models: &crate::provider::models::ModelManager,
-    is_consumer: bool,
-    shared_models: &[String],
-    mid: &str,
-) -> Option<String> {
-    let live = models.resolve_id(mid)?;
-    let shared = !is_consumer
-        || shared_models
-            .iter()
-            .any(|m| models.resolve_id(m).as_deref() == Some(live.as_str()));
-    shared.then_some(live)
-}
-
 /// Where the model a turn asks for comes from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum TurnModel {
@@ -612,11 +595,15 @@ pub(super) fn turn_model(
     TurnModel::Default
 }
 
-/// Resolve and pin the engine's effective model for this turn.
+/// Set the engine's model for this turn by the one rule
+/// (`model_choice::resolve`), against the agent's own default. A consumer
+/// (proxy room) runs only the room's `shared_models`. The picker's model is
+/// kept as the member's once it runs; a kept or picked model that is
+/// replaced is cleared, so the member stops asking for it.
 ///
-/// Consumers (proxy room) MUST be restricted to the room's `shared_models` —
-/// never fall back to the owner's default, which would leak access to a
-/// model the consumer isn't allowed to use.
+/// An app's default model is not applied here: branded apps pin it as the
+/// request's model (their skill page sends ?model= only in app_mode), while
+/// the same skill run in the core app uses the configured global default.
 pub(super) async fn resolve_effective_model(
     engine: &mut crate::engine::AgentEngine,
     (is_consumer, shared_models): (bool, &[String]),
@@ -624,72 +611,35 @@ pub(super) async fn resolve_effective_model(
     (session_id, member): (Option<&str>, &str),
     manager: &Arc<AgentManager>,
 ) {
-    let consumer_default = || -> Option<String> {
-        shared_models
-            .iter()
-            .find_map(|id| engine.model_manager.resolve_id(id))
+    use crate::engine::model_choice::{self, Asker, Rule};
+    let asker = if is_consumer {
+        Asker::Guest(shared_models)
+    } else {
+        Asker::Owner
     };
-
-    if let Some(mid) = asked.id() {
-        if let Some(live) = allowed_model(&engine.model_manager, is_consumer, shared_models, mid) {
-            engine.model_id = live.clone();
-            if let (TurnModel::Request(_), Some(sid)) = (asked, session_id) {
-                super::members::set_model(manager, sid, member, Some(live)).await;
-            }
-            return;
+    let may_switch =
+        session_id.is_none_or(|sid| manager.global_sessions.model_fallback_allowed(sid));
+    let choice = model_choice::resolve(
+        &engine.model_manager,
+        asked.id(),
+        &engine.default_model_id,
+        Rule { asker, may_switch },
+    );
+    let place = format!("session '{}', {member}", session_id.unwrap_or("?"));
+    engine.run_on(&choice, &place).await;
+    let Some(sid) = session_id else {
+        return;
+    };
+    match asked {
+        TurnModel::Request(_) if choice.is_asked() => {
+            let live = Some(choice.model().to_string());
+            super::members::set_model(manager, sid, member, live).await;
         }
-        // A session that may not switch models keeps the one it asked for:
-        // the turn then fails on it, named (`stream_with_fallback`), and the
-        // pin stays so the picker still shows what is wrong. A consumer's
-        // list is an access rule, not a failure — it is never lifted.
-        if !is_consumer
-            && session_id.is_some_and(|sid| !manager.global_sessions.model_fallback_allowed(sid))
-        {
-            tracing::warn!(
-                "Session '{}' asked model '{}' for {member}, unavailable — model switching is off, not falling back",
-                session_id.unwrap_or("?"),
-                mid
-            );
-            engine.model_id = mid.to_string();
-            return;
-        }
-        // Requested model unavailable / not shared with this consumer.
-        // Fall back to a shared model (consumer) or the configured default
-        // (owner), and clear a stale pin so the member stops asking for the
-        // dead id.
-        let fallback = if is_consumer {
-            consumer_default().unwrap_or_else(|| engine.default_model_id.clone())
-        } else {
-            engine.default_model_id.clone()
-        };
-        tracing::warn!(
-            "Session '{}' asked model '{}' for {member}, unavailable for {} — falling back to '{}'",
-            session_id.unwrap_or("?"),
-            mid,
-            if is_consumer { "consumer" } else { "owner" },
-            fallback
-        );
-        engine.model_id = fallback;
-        if let (TurnModel::Request(_) | TurnModel::Member(_), Some(sid)) = (asked, session_id) {
+        TurnModel::Request(_) | TurnModel::Member(_) if choice.clears_pin() => {
             super::members::set_model(manager, sid, member, None).await;
         }
-        return;
+        _ => {}
     }
-
-    if is_consumer {
-        // Consumer chose "Default" — pick a shared model, never the owner's.
-        engine.model_id = consumer_default().unwrap_or_else(|| engine.default_model_id.clone());
-        return;
-    }
-
-    // Owner with no explicit model → the agent's default. An app's default
-    // model (e.g. deepseek-v4-flash) is NOT applied here: branded apps pin it
-    // as the request's model (their skill page sends ?model= only in
-    // app_mode, which wins above), while the SAME skill run in the core app
-    // uses the user's configured global default. The SKILL.md `model:` field
-    // is intentionally not consulted — that would force the app model on
-    // core sessions too.
-    engine.model_id = engine.default_model_id.clone();
 }
 
 /// Promote a session created by the mission scheduler to a user-owned
@@ -1666,7 +1616,7 @@ mod tests {
     }
 
     use super::{
-        allowed_model, auto_session_title, leading_mention, trim_live_history,
+        auto_session_title, leading_mention, trim_live_history,
         trim_live_history_by,
         turn_model, TurnModel,
     };
@@ -1893,19 +1843,5 @@ mod tests {
     #[test]
     fn auto_title_empty_returns_placeholder() {
         assert_eq!(auto_session_title("   "), "New Chat");
-    }
-
-    #[test]
-    fn a_retired_model_runs_and_pins_as_its_successor() {
-        use crate::credentials::Credentials;
-        use crate::provider::models::ModelManager;
-        let m = ModelManager::new_with_credentials(vec![], &Credentials::default());
-        let shared = vec!["gpt-6-sol".to_string()];
-        let live = Some("gpt-6.2-sol".to_string());
-        assert_eq!(allowed_model(&m, false, &[], "gpt-6-sol"), live);
-        assert_eq!(allowed_model(&m, false, &[], "gpt-6.1-sol"), live);
-        assert_eq!(allowed_model(&m, true, &shared, "gpt-6.2-sol"), live);
-        assert_eq!(allowed_model(&m, true, &[], "gpt-6.2-sol"), None);
-        assert_eq!(allowed_model(&m, false, &[], "no-such-model"), None);
     }
 }

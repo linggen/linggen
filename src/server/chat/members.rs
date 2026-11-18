@@ -174,7 +174,10 @@ pub(crate) async fn model_of(
         .model
         .iter()
         .chain(pet.iter())
-        .find_map(|m| models.resolve_id(m));
+        .find_map(|m| {
+            crate::engine::model_choice::live(&models, crate::engine::model_choice::Asker::Owner, m)
+                .ok()
+        });
     match chosen {
         Some(m) => Some(m),
         None => manager.agent_model_id(root, &member.id).await,
