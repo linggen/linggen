@@ -5,10 +5,10 @@
 <h1 align="center">Linggen</h1>
 
 <p align="center">
-  <strong>Local-first AI apps on your own machine.</strong><br>
-  A personal CFO that reads your bank statements without uploading them, a Mac
-  health doctor, a music DJ — full apps on one open runtime, with a
-  general-purpose assistant built in.
+  <strong>Your personal AI assistant, on your own Mac and iPhone.</strong><br>
+  Ling and Yinyue look after a few parts of your life — music, money, health
+  and play — and remember you across all of them. Local-first: it runs on
+  your machine, with the model you choose.
 </p>
 
 <p align="center">
@@ -51,51 +51,25 @@ Opens the web UI at `http://localhost:9527`.
 
 **Releases** — the Mac app (signed and notarized): [linggen-releases](https://github.com/linggen/linggen-releases/releases/latest) · the engine: [linggen/linggen](https://github.com/linggen/linggen/releases/latest) · what changed: [CHANGELOG.md](CHANGELOG.md)
 
----
-
-## The apps
-
-- **CFO** — a personal CFO that never uploads your money data. Drop in bank/card CSV or PDF exports: deterministic local code parses them into a spend report — monthly trends, subscriptions, commitments, transfer detection, duplicate-charge checks. The AI layer only explains and reviews, and account numbers are stripped before it sees even the redacted totals. [60-second demo](https://linggen.dev/cfo-demo.mp4).
-- **Apple Shifu** — AI health analyst for your Mac: disk, security, performance, dormant apps, buyer's guide. Recommends; never acts on its own.
-- **DJ** — tell it a vibe and it curates a set, builds your local music library with clean tags, syncs tracks to your phone, and does karaoke with synced, translated lyrics.
-- **Pulse** — GTM brain for solo founders. Reads your configured trends and feeds, then drafts on-voice posts and replies for X and Reddit.
-- **灵境 (Lingjing)** — a cultivation story with ink-wash scenes, card duels and small games. Plays on the Mac and the iPhone; your save syncs through your account.
-- **Games** — Chinese Chess and Gomoku where the model actually plays you, plus Snake, Pong, and Tetris.
-- **Memory** — cross-agent semantic memory, part of Linggen: the same store reachable from Linggen, Claude Code, or Codex through the [`linggen` plugin](plugins/linggen).
-- **Model sharing** — open a room and let friends use your models over P2P WebRTC. No keys for the consumer, no cloud middleman; the owner controls budget and tools.
-
-Skills, agents, missions — all files. New apps are a folder away. Browse community skills at [github.com/linggen/skills](https://github.com/linggen/skills).
+**iPhone** — [Linggen on the App Store](https://apps.apple.com/app/id6798304906).
 
 ---
 
-## What is Linggen?
+## What it looks after
 
-Architecturally, Linggen is **the root system for AI agents**. The core
-runtime manages agent processes, communication, and execution; everything
-else (skills, agents, missions) grows on top as files. An "AI app" in
-Linggen is a skill, an agent, or a mission — markdown + scripts, not code
-plugins. The runtime gives every app a process, syscalls (built-in tools),
-a filesystem (memory), permissions, and a network surface (P2P rooms).
+Linggen is not a general chatbot and not an app store. It is one assistant
+that takes a few parts of everyday life and does them well. Two share the
+job: **Ling** does the work, **Yinyue** keeps you company and speaks up when
+something matters — the same two on your Mac and your iPhone.
 
-Apps drop into a folder and run.
+- **Music · DJ** — tell it a vibe and it curates a set, builds your local music library with clean tags, syncs tracks to your phone, and does karaoke with synced, translated lyrics.
+- **Money · CFO** — a personal CFO that never uploads your money data. Drop in bank/card CSV or PDF exports: deterministic local code parses them into a spend report — monthly trends, subscriptions, commitments, transfer detection, duplicate-charge checks. The AI layer only explains and reviews, and account numbers are stripped before it sees even the redacted totals. [60-second demo](https://linggen.dev/cfo-demo.mp4).
+- **Health** — your iPhone reads Apple Health and keeps your body data on the device. Ask what a week did to you or why a number moved, and get the answer in your own numbers. Wellness only.
+- **Play · 灵境 (Lingjing)** — a cultivation story with ink-wash scenes, card duels and small games. Plays on the Mac and the iPhone; your save syncs through your account.
+- **Play · Games** — Chinese Chess and Gomoku where the model actually plays you, plus Snake, Pong, and Tetris.
+- **Your devices · Apple Shifu** — AI health analyst for your Mac: disk, security, performance, dormant apps, buyer's guide. Recommends; never acts on its own.
 
-### OS analogy
-
-| OS | Linggen |
-|:---|:---|
-| Process | Agentic loop — one running agent |
-| Interrupt | User message queue — checked each iteration |
-| Thread / Fork | Subagent delegation — concurrent child execution |
-| Syscall | Tool call — built-in tools are the kernel API |
-| Dynamic library | Skill — loaded at runtime, no code changes |
-| Cron job | Mission — scheduled agent / app / script |
-| Driver | Model provider — Ollama, Claude, GPT, Gemini, Bedrock |
-| Filesystem | Memory store — core markdown + LanceDB RAG via `ling-mem` |
-| Process privilege | Permission modes (chat / read / edit / admin) + path scoping |
-| Network share | Rooms — share models with peers over P2P WebRTC |
-
-Full table and design principles in [`doc/product-spec.md`](doc/product-spec.md);
-vision and roadmap in [`doc/insight.md`](doc/insight.md).
+It remembers you: one memory on your machine, shared by Ling and Yinyue.
 
 ---
 
@@ -119,6 +93,43 @@ each other and to you.
 She's an ordinary Linggen session on the `yinyue` agent — swap her model, edit
 her persona, or build another companion the same way. See
 [`doc/yinyue-companion-spec.md`](doc/yinyue-companion-spec.md).
+
+---
+
+## For developers: how it is built
+
+Skills, agents, missions — all files. New apps are a folder away. Browse community skills at [github.com/linggen/skills](https://github.com/linggen/skills).
+
+- **Memory** — cross-agent semantic memory, part of Linggen: the same store reachable from Linggen, Claude Code, or Codex through the [`linggen` plugin](plugins/linggen).
+- **Model sharing** — open a room and let friends use your models over P2P WebRTC. No keys for the consumer, no cloud middleman; the owner controls budget and tools.
+
+
+Architecturally, Linggen is **the root system for AI agents**. The core
+runtime manages agent processes, communication, and execution; everything
+else (skills, agents, missions) grows on top as files. An "AI app" in
+Linggen is a skill, an agent, or a mission — markdown + scripts, not code
+plugins. The runtime gives every app a process, syscalls (built-in tools),
+a filesystem (memory), permissions, and a network surface (P2P rooms).
+
+Apps drop into a folder and run.
+
+### OS analogy
+
+| OS | Linggen |
+|:---|:---|
+| Process | Agentic loop — one running agent |
+| Interrupt | User message queue — checked each iteration |
+| Thread / Fork | Subagent delegation — concurrent child execution |
+| Syscall | Tool call — built-in tools are the kernel API |
+| Dynamic library | Skill — loaded at runtime, no code changes |
+| Cron job | Mission — scheduled agent / app / script |
+| Driver | Model provider — Ollama, Claude, GPT, Gemini, Bedrock |
+| Filesystem | Memory store — LanceDB, hosted by the engine |
+| Process privilege | Permission modes (chat / read / edit / admin) + path scoping |
+| Network share | Rooms — share models with peers over P2P WebRTC |
+
+Full table and design principles in [`doc/product-spec.md`](doc/product-spec.md);
+vision and roadmap in [`doc/insight.md`](doc/insight.md).
 
 ---
 
@@ -149,7 +160,7 @@ and Codex too.
 
 - **Local-first.** Runtime, data, and inference (when you pick local models) live on your machine. Cloud is opt-in via your own API keys.
 - **Model-agnostic.** Any model — Ollama, Claude, GPT, Gemini, DeepSeek, Groq, OpenRouter. Routing policies (`local-first`, `cloud-first`, custom) decide which model handles each request.
-- **App platform, not a single product.** Coding is one app among many.
+- **Curated, not general.** One personal assistant for a few parts of life — music, money, health, play.
 - **P2P, not centralized.** Remote access and model sharing flow over WebRTC data channels. `linggen.dev` acts as a signaling relay; it does not see chat content.
 - **Skills as the contract.** Apps follow the open Agent Skills standard.
 
