@@ -300,7 +300,7 @@ mod tests {
     #[test]
     fn only_the_owner_and_a_linggen_consumer_run_on_this_macs_models() {
         let lan = UserContext::paired();
-        let owner = crate::server::person::unnamed(true, "u-owner");
+        let owner = crate::server::person::unnamed(true);
         assert_eq!(super::refusal(&lan, &owner), None);
         let below = crate::server::person::standing_of("not-paired");
         assert_eq!(

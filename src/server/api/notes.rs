@@ -25,7 +25,7 @@ pub(crate) async fn list_notes(
 ) -> Json<serde_json::Value> {
     let agent = q.agent.trim();
     let shared =
-        crate::server::day_session::shares_builders(&state.manager, q.user_id.as_deref()).await;
+        crate::server::day_session::shares_builders(&state.manager, &crate::server::person::Person::from_wire(q.user_id.as_deref())).await;
     if !is_agent_id(agent) || !shared {
         return Json(serde_json::json!({ "agent": agent, "notes": [] }));
     }

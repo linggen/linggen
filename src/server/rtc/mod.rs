@@ -53,10 +53,6 @@ impl PeerKind {
     }
 }
 
-/// The user id of a paired peer that has not yet said which device it is:
-/// no one — it is given no day (`server::day_session`).
-pub const NO_ONE: &str = "__paired__";
-
 /// Every WebRTC peer connection carries a UserContext — both owner and consumer.
 /// Owner = UserContext { user_id: "abc", permission: Admin, ... }
 /// Consumer = UserContext { user_id: "xyz", permission: Read, ... }
@@ -137,7 +133,7 @@ impl UserContext {
     /// the account's — the phone may be held by someone else entirely.
     pub fn paired() -> Self {
         Self {
-            user_id: NO_ONE.to_string(),
+            user_id: crate::server::person::no_one().wire(),
             user_name: None,
             avatar_url: None,
             kind: PeerKind::Paired,
@@ -149,7 +145,7 @@ impl UserContext {
     /// and nothing else. See [`UserContext::pairing_only`].
     pub fn pairing() -> Self {
         Self {
-            user_id: "__pairing__".to_string(),
+            user_id: crate::server::person::pairing_wire().to_string(),
             user_name: None,
             avatar_url: None,
             kind: PeerKind::Pairing,

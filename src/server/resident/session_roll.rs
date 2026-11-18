@@ -16,7 +16,7 @@ pub(crate) fn is_own_session(session_id: &str) -> bool {
 /// With the daily session on, her thread is the day's session
 /// (`server::day_session`): she is seated there with Ling.
 pub(super) async fn resolve_current_session(state: &Arc<ServerState>) -> String {
-    if let Some(day) = crate::server::day_session::day_for(&state.manager, None, None).await {
+    if let Some(day) = crate::server::day_session::day_for(&state.manager, &crate::server::person::owner(), None).await {
         return day;
     }
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();

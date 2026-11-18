@@ -103,8 +103,7 @@ pub(super) fn handle_control_message(
             let resolved = identified.map(|i| i.actor);
             // A stage it holds is now its person's.
             if let Some(a) = &resolved {
-                let person = person_for(user_ctx, Some(&a.device));
-                state.yinyue_identify(peer_id, crate::server::person::Person::from_wire(Some(&person)));
+                state.yinyue_identify(peer_id, person_for(user_ctx, Some(&a.device)));
             }
             if resolved.is_none() && !token.is_empty() {
                 tracing::warn!("[rtc] identify with an unknown device token — staying anonymous");
@@ -221,14 +220,13 @@ pub(super) fn handle_control_message(
             if !state.manager.daily_session() && !standing.is_owner() {
                 return None;
             }
-            let person = standing.person().to_string();
+            let person = standing.person().clone();
             let session = msg
                 .get("session")
                 .and_then(|v| v.as_str())
-                .filter(|sid| crate::server::day_session::may_enter(sid, Some(&person)))
+                .filter(|sid| crate::server::day_session::may_enter(sid, &person))
                 .map(str::to_string);
-            let whose = crate::server::person::Person::from_wire(Some(&person));
-            state.yinyue_subscribe(peer_id, stage, session, whose);
+            state.yinyue_subscribe(peer_id, stage, session, person);
             None
         }
         "yinyue_release" => {
@@ -340,14 +338,14 @@ pub(super) fn standing_for(
     }
     let Some(device) = device else {
         let owner = matches!(user_ctx.tunnel_mark(), TUNNEL_LOCAL | TUNNEL_OWNER);
-        return crate::server::person::unnamed(owner, &user_ctx.user_id);
+        return crate::server::person::unnamed(owner);
     };
     crate::server::person::standing_of(device)
 }
 
 /// The person a peer's request is for ([`standing_for`]).
-pub(super) fn person_for(user_ctx: &crate::server::rtc::UserContext, device: Option<&str>) -> String {
-    standing_for(user_ctx, device).person().to_string()
+pub(super) fn person_for(user_ctx: &crate::server::rtc::UserContext, device: Option<&str>) -> crate::server::person::Person {
+    standing_for(user_ctx, device).person().clone()
 }
 
 /// Whether this peer is given what is the builder's alone
@@ -362,7 +360,7 @@ fn shares_builders(
         return true;
     }
     let device = actor.lock_ok().as_ref().map(|a| a.device.clone());
-    crate::server::day_session::is_builder(Some(&person_for(user_ctx, device.as_deref())))
+    crate::server::day_session::is_builder(&person_for(user_ctx, device.as_deref()))
 }
 
 /// Whether this peer stands at read or above, as the frames that publish
@@ -686,21 +684,21 @@ pub(super) async fn process_control_request_async(
 #[cfg(test)]
 mod tests {
     /// A peer the tunnel does not know as the owner, with no device named,
-    /// is no one; this machine's own page is its channel's user.
+    /// is no one; this machine's own page is the owner.
     #[test]
     fn a_peer_with_no_device_named_is_no_one_unless_the_tunnel_knows_it() {
-        assert_eq!(super::person_for(&UserContext::paired(), None), crate::server::rtc::NO_ONE);
+        assert!(super::person_for(&UserContext::paired(), None).is_no_one());
         let lan = UserContext {
             reached_by: crate::server::rtc::Reach::Lan,
             ..UserContext::owner(Some("u-owner".into()))
         };
-        assert_eq!(super::person_for(&lan, None), crate::server::rtc::NO_ONE);
+        assert!(super::person_for(&lan, None).is_no_one());
         let here = UserContext {
             reached_by: crate::server::rtc::Reach::ThisMachine,
             ..UserContext::owner(Some("u-owner".into()))
         };
-        assert_eq!(super::person_for(&here, None), "u-owner");
-        assert_eq!(super::person_for(&here, Some("nobody-paired")), crate::server::rtc::NO_ONE);
+        assert!(super::person_for(&here, None).is_owner());
+        assert!(super::person_for(&here, Some("nobody-paired")).is_no_one());
     }
 
     use super::{is_text, named_device, reply_data, wrap_endpoint_response, IDENTIFY_GRACE};
@@ -732,7 +730,8 @@ mod tests {
             ..UserContext::owner(Some("u-owner".into()))
         };
         let got = super::media_get(&here, None, "/api/sessions/day").unwrap();
-        assert_eq!(got, ("/api/sessions/day?user_id=u-owner".to_string(), PermissionMode::Admin));
+        let owners = format!("/api/sessions/day?user_id={}", crate::server::person::owner().wire());
+        assert_eq!(got, (owners, PermissionMode::Admin));
         assert_eq!(super::media_get(&here, None, "/apps/x/.\t./.\t./api/credentials"), None);
         assert_eq!(super::media_get(&UserContext::pairing(), None, "/shared/a.js"), None);
         let unknown = super::media_get(&UserContext::paired(), Some("not-paired"), "/api/skills");

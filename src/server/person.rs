@@ -109,7 +109,7 @@ pub(crate) fn send_judged(
         return Err(Refused::BadPath);
     }
     let path = url_path.split_once('?').map_or(url_path, |(p, _)| p);
-    if standing.person() == crate::server::rtc::NO_ONE && !crate::server::routes::classes::is_way_in(method, path) {
+    if standing.person().is_no_one() && !crate::server::routes::classes::is_way_in(method, path) {
         return Err(Refused::Unnamed);
     }
     let needs = crate::server::routes::classes::class_of(method, path).needs();
@@ -163,18 +163,19 @@ pub(crate) fn send_as(
     method: &str,
     url_path: &str,
     body: &mut serde_json::Value,
-    (person, user_type): (&str, &str),
+    (person, user_type): (&Person, &str),
 ) -> Result<String, NotTheirs> {
     let (path, query) = url_path.split_once('?').unwrap_or((url_path, ""));
-    if let Some(day) = named_sessions(query, body).find(|sid| !crate::server::day_session::may_enter(sid, Some(person))) {
+    if let Some(day) = named_sessions(query, body).find(|sid| !crate::server::day_session::may_enter(sid, person)) {
         return Err(NotTheirs(day));
     }
+    let id = person.wire();
     let takes = takes_body(method, path);
-    let url = with_person(url_path, person);
+    let url = with_person(url_path, &id);
     if takes {
-        as_person(body, person, user_type);
+        as_person(body, &id, user_type);
     } else if body.get("user_id").is_some() {
-        body["user_id"] = serde_json::Value::String(person.to_string());
+        body["user_id"] = serde_json::Value::String(id);
     }
     Ok(url)
 }
@@ -210,14 +211,13 @@ pub(crate) use who::{mac_account, pairing_wire, stamp_of, Person};
 /// [`consumer`], [`unnamed`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Standing {
-    person: String,
+    person: Person,
     level: PermissionMode,
 }
 
 impl Standing {
-    /// The person: the owner's id, another account, a device stamp, or no
-    /// one (`rtc::NO_ONE`).
-    pub(crate) fn person(&self) -> &str {
+    /// The person: the owner, another account, a device, or no one.
+    pub(crate) fn person(&self) -> &Person {
         &self.person
     }
 
@@ -239,6 +239,16 @@ pub(crate) const MOST_FOR_ANOTHER: PermissionMode = PermissionMode::Edit;
 /// A device's level when nobody has set one on this Mac.
 pub(crate) const DEVICE_DEFAULT: PermissionMode = PermissionMode::Read;
 
+/// The owner: this machine, and what the engine starts itself.
+pub(crate) fn owner() -> Person {
+    Person::owner()
+}
+
+/// No one: a peer that has not said which device it is.
+pub(crate) fn no_one() -> Person {
+    Person::no_one()
+}
+
 /// The standing of paired device `device`: the owner's device (an approved
 /// machine, or a phone whose claim of this Mac's account is verified,
 /// `PairedDevice::is_owners`) is the owner at admin; any other device is its
@@ -249,8 +259,7 @@ pub(crate) const DEVICE_DEFAULT: PermissionMode = PermissionMode::Read;
 pub(crate) fn standing_of(device: &str) -> Standing {
     let mac = crate::account::load_account().and_then(|a| a.user_id);
     let devices = crate::state_fs::devices::load_devices();
-    let owner = crate::server::rtc::UserContext::owner(mac.clone()).user_id;
-    standing_in(devices.iter().find(|d| d.id == device), mac.as_deref(), &owner)
+    standing_in(devices.iter().find(|d| d.id == device), mac.as_deref())
 }
 
 /// Whether paired device `device` is a phone whose account claim is this
@@ -294,7 +303,7 @@ fn claims_unverified(device: &crate::state_fs::devices::PairedDevice, mac: Optio
 /// Whether paired device row `device` stands as the owner's with this Mac's
 /// account `mac` (what [`standing_of`] answers for it).
 pub(crate) fn is_owners_device(device: &crate::state_fs::devices::PairedDevice, mac: Option<&str>) -> bool {
-    standing_in(Some(device), mac, mac.unwrap_or_default()).is_owner()
+    standing_in(Some(device), mac).is_owner()
 }
 
 /// Who paired device `device` is, with this Mac's account `mac`: the owner
@@ -321,20 +330,15 @@ pub(crate) fn names_an_account(id: &str, mac: Option<&str>) -> bool {
 }
 
 /// [`standing_of`] for a row found (or not), with this Mac's account
-/// (`mac`) and the owner's person id (`owner`).
-fn standing_in(
-    device: Option<&crate::state_fs::devices::PairedDevice>,
-    mac: Option<&str>,
-    owner: &str,
-) -> Standing {
+/// (`mac`).
+fn standing_in(device: Option<&crate::state_fs::devices::PairedDevice>, mac: Option<&str>) -> Standing {
     let Some(device) = device else {
-        return unnamed(false, "");
+        return unnamed(false);
     };
     let person = of_device(device, mac);
-    let (person, level) = if person.is_owner() {
-        (owner.to_string(), PermissionMode::Admin)
-    } else {
-        (person.wire(), device.permission.unwrap_or(DEVICE_DEFAULT).min(MOST_FOR_ANOTHER))
+    let level = match person.is_owner() {
+        true => PermissionMode::Admin,
+        false => device.permission.unwrap_or(DEVICE_DEFAULT).min(MOST_FOR_ANOTHER),
     };
     Standing {
         person,
@@ -356,7 +360,7 @@ fn most_for_contract(device: &crate::state_fs::devices::PairedDevice) -> Permiss
 /// RTC HTTP and media requests use `routes::classes::tunnel_allows`).
 pub(crate) fn consumer(user_id: &str) -> Standing {
     Standing {
-        person: user_id.to_string(),
+        person: Person::account(user_id),
         level: PermissionMode::Chat,
     }
 }
@@ -365,23 +369,23 @@ pub(crate) fn consumer(user_id: &str) -> Standing {
 #[cfg(test)]
 pub(crate) fn for_test(person: &str, level: PermissionMode) -> Standing {
     Standing {
-        person: person.to_string(),
+        person: Person::for_test(Some(person)),
         level,
     }
 }
 
-/// The standing of a peer that has named no device: its channel's user at
-/// admin when the tunnel knows it as the owner (`owner_known`: this
-/// machine's page, the owner's account on the relay), else no one at chat.
-pub(crate) fn unnamed(owner_known: bool, user_id: &str) -> Standing {
+/// The standing of a peer that has named no device: the owner at admin
+/// when the tunnel knows it as the owner (`owner_known`: this machine's
+/// page, the owner's account on the relay), else no one at chat.
+pub(crate) fn unnamed(owner_known: bool) -> Standing {
     if owner_known {
         return Standing {
-            person: user_id.to_string(),
+            person: Person::owner(),
             level: PermissionMode::Admin,
         };
     }
     Standing {
-        person: crate::server::rtc::NO_ONE.to_string(),
+        person: Person::no_one(),
         level: PermissionMode::Chat,
     }
 }
@@ -494,15 +498,16 @@ mod tests {
     #[test]
     fn a_request_is_sent_as_its_person() {
         let mut body = serde_json::json!({"user_id": "u-owner", "message": "hi"});
-        let url = super::send_as("POST", "/api/chat", &mut body, ("u1", "paired"));
+        let u1 = super::Person::for_test(Some("u1"));
+        let url = super::send_as("POST", "/api/chat", &mut body, (&u1, "paired"));
         assert_eq!(url.as_deref(), Ok("/api/chat"));
         assert_eq!(body["user_id"], "u1");
         assert_eq!(body["user_type"], "paired");
         let mut other = serde_json::json!({"user_id": "x"});
-        super::send_as("POST", "/api/config", &mut other, ("u1", "paired")).unwrap();
+        super::send_as("POST", "/api/config", &mut other, (&u1, "paired")).unwrap();
         assert_eq!(other["user_id"], "u1");
         let mut plain = serde_json::json!({"a": 1});
-        super::send_as("POST", "/api/config", &mut plain, ("u1", "paired")).unwrap();
+        super::send_as("POST", "/api/config", &mut plain, (&u1, "paired")).unwrap();
         assert!(plain.get("user_id").is_none());
         assert_eq!(
             super::with_person("/api/sessions/day?user%5Fid=u-owner", "u1"),
@@ -517,7 +522,7 @@ mod tests {
     fn a_day_not_theirs_is_refused_at_the_seam() {
         let day = "sess-day-2026-11-16";
         let refused = |method: &str, url: &str, mut body: serde_json::Value| {
-            super::send_as(method, url, &mut body, ("u-friend", "paired")).is_err()
+            super::send_as(method, url, &mut body, (&super::Person::for_test(Some("u-friend")), "paired")).is_err()
         };
         assert!(refused("GET", &format!("/api/sessions/images?session_id={day}&name=x"), serde_json::Value::Null));
         assert!(refused("GET", "/api/chat/system-prompt?session%5Fid=sess-day-2026-11-16", serde_json::Value::Null));
@@ -629,20 +634,20 @@ mod tests {
             contract: None,
             ..phone(Some("u-friend"))
         };
-        assert_eq!(super::standing_in(Some(&old), Some("u-owner"), "u-owner").level(), Chat);
+        assert_eq!(super::standing_in(Some(&old), Some("u-owner")).level(), Chat);
         let owners_old = crate::state_fs::devices::PairedDevice {
             contract: Some(0),
             verified_account: Some("u-owner".into()),
             ..phone(Some("u-owner"))
         };
-        let s = super::standing_in(Some(&owners_old), Some("u-owner"), "u-owner");
-        assert_eq!((s.person(), s.level()), ("u-owner", Chat));
+        let s = super::standing_in(Some(&owners_old), Some("u-owner"));
+        assert_eq!((s.person(), s.level()), (&super::Person::owner(), Chat));
         let machine = crate::state_fs::devices::PairedDevice {
             kind: Some(crate::state_fs::devices::DeviceKind::Machine),
             contract: None,
             ..phone(None)
         };
-        assert_eq!(super::standing_in(Some(&machine), None, "__local__").level(), Admin);
+        assert_eq!(super::standing_in(Some(&machine), None).level(), Admin);
     }
 
     /// The owner's device is the owner at admin: an approved machine, and a
@@ -654,13 +659,13 @@ mod tests {
             verified_account: Some("u-owner".into()),
             ..phone(Some("u-owner"))
         };
-        let s = super::standing_in(Some(&verified), Some("u-owner"), "u-owner");
-        assert_eq!((s.person(), s.level()), ("u-owner", Admin));
+        let s = super::standing_in(Some(&verified), Some("u-owner"));
+        assert_eq!((s.person(), s.level()), (&super::Person::owner(), Admin));
         let machine = crate::state_fs::devices::PairedDevice {
             kind: Some(crate::state_fs::devices::DeviceKind::Machine),
             ..phone(None)
         };
-        assert_eq!(super::standing_in(Some(&machine), None, "__local__").level(), Admin);
+        assert_eq!(super::standing_in(Some(&machine), None).level(), Admin);
     }
 
     /// Any other device stands at the level set for it, read when none is,
@@ -669,28 +674,28 @@ mod tests {
     #[test]
     fn another_device_stands_at_its_level() {
         use crate::engine::permission::PermissionMode::*;
-        let claimed = super::standing_in(Some(&phone(Some("u-owner"))), Some("u-owner"), "u-owner");
-        assert_eq!((claimed.person(), claimed.level()), ("device:dev-1", Read));
-        assert!(!crate::server::day_session::is_builder(Some(claimed.person())), "not the builder's day");
-        let friend = super::standing_in(Some(&phone(Some("u-friend"))), Some("u-owner"), "u-owner");
-        assert_eq!((friend.person(), friend.level()), ("u-friend", Read));
+        let claimed = super::standing_in(Some(&phone(Some("u-owner"))), Some("u-owner"));
+        assert_eq!((claimed.person().wire(), claimed.level()), ("device:dev-1".to_string(), Read));
+        assert!(!crate::server::day_session::is_builder(claimed.person()), "not the builder's day");
+        let friend = super::standing_in(Some(&phone(Some("u-friend"))), Some("u-owner"));
+        assert_eq!((friend.person().wire(), friend.level()), ("u-friend".to_string(), Read));
         let raised = crate::state_fs::devices::PairedDevice {
             permission: Some(Edit),
             ..phone(Some("u-friend"))
         };
-        assert_eq!(super::standing_in(Some(&raised), Some("u-owner"), "u-owner").level(), Edit);
+        assert_eq!(super::standing_in(Some(&raised), Some("u-owner")).level(), Edit);
         let over = crate::state_fs::devices::PairedDevice {
             permission: Some(Admin),
             ..phone(Some("u-friend"))
         };
-        assert_eq!(super::standing_in(Some(&over), Some("u-owner"), "u-owner").level(), Edit);
+        assert_eq!(super::standing_in(Some(&over), Some("u-owner")).level(), Edit);
         let lowered = crate::state_fs::devices::PairedDevice {
             permission: Some(Chat),
             ..phone(None)
         };
-        assert_eq!(super::standing_in(Some(&lowered), Some("u-owner"), "u-owner").level(), Chat);
-        let nobody = super::standing_in(None, Some("u-owner"), "u-owner");
-        assert_eq!((nobody.person(), nobody.level()), (crate::server::rtc::NO_ONE, Chat));
+        assert_eq!(super::standing_in(Some(&lowered), Some("u-owner")).level(), Chat);
+        let nobody = super::standing_in(None, Some("u-owner"));
+        assert_eq!((nobody.person(), nobody.level()), (&super::Person::no_one(), Chat));
     }
 
     /// A claimed account id that reads as another kind of person — none,
@@ -706,13 +711,13 @@ mod tests {
         for mac in [Some("u-owner"), None] {
             for claim in claims {
                 let d = phone(Some(claim));
-                let s = super::standing_in(Some(&d), mac, mac.unwrap_or_default());
-                assert_eq!(s.person(), "device:dev-1", "{claim:?} with {mac:?}");
+                let s = super::standing_in(Some(&d), mac);
+                assert_eq!(s.person(), &super::Person::device("dev-1"), "{claim:?} with {mac:?}");
                 assert_eq!(super::whose_device(&d, mac), "signed_out", "{claim:?}");
             }
         }
         let friend = phone(Some("u-friend"));
-        assert_eq!(super::standing_in(Some(&friend), None, "").person(), "u-friend");
+        assert_eq!(super::standing_in(Some(&friend), None).person(), &super::Person::account("u-friend"));
     }
 
     /// A phone claiming this Mac's account unverified is told so; verified,
@@ -759,14 +764,15 @@ mod tests {
     #[test]
     fn an_unnamed_peer_is_the_owner_only_when_known() {
         use crate::engine::permission::PermissionMode::*;
-        assert_eq!(super::unnamed(true, "u-owner").level(), Admin);
-        let stranger = super::unnamed(false, "u-owner");
-        assert_eq!((stranger.person(), stranger.level()), (crate::server::rtc::NO_ONE, Chat));
+        let known = super::unnamed(true);
+        assert_eq!((known.person(), known.level()), (&super::Person::owner(), Admin));
+        let stranger = super::unnamed(false);
+        assert_eq!((stranger.person(), stranger.level()), (&super::Person::no_one(), Chat));
     }
 
     fn at(level: crate::engine::permission::PermissionMode) -> super::Standing {
         super::Standing {
-            person: "u-friend".into(),
+            person: super::Person::for_test(Some("u-friend")),
             level,
         }
     }
@@ -805,7 +811,7 @@ mod tests {
     /// not a chat, not its own-records routes, not the read doors.
     #[test]
     fn an_unnamed_peer_reaches_only_the_way_in() {
-        let nobody = super::unnamed(false, "u-owner");
+        let nobody = super::unnamed(false);
         let judged = |method: &str, url: &str| {
             super::send_judged(method, url, &mut serde_json::json!({}), &nobody, "paired")
         };

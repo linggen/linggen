@@ -103,7 +103,7 @@ async fn day_for_new_chat(
     if !joins {
         return None;
     }
-    let id = crate::server::day_session::day_for(&state.manager, req.user_id.as_deref(), req.skill.as_deref()).await?;
+    let id = crate::server::day_session::day_for(&state.manager, &crate::server::person::Person::from_wire(req.user_id.as_deref()), req.skill.as_deref()).await?;
     let meta = state.manager.global_sessions.get_session_meta(&id).ok()??;
     Some(Json(serde_json::json!({ "id": id, "cwd": meta.cwd })))
 }
@@ -261,7 +261,7 @@ pub(crate) async fn list_skill_sessions(
     Query(query): Query<SkillSessionQuery>,
 ) -> impl IntoResponse {
     let day =
-        crate::server::day_session::day_for(&state.manager, query.user_id.as_deref(), Some(&query.skill)).await;
+        crate::server::day_session::day_for(&state.manager, &crate::server::person::Person::from_wire(query.user_id.as_deref()), Some(&query.skill)).await;
     match state.manager.global_sessions.list_sessions() {
         Ok(sessions) => {
             let api_sessions = match day {
@@ -357,7 +357,7 @@ pub(crate) async fn get_skill_session_state(
 
     // A day is shown to its own person, with each row's place.
     let (messages, day) =
-        crate::server::day_session::rows_for_page(&state.manager, &session_id, query.user_id.as_deref());
+        crate::server::day_session::rows_for_page(&state.manager, &session_id, &crate::server::person::Person::from_wire(query.user_id.as_deref()));
 
     let running = run_calls::session_running(&state.manager, &session_id).await;
     let mapped = run_calls::with_run_calls(

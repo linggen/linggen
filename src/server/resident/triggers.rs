@@ -700,7 +700,7 @@ pub(super) async fn deliver_to_chat_agent(
         Some(day) => crate::server::day_session::takes(&state.manager, app.as_deref())
             .await
             .then_some(day),
-        None => crate::server::day_session::day_for(&state.manager, None, app.as_deref()).await,
+        None => crate::server::day_session::day_for(&state.manager, &crate::server::person::owner(), app.as_deref()).await,
     };
     if let Some(day) = day.as_deref() {
         // Linggen's daily session: the table they share, in the app's place.

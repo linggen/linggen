@@ -942,7 +942,7 @@ pub(crate) async fn say_in_session(
 /// chat, as one typed there — its turn and its row are the app's, never the
 /// day's.
 pub(crate) async fn say_in_app(state: Arc<ServerState>, app: &str, agent_id: &str, text: &str) {
-    let own = crate::server::day_session::own_chat(&state.manager, app, None);
+    let own = crate::server::day_session::own_chat(&state.manager, app, &crate::server::person::owner());
     let req = ChatRequest {
         project_root: crate::paths::ensure_default_workspace().to_string_lossy().to_string(),
         agent_id: agent_id.to_string(),
@@ -1071,7 +1071,7 @@ async fn into_the_day(state: &Arc<ServerState>, mut req: ChatRequest) -> ChatReq
     // A day its app does not join: the app's own chat stands in for it.
     if let (Some(name), Some(_)) = (app, named_day) {
         if !day::takes(&state.manager, Some(name)).await {
-            req.session_id = day::own_chat(&state.manager, name, req.user_id.as_deref());
+            req.session_id = day::own_chat(&state.manager, name, &crate::server::person::Person::from_wire(req.user_id.as_deref()));
             return req;
         }
     }
@@ -1079,16 +1079,16 @@ async fn into_the_day(state: &Arc<ServerState>, mut req: ChatRequest) -> ChatReq
     let someone_elses = req
         .session_id
         .as_deref()
-        .is_some_and(|sid| !day::may_enter(sid, req.user_id.as_deref()));
+        .is_some_and(|sid| !day::may_enter(sid, &crate::server::person::Person::from_wire(req.user_id.as_deref())));
     if someone_elses {
-        req.session_id = day::day_for(&state.manager, req.user_id.as_deref(), app).await;
+        req.session_id = day::day_for(&state.manager, &crate::server::person::Person::from_wire(req.user_id.as_deref()), app).await;
         return req;
     }
     let joins = day::takes_new_chat(app, false, false, req.user_type != "consumer");
     if req.session_id.is_some() || req.mission_id.is_some() || !joins {
         return req;
     }
-    req.session_id = day::day_for(&state.manager, req.user_id.as_deref(), app).await;
+    req.session_id = day::day_for(&state.manager, &crate::server::person::Person::from_wire(req.user_id.as_deref()), app).await;
     req
 }
 

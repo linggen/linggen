@@ -409,7 +409,7 @@ async fn at_the_table(
             q.push_front(m);
         }
     }
-    let Some(day) = super::day_session::day_for(&state.manager, None, app.as_deref()).await else {
+    let Some(day) = super::day_session::day_for(&state.manager, &crate::server::person::owner(), app.as_deref()).await else {
         return apart_from_the_day(state, moments);
     };
     for m in moments.iter_mut() {

@@ -83,7 +83,7 @@ pub(super) fn user_info_msg(
     // told its own person.
     let told = user_ctx.is_consumer() || standing.is_owner();
     let mut user = serde_json::json!({
-        "user_id": if told { user_ctx.user_id.as_str() } else { standing.person() },
+        "user_id": if told { user_ctx.user_id.clone() } else { standing.person().wire() },
         "user_type": user_ctx.user_type_for(identified),
         "user_name": if told { user_ctx.user_name.clone() } else { None },
         "avatar_url": if told { user_ctx.avatar_url.clone() } else { None },
@@ -786,8 +786,8 @@ impl PeerLoop {
         if !crate::server::day_session::is_day(session_id) {
             return true;
         }
-        let person = self.standing().person().to_string();
-        crate::server::day_session::may_enter(session_id, Some(&person))
+        let person = self.standing().person().clone();
+        crate::server::day_session::may_enter(session_id, &person)
     }
 
     fn open_session_channel(&mut self, id: str0m::channel::ChannelId, session_id: &str) {
@@ -1257,11 +1257,11 @@ impl PeerLoop {
         let ctx = self.view_ctx.clone();
         let identified = self.peer_actor.lock_ok().is_some();
         let now = self.standing();
-        let person = now.person().to_string();
+        let person = now.person().clone();
         let whose = standing::seen_as(&self.user_ctx, &now);
         tokio::spawn(async move {
             let who = (&user_ctx_clone, identified);
-            let seen = (whose.as_deref(), &person[..]);
+            let seen = (whose.as_deref(), &person);
             let ps = super::page_state::build_page_state(&st, &ctx, flags, who, seen).await;
             if let Ok(data) = serde_json::to_value(&ps) {
                 if forced {
@@ -1421,7 +1421,7 @@ mod greeting_tests {
         let told = msg.to_string();
         assert!(!told.contains("u-owner") && !told.contains("Owner Name"), "{told}");
         assert_eq!(msg["data"]["user"]["unverified_owner"], true);
-        let owner = crate::server::person::unnamed(true, "u-owner");
+        let owner = crate::server::person::unnamed(true);
         let msg = super::user_info_msg(&lan, true, (&owner, false));
         assert_eq!(msg["data"]["user"]["user_id"], "u-owner");
         assert_eq!(msg["data"]["user"]["user_name"], "Owner Name");

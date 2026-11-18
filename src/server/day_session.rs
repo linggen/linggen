@@ -29,11 +29,11 @@ pub(crate) async fn enabled(manager: &AgentManager) -> bool {
 /// keeps a session of its own ([`takes`]), and for a caller who is no one
 /// yet. Every way into the day asks here; nothing else makes or names a
 /// day's id (the lock test below).
-pub(crate) async fn day_for(manager: &AgentManager, user_id: Option<&str>, app: Option<&str>) -> Option<String> {
+pub(crate) async fn day_for(manager: &AgentManager, asker: &Person, app: Option<&str>) -> Option<String> {
     if !enabled(manager).await || !takes(manager, app).await {
         return None;
     }
-    let person = Person::from_wire(user_id).day_key()?;
+    let person = asker.day_key()?;
     Some(current(manager, person.as_deref()))
 }
 
@@ -66,11 +66,10 @@ pub(crate) async fn private_app_named(manager: &AgentManager, words: &str) -> Op
 /// The app's own chat to stand in when the person `user_id` names a day
 /// their app does not join: the newest of their sessions of it that is not
 /// one of its one-off jobs, else none — a session is then made for it.
-pub(crate) fn own_chat(manager: &AgentManager, app: &str, user_id: Option<&str>) -> Option<String> {
-    let asker = Person::from_wire(user_id);
+pub(crate) fn own_chat(manager: &AgentManager, app: &str, asker: &Person) -> Option<String> {
     let mut sessions: Vec<SessionMeta> = manager.global_sessions.list_sessions().ok()?;
     sessions.retain(|m| m.skill.as_deref() == Some(app) && !kept_apart(m) && !is_day(&m.id));
-    sessions.retain(|m| !asker.is_no_one() && Person::from_wire(m.user_id.as_deref()) == asker);
+    sessions.retain(|m| !asker.is_no_one() && &Person::from_wire(m.user_id.as_deref()) == asker);
     sessions.into_iter().max_by_key(|m| m.created_at).map(|m| m.id)
 }
 
@@ -81,14 +80,13 @@ pub(crate) fn own_chat(manager: &AgentManager, app: &str, user_id: Option<&str>)
 /// the person it was made for (its meta's `user_id`, [`Person::from_wire`]); a
 /// session not kept yet is theirs to make. No one (a peer that named no
 /// device) enters no kept session. The one rule every check point asks.
-pub(crate) fn may_enter(session_id: &str, user_id: Option<&str>) -> bool {
+pub(crate) fn may_enter(session_id: &str, asker: &Person) -> bool {
     let store = crate::state_fs::SessionStore::with_sessions_dir(crate::paths::global_sessions_dir());
-    may_enter_in(&store, session_id, user_id)
+    may_enter_in(&store, session_id, asker)
 }
 
 /// [`may_enter`] against the sessions kept in `store`.
-fn may_enter_in(store: &crate::state_fs::SessionStore, session_id: &str, user_id: Option<&str>) -> bool {
-    let asker = Person::from_wire(user_id);
+fn may_enter_in(store: &crate::state_fs::SessionStore, session_id: &str, asker: &Person) -> bool {
     if let Some(day) = day_session::day_in(session_id) {
         let Some(person) = asker.day_key() else {
             return false;
@@ -100,7 +98,7 @@ fn may_enter_in(store: &crate::state_fs::SessionStore, session_id: &str, user_id
     }
     match kept_for(store, session_id) {
         Kept::No => true,
-        Kept::For(whose) => !asker.is_no_one() && whose == asker,
+        Kept::For(whose) => !asker.is_no_one() && &whose == asker,
         Kept::Unreadable => false,
     }
 }
@@ -129,17 +127,17 @@ fn kept_for(store: &crate::state_fs::SessionStore, session_id: &str) -> Kept {
     }
 }
 
-/// Whether the person `user_id` names is the builder (no id is).
-pub(crate) fn is_builder(user_id: Option<&str>) -> bool {
-    Person::from_wire(user_id).is_owner()
+/// Whether `person` is the builder.
+pub(crate) fn is_builder(person: &Person) -> bool {
+    person.is_owner()
 }
 
 /// Whether the caller `user_id` names is given what is the builder's alone —
 /// an agent's notes, her own thread: with the setting on, the builder only
 /// (a phone signed out is its own person, as memory reads it); with it off,
 /// anyone, as before days.
-pub(crate) async fn shares_builders(manager: &AgentManager, user_id: Option<&str>) -> bool {
-    !enabled(manager).await || is_builder(user_id)
+pub(crate) async fn shares_builders(manager: &AgentManager, asker: &Person) -> bool {
+    !enabled(manager).await || is_builder(asker)
 }
 
 /// Whether session `session_id` is the builder's: their day, or — with the
@@ -150,7 +148,7 @@ pub(crate) async fn is_builders(manager: &AgentManager, session_id: Option<&str>
         return true;
     };
     if day_session::day_in(sid).is_some() {
-        return may_enter(sid, None);
+        return may_enter(sid, &crate::server::person::owner());
     }
     if !enabled(manager).await {
         return true;
@@ -216,7 +214,7 @@ pub(crate) async fn seat_her(manager: &AgentManager, session_id: &str) {
 pub(crate) fn rows_for_page(
     manager: &AgentManager,
     session_id: &str,
-    asker: Option<&str>,
+    asker: &Person,
 ) -> (Vec<ChatMsg>, Option<SessionMeta>) {
     if !may_enter(session_id, asker) {
         return (Vec::new(), None);
@@ -268,7 +266,8 @@ pub(crate) async fn day_session_api(
     axum::extract::Query(asker): axum::extract::Query<Asker>,
 ) -> axum::Json<serde_json::Value> {
     let on = enabled(&state.manager).await;
-    let Some(id) = day_for(&state.manager, asker.user_id.as_deref(), asker.skill.as_deref()).await else {
+    let person = Person::from_wire(asker.user_id.as_deref());
+    let Some(id) = day_for(&state.manager, &person, asker.skill.as_deref()).await else {
         return axum::Json(serde_json::json!({ "on": on, "id": null }));
     };
     let cwd = state
@@ -322,12 +321,12 @@ mod tests {
         made_for("sess-1-builder", None);
         made_for("sess-2-friend", Some("u-friend"));
         made_for("sess-3-local", Some("__local__"));
-        let enters = |sid: &str, who: Option<&str>| may_enter_in(&store, sid, who);
+        let enters = |sid: &str, who: Option<&str>| may_enter_in(&store, sid, &Person::from_wire(who));
         assert!(!enters("sess-1-builder", Some("u-friend")));
         assert!(!enters("sess-3-local", Some("u-friend")));
         assert!(enters("sess-2-friend", Some("u-friend")));
         assert!(!enters("sess-2-friend", Some("u-other")));
-        assert!(!enters("sess-2-friend", Some(crate::server::rtc::NO_ONE)));
+        assert!(!may_enter_in(&store, "sess-2-friend", &Person::test_no_one()));
         assert!(enters("sess-9-new", Some("u-friend")), "a session not kept yet");
         assert!(!enters("../sess-2-friend", Some("u-friend")));
         assert!(!enters("", Some("u-friend")), "no session named: a run of no session");

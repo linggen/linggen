@@ -440,7 +440,7 @@ pub(crate) async fn steer_queued(
     Json(req): Json<SteerRequest>,
 ) -> Response {
     let waits_in = chat::queued_session(&state, &req.id).await;
-    if waits_in.is_some_and(|sid| !crate::server::day_session::may_enter(&sid, req.user_id.as_deref())) {
+    if waits_in.is_some_and(|sid| !crate::server::day_session::may_enter(&sid, &crate::server::person::Person::from_wire(req.user_id.as_deref()))) {
         return (StatusCode::FORBIDDEN, "that session is another person's").into_response();
     }
     if state.claude.steer(&req.id) {

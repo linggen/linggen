@@ -189,7 +189,7 @@ pub(crate) async fn publish(
             Json(serde_json::json!({ "error": "topic and op are required" })),
         );
     }
-    if !crate::server::day_session::shares_builders(&state.manager, body.user_id.as_deref()).await {
+    if !crate::server::day_session::shares_builders(&state.manager, &crate::server::person::Person::from_wire(body.user_id.as_deref())).await {
         return (
             axum::http::StatusCode::OK,
             Json(serde_json::json!({ "ok": true })),

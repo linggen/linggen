@@ -560,7 +560,7 @@ pub(super) fn may_answer(
     user_id: Option<&str>,
 ) -> bool {
     // A question in a day is its own person's to answer.
-    if session_id.is_some_and(|sid| !crate::server::day_session::may_enter(sid, user_id)) {
+    if session_id.is_some_and(|sid| !crate::server::day_session::may_enter(sid, &crate::server::person::Person::from_wire(user_id))) {
         return false;
     }
     match user_type {
@@ -583,7 +583,7 @@ pub(crate) async fn pending_ask_user_handler(
 ) -> impl IntoResponse {
     let pending = state.pending_ask_user.lock().await;
     let theirs = |sid: Option<&str>| {
-        sid.is_none_or(|sid| crate::server::day_session::may_enter(sid, asker.user_id.as_deref()))
+        sid.is_none_or(|sid| crate::server::day_session::may_enter(sid, &crate::server::person::Person::from_wire(asker.user_id.as_deref())))
     };
     let items: Vec<serde_json::Value> = pending
         .iter()

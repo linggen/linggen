@@ -63,7 +63,7 @@ pub(super) fn seen_as(user_ctx: &UserContext, standing: &Standing) -> Option<Str
     if user_ctx.is_consumer() {
         return Some(user_ctx.user_id.clone());
     }
-    (!standing.is_owner()).then(|| standing.person().to_string())
+    (!standing.is_owner()).then(|| standing.person().wire())
 }
 
 #[cfg(test)]
@@ -83,12 +83,12 @@ mod tests {
         let unnamed = PeerStanding::new(&lan, None);
         assert_eq!(
             seen_as(&lan, unnamed.resolved()).as_deref(),
-            Some(crate::server::rtc::NO_ONE)
+            Some(crate::server::person::no_one().wire().as_str())
         );
         let unknown = PeerStanding::new(&lan, Some("not-paired".into()));
         assert_eq!(
             seen_as(&lan, unknown.resolved()).as_deref(),
-            Some(crate::server::rtc::NO_ONE)
+            Some(crate::server::person::no_one().wire().as_str())
         );
         let here = UserContext {
             reached_by: Reach::ThisMachine,

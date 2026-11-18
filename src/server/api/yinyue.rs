@@ -214,7 +214,7 @@ pub(crate) async fn event_handler(
     }
     // A moment is its sender's: another person's is not taken up, as one
     // from a world she is not in.
-    let theirs = !crate::server::day_session::shares_builders(&state.manager, req.user_id.as_deref()).await;
+    let theirs = !crate::server::day_session::shares_builders(&state.manager, &crate::server::person::Person::from_wire(req.user_id.as_deref())).await;
     // An app whose world she hasn't entered yet tells her nothing there.
     if theirs || absent_for_moment(&state, app, session.as_deref()).await {
         return (StatusCode::CONFLICT, "absent").into_response();
@@ -276,7 +276,7 @@ pub(crate) async fn chat_handler(
     if text.is_empty() {
         return (StatusCode::BAD_REQUEST, "empty text").into_response();
     }
-    if !crate::server::day_session::shares_builders(&state.manager, req.user_id.as_deref()).await {
+    if !crate::server::day_session::shares_builders(&state.manager, &crate::server::person::Person::from_wire(req.user_id.as_deref())).await {
         return (StatusCode::FORBIDDEN, "her own thread is another person's").into_response();
     }
     // Her own thread runs with the owner's tools: below admin it is not
@@ -445,8 +445,9 @@ pub(crate) async fn presence_handler(
 ) -> impl IntoResponse {
     // Presence is the owner's: another person's surface, or a peer that
     // named no device, says nothing of whether the owner is here.
-    let theirs = !crate::server::day_session::shares_builders(&state.manager, beat.user_id.as_deref()).await;
-    if theirs || !crate::server::day_session::is_builder(beat.user_id.as_deref()) {
+    let asker = crate::server::person::Person::from_wire(beat.user_id.as_deref());
+    let theirs = !crate::server::day_session::shares_builders(&state.manager, &asker).await;
+    if theirs || !crate::server::day_session::is_builder(&asker) {
         return (StatusCode::OK, "ok").into_response();
     }
     let short = |v: &String| !v.is_empty() && v.len() <= 64;

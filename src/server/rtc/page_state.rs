@@ -28,11 +28,11 @@ impl ViewContext {
     /// (`day_session::may_enter`, as the live channel streams it); another
     /// person's day is an empty view — no session, nothing pinned to it.
     /// The bool says the view was emptied.
-    fn shown_to(&self, person: &str) -> (ViewContext, bool) {
+    fn shown_to(&self, person: &crate::server::person::Person) -> (ViewContext, bool) {
         let refused = self
             .session_id
             .as_deref()
-            .is_some_and(|sid| !crate::server::day_session::may_enter(sid, Some(person)));
+            .is_some_and(|sid| !crate::server::day_session::may_enter(sid, person));
         let mut shown = self.clone();
         if refused {
             shown.session_id = None;
@@ -211,11 +211,11 @@ pub async fn build_page_state(
     ctx: &ViewContext,
     dirty: u64,
     (user, identified): (&super::UserContext, bool),
-    (whose, person): (Option<&str>, &str),
+    (whose, person): (Option<&str>, &crate::server::person::Person),
 ) -> PageState {
     let (shown, refused) = ctx.shown_to(person);
     let ctx = &shown;
-    let theirs = |sid: &str| crate::server::day_session::may_enter(sid, Some(person));
+    let theirs = |sid: &str| crate::server::day_session::may_enter(sid, person);
     let include_global = (dirty & DIRTY_GLOBAL) != 0;
     let include_scoped = (dirty & DIRTY_SCOPED) != 0;
     let is_admin = whose.is_none() && user.permission == crate::engine::permission::PermissionMode::Admin;
@@ -571,15 +571,16 @@ mod tests {
             session_id: Some("sess-day-2026-11-16".into()),
             ..Default::default()
         };
-        let (shown, refused) = day.shown_to("u-friend");
+        let friend = crate::server::person::Person::for_test(Some("u-friend"));
+        let (shown, refused) = day.shown_to(&friend);
         assert!(refused && shown.session_id.is_none());
-        let (shown, refused) = day.shown_to("__local__");
+        let (shown, refused) = day.shown_to(&crate::server::person::Person::test_owner());
         assert!(!refused && shown.session_id.is_some());
         let other = ViewContext {
             session_id: Some("sess-1-a".into()),
             ..Default::default()
         };
-        assert!(!other.shown_to("u-friend").1);
+        assert!(!other.shown_to(&friend).1);
     }
 
     /// The day's row in the session list is marked; no other row changes.

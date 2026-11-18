@@ -324,8 +324,8 @@ pub(crate) async fn get_workspace_state(
     let (messages, day) = match sid {
         "" => (Vec::new(), None),
         sid => {
-            let asker = query.user_id.as_deref();
-            crate::server::day_session::rows_for_page(&state.manager, sid, asker)
+            let asker = crate::server::person::Person::from_wire(query.user_id.as_deref());
+            crate::server::day_session::rows_for_page(&state.manager, sid, &asker)
         }
     };
     let running = !sid.is_empty() && run_calls::session_running(&state.manager, sid).await;
