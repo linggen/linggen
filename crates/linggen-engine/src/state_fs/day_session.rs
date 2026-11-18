@@ -72,8 +72,9 @@ pub fn day_in(session_id: &str) -> Option<NaiveDate> {
 /// A new day's session as it is first kept: Ling seated as its lead (she
 /// answers every message not addressed to Yinyue), Yinyue seated when she
 /// first speaks in it, home's folder `cwd`. Made by `agent`, as Yinyue's own
-/// thread is: the memory scan reads only a person's own chats (`user`), and
-/// app chats and her thread were never read by it — nor is the day.
+/// thread is. The memory scan makes an exception for the owner's exact day
+/// id; other people's days, the companion's own thread, and app-owned chats
+/// stay out.
 /// `person`: whose day it is (`None`: the builder's own); a page lists it
 /// only to them.
 pub fn new_meta(session_id: &str, day: NaiveDate, cwd: &str, (lead, person): (&str, Option<&str>)) -> SessionMeta {
@@ -151,6 +152,6 @@ mod tests {
         assert_eq!(meta.agents[0].id, "ling");
         assert_eq!(meta.skill, None);
         assert!(meta.title_locked);
-        assert_eq!(meta.creator, "agent", "the memory scan never reads the day");
+        assert_eq!(meta.creator, "agent", "the day is agent-created even when scanned");
     }
 }

@@ -261,11 +261,19 @@ if [ -d "$LING_DIR" ]; then
 
     session_name=$(basename "$session_dir")
 
-    # Only ingest user sessions — skip mission/skill/unknown creators.
+    # Named people's days are never in scope, regardless of creator.
+    [[ "$session_name" =~ ^sess-day-[0-9]{4}-[0-9]{2}-[0-9]{2}-p- ]] && continue
+
+    # Ordinary chats must be user-created. Only the exact owner day can
+    # also be agent-created; other agent, skill, and mission chats stay out.
+    owner_day=false
+    if [[ "$session_name" =~ ^sess-day-[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+      owner_day=true
+    fi
     [ -f "${session_dir}session.yaml" ] || continue
     creator=$(grep -m1 '^creator:' "${session_dir}session.yaml" 2>/dev/null \
       | sed -E 's/^creator:[[:space:]]*//; s/[[:space:]]*#.*$//; s/^"(.*)"$/\1/; s/^'"'"'(.*)'"'"'$/\1/')
-    [ "$creator" = "user" ] || continue
+    [[ "$creator" = "user" || ( "$owner_day" = true && "$creator" = "agent" ) ]] || continue
 
     session_title=""
     if [ -f "${session_dir}session.yaml" ]; then
@@ -274,6 +282,9 @@ if [ -d "$LING_DIR" ]; then
     label="${session_title:-$session_name}"
     bytes=$(file_bytes "$jsonl_file")
     user_turns=$(count_user_turns_linggen "$jsonl_file")
+    # An owner day with only automatic chatter is not a candidate, even
+    # if it is large enough to pass scan.sh's ordinary empty-chat filter.
+    [[ "$owner_day" = true && "${user_turns:-0}" -eq 0 ]] && continue
     emit_manifest "$jsonl_file" "Linggen" "$label" "${bytes:-0}" "${user_turns:-0}"
   done
 fi

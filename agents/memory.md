@@ -402,8 +402,10 @@ It works on every machine, primary or replica.
    `ling mem scan <date>`: this machine's session logs of that day
    (Claude Code, Codex, OpenClaw, Linggen) — flattened, denoised,
    secret-filtered, no model, no network — are in
-   `~/.linggen/memory/.scan-output.jsonl`. You never run it and have no
-   shell. Read line 1, the header (`_meta`): the file is missing, or its
+   `~/.linggen/memory/.scan-output.jsonl`. Linggen includes user-created
+   chats and the owner's own daily session when the owner spoke, but
+   not other people's days or app-owned chats. You never run the scan
+   and have no shell. Read line 1, the header (`_meta`): the file is missing, or its
    `window` is not the run's day → `SCAN <date> failed "<why>"`, then
    reply exactly `FAILED` — no stamp: the day was not scanned.
 2. **The candidates.** Each line after the header is one session:

@@ -144,8 +144,10 @@ the day existed. On (decided by the builder 2026-11-15/16):
   reads. From its turns — a subagent's and a turn the engine starts
   there included — a tool that carries words out is refused; a question
   waiting there reaches Yinyue only as that the app waits. Its world line
-  stays. The day's session is made by `agent`, so the memory scan (which
-  reads a person's own chats) never reads it.
+  stays.
+- **Memory scan** — the day's session is still made by `agent`. The scan
+  adds only the owner's exact `sess-day-YYYY-MM-DD` when it has a real
+  user turn; another person's `-p-…` day and private app chats stay out.
 - **Her moments** run in the day's session too, standing in the app they
   came from; her line is a row there and lands nowhere else. A private
   app's moment runs at the app chat it names, never in a day; with none
