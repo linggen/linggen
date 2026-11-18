@@ -317,6 +317,9 @@ async fn the_hourly_ceiling_does_not_hold_a_fault() {
     run_once(&w).await;
     w.wait_agent(Agent::Yinyue, her_mark).await;
     assert_eq!(her_facts(&w).len(), 1);
+    // The turn ends before the speech cue is emitted and logged.
+    w.events_when(|events| events.iter().any(|e| e["kind"] == "pet_speak"))
+        .await;
     assert_eq!(pet_lines(&w), [HER_LINE]);
     assert!(held(&w).is_empty(), "{:?}", held(&w));
     w.assert_all_scripted();
