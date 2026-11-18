@@ -1,0 +1,190 @@
+//! What runs a branch: the dispatcher its catalogue entry names, with the
+//! entry's timeout. Nothing here looks at a tool's name.
+
+use super::catalog::{AgentOp, Dispatch, Render};
+use super::{compose_dream_status, render_data, tool_content, McpDeps};
+use ling_mem::catalog::Branch;
+use serde_json::{json, Value};
+use std::time::Duration;
+
+/// Run `branch` with `args`; every outcome is a tool result (a failure is
+/// one with `isError`).
+pub(super) async fn run(deps: &McpDeps<'_>, branch: &Branch<Dispatch>, args: Value) -> Value {
+    match branch.dispatch {
+        Dispatch::Bridge { module, op, render } => {
+            bridge(deps, module, op, render, args, branch.timeout_ms).await
+        }
+        Dispatch::Agent(op) => agent(deps, op, args).await,
+        Dispatch::DreamStatus => dream_status(deps).await,
+        Dispatch::DreamRun => dream_run(deps, args).await,
+        Dispatch::Memory(verb) => memory(verb, args, branch.timeout_ms).await,
+    }
+}
+
+async fn bridge(
+    deps: &McpDeps<'_>,
+    module: &str,
+    op: &str,
+    render: Render,
+    args: Value,
+    timeout_ms: u64,
+) -> Value {
+    let res = deps.bridge.call_value(module, op, args, timeout_ms).await;
+    if res.get("ok").and_then(Value::as_bool).unwrap_or(false) {
+        let data = res.get("data").cloned().unwrap_or(Value::Null);
+        return render_data(render, &data);
+    }
+    let code = res
+        .get("code")
+        .and_then(Value::as_str)
+        .unwrap_or("upstream_error");
+    let message = res.get("message").and_then(Value::as_str).unwrap_or("");
+    tool_content(bridge_failure(code, message), true)
+}
+
+/// A bridge refusal in words a calling agent can act on.
+pub(super) fn bridge_failure(code: &str, message: &str) -> String {
+    match code {
+        "no_bridge" | "module_unavailable" => "browser not connected — the \
+            linggen-browser extension must be running and connected in Chrome. \
+            Ask the user to install or enable it, then retry."
+            .to_string(),
+        "not_permitted" => format!(
+            "not_permitted: {message} — the user declined this action in the \
+            browser's permission prompt."
+        ),
+        _ => format!("{code}: {message}"),
+    }
+}
+
+async fn agent(deps: &McpDeps<'_>, op: AgentOp, args: Value) -> Value {
+    let Some(state) = deps.state else {
+        return tool_content(
+            "agent_run is unavailable in this context (no daemon state)".to_string(),
+            true,
+        );
+    };
+    let field = |key: &str| args.get(key).and_then(Value::as_str);
+    let session = field("session_id").unwrap_or_default();
+    let result = match op {
+        AgentOp::Status => crate::server::mcp_agent::status(state, session).await,
+        AgentOp::Stop => crate::server::mcp_agent::stop(state, session).await,
+        AgentOp::Permit => {
+            crate::server::mcp_agent::permit(
+                state,
+                session,
+                field("request_id").unwrap_or_default(),
+                field("decision").unwrap_or_default(),
+                field("scope"),
+            )
+            .await
+        }
+        AgentOp::Models => Ok(crate::server::mcp_agent::models(state).await),
+        AgentOp::Close => {
+            let remove = args
+                .get("remove_worktree")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            crate::server::mcp_agent::close(state, session, remove).await
+        }
+        AgentOp::Run => {
+            crate::server::mcp_agent::run(
+                state,
+                field("agent"),
+                field("prompt").unwrap_or_default(),
+                field("write_dir"),
+                field("session_id"),
+                field("model"),
+                field("permission_mode"),
+                field("host"),
+                args.get("model_fallback").and_then(Value::as_bool),
+                field("work"),
+                args.get("grants"),
+            )
+            .await
+        }
+    };
+    match result {
+        Ok(text) => tool_content(text, false),
+        Err(msg) => tool_content(msg, true),
+    }
+}
+
+async fn dream_status(deps: &McpDeps<'_>) -> Value {
+    let Some(state) = deps.state else {
+        return tool_content(
+            "memory_dream_status is unavailable in this context (no daemon state)".to_string(),
+            true,
+        );
+    };
+    match compose_dream_status(state).await {
+        Ok(status) => tool_content(status.to_string(), false),
+        Err(e) => tool_content(
+            format!("dream status unavailable — memory unreachable: {e:#}"),
+            true,
+        ),
+    }
+}
+
+async fn dream_run(deps: &McpDeps<'_>, args: Value) -> Value {
+    let Some(state) = deps.state else {
+        return tool_content(
+            "memory_dream_run is unavailable in this context (no daemon state)".to_string(),
+            true,
+        );
+    };
+    let day = args.get("day").and_then(Value::as_str).map(str::to_string);
+    use crate::server::api::missions::{trigger_mission_core, TriggerOutcome};
+    match trigger_mission_core(state, "dream", None, day.clone(), false).await {
+        TriggerOutcome::Started { session_id } => tool_content(
+            json!({
+                "started": true,
+                "session_id": session_id,
+                "day": day,
+                "note": "dream runs take minutes — poll memory_dream_status; if it later reports a failed run, show last_run_error to the user",
+            })
+            .to_string(),
+            false,
+        ),
+        TriggerOutcome::InFlight => tool_content(
+            json!({
+                "started": false,
+                "in_flight": true,
+                "note": "a dream run is already in flight — poll memory_dream_status",
+            })
+            .to_string(),
+            false,
+        ),
+        TriggerOutcome::NotFound => tool_content(
+            "dream mission not found — the engine's built-in dream mission is missing \
+             (check ~/.linggen/missions/dream or reinstall Linggen)"
+                .to_string(),
+            true,
+        ),
+        TriggerOutcome::BadDay(d) => {
+            tool_content(format!("invalid day '{d}' — expected YYYY-MM-DD"), true)
+        }
+        TriggerOutcome::Internal(e) => tool_content(format!("dream trigger failed: {e}"), true),
+    }
+}
+
+/// A memory branch, through the memory this process hosts: the same
+/// adapters memory's own server runs a branch with
+/// (`ling_mem::catalog::memory`), as the owner.
+async fn memory(verb: &'static str, mut args: Value, timeout_ms: u64) -> Value {
+    use ling_mem::catalog::memory::{finish, prepare, read_envelope};
+    prepare(&mut args);
+    let wait = Duration::from_millis(timeout_ms);
+    let answer = crate::memory_host::post_verb(ling_mem::Who::Owner, verb, args, wait).await;
+    let envelope = match answer {
+        Ok((_status, envelope)) => envelope,
+        Err(e) => return tool_content(e.to_string(), true),
+    };
+    match read_envelope(envelope) {
+        Ok(mut data) => {
+            finish(verb, &mut data);
+            tool_content(data.to_string(), false)
+        }
+        Err(message) => tool_content(message, true),
+    }
+}

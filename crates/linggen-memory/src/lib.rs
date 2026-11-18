@@ -10,6 +10,7 @@ pub mod embed;
 pub mod error;
 pub mod handle;
 mod hash;
+pub mod catalog;
 pub mod hosted;
 pub mod http;
 pub mod memory;
