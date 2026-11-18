@@ -21,7 +21,7 @@ use home::Home;
 use memory::Memory;
 use model::{Agent, Extra, FakeModel, Reply};
 
-pub use model::{text, tool};
+pub use model::{error, text, tool};
 
 pub struct World {
     pub api: Api,

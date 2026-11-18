@@ -2,7 +2,7 @@
 //! spec): a person typing into it keeps the delegate's spec.
 
 use crate::support::model::Agent;
-use crate::support::{text, Setup, World};
+use crate::support::{error, text, tool, Setup, World};
 use serde_json::{json, Value};
 
 /// The one session an external host made.
@@ -116,4 +116,48 @@ async fn a_person_typing_into_a_delegated_session_keeps_its_toolset() {
         "it still answers to its caller: {perms}"
     );
     w.assert_all_scripted();
+}
+
+/// An `agent_run` tool call, as a host sends it.
+fn agent_run(args: Value) -> Value {
+    json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "agent_run", "arguments": args}})
+}
+
+/// A delegated run that read a file and then ended on a model failure,
+/// continued with `agent_run(session_id)`: the continued turn is given what
+/// the run had read, not only its brief.
+#[tokio::test]
+async fn a_run_continued_after_a_model_failure_keeps_what_it_read() {
+    const MARKER: &str = "the-harbor-ledger-balances-at-7731";
+    let setup = Setup::default().script(
+        Agent::Ling,
+        vec![
+            tool("Read", json!({"path": "notes.txt"})),
+            error(500, "upstream overloaded"),
+            text("Picked up where I stopped."),
+        ],
+    );
+    let w = World::start(setup).await;
+    std::fs::write(std::path::Path::new(&w.work()).join("notes.txt"), format!("{MARKER}\n")).unwrap();
+
+    let first = w
+        .api
+        .post("/mcp", agent_run(json!({"prompt": "Read notes.txt, then sum it up.", "write_dir": w.work()})))
+        .await;
+    let said = first["result"]["content"][0]["text"].as_str().unwrap_or_default().to_string();
+    assert!(said.contains("agent run failed"), "the run ends on the model failure: {first}");
+    let sid = delegate_session(&w);
+
+    let again = w
+        .api
+        .post("/mcp", agent_run(json!({"prompt": "Go on from where you stopped.", "session_id": sid})))
+        .await;
+    assert_eq!(again["result"]["content"][0]["text"], "Picked up where I stopped.", "{again}");
+
+    let calls = w.model.calls_of(Agent::Ling);
+    assert_eq!(calls.len(), 3, "the read, the failed call, the continued turn");
+    assert!(calls[1].body.to_string().contains(MARKER), "the failed call had read the file");
+    let continued = calls[2].body.to_string();
+    assert!(continued.contains("Read notes.txt, then sum it up."), "the brief is kept");
+    assert!(continued.contains(MARKER), "the continued turn lost what the run had read");
 }

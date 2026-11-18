@@ -49,6 +49,8 @@ impl Agent {
 pub enum Reply {
     Text(String),
     Tool(String, Value),
+    /// The provider refuses the call: an HTTP status and its message.
+    Error(u16, String),
 }
 
 pub fn text(s: &str) -> Reply {
@@ -57,6 +59,10 @@ pub fn text(s: &str) -> Reply {
 
 pub fn tool(name: &str, args: Value) -> Reply {
     Reply::Tool(name.to_string(), args)
+}
+
+pub fn error(status: u16, message: &str) -> Reply {
+    Reply::Error(status, message.to_string())
 }
 
 /// Extra fixtures a test needs beside the member scripts (a summarizer…).
@@ -152,6 +158,7 @@ fn respond(fixture: Fixture, reply: &Reply) -> Fixture {
             name: name.clone(),
             arguments: args.clone(),
         }]),
+        Reply::Error(status, message) => fixture.with_error(*status, message),
     }
 }
 

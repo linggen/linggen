@@ -656,6 +656,9 @@ async fn drive(
     .await;
     engine.set_run_id(None);
     engine.end_turn();
+    // The brief first in the thread a continued turn (`agent_run(session_id)`)
+    // reads; a run that failed left its reading after it
+    // (`AgentEngine::keep_unfinished_work`).
     crate::server::chat::thread::seed_task(&mut engine, &prompt);
     drop(engine);
 

@@ -47,6 +47,7 @@ pub mod tool_scope;
 pub mod tools;
 pub mod turn_place;
 mod types;
+mod unfinished;
 pub mod video_search;
 pub mod web_fetch;
 pub mod web_search;
@@ -454,6 +455,16 @@ impl AgentEngine {
     async fn run_agent_loop_unguarded(&mut self, session_id: Option<&str>) -> Result<AgentOutcome> {
         self.begin_suggestion_turn();
         let mut state = self.initialize_loop(session_id).await?;
+        let opening = state.messages.len();
+        let outcome = self.run_steps(&mut state, session_id).await;
+        if outcome.is_err() {
+            self.keep_unfinished_work(&state.messages, opening);
+        }
+        outcome
+    }
+
+    /// The loop's steps, from the opened state to the run's outcome.
+    async fn run_steps(&mut self, state: &mut LoopState, session_id: Option<&str>) -> Result<AgentOutcome> {
         self.kickoff_turn = KickoffTurn::opened_by_last(&state.messages);
         self.closing_ask = None;
         self.last_ask_answered = false;
@@ -687,7 +698,7 @@ impl AgentEngine {
                     let done_ids: Vec<String> =
                         native_tool_calls.iter().map(|tc| tc.id.clone()).collect();
                     match self
-                        .try_closing_ask(&mut state, session_id, &raw, true, &done_ids)
+                        .try_closing_ask(state, session_id, &raw, true, &done_ids)
                         .await?
                     {
                         ClosingAsk::Answered => continue,
@@ -698,7 +709,7 @@ impl AgentEngine {
                         }
                         ClosingAsk::NotNeeded => {}
                     }
-                    if self.try_drain_kickoff(&mut state, session_id, &raw).await {
+                    if self.try_drain_kickoff(state, session_id, &raw).await {
                         continue;
                     }
                     if self.close_or_receive_run_messages(&mut state.messages, None).await {
@@ -722,7 +733,7 @@ impl AgentEngine {
                 let tc_ids: Vec<String> =
                     native_tool_calls.iter().map(|tc| tc.id.clone()).collect();
                 if let Some(outcome) = self
-                    .execute_action_loop(actions, &mut state, session_id, &tc_ids)
+                    .execute_action_loop(actions, state, session_id, &tc_ids)
                     .await?
                 {
                     return Ok(outcome);
@@ -774,7 +785,7 @@ impl AgentEngine {
                         .push(ChatMessage::new("assistant", raw.clone()));
                     self.last_assistant_text = Some(raw.clone());
                     match self
-                        .try_closing_ask(&mut state, session_id, &raw, true, &[])
+                        .try_closing_ask(state, session_id, &raw, true, &[])
                         .await?
                     {
                         ClosingAsk::Answered => continue,
@@ -785,7 +796,7 @@ impl AgentEngine {
                         }
                         ClosingAsk::NotNeeded => {}
                     }
-                    if self.try_drain_kickoff(&mut state, session_id, &raw).await {
+                    if self.try_drain_kickoff(state, session_id, &raw).await {
                         continue;
                     }
                     if self.close_or_receive_run_messages(&mut state.messages, Some(&raw)).await {
@@ -843,7 +854,7 @@ impl AgentEngine {
                         let _ = self.persist_assistant_message(&raw, session_id).await;
                         match self
                             .try_closing_ask(
-                                &mut state,
+                                state,
                                 session_id,
                                 &raw,
                                 native_tools.is_some(),
@@ -856,7 +867,7 @@ impl AgentEngine {
                             ClosingAsk::Unanswered => return Ok(AgentOutcome::None),
                             ClosingAsk::NotNeeded => {}
                         }
-                        if self.try_drain_kickoff(&mut state, session_id, &raw).await {
+                        if self.try_drain_kickoff(state, session_id, &raw).await {
                             continue;
                         }
                         if self.close_or_receive_run_messages(&mut state.messages, Some(&raw)).await {
@@ -878,7 +889,7 @@ impl AgentEngine {
                         };
                         let _ = self.persist_assistant_message(&message, session_id).await;
                         if self
-                            .try_drain_kickoff(&mut state, session_id, &message)
+                            .try_drain_kickoff(state, session_id, &message)
                             .await
                         {
                             continue;
@@ -911,7 +922,7 @@ impl AgentEngine {
 
             // Execute actions with parallel delegation support.
             if let Some(outcome) = self
-                .execute_action_loop(actions, &mut state, session_id, &[])
+                .execute_action_loop(actions, state, session_id, &[])
                 .await?
             {
                 return Ok(outcome);
