@@ -7,19 +7,9 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { useStableArray } from '../../hooks/useStableArray';
 import { normalizeAgentKey, sortMessagesByTime, collapseProgressMessages } from '../../lib/messageUtils';
 
-/** A main-chat row: every member's — the session's thread is one table
- *  (doc/shared-session-spec.md) — so any main agent's traffic, the user's
- *  lines to any of them, and unrouted notices (system, compaction, skill-page
- *  `assistant` rows). `selected` is the agent the chat speaks with; its rows
- *  count even when it isn't listed among the main agents yet. */
-export function isMainChatRow(msg: ChatMessage, selected: string, mainAgentIds: readonly string[] = []): boolean {
-  const from = normalizeAgentKey(msg.from || msg.role);
-  const to = normalizeAgentKey(msg.to || '');
-  if (from === 'system' || from === 'compaction' || from === 'assistant') return true;
-  if (from === selected || to === selected) return true;
-  if (mainAgentIds.includes(from) || mainAgentIds.includes(to)) return true;
-  return (msg.role === 'user' || from === 'user') && !to;
-}
+import { useServerStore } from '../../stores/serverStore';
+import { pagePlace } from '../../lib/dayFold.mts';
+import { selectMainChatRows } from '../../lib/chatRows.mts';
 
 const involves = (msg: ChatMessage, id: string) =>
   normalizeAgentKey(msg.from || msg.role) === id || normalizeAgentKey(msg.to || '') === id;
@@ -43,13 +33,15 @@ export function useChatFilters(opts: {
 }) {
   const { chatMessages, queuedMessages, selectedAgent, mainAgentIds, subagents, openSubagentId, subagentMessageFilter } = opts;
   const isMissionSession = useSessionStore((s) => s.isMissionSession);
+  const here = useSessionStore((s) => pagePlace(s.isSkillSession ? s.activeSkillName : null));
+  const runPlaces = useServerStore((s) => s.runPlaces);
   const selected = normalizeAgentKey(selectedAgent);
 
   // Mission sessions show all messages — no agent filtering.
   const filteredMainMessages = useMemo(() => {
-    const visible = isMissionSession ? chatMessages : chatMessages.filter((m) => isMainChatRow(m, selected, mainAgentIds));
+    const visible = isMissionSession ? chatMessages : selectMainChatRows(chatMessages, { selected, mainAgentIds, here, runPlaces });
     return collapseProgressMessages(sortMessagesByTime(visible));
-  }, [chatMessages, selected, mainAgentIds, isMissionSession]);
+  }, [chatMessages, selected, mainAgentIds, isMissionSession, here, runPlaces]);
 
   // The finished part keeps its identity while its rows do, so the list's
   // memo holds for the whole stream.
