@@ -35,6 +35,17 @@ Ships as 2.4, on the Mac and the iPhone together.
   with a folder to write, and the session works on code with care.
 - **A coding session runs its work in its folder without asking.** Anything
   outside the folder, or leaving the machine, still asks first.
+- **The gate says why.** When a command asks or is blocked, the agent gets
+  the reason.
+- **Inline code follows the same rule as a script.** In a coding session,
+  the gate judges interpreter code the same way whether it is written on the
+  command line or in a script in the folder.
+- **A read grant lets the agent inspect lines.** Plain `sed -n` line selections
+  work without asking, including after changing into a granted folder.
+- **Hand-offs keep their brief.** Linggen recalls in the delegated session;
+  the plugin no longer rewrites the call.
+- **A caller's words are not yours.** A delegated brief cannot give a memory
+  the standing of something you said.
 - **Outward commands always ask, once.** Publishing, ssh and a push to main
   ask whatever you have granted.
 - **Fewer questions for harmless commands.** Running a script in the folder,
