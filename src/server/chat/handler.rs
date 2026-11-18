@@ -673,8 +673,6 @@ async fn promote_mission_session_to_user(
         return;
     }
     engine.respec(|spec| spec.creator = Some("user".to_string()));
-
-    engine.cached_system_prompt = None;
 }
 
 /// The spec of a turn a person typed into `session_id` (its meta read after

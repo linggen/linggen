@@ -41,8 +41,8 @@ const LISTED: &[(&str, usize, &str)] = &[
     // A session's settings written by a door, not their owner.
     (
         "src/server/chat/handler.rs",
-        9,
-        "live models, a promotion's prompt; the thread trimmed; \
+        8,
+        "live models; the thread trimmed; \
          ChatRequest's session and agent (5)",
     ),
     (

@@ -36,6 +36,7 @@ impl SessionSpec {
         let tools = self.tools.allowlist();
         let (consumer_tools, consumer_skills) = self.consumer_sets();
         let changed = engine.session_spec.work != self.work
+            || engine.session_spec.creator != self.creator
             || engine.prompt_profile != profile
             || engine.cfg.mission_allowed_tools != tools
             || engine.cfg.consumer_allowed_tools != consumer_tools

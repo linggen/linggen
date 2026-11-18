@@ -391,6 +391,21 @@ fn taking_up_a_mission_drops_the_cached_prompt() {
     assert!(engine.cached_system_prompt.is_none());
 }
 
+/// A session made by someone else now (a mission's promoted to a person's)
+/// builds its prompt again: who made it decides what the prompt carries.
+#[test]
+fn a_new_creator_drops_the_cached_prompt() {
+    let mut engine = engine_for(&meta("sess-1-m", "mission", None));
+    engine.cached_system_prompt = Some(crate::engine::types::CachedSystemPrompt {
+        input_hash: 1,
+        content: "before".into(),
+    });
+    engine.respec(|spec| spec.creator = Some("mission".into()));
+    assert!(engine.cached_system_prompt.is_some(), "the same creator keeps it");
+    engine.respec(|spec| spec.creator = Some("user".into()));
+    assert!(engine.cached_system_prompt.is_none());
+}
+
 /// An `agent_run` delegate (`server::mcp_agent`): its toolset, the owner's
 /// sections framed as a task, its caller answering beyond the grants.
 #[test]
