@@ -200,6 +200,16 @@ pub const DIRTY_GLOBAL: u64 = 0b0000_0001;
 pub const DIRTY_SCOPED: u64 = 0b0000_0010;
 pub const DIRTY_ALL: u64 = DIRTY_GLOBAL | DIRTY_SCOPED;
 
+/// Whether a session made for `made_for` is listed to the viewer whose id is
+/// `viewer`: one made for them; one made for no one (kept before sessions
+/// had a person) to the owner at admin (`is_admin`).
+fn listed_for(made_for: Option<&str>, viewer: &str, is_admin: bool) -> bool {
+    match made_for {
+        Some(id) => id == viewer,
+        None => is_admin,
+    }
+}
+
 /// Build the page state from server state + view context + user context.
 /// All data is filtered by user_id. Permission level controls what data categories are included.
 /// `person`: the person behind the peer (`peer::control::person_for`) — a
@@ -263,11 +273,7 @@ pub async fn build_page_state(
         if let Ok(sessions) = state.manager.global_sessions.list_sessions() {
             sessions
                 .iter()
-                .filter(|s| match (&s.user_id, user_id.as_str()) {
-                    (Some(sid), uid) => sid == uid,
-                    (None, "__local__") => true, // legacy sessions belong to local owner
-                    (None, _) => is_admin,       // admin sees legacy sessions
-                })
+                .filter(|s| listed_for(s.user_id.as_deref(), user_id, is_admin))
                 .map(|s| s.id.clone())
                 .collect()
         } else {
@@ -581,6 +587,19 @@ mod tests {
             ..Default::default()
         };
         assert!(!other.shown_to(&friend).1);
+    }
+
+    /// A session made for a person is listed to that person; one made for
+    /// no one only to the owner at admin — never below it, whatever id the
+    /// viewer goes by.
+    #[test]
+    fn a_session_made_for_no_one_is_listed_only_at_the_owners_standing() {
+        assert!(listed_for(Some("u-friend"), "u-friend", false));
+        assert!(!listed_for(Some("u-friend"), "u-other", true));
+        assert!(listed_for(None, "u-owner", true));
+        assert!(!listed_for(None, "u-friend", false));
+        let local = crate::server::person::Person::from_wire(None).wire();
+        assert!(!listed_for(None, &local, false), "{local}");
     }
 
     /// The day's row in the session list is marked; no other row changes.
