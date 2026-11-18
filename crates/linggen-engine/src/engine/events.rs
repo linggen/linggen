@@ -50,6 +50,12 @@ pub struct QueuedChatItem {
     /// off what it waits on; a Claude one gets it at priority `now`). False
     /// once steered. The chat hides it while a native question is open.
     pub steerable: bool,
+    /// In a day's session, the place it was sent from
+    /// (`turn_place::told_place`): another page shows it as waiting from
+    /// there, and only its own page offers Edit and Remove. Absent elsewhere.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(any(test, feature = "test-support"), ts(optional))]
+    pub place: Option<String>,
     /// The message as sent and its pictures, kept on the engine so an Edit
     /// can hand them back; never pushed with the queue.
     #[serde(skip)]

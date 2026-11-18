@@ -6,4 +6,10 @@ export type QueuedChatItem = { id: string, agent_id: string, session_id: string,
  * off what it waits on; a Claude one gets it at priority `now`). False
  * once steered. The chat hides it while a native question is open.
  */
-steerable: boolean, };
+steerable: boolean, 
+/**
+ * In a day's session, the place it was sent from
+ * (`turn_place::told_place`): another page shows it as waiting from
+ * there, and only its own page offers Edit and Remove. Absent elsewhere.
+ */
+place?: string, };

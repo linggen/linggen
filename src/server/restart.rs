@@ -1143,6 +1143,7 @@ mod tests {
             preview: text.into(),
             timestamp: 0,
             steerable: false,
+            place: None,
             text: text.into(),
             images: vec![format!("{text}.png")],
         }

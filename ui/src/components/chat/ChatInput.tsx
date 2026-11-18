@@ -31,7 +31,7 @@ import { useUiStore } from '../../stores/uiStore';
 import { replyAddressee } from '../../lib/replyTo.mts';
 import { isRestartCommand, restartSuggestion } from '../../lib/restartCommand.mts';
 import { chatAgentOf } from '../../lib/sessionMembers.mts';
-import { stopLabel } from '../../lib/dayFold.mts';
+import { pagePlace, placeName, queuedHere, stopLabel, waitingFrom } from '../../lib/dayFold.mts';
 import {
   agentMatches,
   agentMentionLabel,
@@ -371,6 +371,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const claudeSession = useSessionStore((s) => s.allSessions.find((session) => session.id === currentSession)?.runtime === 'claude_agent_sdk');
   // A message never cancels an open question: Steer waits until it is answered.
   const questionOpen = useInteractionStore((s) => (s.askQueues[currentSession ?? '']?.length ?? 0) > 0);
+  // In the day a waiting message names the place it was sent from: only
+  // that page may change it (lib/dayFold.mts `queuedHere`).
+  const here = useSessionStore((s) => pagePlace(s.isSkillSession ? s.activeSkillName : null));
   const offerSteer = (item: QueuedChatItem) => item.steerable && (claudeSession || !questionOpen);
 
   /** Take one message off the server queue (it never runs); resolves to it. */
@@ -513,7 +516,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               <span className="flex-1">{visibleQueued.length} message{visibleQueued.length > 1 ? 's' : ''} queued — agent is busy</span>
             </div>
             <div className="mt-1 space-y-0.5 text-amber-700 dark:text-amber-300/80">
-              {visibleQueued.map((item) => (
+              {visibleQueued.map((item) => queuedHere(item, here) ? (
                 <div key={item.id} className="group flex items-center gap-1 pl-3">
                   <span className="flex-1 truncate">{item.preview}</span>
                   {offerSteer(item) && (
@@ -547,6 +550,11 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                   >
                     <X size={10} />
                   </button>
+                </div>
+              ) : (
+                <div key={item.id} className="flex items-center gap-1 pl-3">
+                  <span className="flex-1 truncate">{item.preview}</span>
+                  <span className="shrink-0 text-[10px] opacity-70">{waitingFrom(placeName(item.place ?? '', skills))}</span>
                 </div>
               ))}
             </div>

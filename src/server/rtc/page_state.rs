@@ -575,6 +575,7 @@ mod tests {
             preview: "hello".into(),
             timestamp: 0,
             steerable: false,
+            place: None,
             text: "hello".into(),
             images: Vec::new(),
         }

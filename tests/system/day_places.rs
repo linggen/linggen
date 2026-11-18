@@ -73,6 +73,19 @@ async fn in_the_day_a_running_turns_status_names_its_place() {
     }
 }
 
+/// A message waiting in the day carries the place it was sent from.
+#[tokio::test]
+async fn in_the_day_a_waiting_message_carries_its_place() {
+    let (w, _) = day_world_at(12, held_setup()).await;
+    let day = the_day(&w).await;
+    let events = dice_running_quiet_waiting(&w, &day).await;
+    let waiting = queue_items(&events, &day);
+    assert!(!waiting.is_empty(), "nothing waited: {events:#?}");
+    for item in waiting {
+        assert_eq!(item["place"], "quiet", "{item}");
+    }
+}
+
 /// With the setting off, nothing the engine sends names a place.
 #[tokio::test]
 async fn with_the_setting_off_nothing_names_a_place() {

@@ -387,14 +387,16 @@ fn busy_message(meets: Meets) -> BusyMessage {
 /// When the agent is busy, enqueue this turn and broadcast the queue update.
 /// Returns the queued item (if any), and whether the running turn may take
 /// it in at its next step (see [`busy_message`]); otherwise the spawned task
-/// dequeues it once the turn lock is its.
+/// dequeues it once the turn lock is its. `sent`: the message as sent, its
+/// pictures, and the place it was sent from as a page is told it
+/// (`turn_place::told_place`; `None` outside a day).
 pub(crate) async fn enqueue_if_busy(
     state: &Arc<ServerState>,
     was_busy: bool,
     effective_session_id: &str,
     target_id: &str,
     clean_msg: &str,
-    sent: (&str, &[String]),
+    sent: (&str, &[String], Option<String>),
     queue: Meets,
 ) -> Option<(QueuedChatItem, bool)> {
     if !was_busy {
@@ -415,6 +417,7 @@ pub(crate) async fn enqueue_if_busy(
         // Steer means now (`fold.rs`); the chat hides it while a question
         // is open, and the engine refuses it then.
         steerable: busy != BusyMessage::WaitForEnd,
+        place: sent.2,
         text: sent.0.to_string(),
         images: sent.1.to_vec(),
     };
@@ -1272,13 +1275,15 @@ pub(crate) async fn start_turn(
         false => super::turn_place::mark_turn(&state.manager, &effective_session_id, &turn_place),
         true => None,
     };
+    let day_on = state.manager.daily_session();
+    let told = crate::engine::turn_place::told_place(&turn_place, &effective_session_id, day_on);
     let queued_item = enqueue_if_busy(
         &state,
         was_busy,
         &effective_session_id,
         &target_id,
         &clean_msg,
-        (&req.message, &req.images),
+        (&req.message, &req.images, told),
         queue,
     )
     .await;
@@ -1527,6 +1532,7 @@ mod tests {
             preview: "hi".into(),
             timestamp: 0,
             steerable: true,
+            place: None,
             text: "hi".into(),
             images: Vec::new(),
         };

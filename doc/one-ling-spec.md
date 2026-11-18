@@ -194,7 +194,10 @@ session, prompt and row is as before. On (decided by the builder 2026-11-15/16):
   anywhere else, and a private app is never one). While the running turn
   stands in another place, the status line and Stop name it ("Working in
   Health", "Stop · Health"); Stop still stops it. The running top-level
-  run on the page state and its status events carry `place`.
+  run on the page state and its status events carry `place`. A waiting
+  message carries the place it was sent from (`place` on the queued item):
+  another page shows it as "Waiting from Music", and only its own page
+  offers Edit, Remove and Steer.
 - **One model a member for the day**: only the picker keeps one
   (`PATCH /api/sessions`); a model a page sends with a message is for that
   turn and is not kept.

@@ -4,7 +4,9 @@
 // the page shows it. The page never works a place out itself.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { placeName, runningElsewhere, stopLabel, toldPlaces, workingIn, HOME_PLACE } from '../src/lib/dayFold.mts';
+import {
+  placeName, queuedHere, runningElsewhere, stopLabel, toldPlaces, waitingFrom, workingIn, HOME_PLACE,
+} from '../src/lib/dayFold.mts';
 
 const skills = [{ name: 'health', app: { title: 'Health' } }, { name: 'dj' }];
 
@@ -32,4 +34,11 @@ test('the running turn stands elsewhere only when the engine said so', () => {
 test('the status line and Stop name the place the turn stands in', () => {
   assert.equal(workingIn('Health'), 'Working in Health');
   assert.equal(stopLabel('Health'), 'Stop · Health');
+});
+
+test('a waiting message is Edit and Remove only at the page it came from', () => {
+  assert.equal(queuedHere({ place: 'music' }, 'music'), true);
+  assert.equal(queuedHere({ place: 'music' }, 'health'), false);
+  assert.equal(queuedHere({}, 'health'), true, 'no place told (any other session): as before');
+  assert.equal(waitingFrom(placeName('health', skills)), 'Waiting from Health');
 });

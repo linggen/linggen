@@ -81,6 +81,18 @@ export function foldOthers(messages: ReadonlyArray<{ place?: string }>, here: st
   return out;
 }
 
+/** Whether a waiting message is this page's to change: sent from here, or
+ *  with no place told (any other session). Only its own page offers Edit,
+ *  Remove and Steer; another page shows where it waits from. */
+export function queuedHere(item: { place?: string | null }, here: string): boolean {
+  return !item.place || item.place === here;
+}
+
+/** A waiting message sent from another place, as another page shows it. */
+export function waitingFrom(name: string): string {
+  return `Waiting from ${name}`;
+}
+
 /** Whether Clear on a page cancels the run going on: never in the day's
  *  session, where that run may be another place's and Clear takes only this
  *  page's part (Stop is the button that stops it). */
