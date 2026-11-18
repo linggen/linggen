@@ -464,6 +464,73 @@ mod tests {
     }
 
     #[test]
+    fn tunnel_endpoint_access_matches_the_baseline() {
+        use crate::engine::permission::PermissionMode;
+        use UserPermission::{Admin, Chat, Edit, Read};
+        // Raw tunnel URL: exact matches retain the query, as do the prefixes.
+        // The room gate and the named-device route seam are independent.
+        let all = [true; 4];
+        let admin = [false, false, false, true];
+        let read = [false, true, true, true];
+        let edit = [false, false, true, true];
+        for (method, url, room, device) in [
+            ("GET", "/index.html", all, all),
+            ("GET", "/index.html?v=1", admin, all),
+            ("GET", "/logo.svg", admin, all),
+            ("GET", "/assets/app.js?v=1", all, all),
+            ("HEAD", "/assets/app.js", admin, admin),
+            ("GET", "/shared/chat-bridge.js", all, all),
+            ("POST", "/shared/chat-bridge.js", admin, admin),
+            ("GET", "/apps/cfo/scripts/cfo.html", all, read),
+            ("POST", "/apps/cfo/capability/test", admin, admin),
+            ("POST", "/api/sessions", all, all),
+            ("POST", "/api/sessions?x=1", admin, all),
+            ("DELETE", "/api/sessions/all", all, admin),
+            ("GET", "/api/workspace/state?x=1", all, all),
+            ("GET", "/api/skill-sessions/state?x=1", all, all),
+            ("GET", "/api/user/language", all, all),
+            ("GET", "/api/user/language?x=1", admin, all),
+            ("POST", "/api/user/language", admin, admin),
+            ("POST", "/api/chat", admin, all),
+            ("GET", "/api/topic/latest", admin, read),
+            ("POST", "/api/media/backup", admin, edit),
+            ("POST", "/api/memory/search", admin, all),
+            ("GET", "/api/config", admin, admin),
+            ("POST", "/api/engine/restart", admin, admin),
+        ] {
+            for (i, (ceiling, level)) in [Chat, Read, Edit, Admin]
+                .into_iter()
+                .zip([
+                    PermissionMode::Chat,
+                    PermissionMode::Read,
+                    PermissionMode::Edit,
+                    PermissionMode::Admin,
+                ])
+                .enumerate()
+            {
+                assert_eq!(
+                    ceiling.can_access_endpoint(method, url),
+                    room[i],
+                    "room gate: {method} {url} at {level}"
+                );
+                let standing = crate::server::person::for_test("u-device", level);
+                assert_eq!(
+                    crate::server::person::send_judged(
+                        method,
+                        url,
+                        &mut serde_json::Value::Null,
+                        &standing,
+                        "paired",
+                    )
+                    .is_ok(),
+                    device[i],
+                    "device seam: {method} {url} at {level}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn a_room_member_can_load_the_shared_page_helpers() {
         // A skill app opened through a room imports /shared/*.js; without it
         // the page is blank for everyone but the owner.
