@@ -243,26 +243,10 @@ pub(crate) fn own_name_of(caller: &Caller) -> OwnName {
     }
 }
 
-/// The person behind a paired device, as memory resolves it ([`person_for`])
-/// — the one seam the day's lookup takes its person from too
-/// (`server::person::standing_of`), with this Mac's account (`owner_id`):
-/// `None` for the owner's own device, `Some(id)` for another person (a
-/// signed-out phone, and an unverified claim of this Mac's account, are
-/// their device).
-pub(crate) fn person_behind_for(
-    device: &crate::server::api::pair::PairedDevice,
-    owner_id: Option<&str>,
-) -> Option<String> {
-    match Caller::of(device.clone()) {
-        Caller::Phone(phone) => person_for(&phone, owner_id).map(|p| p.id),
-        _ => None,
-    }
-}
-
-/// Who is behind this device, for the store. The owner's own phone (its
-/// claim of this Mac's account verified, `PairedDevice::is_owners`) gets no
-/// stamp; any other account is stamped as itself; a signed-out phone, and a
-/// phone claiming this Mac's account unverified, are stamped as their device.
+/// Who is behind this device, for the store, as `server::person::of_device`
+/// resolves it — the one answer a device's standing and its day take too.
+/// The owner's own device gets no stamp; anyone else is stamped as the
+/// person they are, named as their account or their device is.
 fn person_of(device: &crate::server::api::pair::PairedDevice) -> Option<Person> {
     let owner = crate::account::load_account().and_then(|a| a.user_id);
     person_for(device, owner.as_deref())
@@ -272,30 +256,22 @@ fn person_for(
     device: &crate::server::api::pair::PairedDevice,
     owner_id: Option<&str>,
 ) -> Option<Person> {
-    if device.is_owners(owner_id) {
+    let person = crate::server::person::of_device(device, owner_id);
+    if person.is_owner() {
         return None;
     }
-    let as_device = || Person {
-        id: device_stamp(&device.id),
-        name: Some(device.name.clone()),
+    let name = match (&device.account, person.is_device()) {
+        (Some(a), false) => a
+            .name
+            .clone()
+            .or_else(|| a.email.clone())
+            .filter(|s| !s.trim().is_empty()),
+        _ => Some(device.name.clone()),
     };
-    match &device.account {
-        Some(a) if Some(a.id.as_str()) == owner_id => Some(as_device()),
-        Some(a) => Some(Person {
-            id: a.id.clone(),
-            name: a
-                .name
-                .clone()
-                .or_else(|| a.email.clone())
-                .filter(|s| !s.trim().is_empty()),
-        }),
-        None => Some(as_device()),
-    }
-}
-
-/// The stamp a signed-out phone writes under.
-fn device_stamp(device_id: &str) -> String {
-    format!("device:{device_id}")
+    Some(Person {
+        id: person.wire(),
+        name,
+    })
 }
 
 /// A phone that signed in, or was verified as the owner's, just now: hand the
@@ -310,7 +286,7 @@ pub async fn restamp_device(device_id: &str, gained: &crate::server::api::pair::
         return;
     };
     let body = json!({
-        "from": device_stamp(device_id),
+        "from": crate::server::person::stamp_of(device_id),
         "account_id": if to_owner { Value::Null } else { json!(gained.id) },
         "account_name": if to_owner {
             Value::Null
@@ -396,26 +372,26 @@ mod tests {
         }
     }
 
-    /// The day's lookup takes its person from this seam: the owner's other
-    /// computer is the owner, a phone signed in to another account is that
-    /// account, a signed-out phone its device.
+    /// The day's lookup takes its person from the same answer: the owner's
+    /// other computer is the owner, a phone signed in to another account is
+    /// that account, a signed-out phone its device.
     #[test]
     fn the_person_behind_a_device_is_the_doors() {
         let machine = PairedDevice {
             kind: Some(crate::state_fs::devices::DeviceKind::Machine),
             ..device(None)
         };
-        assert_eq!(person_behind_for(&machine, None), None);
+        assert_eq!(person_for(&machine, None), None);
         let phone = PairedDevice {
             kind: Some(crate::state_fs::devices::DeviceKind::Phone),
             ..device(Some(("u-2", None)))
         };
-        assert_eq!(person_behind_for(&phone, None).as_deref(), Some("u-2"));
+        assert_eq!(person_for(&phone, None).map(|p| p.id).as_deref(), Some("u-2"));
         let signed_out = PairedDevice {
             kind: Some(crate::state_fs::devices::DeviceKind::Phone),
             ..device(None)
         };
-        assert_eq!(person_behind_for(&signed_out, None).as_deref(), Some("device:dev-1"));
+        assert_eq!(person_for(&signed_out, None).map(|p| p.id).as_deref(), Some("device:dev-1"));
     }
 
     #[test]

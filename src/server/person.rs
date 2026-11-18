@@ -242,7 +242,7 @@ pub(crate) const DEVICE_DEFAULT: PermissionMode = PermissionMode::Read;
 /// The standing of paired device `device`: the owner's device (an approved
 /// machine, or a phone whose claim of this Mac's account is verified,
 /// `PairedDevice::is_owners`) is the owner at admin; any other device is its
-/// person (memory's own seam, `api::memory::person_behind_for`) at the level
+/// person ([`of_device`], the answer memory stamps its rows with) at the level
 /// set for it on this Mac, read when none is; a device not paired is no one
 /// at chat. A phone out of step with this Mac (`rtc::contract::behind`)
 /// stands at chat at most, whoever it is.
@@ -295,6 +295,22 @@ pub(crate) fn is_owners_device(device: &crate::state_fs::devices::PairedDevice, 
     standing_in(Some(device), mac, mac.unwrap_or_default()).is_owner()
 }
 
+/// Who paired device `device` is, with this Mac's account `mac`: the owner
+/// for the owner's device (an approved machine, or a phone whose claim of
+/// this Mac's account is verified, `PairedDevice::is_owners`); else the
+/// account it is signed in to, or its device — signed out, or claiming this
+/// Mac's account unverified. The one answer a device's standing, its day and
+/// memory's stamp take.
+pub(crate) fn of_device(device: &crate::state_fs::devices::PairedDevice, mac: Option<&str>) -> Person {
+    if device.is_owners(mac) {
+        return Person::owner();
+    }
+    match &device.account {
+        Some(a) if Some(a.id.as_str()) != mac => Person::account(&a.id),
+        _ => Person::device(&device.id),
+    }
+}
+
 /// [`standing_of`] for a row found (or not), with this Mac's account
 /// (`mac`) and the owner's person id (`owner`).
 fn standing_in(
@@ -305,12 +321,11 @@ fn standing_in(
     let Some(device) = device else {
         return unnamed(false, "");
     };
-    let (person, level) = if device.is_owners(mac) {
+    let person = of_device(device, mac);
+    let (person, level) = if person.is_owner() {
         (owner.to_string(), PermissionMode::Admin)
     } else {
-        let person = crate::server::api::memory::person_behind_for(device, mac)
-            .unwrap_or_else(|| crate::server::rtc::NO_ONE.to_string());
-        (person, device.permission.unwrap_or(DEVICE_DEFAULT).min(MOST_FOR_ANOTHER))
+        (person.wire(), device.permission.unwrap_or(DEVICE_DEFAULT).min(MOST_FOR_ANOTHER))
     };
     Standing {
         person,
