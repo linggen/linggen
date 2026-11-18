@@ -8,6 +8,7 @@
 
 mod answer;
 mod call;
+mod catalog;
 mod guards;
 mod layers;
 mod mcp;
