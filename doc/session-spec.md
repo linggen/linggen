@@ -176,6 +176,13 @@ person typing into a session runs it under their policy, verbatim, with the
 memory of whom the turn belongs to; in an `agent_run` delegate's session the
 delegate's toolset stays and its caller still answers beyond the grants.
 
+The rest of what a session holds is changed through the engine's own
+methods, never by the door a turn came through: the mission it runs, its
+grant table, its plan, its compaction settings, the live models, a
+member's recall. Its thread's cache is changed only by the chat's thread
+module. A test holds that no code outside the engine writes an engine's
+field, besides listed ones of other structs that share a name.
+
 **A turn's ceiling.** A turn a paired device sent below the owner's level
 runs at no more than that level: `SessionSpec::typed` takes the level the
 request was judged at (`x-linggen-level`, never the body) as the spec's
