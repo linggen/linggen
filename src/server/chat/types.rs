@@ -118,6 +118,10 @@ pub(crate) struct SystemPromptQuery {
     pub(super) agent_id: String,
     #[serde(default)]
     pub(super) session_id: Option<String>,
+    /// The app whose page asks, as a chat turn names it: the export shows
+    /// the prompt and tools of that app's place.
+    #[serde(default)]
+    pub(super) skill_name: Option<String>,
 }
 
 #[derive(Deserialize)]

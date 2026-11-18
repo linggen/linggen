@@ -4,7 +4,7 @@ import { Sparkles, ArrowDown, Copy, FileText, Eraser, Plus, ListTree } from 'luc
 import { RunningSpinner } from './TaskList';
 import 'highlight.js/styles/github.css';
 import { cn } from '../../lib/cn';
-import { useSessionStore } from '../../stores/sessionStore';
+import { useSessionStore, pageSkillName } from '../../stores/sessionStore';
 import { useInteractionStore } from '../../stores/interactionStore';
 import { useServerStore } from '../../stores/serverStore';
 import { useUserStore } from '../../stores/userStore';
@@ -62,7 +62,7 @@ const ChatDebugActions: React.FC<{ projectRoot?: string | null; sessionId?: stri
     const agentId = chatAgentOf(useServerStore.getState().selectedAgent, useUiStore.getState().sessionMembers);
     const sid = sessionId || useSessionStore.getState().activeSessionId;
     try {
-      const payload = await sessionApi.systemPrompt(root, agentId, sid);
+      const payload = await sessionApi.systemPrompt(root, agentId, sid, pageSkillName());
       const promptText = payload.system_prompt || '';
       const tools = Array.isArray(payload.tools) ? payload.tools : [];
       if (!promptText && tools.length === 0) throw new Error('empty payload');

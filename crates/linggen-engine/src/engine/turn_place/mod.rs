@@ -145,13 +145,22 @@ pub async fn folder_at(
     if place.own {
         return None;
     }
-    let skill = match place.skill.as_deref() {
-        Some(name) => manager.skills.get_skill(name).await,
-        None => None,
-    };
-    let day_on = Some(manager.daily_session());
-    let skill = skill.filter(|s| !kept_out(s, Some(session_id), day_on));
+    let skill = skill_at(manager, session_id, place).await;
     place.folder(skill.as_ref())
+}
+
+/// The skill a door that acts at `place` of session `session_id` (a `!`
+/// line, the prompt export) enters, as a turn entering it would: the
+/// place's skill when it resolves, and none for a private app a day keeps
+/// out (`AgentEngine::enter_place`).
+pub async fn skill_at(
+    manager: &crate::engine::agent::AgentManager,
+    session_id: &str,
+    place: &TurnPlace,
+) -> Option<crate::engine::skill::Skill> {
+    let skill = manager.skills.reload_one(place.skill.as_deref()?).await?;
+    let day_on = Some(manager.daily_session());
+    (!kept_out(&skill, Some(session_id), day_on)).then_some(skill)
 }
 
 /// Whether session `session_id` keeps `skill` out: a day's session, with the

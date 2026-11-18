@@ -1148,7 +1148,6 @@ async fn at_an_apps_place_in_the_day_she_answers_from_his_look() {
 /// prompt and tools of the app's place — the page names its app as a chat
 /// does (`prompt::export_per_member_at_a_skill_table`).
 #[tokio::test]
-#[ignore = "the prompt export takes no place: from an app's page in the day it shows home's prompt and tools"]
 async fn an_apps_prompt_export_in_the_day_is_its_places() {
     let (w, _) = day_world_at(12, Setup::default()).await;
     let day = w.api.create_session(json!({"title": "table", "skill": "dice"})).await;
@@ -1161,6 +1160,20 @@ async fn an_apps_prompt_export_in_the_day_is_its_places() {
     assert!(names.contains(&"Look") && names.contains(&"Roll"), "{names:?}");
     let prompt = e["system_prompt"].as_str().unwrap_or("");
     assert!(prompt.contains("You run the dice table"), "{prompt}");
+}
+
+/// A private app is never a place in the day: the export asked from its
+/// page with the day's id shows none of its prompt or tools.
+#[tokio::test]
+async fn a_private_apps_prompt_export_in_the_day_shows_none_of_it() {
+    let (w, _) = day_world_at(12, Setup::default()).await;
+    install_ledger(&w).await;
+    let day = w.api.get("/api/sessions/day").await["id"].as_str().unwrap().to_string();
+    let q = format!("/api/chat/system-prompt?project_root=&agent_id=ling&session_id={day}&skill_name=ledger");
+    let e = w.api.get(&q).await;
+    let prompt = e["system_prompt"].as_str().unwrap_or("");
+    assert!(!prompt.is_empty(), "{e}");
+    assert!(!prompt.contains("You keep the ledger"), "{prompt}");
 }
 
 /// Her moment's hidden kickoff in the day is hers alone: no other member

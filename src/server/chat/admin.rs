@@ -125,9 +125,12 @@ pub(crate) async fn get_system_prompt_api(
     // `agent_id=` selects the member whose prompt to preview. None named
     // (or a frontend that serialized "no agent"): the session's default
     // responder, the one a message naming nobody reaches.
+    // Where the page's turn would stand: the page's app, else the session's
+    // own (`TurnPlace::of_request`, as a chat turn asks it).
+    let place = crate::engine::turn_place::TurnPlace::of_request(query.skill_name.as_deref(), session_meta.as_ref());
     let members = match &session_meta {
         Some(meta) => {
-            let skill = match meta.skill.as_deref() {
+            let skill = match place.skill.as_deref() {
                 Some(name) => state.manager.skills.get_skill(name).await,
                 None => None,
             };
@@ -160,7 +163,7 @@ pub(crate) async fn get_system_prompt_api(
     // chat path applies it — the same creator rule a real turn follows (a
     // skill's or a mission's session gets no core block and no memory
     // protocol), and the world as its creator decides.
-    export_spec(session_meta.as_ref()).apply(&mut engine);
+    export_spec(session_meta.as_ref(), &place).apply(&mut engine);
     // Seated as the member it is, on the model it runs on there.
     seat_for_export(&state, &mut engine, &root, &members, agent_id).await;
 
@@ -169,14 +172,10 @@ pub(crate) async fn get_system_prompt_api(
     // shows a "cold engine" view missing SKILL.md / mission body.
     if let Some(meta) = session_meta {
         engine.withhold_session_tools(&state.manager.global_sessions, Some(&meta.id));
-        // The export has no page: the session's own place, entered as a
-        // real turn enters it (its memory index, its tools, its SKILL.md).
-        let place = crate::engine::turn_place::TurnPlace::of_session(Some(&meta));
-        let skill = match place.skill.as_deref() {
-            Some(name) => state.manager.skills.reload_one(name).await,
-            None => None,
-        };
-        if skill.is_some() {
+        // The page's place, entered as a real turn enters it (its memory
+        // index, its tools, its SKILL.md, its folder).
+        let skill = crate::engine::turn_place::skill_at(&state.manager, &meta.id, &place).await;
+        if skill.is_some() || !place.own {
             engine.enter_place(place, skill, ActivationMode::Export).await;
         }
         if let Some(ref mission_id) = meta.mission_id {
@@ -201,18 +200,18 @@ pub(crate) async fn get_system_prompt_api(
     export_prompt(engine)
 }
 
-/// The spec the export's engine is given: a turn typed into the session's
-/// own place under the owner policy; with no session, an unclaimed one's.
+/// The spec the export's engine is given: a turn typed at `place` of the
+/// session under the owner policy; with no session, an unclaimed one's.
 fn export_spec(
     meta: Option<&crate::state_fs::sessions::SessionMeta>,
+    place: &crate::engine::turn_place::TurnPlace,
 ) -> crate::engine::session_spec::SessionSpec {
     use crate::engine::session_spec::{Memory, SessionSpec};
     let owner = crate::engine::session_policy::SessionPolicy::owner();
     let Some(meta) = meta else {
         return SessionSpec::unclaimed(None).typed(owner, Memory::Full, None);
     };
-    let place = crate::engine::turn_place::TurnPlace::of_session(Some(meta));
-    let turn_owner = super::turn_place::turn_creator(meta.mission_id.as_deref(), &place);
+    let turn_owner = super::turn_place::turn_creator(meta.mission_id.as_deref(), place);
     SessionSpec::of(meta).typed(owner, Memory::of_turn(turn_owner), None)
 }
 

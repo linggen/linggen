@@ -191,6 +191,9 @@ session, prompt and row is as before. On (decided by the builder 2026-11-15/16):
   names its app as a chat turn does): at an app's page it starts in the
   app's folder, and its `cd` is kept for that place alone; home's starts in
   the day's own folder. A private app's page gets home's workspace.
+- **Copy system prompt** shows the prompt and tools of the place it is
+  pressed in (the page names its app): an app's page its app's place, the
+  main page home's. A private app's page shows none of the app.
 
 Built (2.4 branch, 2026-11-16/17): all of the above, in `server::day_session`, `server::person`,
 `state_fs::day_session`, `TurnPlace::private_app` and `tools::exit_gate`.
