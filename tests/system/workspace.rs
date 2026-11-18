@@ -37,9 +37,11 @@ async fn a_plain_chat_starts_in_the_default_workspace() {
     assert!(workspace(&w).is_dir(), "the workspace was not made");
 }
 
+/// An app's own session, with the setting off; in the day:
+/// `day_session::a_turn_in_an_app_works_in_that_apps_folder`.
 #[tokio::test]
 async fn a_skill_session_keeps_its_declared_cwd() {
-    let w = World::start(Setup::default()).await;
+    let w = World::start(Setup::default().setting_off()).await;
     let sid = w
         .api
         .create_session(json!({"title": "dice", "skill": "dice", "project_root": w.work()}))
@@ -76,9 +78,11 @@ async fn another_sessions_folder_does_not_rebind_a_new_chat() {
     assert_eq!(cwd_of(&w, &sid), want);
 }
 
+/// An app's own session, with the setting off; in the day:
+/// `day_session::a_turn_in_an_app_works_in_that_apps_folder`.
 #[tokio::test]
 async fn a_skill_session_with_no_declared_cwd_starts_in_the_skills_folder() {
-    let w = World::start(Setup::default()).await;
+    let w = World::start(Setup::default().setting_off()).await;
     let sid = w
         .api
         .create_session(json!({"title": "quiet", "skill": "quiet"}))

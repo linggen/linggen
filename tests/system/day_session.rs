@@ -82,7 +82,7 @@ async fn from_four_in_the_morning_it_is_a_new_day() {
 
 #[tokio::test]
 async fn with_the_setting_off_there_is_no_day_session() {
-    let w = World::start(Setup::default()).await;
+    let w = World::start(Setup::default().setting_off()).await;
     let day = w.api.get("/api/sessions/day").await;
     assert_eq!(day, json!({ "on": false, "id": null }));
     let sessions = w.home.linggen_home().join("sessions");
@@ -381,7 +381,8 @@ async fn install_planner(w: &World) {
 /// place is shown on them.
 #[tokio::test]
 async fn with_the_setting_off_an_apps_session_is_its_own() {
-    let w = World::start(Setup::default().script(Agent::Ling, vec![text("Rolled.")])).await;
+    let setup = Setup::default().setting_off().script(Agent::Ling, vec![text("Rolled.")]);
+    let w = World::start(setup).await;
     let sid = w
         .api
         .create_session(json!({"title": "Dice", "skill": "dice"}))
@@ -954,4 +955,236 @@ async fn every_mcp_tool_taking_a_session_refuses_a_day() {
     assert!(wrong.is_empty(), "{wrong:#?}");
     assert!(w.raw_rows(&mine).is_empty() && w.raw_rows(&theirs).is_empty(), "a day was written");
     assert!(w.model.calls().is_empty(), "a model was called");
+}
+
+// What an app's own session gives a person, held in the day: each test below
+// is the twin of one with the setting off (named in its comment), its turn
+// sent as an app's page sends it — naming its app (`skill_name`).
+
+/// The `- Workspace:` line of a call's system prompt.
+fn workspace_line(call: &crate::support::model::Call) -> String {
+    let body = &call.body;
+    let system = body["messages"][0]["content"].as_str().unwrap_or_default();
+    system
+        .lines()
+        .find(|l| l.starts_with("- Workspace: "))
+        .unwrap_or_else(|| panic!("no Workspace line: {system}"))
+        .to_string()
+}
+
+/// A turn standing in an app works in that app's folder — its declared
+/// `cwd:` (dice), else the skill's own folder (quiet) — and a home turn after
+/// them in home's (`workspace::a_skill_session_keeps_its_declared_cwd`,
+/// `…_with_no_declared_cwd_starts_in_the_skills_folder`).
+#[tokio::test]
+async fn a_turn_in_an_app_works_in_that_apps_folder() {
+    let setup = Setup::default().script(
+        Agent::Ling,
+        vec![text("Rolled."), text("Talked."), text("Home.")],
+    );
+    let (w, _) = day_world_at(12, setup).await;
+    let day = w.api.create_session(json!({"title": "Dice", "skill": "dice"})).await;
+    turn_at(&w, &day, Some("dice"), "Roll", Agent::Ling).await;
+    turn_at(&w, &day, Some("quiet"), "Talk", Agent::Ling).await;
+    turn_at(&w, &day, None, "Back home", Agent::Ling).await;
+    let calls = w.model.calls_of(Agent::Ling);
+    let home = w.home.linggen_home();
+    let want = [home.join("skills/dice"), home.join("skills/quiet"), home.join("workspace")];
+    for (call, folder) in calls.iter().zip(want) {
+        assert_eq!(workspace_line(call), format!("- Workspace: {}", folder.display()));
+    }
+}
+
+/// A `!` command typed at an app's page in the day starts in that app's
+/// folder, as it does in the app's own session — the page names its app as
+/// a chat does (`workspace::a_skill_session_keeps_its_declared_cwd`).
+#[tokio::test]
+#[ignore = "`/api/bash` takes no place: a `!` command at an app's page in the day runs in home's workspace"]
+async fn a_bang_command_at_an_apps_page_in_the_day_starts_in_its_folder() {
+    let (w, _) = day_world_at(12, Setup::default()).await;
+    let day = w.api.create_session(json!({"title": "Dice", "skill": "dice"})).await;
+    let body = json!({"session_id": day, "project_root": w.work(), "command": "pwd", "skill_name": "dice"});
+    let ran = w.api.post("/api/bash", body).await;
+    let want = w.home.linggen_home().join("skills/dice");
+    assert_eq!(ran["stdout"].as_str().unwrap_or_default().trim(), want.display().to_string(), "{ran}");
+}
+
+/// A skill's `tier: edit` tool, from its page in the day, runs under the
+/// grant the skill declares on its own folder — no prompt — and writes
+/// there (`skills::skill_edit_tool_runs_under_its_own_grant`).
+#[tokio::test]
+async fn an_apps_edit_tool_runs_under_its_own_grant_in_the_day() {
+    let setup = Setup::default().script(
+        Agent::Ling,
+        vec![tool("Roll", json!({"faces": 9})), text("Five.")],
+    );
+    let (w, _) = day_world_at(12, setup).await;
+    let day = w.api.create_session(json!({"title": "table", "skill": "dice"})).await;
+    turn_at(&w, &day, Some("dice"), "Roll a nine-sided die.", Agent::Ling).await;
+    assert_eq!(crate::support::rows::calls_by(&w.rows(&day), "ling"), ["Roll"]);
+    let table = std::fs::read_to_string(w.home.linggen_home().join("skills/dice/data/table.json"))
+        .expect("table");
+    assert!(
+        table.contains(r#""last_roll":{"faces":9,"value":5}"#),
+        "Roll did not write the table: {table}"
+    );
+    w.assert_all_scripted();
+}
+
+/// A zero-tool app (`allowed-tools: []`), from its page in the day, offers
+/// only the agent's own notes (`skills::zero_tool_skill_offers_no_tools`).
+#[tokio::test]
+async fn a_zero_tool_app_offers_no_tools_in_the_day() {
+    let setup = Setup::default().script(Agent::Ling, vec![text("Hello.")]);
+    let (w, _) = day_world_at(12, setup).await;
+    let day = w.api.create_session(json!({"title": "quiet", "skill": "quiet"})).await;
+    turn_at(&w, &day, Some("quiet"), "Hi.", Agent::Ling).await;
+    let mut offered = w.model.calls_of(Agent::Ling).pop().expect("his call").tool_names();
+    offered.sort();
+    assert_eq!(offered, ["note_done", "note_write"], "the call offered {offered:?}");
+    w.assert_all_scripted();
+}
+
+/// Not signed in, on a machine the picture lane refuses: a turn at an app
+/// whose tools never had GenerateImage lists nothing as not available
+/// (`prompt::a_tool_this_machine_cannot_run_is_named_with_what_it_needs`).
+#[tokio::test]
+async fn at_an_app_in_the_day_a_tool_it_never_had_is_not_listed() {
+    let setup = Setup {
+        signed_out: true,
+        machine_memory_gb: Some(8),
+        ..Setup::default()
+    }
+    .script(Agent::Ling, vec![text("Rolled.")]);
+    let (w, _) = day_world_at(12, setup).await;
+    let day = w.api.create_session(json!({"title": "table", "skill": "dice"})).await;
+    turn_at(&w, &day, Some("dice"), "Roll", Agent::Ling).await;
+    let call = w.model.calls_of(Agent::Ling).pop().expect("his call");
+    assert!(!call.text().contains("# Not available here"), "a tool it never had: {}", call.text());
+}
+
+/// At an app's place in the day each member is handed what the app's own
+/// table gave them: Ling the skill's tools and not her pet tool; Yinyue,
+/// called by name from the page, her place's tool only, reading his tool
+/// call as labelled facts and never his guide — and she is seated
+/// (`shared_table::a_shared_table_she_answers_from_his_look`,
+/// `prompt::export_per_member_at_a_skill_table`).
+#[tokio::test]
+async fn at_an_apps_place_in_the_day_she_answers_from_his_look() {
+    let setup = Setup::default()
+        .script(
+            Agent::Ling,
+            vec![tool("Look", json!({})), text("Harbor Table."), text("Mm.")],
+        )
+        .script(Agent::Yinyue, vec![text("Alex.")]);
+    let (w, _) = day_world_at(12, setup).await;
+    let day = w.api.create_session(json!({"title": "table", "skill": "dice"})).await;
+    turn_at(&w, &day, Some("dice"), "Look at the table.", Agent::Ling).await;
+    let his = w.model.calls_of(Agent::Ling).remove(0);
+    assert!(offers(&his, "Look") && offers(&his, "Roll"), "{:?}", his.tool_names());
+    assert!(!offers(&his, "Peek"), "Ling is offered her pet tool: {:?}", his.tool_names());
+
+    let before = w.rows(&day).len();
+    turn_at(&w, &day, Some("dice"), "@银月 what is the player called?", Agent::Yinyue).await;
+    let rows = w.rows(&day);
+    let hers = &rows[before..];
+    assert!(crate::support::rows::calls_by(hers, "yinyue").is_empty(), "{hers:?}");
+    assert_eq!(crate::support::rows::last_said(hers, "yinyue"), Some("Alex."));
+    let read = w.model.calls_of(Agent::Yinyue).pop().expect("her call");
+    let seen = read.text();
+    assert!(seen.contains("Ling used Look"), "his call is not labelled text for her");
+    assert!(seen.contains("Harbor Table") && seen.contains("Alex"), "the declared facts are missing");
+    assert!(!seen.contains("Never mention this guide"), "she read Ling's guide");
+    assert!(offers(&read, "Peek"), "her place's tool is missing: {:?}", read.tool_names());
+    for not in ["Look", "Roll", "AskUser"] {
+        assert!(!offers(&read, not), "she is offered {not}: {:?}", read.tool_names());
+    }
+    let seated = meta(&w, &day);
+    assert!(seated.contains("id: yinyue"), "{seated}");
+
+    turn_at(&w, &day, Some("dice"), "Thanks.", Agent::Ling).await;
+    w.assert_all_scripted();
+}
+
+/// An app page's prompt export (Copy system prompt), in the day, shows the
+/// prompt and tools of the app's place — the page names its app as a chat
+/// does (`prompt::export_per_member_at_a_skill_table`).
+#[tokio::test]
+#[ignore = "the prompt export takes no place: from an app's page in the day it shows home's prompt and tools"]
+async fn an_apps_prompt_export_in_the_day_is_its_places() {
+    let (w, _) = day_world_at(12, Setup::default()).await;
+    let day = w.api.create_session(json!({"title": "table", "skill": "dice"})).await;
+    let q = format!("/api/chat/system-prompt?project_root=&agent_id=ling&session_id={day}&skill_name=dice");
+    let e = w.api.get(&q).await;
+    let names: Vec<&str> = e["tools"]
+        .as_array()
+        .map(|all| all.iter().filter_map(|t| t["function"]["name"].as_str().or(t["name"].as_str())).collect())
+        .unwrap_or_default();
+    assert!(names.contains(&"Look") && names.contains(&"Roll"), "{names:?}");
+    let prompt = e["system_prompt"].as_str().unwrap_or("");
+    assert!(prompt.contains("You run the dice table"), "{prompt}");
+}
+
+/// Her moment's hidden kickoff in the day is hers alone: no other member
+/// holds it (`shared_table::f_app_moment_lands_in_the_named_session`; where
+/// it lands: `an_apps_moment_wakes_her_in_the_day_in_that_apps_place`).
+#[tokio::test]
+async fn her_moments_hidden_kickoff_is_hers_alone_in_the_day() {
+    let setup = Setup::default().script(Agent::Yinyue, vec![text("Clouds over the harbor.")]);
+    let (w, _) = day_world_at(12, setup).await;
+    let day = w.api.get("/api/sessions/day").await["id"].as_str().unwrap().to_string();
+    let mark = w.mark();
+    let moment = json!({"app": "dice", "text": "The player looks at the sky.", "asked": true, "session": day});
+    assert_eq!(w.api.post("/api/yinyue/event", moment).await, json!("ok"));
+    w.finish_run(&day, Agent::Yinyue, mark).await;
+    let rows = w.rows(&day);
+    assert_eq!(crate::support::rows::last_said(&rows, "yinyue"), Some("Clouds over the harbor."));
+    let hidden: Vec<_> = rows.iter().filter(|r| r.content.contains("[HIDDEN]")).collect();
+    assert!(!hidden.is_empty(), "no hidden kickoff row");
+    assert!(hidden.iter().all(|r| r.agent_id == "yinyue"), "{hidden:?}");
+    w.assert_all_scripted();
+}
+
+/// Her own talk in the day reads the room as her own thread does: the
+/// Right now block, the most present surface winning
+/// (`presence::active_and_idle_focused_surfaces_read_present`).
+#[tokio::test]
+#[ignore = "in the day her talk sits at Ling's table with his `*` set, so no Right now block (it needs `sense` named)"]
+async fn in_the_day_her_call_reads_the_room() {
+    let setup = Setup::default().script(Agent::Yinyue, vec![text("Here.")]);
+    let (w, _) = day_world_at(12, setup).await;
+    let beat = |surface: &'static str, idle_ms: u64| {
+        json!({"surface": surface, "focused": true, "typing": false, "idle_ms": idle_ms})
+    };
+    w.api.post("/api/presence", beat("main-ui", 30_000)).await;
+    w.api.post("/api/presence", beat("skill-page", 600_000)).await;
+    let mark = w.mark();
+    w.api.post("/api/yinyue/chat", json!({"text": "Are you there?"})).await;
+    w.wait_agent(Agent::Yinyue, mark).await;
+    let call = w.model.calls_of(Agent::Yinyue).pop().expect("her call");
+    let them = call
+        .thread()
+        .into_iter()
+        .find_map(|(_, t)| t.lines().find(|l| l.starts_with("- Them: ")).map(str::to_string));
+    let them = them.unwrap_or_else(|| panic!("no Right now block in her call: {:?}", call.thread()));
+    assert!(them.starts_with("- Them: present_reading"), "{them}");
+}
+
+/// Her own talk in the day is offered her own tools — her senses, not
+/// Ling's hands — as her own thread offers them (`agents/yinyue.md`).
+#[tokio::test]
+#[ignore = "in the day her own talk is seated at Ling's table and offered his whole tool set, not hers"]
+async fn in_the_day_her_own_talk_offers_her_own_tools() {
+    let setup = Setup::default().script(Agent::Yinyue, vec![text("Here.")]);
+    let (w, _) = day_world_at(12, setup).await;
+    let mark = w.mark();
+    w.api.post("/api/yinyue/chat", json!({"text": "Are you there?"})).await;
+    w.wait_agent(Agent::Yinyue, mark).await;
+    let call = w.model.calls_of(Agent::Yinyue).pop().expect("her call");
+    let mut names = call.tool_names();
+    names.sort();
+    assert!(offers(&call, "sense"), "{names:?}");
+    for not in ["Bash", "Write", "Edit"] {
+        assert!(!offers(&call, not), "she is offered Ling's {not}: {names:?}");
+    }
 }

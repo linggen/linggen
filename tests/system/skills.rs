@@ -6,10 +6,12 @@ use crate::support::{text, tool, Setup, World};
 use serde_json::json;
 
 /// A skill's `tier: edit` tool runs under the grant the skill declares on
-/// its own folder — no prompt — and writes there.
+/// its own folder — no prompt — and writes there. An app's own session,
+/// with the setting off; in the day:
+/// `day_session::an_apps_edit_tool_runs_under_its_own_grant_in_the_day`.
 #[tokio::test]
 async fn skill_edit_tool_runs_under_its_own_grant() {
-    let w = World::start(Setup::default().script(
+    let w = World::start(Setup::default().setting_off().script(
         Agent::Ling,
         vec![tool("Roll", json!({"faces": 9})), text("Five.")],
     ))
@@ -34,10 +36,12 @@ async fn skill_edit_tool_runs_under_its_own_grant() {
 /// `allowed-tools: []`: a zero-tool session — the skill's tools: none. The
 /// agent's own notes are not the skill's (`note_write`, `note_done` follow
 /// the agent to every table), so they are the only tools in the export and on
-/// the model call.
+/// the model call. An app's own session, with the setting off; in the day:
+/// `day_session::a_zero_tool_app_offers_no_tools_in_the_day`.
 #[tokio::test]
 async fn zero_tool_skill_offers_no_tools() {
-    let w = World::start(Setup::default().script(Agent::Ling, vec![text("Hello.")])).await;
+    let setup = Setup::default().setting_off().script(Agent::Ling, vec![text("Hello.")]);
+    let w = World::start(setup).await;
     let sid = w
         .api
         .create_session(json!({"title": "quiet", "skill": "quiet"}))

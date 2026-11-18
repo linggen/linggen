@@ -35,11 +35,13 @@ fn last_call(w: &World, agent: Agent) -> Call {
 
 /// (a) Ling's tool call at a skill table; @银月 answers from its labelled
 /// result with no tools and no question; the next plain message goes back
-/// to Ling.
+/// to Ling. An app's own session, with the setting off; in the day:
+/// `day_session::at_an_apps_place_in_the_day_she_answers_from_his_look`.
 #[tokio::test]
 async fn a_shared_table_she_answers_from_his_look() {
     let w = World::start(
         Setup::default()
+            .setting_off()
             .script(
                 Agent::Ling,
                 vec![tool("Look", json!({})), text("Harbor Table."), text("Mm.")],
@@ -327,12 +329,16 @@ fn provider_warnings(log: &str) -> Vec<String> {
 }
 
 /// (f) An app moment naming a table lands as her rows in that session — and
-/// only there; her hidden kickoff is hers alone.
+/// only there; her hidden kickoff is hers alone. Two app sessions, so the
+/// setting off; in the day:
+/// `day_session::an_apps_moment_wakes_her_in_the_day_in_that_apps_place`,
+/// `…::her_moments_hidden_kickoff_is_hers_alone_in_the_day`.
 #[tokio::test]
 async fn f_app_moment_lands_in_the_named_session() {
-    let w =
-        World::start(Setup::default().script(Agent::Yinyue, vec![text("Clouds over the harbor.")]))
-            .await;
+    let setup = Setup::default()
+        .setting_off()
+        .script(Agent::Yinyue, vec![text("Clouds over the harbor.")]);
+    let w = World::start(setup).await;
     let other = w
         .api
         .create_session(json!({"title": "other table", "skill": "dice"}))

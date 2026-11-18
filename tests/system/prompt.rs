@@ -30,10 +30,13 @@ fn memory_tools(names: &[String]) -> Vec<String> {
 }
 
 /// The export of each member at a skill table, snapshotted; Ling's lists the
-/// skill's own tools, Yinyue's only what her place names.
+/// skill's own tools, Yinyue's only what her place names. An app's own
+/// session, with the setting off; in the day:
+/// `day_session::at_an_apps_place_in_the_day_she_answers_from_his_look`,
+/// `…::an_apps_prompt_export_in_the_day_is_its_places`.
 #[tokio::test]
 async fn export_per_member_at_a_skill_table() {
-    let w = World::start(Setup::default()).await;
+    let w = World::start(Setup::default().setting_off()).await;
     let sid = w
         .api
         .create_session(json!({"title": "table", "skill": "dice"}))
@@ -72,12 +75,15 @@ const NOT_HERE: &str = "# Not available here";
 
 /// Not signed in to ChatGPT, on a machine the picture lane refuses:
 /// GenerateImage is not offered, and the prompt carries its one-line fact
-/// instead; a skill table whose tools never had it lists nothing.
+/// instead; a skill table whose tools never had it lists nothing. The table
+/// is an app's own session, with the setting off; in the day:
+/// `day_session::at_an_app_in_the_day_a_tool_it_never_had_is_not_listed`.
 #[tokio::test]
 async fn a_tool_this_machine_cannot_run_is_named_with_what_it_needs() {
     let w = World::start(Setup {
         signed_out: true,
         machine_memory_gb: Some(8),
+        daily_session: Some(false),
         ..Setup::default()
     })
     .await;

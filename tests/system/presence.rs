@@ -27,10 +27,14 @@ async fn her_right_now(w: &World) -> String {
     them.unwrap_or_else(|| panic!("no Right now block in her call: {:?}", call.thread()))
 }
 
+/// Her own thread, with the setting off; in the day:
+/// `day_session::in_the_day_her_call_reads_the_room`.
 #[tokio::test]
 async fn active_and_idle_focused_surfaces_read_present() {
     let w = World::start(
-        Setup::default().script(Agent::Yinyue, vec![text("Here."), text("Still here.")]),
+        Setup::default()
+            .setting_off()
+            .script(Agent::Yinyue, vec![text("Here."), text("Still here.")]),
     )
     .await;
 

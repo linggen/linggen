@@ -260,6 +260,7 @@ async fn pair_signed_out_phone(w: &World) -> Lan {
 async fn with_the_setting_off_the_lan_path_is_as_before() {
     let w = World::start(Setup {
         lan: true,
+        daily_session: Some(false),
         ..Setup::default()
     })
     .await;

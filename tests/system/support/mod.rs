@@ -65,11 +65,21 @@ pub struct Setup {
     /// Bind the engine to every address (`--host 0.0.0.0`), so a test can
     /// reach it from this machine's own LAN address, as a phone does.
     pub lan: bool,
+    /// `agent.daily_session` saved in the config before the engine starts;
+    /// `None` leaves the engine's default.
+    pub daily_session: Option<bool>,
 }
 
 impl Setup {
     pub fn script(mut self, agent: Agent, replies: Vec<Reply>) -> Self {
         self.scripts.push((agent, replies));
+        self
+    }
+
+    /// Linggen's daily session saved off before the engine starts, whatever
+    /// the engine's default: every app's chat is a session of its own.
+    pub fn setting_off(mut self) -> Self {
+        self.daily_session = Some(false);
         self
     }
 
@@ -80,6 +90,14 @@ impl Setup {
         });
         self
     }
+}
+
+/// Write `agent.daily_session = on` into the rendered config's `[agent]`.
+fn save_daily_session(home: &Home, on: bool) {
+    let config = std::fs::read_to_string(home.config_path()).expect("config");
+    assert!(config.contains("\n[agent]\n"), "the fixture's config has no [agent]");
+    let config = config.replacen("\n[agent]\n", &format!("\n[agent]\ndaily_session = {on}\n"), 1);
+    std::fs::write(home.config_path(), config).expect("config");
 }
 
 impl World {
@@ -105,6 +123,9 @@ impl World {
                     format!("\n{}\n", home::render(extra, &vars)).as_bytes(),
                 )
                 .expect("append config");
+            }
+            if let Some(on) = setup.daily_session {
+                save_daily_session(&home, on);
             }
             let config = std::fs::read_to_string(home.config_path()).expect("config");
             guard::config_text(&config);
