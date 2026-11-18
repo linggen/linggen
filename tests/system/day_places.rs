@@ -197,3 +197,47 @@ async fn with_the_setting_off_a_question_names_no_place() {
     w.api.answer(&asked, "Red").await;
     w.finish_run(&sid, Agent::Ling, mark).await;
 }
+
+/// The continue turns a restart left in `sid`'s transcript: each one's place
+/// and words.
+fn continue_rows(w: &World, sid: &str) -> Vec<(String, String)> {
+    w.raw_rows(sid)
+        .iter()
+        .filter(|r| r["client_id"].as_str().is_some_and(|c| c.starts_with("restart-")))
+        .map(|r| (r["place"].as_str().unwrap_or("-").to_string(), r["content"].to_string()))
+        .collect()
+}
+
+/// A restart while a turn from the dice page ran and messages waited in
+/// the day — one from the dice page, one from quiet's: after it, each
+/// waiting message is told in a turn standing where it was sent from, and
+/// one app's waiting words never reach a turn in another.
+#[tokio::test]
+async fn after_a_restart_a_waiting_message_stands_where_it_was_sent_from() {
+    let setup = Setup::default().script(Agent::Ling, vec![text("Continuing."), text("Continuing.")]);
+    let (mut w, _) = day_world_at(12, setup).await;
+    let day = the_day(&w).await;
+    let waiting = |text: &str, place: &str| json!({"text": text, "images": [], "agent_id": "ling", "place": place});
+    crate::restart::leave_plan(
+        &w,
+        json!([{
+            "session_id": day, "agent_id": "ling", "caller": false, "turn_interrupted": true,
+            "tasks": [], "place": "dice",
+            "queued": [waiting("DICE-WAITING words", "dice"), waiting("QUIET-WAITING words", "quiet")],
+        }]),
+    );
+    w.engine.restart(&w.home).await;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while continue_rows(&w, &day).len() < 2 || w.model.calls_of(Agent::Ling).len() < 2 {
+        assert!(std::time::Instant::now() < deadline, "not continued: {:#?}", continue_rows(&w, &day));
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    let rows = continue_rows(&w, &day);
+    let told_at = |words: &str| rows.iter().filter(|(_, t)| t.contains(words)).map(|(p, _)| p.clone()).collect::<Vec<_>>();
+    assert_eq!(told_at("DICE-WAITING"), ["dice"], "{rows:#?}");
+    assert_eq!(told_at("QUIET-WAITING"), ["quiet"], "{rows:#?}");
+    for call in w.model.calls_of(Agent::Ling) {
+        let last = call.thread().last().map(|(_, t)| t.clone()).unwrap_or_default();
+        assert!(!(last.contains("DICE-WAITING") && last.contains("QUIET-WAITING")), "one turn told both: {last}");
+    }
+}

@@ -773,6 +773,7 @@ pub(super) async fn deliver_to_chat_agent(
         text: &message,
         images: &[],
         sender: Some(&from),
+        place: None,
     };
     let again = || {
         let sent_in = Some(session_id.clone());

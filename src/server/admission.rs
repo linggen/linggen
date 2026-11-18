@@ -46,14 +46,21 @@ pub(crate) struct Incoming<'a> {
     pub(crate) images: &'a [String],
     /// Who sent it, when not the person (`system` for a task's end).
     pub(crate) sender: Option<&'a str>,
+    /// In a day, the place it was sent from, as a page is told it
+    /// (`turn_place::told_place`); its turn stands there after the restart.
+    pub(crate) place: Option<&'a str>,
 }
 
 impl Incoming<'_> {
-    /// As the plan's queue keeps it.
+    /// As the plan's queue keeps it — as `restart::queued_messages` keeps a
+    /// waiting message.
     fn item(&self) -> Value {
         let mut item = json!({"text": self.text, "images": self.images, "agent_id": self.agent});
         if let Some(sender) = self.sender {
             item["sender"] = json!(sender);
+        }
+        if let Some(place) = self.place {
+            item["place"] = json!(place);
         }
         item
     }
@@ -180,6 +187,7 @@ mod tests {
             text,
             images,
             sender: None,
+            place: None,
         }
     }
 
@@ -203,6 +211,21 @@ mod tests {
             .iter()
             .filter_map(|m| m["text"].as_str().map(str::to_owned))
             .collect()
+    }
+
+    /// A message kept in the plan keeps the place it was sent from, as the
+    /// snapshot keeps a waiting message's; one sent from no told place keeps none.
+    #[tokio::test]
+    async fn a_message_kept_in_the_plan_keeps_its_place() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = plan_in(&dir);
+        let admission = Arc::new(Mutex::new(Admission::default()));
+        freeze(&mut *admission.lock().await, path.clone());
+        let from_dice = Incoming { place: Some("dice"), ..msg("s", "ling", "rolled", &[]) };
+        assert!(admit(&admission, from_dice, no_resend).await.unwrap().is_none());
+        let kept: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(kept["sessions"][0]["queued"][1]["place"], "dice");
+        assert!(kept["sessions"][0]["queued"][0].get("place").is_none());
     }
 
     /// Once the plan is kept, a message admitted later joins the plan's

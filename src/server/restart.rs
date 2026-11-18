@@ -94,22 +94,31 @@ fn sent_order(id: &str) -> u64 {
 
 /// The messages queued now, by session, each session's in the order they
 /// were sent. Written out by hand: a queued item never serializes its text
-/// or pictures.
+/// or pictures. In a day each keeps the place it was sent from (`place`, as
+/// a page is told it; none elsewhere).
 fn queued_messages(all: &HashMap<String, Vec<QueuedChatItem>>) -> BTreeMap<String, Vec<Value>> {
     let mut items: Vec<&QueuedChatItem> = all.values().flatten().collect();
     items.sort_by_key(|item| sent_order(&item.id));
     let mut queued: BTreeMap<String, Vec<Value>> = BTreeMap::new();
     for item in items {
-        queued
-            .entry(item.session_id.clone())
-            .or_default()
-            .push(json!({
-                "text": item.text,
-                "images": item.images,
-                "agent_id": item.agent_id,
-            }));
+        let mut kept = json!({
+            "text": item.text,
+            "images": item.images,
+            "agent_id": item.agent_id,
+        });
+        if let Some(place) = &item.place {
+            kept["place"] = json!(place);
+        }
+        queued.entry(item.session_id.clone()).or_default().push(kept);
     }
     queued
+}
+
+/// In a day, the place the turn running in `sid` stands in, as a page is
+/// told it: kept with the session's entry so its continue turn stands there.
+fn running_place(state: &ServerState, sid: &str) -> Option<String> {
+    let places = &state.manager.global_sessions.running_places;
+    crate::engine::turn_place::told_running(places, sid, state.manager.daily_session())
 }
 
 /// The new build as the continue message names it: its version, and when it
@@ -296,7 +305,11 @@ async fn perform_restart(
         .map(|(sid, agent)| {
             let tasks: Vec<_> = state.tasks.list(sid).into_iter().filter(|t| t.is_running()).collect();
             let waiting = queued.remove(sid).unwrap_or_default();
-            json!({"session_id": sid, "agent_id": agent, "caller": Some(sid) == caller.as_ref(), "turn_interrupted": running.contains(sid), "tasks": tasks, "queued": waiting})
+            let mut entry = json!({"session_id": sid, "agent_id": agent, "caller": Some(sid) == caller.as_ref(), "turn_interrupted": running.contains(sid), "tasks": tasks, "queued": waiting});
+            if let Some(place) = running_place(&state, sid) {
+                entry["place"] = json!(place);
+            }
+            entry
         })
         .collect();
     // A session with messages queued and no turn to continue (a mission's,
@@ -577,6 +590,7 @@ async fn resume(state: &Arc<ServerState>, path: &std::path::Path) {
     // helper then stops never gets past this, and leaves the plan whole.
     let outcome = helper_outcome(&crate::cli::restart::status_file(), requested, TAKEOVER).await;
     let (readable, unkept) = keep_pictures(state, ready);
+    let readable = readable.iter().flat_map(by_place).collect();
     left.extend(unkept);
     left.extend(deliver(state, &plan, readable, outcome.as_ref()).await);
     retire(state, path, &plan, left);
@@ -647,6 +661,44 @@ fn with_kept_pictures(state: &ServerState, session: &Value) -> Option<Value> {
     Some(session)
 }
 
+/// A session's entry as it continues, one entry per place its work stands
+/// in (a day's, places kept): the interrupted turn's place — or, with no
+/// turn, the first waiting message's — with the messages sent from there,
+/// then one queue-only entry for each other place messages waited from, in
+/// the order sent. One app's waiting words never reach a turn in another.
+/// An entry that keeps no place is as it was.
+fn by_place(session: &Value) -> Vec<Value> {
+    let items = session["queued"].as_array().cloned().unwrap_or_default();
+    let place_of = |item: &Value| item["place"].as_str().map(str::to_owned);
+    let own = match session["agent_id"].is_string() {
+        true => session["place"].as_str().map(str::to_owned),
+        false => items.first().and_then(place_of),
+    };
+    let mut groups: Vec<(String, Vec<Value>)> = Vec::new();
+    let mut mine = Vec::new();
+    for item in items {
+        match place_of(&item).filter(|p| Some(p) != own.as_ref()) {
+            None => mine.push(item),
+            Some(p) => match groups.iter_mut().find(|(at, _)| *at == p) {
+                Some((_, kept)) => kept.push(item),
+                None => groups.push((p, vec![item])),
+            },
+        }
+    }
+    let mut first = session.clone();
+    if let Some(own) = &own {
+        first["place"] = json!(own);
+    }
+    if session.get("queued").is_some() {
+        first["queued"] = Value::Array(mine);
+    }
+    let sid = &session["session_id"];
+    let others = groups
+        .into_iter()
+        .map(|(place, queued)| json!({"session_id": sid, "queued": queued, "place": place}));
+    std::iter::once(first).chain(others).collect()
+}
+
 /// One continue turn to give: a session's, for one agent.
 #[derive(Clone)]
 struct Delivery {
@@ -654,6 +706,8 @@ struct Delivery {
     agent: String,
     message: String,
     mark: String,
+    /// In a day, the place the turn stands in (a page's key).
+    place: Option<String>,
     /// The session's entry as this agent is told it, for the record.
     scoped: Value,
 }
@@ -718,7 +772,7 @@ async fn attempt_delivery(state: Arc<ServerState>, d: Delivery) -> bool {
         return true;
     }
     let sid = d.meta.id.clone();
-    let turn = continue_session(state, d.meta, d.agent.clone(), d.message, d.mark);
+    let turn = continue_session(state, d.meta, (d.agent.clone(), d.place), d.message, d.mark);
     match tokio::time::timeout(DELIVERY_WAIT, turn).await {
         Ok(kept) => kept,
         Err(_) => {
@@ -781,10 +835,12 @@ fn deliveries_for(
             owners.insert(owner.clone());
         }
     }
+    let place = session["place"].as_str().map(str::to_owned);
     let mut deliveries = Vec::new();
     for owner in owners {
         let scoped = scoped_to(session, &owner, agent);
         let mark = delivery_mark(requested, &owner, scoped["turn_interrupted"] != false);
+        let mark = marked_at(mark, place.as_deref());
         if told(&state.manager.global_sessions, sid, &mark) {
             tracing::info!("[restart] {sid}/{owner} was already told");
             continue;
@@ -796,6 +852,7 @@ fn deliveries_for(
             agent: owner,
             message,
             mark,
+            place: place.clone(),
             scoped,
         });
     }
@@ -911,6 +968,15 @@ fn delivery_mark(requested_at: u64, agent: &str, turn_interrupted: bool) -> Stri
 
 const TASKS_ONLY_MARK: &str = "restart-tasks-";
 
+/// A continue turn's mark with the place it stands in, when one is kept:
+/// one session's turns in several places are told apart. None kept: as it was.
+fn marked_at(mark: String, place: Option<&str>) -> String {
+    match place {
+        Some(place) => format!("{mark}@{place}"),
+        None => mark,
+    }
+}
+
 /// Whether a row kept under `client_id` is a continue turn that goes on
 /// with the turn a restart cut — it answers what that turn answered.
 pub(crate) fn continues_a_turn(client_id: &str) -> bool {
@@ -942,7 +1008,7 @@ fn restore_interrupted_tasks(
 fn continue_session(
     state: Arc<ServerState>,
     meta: SessionMeta,
-    agent: String,
+    (agent, stands_in): (String, Option<String>),
     message: String,
     mark: String,
 ) -> impl std::future::Future<Output = bool> + Send + 'static {
@@ -950,7 +1016,7 @@ fn continue_session(
         let (kept, was_kept) = tokio::sync::oneshot::channel();
         tokio::spawn(super::tasks::tell_marked(
             state.clone(),
-            meta.id.clone(),
+            (meta.id.clone(), stands_in),
             agent.clone(),
             message.clone(),
             (mark.clone(), kept),
@@ -1179,5 +1245,46 @@ mod tests {
         assert_eq!(queued["s1"][1]["agent_id"], "yinyue");
         assert_eq!(queued["s1"][1]["images"], json!(["second.png"]));
         assert_eq!(queued["s2"][0]["text"], "alone");
+    }
+
+    /// In a day an entry continues once per place: the interrupted turn's
+    /// with its own place's messages, then each other place's messages in a
+    /// turn of their own. An entry keeping no place is as it was.
+    #[test]
+    fn a_session_continues_once_for_each_place_its_messages_came_from() {
+        let at = |text: &str, place: &str| json!({"text": text, "agent_id": "ling", "place": place});
+        let entry = json!({"session_id": "sess-day-1", "agent_id": "ling", "place": "dice",
+            "queued": [at("a", "dice"), at("b", "quiet"), json!({"text": "c", "agent_id": "ling"}), at("d", "quiet")]});
+        let split = by_place(&entry);
+        let texts = |e: &Value| e["queued"].as_array().unwrap().iter().map(|i| i["text"].as_str().unwrap().to_owned()).collect::<Vec<_>>();
+        assert_eq!(split.len(), 2);
+        assert_eq!((split[0]["place"].as_str(), texts(&split[0])), (Some("dice"), vec!["a".into(), "c".into()]));
+        assert_eq!((split[1]["place"].as_str(), texts(&split[1])), (Some("quiet"), vec!["b".into(), "d".into()]));
+        assert!(split[1].get("agent_id").is_none(), "a queue-only entry: {}", split[1]);
+        // A queue-only entry stands where its first message was sent from.
+        let only = json!({"session_id": "sess-day-1", "queued": [at("x", "quiet")]});
+        assert_eq!(by_place(&only), vec![json!({"session_id": "sess-day-1", "queued": [at("x", "quiet")], "place": "quiet"})]);
+        // No place kept: the entry as it was.
+        let plain = json!({"session_id": "s", "agent_id": "ling", "queued": [{"text": "y"}]});
+        assert_eq!(by_place(&plain), vec![plain.clone()]);
+        let bare = json!({"session_id": "s", "agent_id": "ling", "caller": true});
+        assert_eq!(by_place(&bare), vec![bare.clone()]);
+        assert_eq!(marked_at("restart-1-ling".into(), None), "restart-1-ling");
+        assert_eq!(marked_at("restart-1-ling".into(), Some("dice")), "restart-1-ling@dice");
+    }
+
+    /// A waiting message keeps the place it was sent from in the plan (as a
+    /// page is told it); one with none told keeps no `place`.
+    #[test]
+    fn the_plan_keeps_where_each_waiting_message_was_sent_from() {
+        let mut from_dice = item(1, "sess-day-1", "ling", "rolled");
+        from_dice.place = Some("dice".into());
+        let all = HashMap::from([(
+            "sess-day-1|ling".to_string(),
+            vec![from_dice, item(2, "sess-day-1", "ling", "plain")],
+        )]);
+        let queued = queued_messages(&all);
+        assert_eq!(queued["sess-day-1"][0]["place"], "dice");
+        assert!(queued["sess-day-1"][1].get("place").is_none());
     }
 }

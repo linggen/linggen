@@ -213,6 +213,12 @@ session, prompt and row is as before. On (decided by the builder 2026-11-15/16):
   so ("From Health"). The engine tells the place on the `ask_user` event and
   on each open question it lists (`pending_ask_user`, `GET
   /api/pending-ask-user`); the page never works it out.
+- **A waiting message keeps its place over a restart**: the restart's plan
+  keeps the place each waiting message was sent from and the place of the
+  turn it cut (`place`, as a page is told it), and after the restart each
+  place's messages are told in a continue turn standing in that place — the
+  cut turn's with its own place's messages, one more for each other place.
+  One app's waiting words never reach a turn in another.
 - **One model a member for the day**: only the picker keeps one
   (`PATCH /api/sessions`); a model a page sends with a message is for that
   turn and is not kept.

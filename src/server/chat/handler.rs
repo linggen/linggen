@@ -1228,13 +1228,17 @@ pub(crate) async fn start_turn(
 
     // One agent speaks at a time in a session: a turn already running
     // there — anyone's — holds the session's turn lock.
-    // Past a restart's snapshot the message waits in its plan instead.
+    // Past a restart's snapshot the message waits in its plan instead, with
+    // the place it was sent from (in a day).
+    let day_on = state.manager.daily_session();
+    let told = crate::engine::turn_place::told_place(&turn_place, &effective_session_id, day_on);
     let incoming = crate::server::admission::Incoming {
         session: &effective_session_id,
         agent: &target_id,
         text: &req.message,
         images: &req.images,
         sender: None,
+        place: told.as_deref(),
     };
     let again = || resend_chat(state.clone(), &req, &effective_session_id, &target_id);
     let gate = match crate::server::admission::admit(&state.admission, incoming, again).await {
@@ -1275,8 +1279,6 @@ pub(crate) async fn start_turn(
         false => super::turn_place::mark_turn(&state.manager, &effective_session_id, &turn_place),
         true => None,
     };
-    let day_on = state.manager.daily_session();
-    let told = crate::engine::turn_place::told_place(&turn_place, &effective_session_id, day_on);
     let queued_item = enqueue_if_busy(
         &state,
         was_busy,

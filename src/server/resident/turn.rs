@@ -312,6 +312,7 @@ async fn her_place(
         text: task,
         images: &[],
         sender: (trigger_source != "user").then_some("system"),
+        place: None,
     };
     let again = || {
         resend_hers(

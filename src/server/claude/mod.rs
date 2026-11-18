@@ -257,7 +257,7 @@ pub(crate) async fn start_turn(
     // Take the turn's place before spawning: two simultaneous first messages
     // cannot both appear idle, and queued ones run in the order they came.
     // Past a restart's snapshot the message waits in its plan instead.
-    let incoming = crate::server::admission::Incoming { session: &meta.id, agent: AGENT_ID, text: &req.message, images: &req.images, sender: None };
+    let incoming = crate::server::admission::Incoming { session: &meta.id, agent: AGENT_ID, text: &req.message, images: &req.images, sender: None, place: None };
     let again = || chat::resend_chat(state.clone(), &req, &meta.id, AGENT_ID);
     let gate = match crate::server::admission::admit(&state.admission, incoming, again).await {
         Ok(Some(gate)) => gate,

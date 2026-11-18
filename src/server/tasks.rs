@@ -275,9 +275,11 @@ pub(crate) fn tell_from(
 
 /// [`tell`], its notice kept under `mark` (the row's `client_id`); `kept`
 /// hears once the notice is in the transcript, and is dropped if it never is.
+/// `stands_in`: in a day's session, the place (a page's key) the turn
+/// stands in; else the session's own.
 pub(crate) fn tell_marked(
     state: std::sync::Arc<super::ServerState>,
-    session: String,
+    (session, stands_in): (String, Option<String>),
     agent: String,
     notice: String,
     mark: (String, tokio::sync::oneshot::Sender<()>),
@@ -286,7 +288,7 @@ pub(crate) fn tell_marked(
     tell_in_place(
         state,
         (session, agent, notice, "system".into()),
-        (place, None),
+        (place, stands_in),
         Some(mark),
     )
 }
@@ -417,6 +419,7 @@ async fn place_or_plan(
         text: notice,
         images: &[],
         sender: Some(sender),
+        place: None,
     };
     let again = || {
         resend_notice(
