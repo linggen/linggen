@@ -4,7 +4,7 @@
 //! All pure logic — no I/O, no UI prompts. The store layer lives in
 //! [`super::store`]; prompt construction in [`super::prompt`].
 
-use super::classify::{classify_bash, dequote};
+use super::classify::{classify_bash, dequote, literal_shell_commands};
 use super::pattern_text::text_words;
 use super::shell_text::strip_heredoc_bodies;
 use super::store::SessionPermissions;
@@ -753,6 +753,13 @@ pub fn check_permission_for(
         .filter(|_| tool == "Bash")
         .and_then(super::known_vars::read_as_the_shell);
     let bash_command = read_as.as_deref().or(bash_command);
+    let inner = bash_command
+        .filter(|_| coding && tool == "Bash")
+        .map(literal_shell_commands)
+        .unwrap_or_default();
+    if inner.iter().any(|text| is_hardcoded_deny(text)) {
+        return PermissionCheckResult::Blocked(BashReason::Floor.sentence(PermissionMode::Admin, ""));
+    }
     let result = check_grants(
         tool,
         bash_command,
@@ -762,7 +769,10 @@ pub fn check_permission_for(
         (action_tier_override, ceiling),
         coding,
     );
-    let result = match bash_command.filter(|cmd| tool == "Bash" && super::outward::is_outward(cmd)) {
+    let result = match bash_command.filter(|cmd| {
+        tool == "Bash" && (super::outward::is_outward(cmd)
+            || inner.iter().any(|text| super::outward::is_outward(text)))
+    }) {
         Some(cmd) => ask_outward(result, cmd, session_cwd, coding),
         None => result,
     };

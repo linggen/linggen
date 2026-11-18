@@ -237,17 +237,41 @@ const BEYOND_THE_FOLDER: &[&str] = &[
     "launchctl", "systemctl", "defaults", "osascript", "diskutil", "shutdown", "reboot", "halt",
 ];
 
-/// Programs that run code: a file of it is the folder's own code, but code
-/// given as text on the command line is not a word any check here reads.
-const RUNS_CODE: &[&str] = &[
-    "sh", "bash", "zsh", "dash", "ksh", "fish", "csh", "tcsh", "perl", "ruby", "php", "lua",
-    "python", "python3", "node", "deno", "bun",
-];
+/// Shells whose flags can take a separate command line.
+const SHELLS: &[&str] = &["sh", "bash", "zsh", "dash", "ksh", "fish", "csh", "tcsh"];
 
-/// Whether `program` is handed its code as text rather than as a file:
-/// `sh -c '…'`, `perl -e …`, `node -p …`, `git -c …`, `eval`, `source`,
-/// `xargs` (which runs another command). Such text could hold anything — an outward
-/// command the outward table cannot read — so the tables keep it.
+/// Literal command operands of shells remain subject to the floor and
+/// outward table, even though the outer shell still needs admin.
+pub(super) fn literal_shell_commands(cmd: &str) -> Vec<String> {
+    let stripped = strip_heredoc_bodies(cmd);
+    let tokens = command_tokens(&stripped);
+    tokens
+        .split(|token| matches!(token, Token::Op(_)))
+        .filter_map(literal_shell_command)
+        .map(str::to_string)
+        .collect()
+}
+
+fn literal_shell_command(segment: &[Token]) -> Option<&str> {
+    let raw: Vec<_> = segment.iter().filter_map(|token| match token {
+        Token::Word(word) => Some(word.as_str()),
+        _ => None,
+    }).collect();
+    let plain: Vec<_> = raw.iter().map(|word| dequote(word)).collect();
+    let words: Vec<_> = plain.iter().map(String::as_str).collect();
+    let run = command_run(&words);
+    let [program, option, _, ..] = run else { return None };
+    if !SHELLS.contains(&file_name(program).as_str()) || !matches!(*option, "-c" | "-lc" | "-cl") {
+        return None;
+    }
+    let operand = raw[words.len() - run.len() + 2];
+    let text = operand.strip_prefix('\'')?.strip_suffix('\'')?;
+    (!text.contains('\'')).then_some(text)
+}
+
+/// Shell command text and indirect runners stay with the tables: the gate
+/// judges the outer command line, not a second shell command line inside it.
+/// Other interpreters' inline code is judged like their script files.
 fn runs_given_text(program: &str, args: &[String]) -> bool {
     if matches!(program, "eval" | "source" | "." | "xargs") {
         return true;
@@ -257,7 +281,7 @@ fn runs_given_text(program: &str, args: &[String]) -> bool {
     if program == "git" {
         return args.iter().take_while(|a| a.starts_with('-')).any(|a| a == "-c");
     }
-    if !RUNS_CODE.contains(&program) {
+    if !SHELLS.contains(&program) {
         return false;
     }
     args.iter()

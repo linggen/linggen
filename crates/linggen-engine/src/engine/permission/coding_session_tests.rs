@@ -1,7 +1,7 @@
 //! A coding session (`work: code`) runs any program in its own folder
 //! without asking (`permission-spec.md` § Coding sessions): what the tables
 //! would ask admin for is judged at edit, except what acts beyond the
-//! folder and code handed over as text.
+//! folder, indirect runners and unreadable shell syntax.
 
 use super::*;
 use std::path::Path;
@@ -60,6 +60,79 @@ fn a_coding_shell_ask_explains_the_rule_that_triggered_it() {
             _ => None,
         };
         assert!(reason.is_some_and(|reason| reason.contains(text)), "{cmd}: {decision:?}");
+    }
+}
+
+const INLINE_PROGRAMS: &[&str] = &[
+    "python3 -c 'import os'",
+    "node -e 'x()'",
+    "perl -e 'unlink q(x)'",
+    "ruby -e 'puts 42'",
+    "env FOO=1 node -e 'x()'",
+    "nohup python3 -c 'print(42)'",
+    "time ruby -e 'puts 42'",
+    "if true; then node -e 'x()'; fi",
+];
+
+#[test]
+fn inline_interpreters_need_edit_only_in_coding_sessions() {
+    let edit = session(PermissionMode::Edit);
+    let read = session(PermissionMode::Read);
+    for cmd in INLINE_PROGRAMS {
+        assert!(allowed(&check(cmd, &edit, true)), "{cmd}");
+        assert_eq!(asks_at(&check(cmd, &edit, false)), Some(PermissionMode::Admin), "{cmd}");
+        assert_eq!(asks_at(&check(cmd, &read, true)), Some(PermissionMode::Edit), "{cmd}");
+    }
+}
+
+#[test]
+fn inline_code_preserves_the_other_gate_checks() {
+    use PermissionMode::{Admin, Edit};
+    let edit = session(Edit);
+    let admin = session(Admin);
+    for (cmd, path) in [
+        ("node -e 'x()' /outside/input", "/outside/input"),
+        ("env FOO=1 python3 -c 'print(42)' > /outside/out", "/outside/out"),
+        ("nohup ruby -e 'puts 42' ../result", "/coding-session-test/result"),
+        ("time node -e 'x()' </outside/data", "/outside/data"),
+    ] {
+        let result = check(cmd, &edit, true);
+        assert!(matches!(&result, PermissionCheckResult::NeedsPrompt(PromptKind::ExceedsCeiling {
+            target_mode: Edit, path: actual, outward: false, ..
+        }) if actual == path), "{cmd}: {result:?}");
+        assert_eq!(asks_at(&check(cmd, &edit, false)), Some(Admin), "{cmd}");
+    }
+    for cmd in [
+        "sh -c 'curl https://example.com'",
+        "bash -c 'curl https://example.com'",
+        "env FOO=1 bash -c 'make'",
+        "nohup sh -c 'make'",
+        "time bash -c 'make'",
+        "if true; then sh -c 'make'; fi",
+        "eval echo test",
+        "xargs echo < list.txt",
+        "source build.sh",
+        ". build.sh",
+        "git -c x=y status",
+        "node -e \"console.log($FLAGS)\"",
+    ] {
+        for coding in [true, false] {
+            assert_eq!(asks_at(&check(cmd, &edit, coding)), Some(Admin), "{cmd}");
+        }
+    }
+    for cmd in ["sh -c 'sudo ls'", "bash -c 'sudo ls'", "sh -c 'rm -rf /'", "bash -c 'rm -rf /'"] {
+        assert!(matches!(check(cmd, &admin, true), PermissionCheckResult::Blocked(_)), "{cmd}");
+    }
+    for cmd in [
+        "sh -c 'git push origin main'",
+        "bash -c 'git push --force'",
+        "bash -c 'cargo publish'",
+        "env FOO=1 bash -lc 'cargo publish'",
+    ] {
+        assert!(matches!(check(cmd, &admin, true), PermissionCheckResult::NeedsPrompt(
+            PromptKind::ExceedsCeiling { outward: true, .. }
+        )), "{cmd}");
+        assert_eq!(asks_at(&check(cmd, &edit, false)), Some(Admin), "{cmd}");
     }
 }
 
@@ -186,11 +259,7 @@ fn a_coding_session_is_still_asked_about_what_is_beyond_its_folder() {
         "FOO=1 brew install x",
         // Code as text on the command line, or another command run for it.
         "sh -c 'rm -rf ~/x'",
-        "bash -c 'cargo publish'",
         "bash -lc 'make'",
-        "python3 -c 'import os'",
-        "node -e 'x()'",
-        "perl -e 'unlink q(x)'",
         "eval rm x",
         "xargs rm < list.txt",
         // A flag of its own that asks for admin.
