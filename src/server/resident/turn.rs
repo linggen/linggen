@@ -365,7 +365,7 @@ fn table_is_not_a_persons(state: &Arc<ServerState>, turn: &Turn) -> bool {
 }
 
 /// Her model in this session: the one the session keeps for her, else her
-/// Pet setting (`pet.model`), else whatever she is on — each only when this
+/// Pet setting (`pet.model`), else her default — each only when this
 /// machine has it.
 async fn apply_her_model(
     state: &Arc<ServerState>,
@@ -378,6 +378,7 @@ async fn apply_her_model(
         .iter()
         .find(|m| m.id == YINYUE_AGENT)
         .and_then(|m| m.model.clone());
+    let pinned = kept.is_some();
     let wanted = kept.or_else(|| resolve_pet_model(&pet.model));
     let may_switch = state
         .manager
@@ -385,10 +386,16 @@ async fn apply_her_model(
         .model_fallback_allowed(session_id);
     let choice = her_choice(engine, wanted.as_deref(), may_switch);
     engine.run_on(&choice, "[yinyue]").await;
+    // A kept model she cannot run is cleared, as a chat turn clears it: the
+    // session then shows the model she answers on.
+    if pinned && choice.clears_pin() {
+        crate::server::chat::members::set_model(&state.manager, session_id, YINYUE_AGENT, None)
+            .await;
+    }
 }
 
 /// Her model by the one rule (`model_choice::resolve`). Her standing model
-/// is the one she is on.
+/// is her own default, not whatever an earlier turn left her on.
 fn her_choice(
     engine: &crate::engine::AgentEngine,
     wanted: Option<&str>,
@@ -399,7 +406,7 @@ fn her_choice(
         asker: Asker::Owner,
         may_switch,
     };
-    resolve(&engine.model_manager, wanted, &engine.model_id, rule)
+    resolve(&engine.model_manager, wanted, &engine.default_model_id, rule)
 }
 
 /// Set her engine up for one turn. Idempotent — her engine outlives the
@@ -453,7 +460,7 @@ pub(crate) fn tune_companion(
 /// Resolve Yinyue's model from the `pet.model` setting. An explicit id wins;
 /// "auto" uses the metered Linggen Cloud model for signed-in (paid/free) users
 /// and leaves the engine default for BYOK users (who pick their own). Returns
-/// `None` to mean "keep the engine's current model".
+/// `None` to mean "her default model".
 pub(crate) fn resolve_pet_model(setting: &str) -> Option<String> {
     let s = setting.trim();
     if !s.is_empty() && !s.eq_ignore_ascii_case("auto") {
@@ -528,6 +535,27 @@ mod tests {
         for tool in acting {
             assert!(engine.is_withheld(tool), "{tool} is withheld from a woken note");
         }
+    }
+
+    /// Her engine outlives her turns: a model she cannot run, or none asked,
+    /// puts her on her own default — not on whatever the last turn left,
+    /// as a chat turn and a mission do.
+    #[tokio::test]
+    async fn an_unavailable_model_puts_her_on_her_default_not_the_last_one() {
+        use crate::engine::model_choice::{Outcome, Why};
+        let mut engine = her_engine();
+        let earlier = her_choice(&engine, Some("gpt-6-luna"), true);
+        engine.run_on(&earlier, "test").await;
+        assert_eq!(engine.model_id, "gpt-6-luna");
+
+        let dead = her_choice(&engine, Some("ghost"), true);
+        assert_eq!(dead.model(), engine.default_model_id);
+        assert_eq!(dead.outcome(), Outcome::Replaced(Why::NotHere));
+        assert!(dead.clears_pin());
+        let none = her_choice(&engine, None, true);
+        assert_eq!(none.model(), engine.default_model_id);
+        // Switching off, she keeps the one asked for and fails on it.
+        assert_eq!(her_choice(&engine, Some("ghost"), false).model(), "ghost");
     }
 
     fn her_engine() -> crate::engine::AgentEngine {
