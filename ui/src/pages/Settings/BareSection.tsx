@@ -10,6 +10,8 @@ import { RoomTab } from '../../components/RoomTab';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useAutoSaveConfig } from './useAutoSaveConfig';
 import { SaveStatus } from './SaveStatus';
+import { useUserStore } from '../../stores/userStore';
+import { sectionOpens } from '../../lib/roomsShown.mts';
 
 // Only the truly form-shaped sections are exposed via bare routes. Mission
 // and Storage are full-page experiences with their own chrome — embedding
@@ -35,7 +37,8 @@ export const BareSection: React.FC = () => {
   const projectRoot = useSessionStore((s) => s.selectedProjectRoot);
 
   const tab = section as BareTab | undefined;
-  const isKnown = !!tab && KNOWN_SECTIONS.has(tab);
+  const roomsOn = useUserStore((s) => s.roomsOn);
+  const isKnown = !!tab && KNOWN_SECTIONS.has(tab) && sectionOpens(tab, roomsOn);
   const needsConfig = !!tab && NEEDS_CONFIG.has(tab);
 
   const { config, setConfig, setCredsDirty, saveCredsRef, state: saveState, error } = useAutoSaveConfig(needsConfig);

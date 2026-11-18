@@ -24,6 +24,8 @@ interface UserState {
   userTokenBudget: number | null;
   /** Whether owner's room is enabled (accepting consumers). */
   roomEnabled: boolean;
+  /** Whether rooms are on at all (the engine's switch); off until it says so. */
+  roomsOn: boolean;
   connectionStatus: 'connected' | 'reconnecting' | 'disconnected';
   /** Role in a room: 'owner' if sharing, 'consumer' if joined via proxy. */
   roomRole: 'owner' | 'consumer' | null;
@@ -41,6 +43,7 @@ interface UserState {
   loadCoreName: () => Promise<void>;
   setUserInfo: (permission: string, roomName?: string | null, tokenBudget?: number | null) => void;
   setRoomEnabled: (enabled: boolean) => void;
+  setRoomsOn: (on: boolean) => void;
   setConnectionStatus: (status: 'connected' | 'reconnecting' | 'disconnected') => void;
   setProxyRoom: (roomName: string | null) => void;
 }
@@ -63,6 +66,7 @@ export const useUserStore = create<UserState>((set) => ({
   userRoomName: null,
   userTokenBudget: null,
   roomEnabled: true,
+  roomsOn: false,
   connectionStatus: isRemote ? 'disconnected' : 'connected',
   roomRole: null,
   proxyRoomName: null,
@@ -84,6 +88,7 @@ export const useUserStore = create<UserState>((set) => ({
     userTokenBudget: tokenBudget ?? null,
   }),
   setRoomEnabled: (enabled) => set({ roomEnabled: enabled }),
+  setRoomsOn: (on) => set({ roomsOn: on }),
   setConnectionStatus: (status) => set({ connectionStatus: status }),
   setProxyRoom: (roomName) => set({ proxyRoomName: roomName, roomRole: roomName ? 'consumer' : null }),
 }));

@@ -78,6 +78,7 @@ export type ContentBlockEvent =
 export interface PageState {
   permission?: string;
   room_name?: string | null;
+  rooms_on?: boolean | null;
   room_enabled?: boolean | null;
   all_sessions?: SessionInfo[];
   models?: ModelInfo[];

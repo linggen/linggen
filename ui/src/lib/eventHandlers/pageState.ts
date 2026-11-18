@@ -47,6 +47,10 @@ function pageFacts(): PageFacts {
 }
 
 function applyPermission(ps: PageState): void {
+  // The engine's rooms switch: nothing about rooms shows until it says on.
+  if (ps.rooms_on !== undefined && ps.rooms_on !== null) {
+    useUserStore.getState().setRoomsOn(ps.rooms_on);
+  }
   // userType is set once by user_info at connection time, not by page_state.
   if (!ps.permission) return;
   const userStore = useUserStore.getState();

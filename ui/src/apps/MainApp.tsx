@@ -18,6 +18,7 @@ import { YinyueAvatar } from '../components/yinyue/YinyueAvatar';
 import { AppPanel } from '../components/AppPanel';
 import { InfoPanel } from '../components/InfoPanel';
 import { RoomChatPanel } from '../components/RoomChatPanel';
+import { roomsShown } from '../lib/roomsShown.mts';
 import { recordSkillUsage } from '../lib/skillUsage';
 import { buildAgentWorkInfo } from '../lib/messageUtils';
 import { startPresenceBeat } from '../lib/presence';
@@ -288,6 +289,7 @@ export const MainApp: React.FC = () => {
 
   // --- Remote mode: gate rendering until transport is connected ---
   const connectionStatus = useUserStore((s) => s.connectionStatus);
+  const roomsOn = useUserStore((s) => s.roomsOn);
   if (isRemoteMode && connectionStatus === 'disconnected') {
     return (
       <div className="h-screen flex items-center justify-center bg-white dark:bg-[#0b0e14]">
@@ -364,7 +366,7 @@ export const MainApp: React.FC = () => {
               onDeleteSession={(id) => projectStore.removeSession(id)}
               onOpenSettings={openSettings}
             />
-            <RoomChatPanel />
+            {roomsShown(roomsOn) && <RoomChatPanel />}
           </div>
 
           {/* Center: Chat */}

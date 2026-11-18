@@ -6,6 +6,7 @@ import { useOpenSettings } from '../hooks/useOpenSettings';
 import { AccountAvatar } from './AccountAvatar';
 import logoUrl from '../assets/logo.svg';
 import { roomApi } from './room/roomApi';
+import { roomsShown } from '../lib/roomsShown.mts';
 import { WeatherChip } from './WeatherChip';
 import { TermChip } from './TermChip';
 
@@ -77,13 +78,14 @@ export const HeaderBar: React.FC<{
   const userType = useUserStore((s) => s.userType);
   const roomEnabled = useUserStore((s) => s.roomEnabled);
   const proxyRoomName = useUserStore((s) => s.proxyRoomName);
+  const roomsOn = useUserStore((s) => s.roomsOn);
   const openSettings = useOpenSettings();
 
   // Fetch room name for owner — room_enabled comes from page_state, but
   // room_name requires an HTTP call since it's stored on linggen.dev.
   // Also fetch proxy status for consumer role.
   useEffect(() => {
-    if (userType !== 'owner') return;
+    if (userType !== 'owner' || !roomsShown(roomsOn)) return;
     let cancelled = false;
     let retryCount = 0;
     const fetchRoomName = () => {
@@ -120,7 +122,7 @@ export const HeaderBar: React.FC<{
     fetchRoomName();
     fetchProxyRoom();
     return () => { cancelled = true; };
-  }, [userType, connectionStatus]);
+  }, [userType, connectionStatus, roomsOn]);
 
   return (
     <header className="flex items-center justify-between px-4 md:px-6 py-2.5 border-b border-slate-200 dark:border-white/5 bg-white/90 dark:bg-[#0f0f0f]/90 backdrop-blur-md z-50">
@@ -135,7 +137,7 @@ export const HeaderBar: React.FC<{
           <img src={logoUrl} alt="Linggen" className="w-6 h-6 md:w-7 md:h-7" />
           <h1 className="text-sm md:text-base font-bold tracking-tight text-slate-900 dark:text-white">Linggen</h1>
         </a>
-        {userRoomName && (
+        {roomsShown(roomsOn) && userRoomName && (
           <button
             onClick={() => {
               openSettings('room');
@@ -152,7 +154,7 @@ export const HeaderBar: React.FC<{
             <span className="text-[8px] opacity-60">owner</span>
           </button>
         )}
-        {!userRoomName && proxyRoomName && (
+        {roomsShown(roomsOn) && !userRoomName && proxyRoomName && (
           <button
             onClick={() => {
               openSettings('room');

@@ -19,6 +19,8 @@ import type { SettingsLocationState } from '../../hooks/useOpenSettings';
 import { useAutoSaveConfig } from './useAutoSaveConfig';
 import { SaveStatus } from './SaveStatus';
 import { language } from '../../lib/i18n';
+import { useUserStore } from '../../stores/userStore';
+import { sectionOpens, tabGroupsFor } from '../../lib/roomsShown.mts';
 
 type TabKey = Exclude<ManagementTab, 'mcp'>;
 
@@ -68,7 +70,11 @@ export const SettingsHome: React.FC = () => {
   // `open`) has no route state to carry.
   const queryTab = new URLSearchParams(location.search).get('tab');
   const requestedTab = toTab((location.state as SettingsLocationState | null)?.tab ?? queryTab);
-  const [activeTab, setActiveTab] = useState<TabKey>(requestedTab || 'general');
+  const roomsOn = useUserStore((s) => s.roomsOn);
+  const shownGroups = tabGroupsFor(groups, roomsOn);
+  const [pickedTab, setActiveTab] = useState<TabKey>(requestedTab || 'general');
+  // The room tab opens only while rooms are on.
+  const activeTab: TabKey = sectionOpens(pickedTab, roomsOn) ? pickedTab : 'general';
   const { config, setConfig, setCredsDirty, saveCredsRef, state: saveState, error } = useAutoSaveConfig();
 
   useEffect(() => {
@@ -105,7 +111,7 @@ export const SettingsHome: React.FC = () => {
         </div>
         {/* Phone width: one scrolling row. Wider screens use the sidebar. */}
         <nav className="md:hidden flex items-center gap-1 px-3 pb-2 overflow-x-auto">
-          {tabs.map((tab) => (
+          {shownGroups.flatMap((g) => g.tabs).map((tab) => (
             <TabButton key={tab.key} label={tab.label} active={activeTab === tab.key} onClick={() => setActiveTab(tab.key)} />
           ))}
         </nav>
@@ -113,7 +119,7 @@ export const SettingsHome: React.FC = () => {
 
       <div className="flex-1 flex min-h-0">
         <aside className="hidden md:flex flex-col w-48 shrink-0 border-r border-slate-200 dark:border-white/5 bg-white/60 dark:bg-[#0f0f0f]/60 overflow-y-auto py-3 px-2">
-          {groups.map((g, i) => (
+          {shownGroups.map((g, i) => (
             <div key={g.label ?? i} className={i ? 'mt-4' : undefined}>
               {g.label && <div className="px-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">{sidebarLabel(g.label)}</div>}
               {g.tabs.map((tab) => (
