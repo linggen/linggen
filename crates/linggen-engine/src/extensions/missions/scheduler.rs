@@ -860,9 +860,7 @@ async fn dispatch_mission_prompt(
     // chat runtime — without it the tool returns "not available"
     // immediately instead of blocking on the user's answer.
     if attended {
-        if let Some(ref mut set) = engine.cfg.mission_allowed_tools {
-            set.insert("AskUser".to_string());
-        }
+        engine.respec(|spec| spec.tools.permit_in_mission("AskUser"));
         engine.tools.set_ask_user_bridge(std::sync::Arc::new(
             crate::engine::tools::AskUserBridge {
                 events_tx: state.events_tx.clone(),

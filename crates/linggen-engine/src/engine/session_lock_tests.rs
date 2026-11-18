@@ -46,11 +46,6 @@ const LISTED: &[(&str, usize, &str)] = &[
          ChatRequest's session and agent (5)",
     ),
     (
-        "crates/linggen-engine/src/extensions/missions/scheduler.rs",
-        1,
-        "an attended run's AskUser",
-    ),
-    (
         "crates/linggen-engine/src/extensions/missions/enter.rs",
         3,
         "the mission run and its prompt; SessionSpec::tools (1)",

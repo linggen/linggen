@@ -136,6 +136,14 @@ impl Tools {
             Self::Delegate { write } => delegate::tool_scope(*write),
         }
     }
+
+    /// A mission's restricted set takes `tool` too (an attended run's
+    /// AskUser); any other set is left as it is.
+    pub fn permit_in_mission(&mut self, tool: &str) {
+        if let Self::Mission(Some(scope)) = self {
+            scope.insert(tool.to_string());
+        }
+    }
 }
 
 /// Which memory a session's prompt carries.

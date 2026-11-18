@@ -356,6 +356,23 @@ fn a_missions_run_runs_as_today() {
     assert!(!by_spec.session_permissions.interactive);
 }
 
+/// An attended mission run asks through AskUser: it joins the run's tools
+/// in its spec, so a later change of the spec keeps it.
+#[test]
+fn an_attended_missions_askuser_is_in_its_spec() {
+    let mission = mission();
+    let meta = crate::extensions::missions::scheduler::mission_session_meta(&mission, "sess-9-m");
+    let mut engine = engine_for(&meta);
+    let mut spec = SessionSpec::of(&meta);
+    spec.tools = Tools::Mission(crate::extensions::missions::enter::tool_scope(&mission, None));
+    spec.apply(&mut engine);
+    engine.respec(|spec| spec.tools.permit_in_mission("AskUser"));
+    engine.respec(|spec| spec.memory = Memory::None);
+    let tools = engine.cfg.mission_allowed_tools.clone().unwrap();
+    assert!(tools.contains("AskUser") && tools.contains("Read"));
+    assert!(!engine.session_permissions.interactive);
+}
+
 /// An `agent_run` delegate (`server::mcp_agent`): its toolset, the owner's
 /// sections framed as a task, its caller answering beyond the grants.
 #[test]
