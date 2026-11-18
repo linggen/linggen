@@ -76,7 +76,7 @@ pub(crate) async fn clear_chat_history_api(
             for engine_mutex in state.manager.session_engines_of(&session_id).await {
                 let mut engine = engine_mutex.lock().await;
                 engine.chat_history.clear();
-                engine.observations.clear();
+                engine.forget_observations();
             }
             let _ = state.events_tx.send(ServerEvent::StateUpdated);
             Json(serde_json::json!({ "removed": removed })).into_response()
@@ -168,7 +168,7 @@ pub(crate) async fn get_system_prompt_api(
     // the model actually sees during a chat turn. Without this, the export
     // shows a "cold engine" view missing SKILL.md / mission body.
     if let Some(meta) = session_meta {
-        engine.withheld_tools.extend(meta.withheld_tools.clone());
+        engine.withhold_session_tools(&state.manager.global_sessions, Some(&meta.id));
         // The export has no page: the session's own place, entered as a
         // real turn enters it (its memory index, its tools, its SKILL.md).
         let place = crate::engine::turn_place::TurnPlace::of_session(Some(&meta));
@@ -228,7 +228,7 @@ async fn seat_for_export(
 ) {
     let lead = super::members::lead(members);
     if lead != agent_id {
-        engine.session_tools = state
+        let tools = state
             .manager
             .agents
             .find(root, &lead)
@@ -236,7 +236,7 @@ async fn seat_for_export(
             .ok()
             .flatten()
             .map(|spec| spec.spec.tools);
-        engine.session_lead = Some(lead);
+        engine.seat_at(Some((lead, tools)));
     }
     if super::members::is_companion(agent_id) {
         let pet = state.manager.get_config_snapshot().await.pet;
@@ -372,7 +372,7 @@ pub(crate) async fn compact_chat_api(
         for engine in state.manager.session_engines_of(&session_id).await {
             let mut engine = engine.lock().await;
             engine.chat_history.clear();
-            engine.observations.clear();
+            engine.forget_observations();
         }
     }
     let _ = state.events_tx.send(ServerEvent::StateUpdated);

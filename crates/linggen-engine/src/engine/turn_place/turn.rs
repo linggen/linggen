@@ -200,6 +200,24 @@ impl AgentEngine {
         )
     }
 
+    /// Where this member sits this turn: at `lead`'s table, with the lead's
+    /// declared tools as the session's set — or, with `None`, the lead
+    /// itself.
+    pub fn seat_at(&mut self, lead: Option<(String, Option<Vec<String>>)>) {
+        let (lead, tools) = match lead {
+            Some((lead, tools)) => (Some(lead), tools),
+            None => (None, None),
+        };
+        self.session_lead = lead;
+        self.session_tools = tools;
+    }
+
+    /// The thread was cleared or compacted away: what its runs observed
+    /// goes with it.
+    pub fn forget_observations(&mut self) {
+        self.observations.clear();
+    }
+
     /// Where a person's messages sent during this run wait.
     pub fn take_messages_from(&mut self, inbox: Option<crate::engine::types::Inbox>) {
         self.inbox = inbox;

@@ -71,12 +71,6 @@ const LISTED: &[(&str, usize, &str)] = &[
         "a delegated child's task (its own fresh engine)",
     ),
     // Bypasses: a turn's settings written by its caller.
-    ("src/server/chat/handler.rs", 4, "a member's seat"),
-    (
-        "src/server/chat/admin.rs",
-        5,
-        "a cleared chat; the prompt export's seat and withheld tools",
-    ),
     // Not the engine's: another struct's field of the same name.
     (
         "crates/linggen-engine/src/engine/background.rs",

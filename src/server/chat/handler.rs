@@ -874,11 +874,10 @@ pub(super) async fn seat_member(engine: &mut crate::engine::AgentEngine, ctx: &C
     let members = super::members::of_session(&ctx.manager, sid).await;
     let lead = super::members::lead(&members);
     if lead == ctx.agent_id {
-        engine.session_lead = None;
-        engine.session_tools = None;
+        engine.seat_at(None);
         return;
     }
-    engine.session_tools = ctx
+    let tools = ctx
         .manager
         .agents
         .find(&ctx.root, &lead)
@@ -886,7 +885,7 @@ pub(super) async fn seat_member(engine: &mut crate::engine::AgentEngine, ctx: &C
         .ok()
         .flatten()
         .map(|spec| spec.spec.tools);
-    engine.session_lead = Some(lead);
+    engine.seat_at(Some((lead, tools)));
 }
 
 /// Keep a capped session's live history near `cap` messages — in chunks.
