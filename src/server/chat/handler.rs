@@ -844,16 +844,21 @@ pub(crate) async fn run_session_turn(
     engine.end_turn();
 }
 
-/// Her words at a table that isn't her own thread are heard, too.
+/// Her words at a table that isn't her own thread go to her stage too —
+/// heard only when the page of the turn's place is not the one in front.
 fn hear_her_at_table(
     state: &Arc<ServerState>,
     engine: &crate::engine::AgentEngine,
-    target_id: &str,
+    ctx: &ChatRunCtx,
     session_id: &str,
 ) {
-    if super::members::is_companion(target_id) && !crate::server::resident::is_own_session(session_id) {
+    if super::members::is_companion(&ctx.agent_id) && !crate::server::resident::is_own_session(session_id) {
         if let Some(reply) = engine.last_assistant_text.clone() {
-            crate::server::resident::speak_reply(state, &reply, Some(session_id));
+            let at = crate::server::api::yinyue::SaidAt {
+                session: Some(session_id),
+                app: ctx.place.skill.as_deref(),
+            };
+            crate::server::resident::speak_reply(state, &reply, at);
         }
     }
 }
@@ -1498,7 +1503,7 @@ pub(crate) async fn start_turn(
         };
 
         run_session_turn(&ctx, &mut engine, &manager, None).await;
-        hear_her_at_table(&state_clone, &engine, &target_id_clone, &session_id_for_queue);
+        hear_her_at_table(&state_clone, &engine, &ctx, &session_id_for_queue);
 
         // TurnComplete gives the Web UI a single finalizer.
         let run_id = engine.last_run_id.clone();

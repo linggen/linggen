@@ -130,15 +130,16 @@ pub(crate) fn is_silent_reply(from_id: &str, content: &str) -> bool {
         .is_some_and(is_silence)
 }
 
-/// Say her reply aloud: its spoken line, when it has one (not SILENT).
-/// `session`: where she said it (`None`: her own thread).
+/// Say her reply: its spoken line, when it has one (not SILENT). `at`: where
+/// she said it — whether it is heard or only read is the voice's own rule
+/// (`emit_speak`).
 pub(crate) fn speak_reply(
     state: &std::sync::Arc<crate::server::ServerState>,
     reply: &str,
-    session: Option<&str>,
+    at: crate::server::api::yinyue::SaidAt<'_>,
 ) {
     if let Some(line) = spoken_line(reply) {
-        crate::server::api::yinyue::emit_speak(state, line, None, session);
+        crate::server::api::yinyue::emit_speak(state, line, None, at);
     }
 }
 

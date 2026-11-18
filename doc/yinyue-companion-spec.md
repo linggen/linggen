@@ -81,6 +81,22 @@ surface. Beats without a `surface` (old clients, `scripts/live-check.sh`) share
 one slot per app, where a blurred beat cannot clear a focused one under 10s old.
 The `sense` tool and the herald watch read the aggregate.
 
+### Heard or read — her voice only where she can't be seen
+
+Her words are spoken aloud only when the person cannot see them; at the page
+where the line shows, it is text only. One rule for everything she says —
+answers, heralds, moments — decided in one place (`emit_speak` →
+`speaks_aloud`, `server/api/yinyue.rs`) by the same judgement the heralds
+use (`resident::triggers::user_sees`): `Sight::Screen` for "at any screen",
+`Sight::Line(app)` for "at the page this line shows on". A line shows on the
+page of the place it was said in — an app's page (the turn's skill), or the
+main page for home and her own thread; on any other page it is folded away.
+The person is at that page when one of its own surfaces reads present
+(`PresenceBoard::at_page`; a typed turn names no page). A text-only line is
+`voice: false` with no clauses: the stage shows the bubble and any held
+gesture, never the talking loop, and fetches no audio — as when muted. When
+and how often she speaks up is unchanged. The phone has no spoken voice.
+
 ## Herald — watch the bus, don't call-site-inject
 
 Terminal/blocked run events are already broadcast; `server/resident/triggers.rs` subscribes

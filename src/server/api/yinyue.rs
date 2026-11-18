@@ -16,12 +16,20 @@ use serde::Deserialize;
 
 use crate::server::{ServerEvent, ServerState};
 
+/// Where a line of hers is said: its session (`None`: her own thread) — with
+/// the daily session on, the line reaches only the stage that session's
+/// person holds — and the place in it whose page shows the line: an app's
+/// skill, `None` Linggen's main page.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SaidAt<'a> {
+    pub session: Option<&'a str>,
+    pub app: Option<&'a str>,
+}
+
 /// Push a speak cue to the user's surfaces. The single producer — the
-/// event-reactive watch loop calls this when Yinyue reacts. `session`: where
-/// she said it (`None`: her own thread) — with the daily session on, the
-/// line reaches only the stage that session's person holds.
-pub fn emit_speak(state: &Arc<ServerState>, text: String, emotion: Option<String>, session: Option<&str>) {
-    emit_speak_offering(state, text, emotion, session, None);
+/// event-reactive watch loop calls this when Yinyue reacts.
+pub fn emit_speak(state: &Arc<ServerState>, text: String, emotion: Option<String>, at: SaidAt<'_>) {
+    emit_speak_offering(state, text, emotion, at, None);
 }
 
 /// A line that raised a problem, with its offers under her labels — the
@@ -30,7 +38,7 @@ pub(crate) fn emit_speak_offering(
     state: &Arc<ServerState>,
     text: String,
     emotion: Option<String>,
-    session: Option<&str>,
+    at: SaidAt<'_>,
     problem: Option<(String, Vec<crate::perception::offer::Shown>)>,
 ) {
     // Not met yet: there is no one to speak.
@@ -40,8 +48,8 @@ pub(crate) fn emit_speak_offering(
     {
         return;
     }
-    // Muted, the line still goes out — as words only.
-    let voice = !state.manager.pet_muted();
+    let voice = speaks_aloud(state, at.app);
+    let session = at.session;
     // Every line she says, from any path, restarts the quiet an app moment
     // waits for — a line an app had her say directly counts too.
     crate::server::yinyue_moments::note_spoke();
@@ -58,6 +66,15 @@ pub(crate) fn emit_speak_offering(
         problem,
         offers,
     });
+}
+
+/// The one place a line of hers is decided spoken: her words are said aloud
+/// only when the person cannot see them. At the page the line shows on
+/// (`app`, `None` the main page), or with her voice muted, it goes out as
+/// words only — the stage shows the bubble and does not talk.
+fn speaks_aloud(state: &ServerState, app: Option<&str>) -> bool {
+    use crate::server::resident::{user_sees, Sight};
+    !state.manager.pet_muted() && !user_sees(state, Sight::Line(app))
 }
 
 /// `/mute` → turn her voice off, `/unmute` → back on; any other message is
@@ -317,7 +334,7 @@ pub(crate) async fn chat_handler(
     tokio::spawn(async move {
         if let Some(reply) = crate::server::resident::run_yinyue_turn(&state, task, "user").await {
             if !reply.eq_ignore_ascii_case("silent") {
-                emit_speak(&state, reply, None, None);
+                emit_speak(&state, reply, None, SaidAt::default());
             }
         }
     });
@@ -459,6 +476,50 @@ pub(crate) async fn presence_handler(
         app: beat.app.filter(|a| !a.is_empty() && a.len() <= 40),
     });
     (StatusCode::OK, "ok").into_response()
+}
+
+/// One place decides whether a line of hers is heard: her cue is sent from
+/// this file alone, its voice set by [`speaks_aloud`], and nothing else asks
+/// whether a line is seen. A second sender or a second judgement fails here
+/// until it is looked at and listed.
+#[cfg(test)]
+mod one_voice_rule {
+    fn rust_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                rust_files(&path, out);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                out.push(path);
+            }
+        }
+    }
+
+    /// Each file's count of `needle`, against the files it must be in.
+    fn check(needle: &str, listed: &[(&str, usize)]) {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut files = Vec::new();
+        for dir in ["src", "crates/linggen-engine/src"] {
+            rust_files(&root.join(dir), &mut files);
+        }
+        for file in files {
+            let rel = file.strip_prefix(root).unwrap().to_string_lossy().to_string();
+            let found = std::fs::read_to_string(&file).unwrap().matches(needle).count();
+            let want = listed.iter().find(|(f, _)| *f == rel).map_or(0, |e| e.1);
+            assert_eq!(found, want, "{rel}: `{needle}` — her voice has one rule; look at it, then list it");
+        }
+    }
+
+    #[test]
+    fn her_cue_is_sent_and_its_voice_decided_in_one_place() {
+        // Built from parts, so this test's own text is no match.
+        let send = format!("{}{}", "events_tx.send(ServerEvent::", "PetSpeak");
+        check(&send, &[("src/server/api/yinyue.rs", 1)]);
+        let voice = format!("{}{}", "speaks_", "aloud(");
+        check(&voice, &[("src/server/api/yinyue.rs", 2)]);
+        let seen = format!("{}{}", "Sight::", "Line");
+        check(&seen, &[("src/server/api/yinyue.rs", 1), ("src/server/resident/triggers.rs", 1)]);
+    }
 }
 
 #[cfg(test)]

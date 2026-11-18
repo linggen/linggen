@@ -436,6 +436,12 @@ impl AgentManager {
         self.presence.lock_ok().front(now)
     }
 
+    /// Whether the person is at a page showing `app` now (`None`: the main
+    /// page) — `PresenceBoard::at_page`.
+    pub fn presence_at_page(&self, app: Option<&str>) -> bool {
+        self.presence.lock_ok().at_page(app, crate::util::now_ts_secs())
+    }
+
     /// A person who just typed to an agent is present, wherever they typed it.
     ///
     /// The beat above is sent by browser surfaces only, so a turn from a skill

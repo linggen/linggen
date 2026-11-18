@@ -89,7 +89,7 @@ fn herald_ask(
     if !state.manager.agent_present(YINYUE_AGENT) {
         return; // not met: the prompt waits on the screen, as it does for anyone
     }
-    if user_sees_screen(state) {
+    if user_sees(state, Sight::Screen) {
         return; // the question is on the screen they're looking at
     }
     let (summary, options) = ask_summary(&questions);
@@ -130,7 +130,7 @@ fn herald_ask(
             );
             return;
         }
-        if user_sees_screen(&state) {
+        if user_sees(&state, Sight::Screen) {
             tracing::info!("[yinyue-watch] user back at the screen — herald dropped");
             return;
         }
@@ -138,7 +138,7 @@ fn herald_ask(
             "[yinyue-watch] Yinyue heralds ({} chars, neutral)",
             line.len()
         );
-        crate::server::api::yinyue::emit_speak(&state, line, Some("neutral".to_string()), None);
+        crate::server::api::yinyue::emit_speak(&state, line, Some("neutral".to_string()), Default::default());
     });
 }
 
@@ -149,7 +149,7 @@ fn herald_kept_ask(state: &Arc<ServerState>, app: String, question_id: String, s
     if delegated_session(state, session_id.as_deref()) || !state.manager.agent_present(YINYUE_AGENT) {
         return;
     }
-    if user_sees_screen(state) {
+    if user_sees(state, Sight::Screen) {
         return;
     }
     let state = state.clone();
@@ -166,10 +166,10 @@ fn herald_kept_ask(state: &Arc<ServerState>, app: String, question_id: String, s
         let Some(line) = spoken_line(&reply) else {
             return;
         };
-        if !ask_still_pending(&state, &question_id).await || user_sees_screen(&state) {
+        if !ask_still_pending(&state, &question_id).await || user_sees(&state, Sight::Screen) {
             return;
         }
-        crate::server::api::yinyue::emit_speak(&state, line, Some("neutral".to_string()), None);
+        crate::server::api::yinyue::emit_speak(&state, line, Some("neutral".to_string()), Default::default());
     });
 }
 
@@ -278,7 +278,7 @@ fn on_agent_chat(
                         &state,
                         line,
                         Some("neutral".to_string()),
-                        None,
+                        Default::default(),
                     );
                 } else {
                     tracing::info!("[yinyue-watch] chose silence (agent_chat)");
@@ -368,7 +368,7 @@ pub(super) fn handle_notification(state: &Arc<ServerState>, payload: Notificatio
             if agent_id == YINYUE_AGENT {
                 return; // never herald her own turns
             }
-            if user_sees_screen(state) {
+            if user_sees(state, Sight::Screen) {
                 return; // they're here; the reply is already on screen
             }
             let state = state.clone();
@@ -463,15 +463,33 @@ pub(super) fn error_announce_allowed() -> bool {
     true
 }
 
-/// Whether the user is at the screen right now. A herald of what they can
-/// already see — a finished reply, a question with its buttons — is noise: she
-/// speaks only when they have stepped away.
-pub(super) fn user_sees_screen(state: &Arc<ServerState>) -> bool {
-    state
-        .manager
-        .presence_snapshot()
-        .state(crate::util::now_ts_secs())
-        != "away"
+/// What the person must be looking at for something to reach them by sight.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Sight<'a> {
+    /// Whatever screen they are at: a finished reply, a question with its
+    /// buttons. A herald of what they can already see is noise — she speaks
+    /// up only when they have stepped away.
+    Screen,
+    /// One line of hers, shown on one page only: the page of the place it
+    /// was said in — an app's (its skill), `None` Linggen's main page. On any
+    /// other page it is folded away, so it is not seen.
+    Line(Option<&'a str>),
+}
+
+/// Whether the person sees `sight` right now — the one judgement for her
+/// heralds (does the person see the screen) and her voice (does the person
+/// see this line: spoken only when not).
+pub(crate) fn user_sees(state: &ServerState, sight: Sight<'_>) -> bool {
+    match sight {
+        Sight::Screen => {
+            state
+                .manager
+                .presence_snapshot()
+                .state(crate::util::now_ts_secs())
+                != "away"
+        }
+        Sight::Line(app) => state.manager.presence_at_page(app),
+    }
 }
 
 /// Whether an AskUser question (or permission prompt) is still awaiting the
@@ -520,6 +538,14 @@ pub(crate) fn moment_source(asked: bool, in_use: bool) -> &'static str {
 pub(crate) struct Table {
     pub session: String,
     pub app: Option<String>,
+}
+
+/// The page a line said at `table` shows on: in a day's session the app it
+/// stands in, elsewhere the session's own app (`None`: the main page).
+fn table_page(state: &ServerState, table: &Table) -> Option<String> {
+    table.app.clone().or_else(|| {
+        crate::server::chat::turn_place::of_session_id(&state.manager, &table.session).skill
+    })
 }
 
 /// Wake her to tell a mission run's fault. Unprompted: quiet hours make it
@@ -586,7 +612,9 @@ pub(super) async fn wake_and_offer(
         Some(r) if !r.offers.is_empty() => format!("{kickoff} {}", super::offer_labels::CONTRACT),
         _ => kickoff,
     };
-    let said_in = table.as_ref().map(|t| t.session.clone());
+    // The app chat it is said at, and the place there whose page shows it.
+    let said_in = table.clone();
+    let shown_on = table.as_ref().and_then(|t| table_page(&state, t));
     // A failure of hers held for a turn that can carry it rides this one —
     // her own thread's unprompted turns only: never an app's table, an asked
     // reading or a tap's outcome, whose answer is about something else.
@@ -633,7 +661,10 @@ pub(super) async fn wake_and_offer(
         &state,
         line.clone(),
         Some(emotion.to_string()),
-        said_in.as_deref(),
+        crate::server::api::yinyue::SaidAt {
+            session: said_in.as_ref().map(|t| t.session.as_str()),
+            app: shown_on.as_deref(),
+        },
         raised.map(|r| (r.problem.to_string(), shown)),
     );
     Some(line)

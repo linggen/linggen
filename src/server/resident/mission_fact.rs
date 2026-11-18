@@ -53,7 +53,7 @@ pub(super) fn hand_or_hold(state: &Arc<ServerState>, run: Held) {
     let state = state.clone();
     tokio::spawn(async move {
         let quiet = quiet_now(&state).await;
-        if quiet.is_none() && super::triggers::user_sees_screen(&state) {
+        if quiet.is_none() && super::triggers::user_sees(&state, super::triggers::Sight::Screen) {
             tracing::info!(
                 "[yinyue-watch] mission run {} had failures; handing Yinyue the fact",
                 run.run_id
@@ -126,7 +126,7 @@ pub async fn mission_fact_loop(state: Arc<ServerState>) {
         }
         let quiet = quiet_now(&state).await;
         record_waits(&waiting, quiet.as_ref());
-        let ready = quiet.is_none() && super::triggers::user_sees_screen(&state);
+        let ready = quiet.is_none() && super::triggers::user_sees(&state, super::triggers::Sight::Screen);
         let taken = take_ready(&mut HELD.lock().unwrap_or_else(|e| e.into_inner()), ready);
         for run in taken {
             hand(&state, &run).await;

@@ -37,4 +37,5 @@ mod shared_table;
 mod skills;
 mod support;
 mod unprompted;
+mod voice_seen;
 mod workspace;

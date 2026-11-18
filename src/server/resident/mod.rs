@@ -46,7 +46,7 @@ use session_roll::*;
 use spoken::*;
 pub(crate) use spoken::{is_engine_prompt, is_silent_reply, speak_reply};
 pub use triggers::yinyue_watch_loop;
-pub(crate) use triggers::{moment_source, wake_for_moment, wake_herald, Table};
+pub(crate) use triggers::{moment_source, user_sees, wake_for_moment, wake_herald, Sight, Table};
 pub(crate) use turn::run_yinyue_turn;
 pub(crate) use turn::{resolve_pet_model, tune_companion};
 use turn::{run_moment_turn, Reach};

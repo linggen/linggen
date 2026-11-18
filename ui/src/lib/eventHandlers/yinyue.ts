@@ -160,8 +160,10 @@ export function handlePetSpeak(item: UiEventOf<'pet_speak'>): void {
   const raised: SpeechRaised | undefined = problem
     ? { problem, offers: (item.data?.offers as OfferButton[] | undefined) ?? [] }
     : undefined;
-  // Her voice is muted on this Mac: the words, no audio fetched.
+  // A line the person can see where it shows, or her voice muted: the words,
+  // no audio fetched. Like any new line it supersedes one still sounding.
   if (item.data?.voice === false) {
+    hush();
     showWords(text, emotion, raised);
     return;
   }

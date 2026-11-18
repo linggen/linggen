@@ -171,6 +171,18 @@ impl PresenceBoard {
             })
     }
 
+    /// Whether the person is at a page showing `app` at `now` (`None`:
+    /// Linggen's main page): one of that page's own surfaces reads present, as
+    /// [`Presence::state`] reads it. A typed turn names no page, so it never
+    /// counts here.
+    pub fn at_page(&self, app: Option<&str>, now: u64) -> bool {
+        let turn = format!("s:{USER_TURN_SURFACE}");
+        self.surfaces
+            .iter()
+            .filter(|(key, _)| **key != turn)
+            .any(|(_, p)| p.app.as_deref() == app && p.state(now) != "away")
+    }
+
     #[cfg(test)]
     fn len(&self) -> usize {
         self.surfaces.len()
@@ -301,6 +313,45 @@ mod tests {
 
         // The page stops beating: nothing is in front once it is not live.
         assert_eq!(b.front(now + BEAT_LIVE_SECS + 1), None);
+    }
+
+    fn page(surface: &str, app: Option<&str>, focused: bool, idle_s: u64) -> Beat {
+        Beat {
+            app: app.map(str::to_string),
+            ..beat(Some(surface), focused, false, idle_s)
+        }
+    }
+
+    /// A person reading the page a line shows on is at that page; the page
+    /// hidden, left idle, or another app's page in front is not.
+    #[test]
+    fn the_person_is_at_a_page_only_while_its_own_surface_reads_present() {
+        let now = 1_000;
+        let mut b = PresenceBoard::default();
+        assert!(!b.at_page(None, now), "nothing beats: at no page");
+
+        b.record(page("main", None, true, 3), now);
+        assert!(b.at_page(None, now), "the main page, focused, input a moment ago");
+        assert!(!b.at_page(Some("dj"), now), "another app's page is not in front");
+
+        b.record(page("main", None, false, 0), now + 1);
+        assert!(!b.at_page(None, now + 1), "the main page hidden or blurred");
+
+        b.record(page("dj", Some("dj"), true, 30), now + 1);
+        assert!(b.at_page(Some("dj"), now + 1), "an app's page, being read");
+        assert!(!b.at_page(None, now + 1));
+        assert!(!b.at_page(Some("dj"), now + 200), "walked away from it");
+    }
+
+    #[test]
+    fn a_typed_turn_is_at_no_page() {
+        let now = 1_000;
+        let mut b = PresenceBoard::default();
+        b.record(page(USER_TURN_SURFACE, None, true, 0), now);
+        b.record(page(USER_TURN_SURFACE, Some("dj"), true, 0), now);
+        assert!(!b.at_page(None, now));
+        assert!(!b.at_page(Some("dj"), now));
+        assert_eq!(b.snapshot(now).state(now), "typing", "yet they are present");
     }
 
     #[test]
