@@ -78,9 +78,11 @@ pub const BRANCHES: &[Branch<&str>] = &[
         // relevance threshold to a model invites exactly the over-fill
         // failure these narrow schemas exist to prevent: a guessed value
         // silently narrows recall to zero rows. Omitted here, the daemon's
-        // store-wide `recall_min_score` applies.
+        // store-wide `recall_min_score` applies. `type` is the same: an
+        // app's auto-recall searches one row type at a time; a model is
+        // told never to pass it.
         extra: None,
-        hidden: &["min_score", "from", "outcome"],
+        hidden: &["min_score", "from", "outcome", "type"],
         fixed: &[],
         check: None,
         timeout_ms: CALL_TIMEOUT_MS,

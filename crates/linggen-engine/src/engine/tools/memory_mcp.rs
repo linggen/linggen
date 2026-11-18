@@ -654,6 +654,33 @@ mod tests {
         assert!(own.get("user_directed").is_none(), "{own}");
     }
 
+    /// The dream's promote and the scan's backfill as `agents/memory.md`
+    /// writes them run as written: the folded `memory_add` takes every field
+    /// (the original row's session, its scope as `cwd`, its time), and a
+    /// field the call carries is never filled over.
+    #[test]
+    fn the_promote_and_backfill_shapes_run_as_written() {
+        let promote = json!({"content": "Alex keeps bees", "type": "fact", "from": "user", "tier": "semantic",
+            "occurred_at": "2026-11-10T12:00:00Z", "source_session": "sess-original", "cwd": "/work/harbor", "summary": "bees"});
+        let backfill = json!({"content": "Alex keeps bees", "type": "fact", "from": "user", "tier": "episodic",
+            "occurred_at": "2026-11-10T12:00:00Z", "source_session": "cc-session", "cwd": "/work/harbor"});
+        for sent in [promote, backfill] {
+            let ran = match catalog().resolve(View::Local, "memory_add", sent.clone()) {
+                ling_mem::catalog::Resolved::Call { branch, args } => {
+                    assert_eq!(branch.op, "add");
+                    args
+                }
+                ling_mem::catalog::Resolved::Refused(why) => panic!("{sent}: {why}"),
+                ling_mem::catalog::Resolved::Unknown => panic!("memory_add is folded"),
+            };
+            for field in ["source_session", "cwd", "occurred_at", "from", "tier"] {
+                assert_eq!(ran[field], sent[field], "{field}");
+            }
+            assert!(!wants_project(&sent, "cwd"), "the row's own scope is not stamped over");
+            assert!(has(&sent, "source_session"), "the original session is not filled over");
+        }
+    }
+
     /// The engine's own agents, missions and prompts call memory by its
     /// folded tools: no retired tool name (a legacy name that is no folded
     /// tool) is left in them for a model to call into nothing.

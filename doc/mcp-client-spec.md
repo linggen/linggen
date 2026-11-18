@@ -252,7 +252,8 @@ A declaration names the **server**, not each tool: `mcp__memory` in an agent's
 `tools:`, a skill's `allowed-tools:` or a mission's expands to what that server
 advertises, through one rule shared by prompt assembly and the scope sets
 (`extensions/scope.rs`). Pulse is the exception — it reads the founder's
-context and never curates it, so it names the three read tools.
+context and never curates it, so it names the read tool alone
+(`mcp__memory__memory_search`: its semantic, get and list).
 
 `[agent].ling_mem_url` is **gone** (2.3): the engine hosts the store, so the
 built-in memory server's endpoint is its own `/mem/mcp` and the program-side

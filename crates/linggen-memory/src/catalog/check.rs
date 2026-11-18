@@ -398,6 +398,13 @@ mod tests {
         assert_eq!(semantic, None, "nothing given fits no branch");
         let search = catalog().branch_of(View::Local, "memory_search", &json!({"query": "q"})).unwrap();
         assert!(search.accepts("from") && !search.advertises("from"), "a hidden filter is accepted, never shown");
+        // Auto-recall's exact shapes, the app's one-type search included.
+        for recall in [
+            json!({"query": "q", "limit": 20, "min_score": 0.3, "scope_root": "/w"}),
+            json!({"query": "q", "limit": 20, "scope_root": "/w", "type": "fact"}),
+        ] {
+            assert_eq!(call("memory_search", recall).0, "semantic");
+        }
     }
 
     /// Unknown ops, fields of another branch, missing and bad values are
