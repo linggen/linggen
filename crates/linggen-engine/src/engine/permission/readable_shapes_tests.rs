@@ -1,5 +1,6 @@
 //! Ordinary shapes the gate reads as the shell does (`permission-spec.md`
-//! § Bash path gating): `git grep`'s pattern is text. Each step has a table
+//! § Bash path gating): `git grep`'s pattern is text, and `$?` is a number.
+//! Each step has a table
 //! of what it newly allows and a table, at least as long, of what must still
 //! be judged as before.
 
@@ -116,4 +117,71 @@ fn a_git_grep_in_the_folder_runs_unasked() {
         let cmd = "git grep -n '/api/config' /etc/x";
         assert!(!allowed(&check(cmd, coding)), "{cmd} coding={coding}");
     }
+}
+
+// ---------------------------------------------------------------------------
+// `$?`: a number
+// ---------------------------------------------------------------------------
+
+/// Run unasked in a coding session: `$?` is read as a number.
+const STATUS_READ: &[&str] = &[
+    "scripts/scratch-test.sh --lib some_test; echo EXIT=$?",
+    "echo $?",
+    "echo \"$?\"",
+    "echo ${?}",
+    "cargo test; echo \"exit: $?\"",
+    "cargo build 2>&1 | tail -3; echo \"status $? of 1\"",
+    "test $? -eq 0 && echo ok",
+    "false || echo \"failed with $?\"",
+    "echo rc=$? \"${?}\"",
+];
+
+/// Left as they are (a `$` in them keeps them unreadable): `$?` glued to
+/// other text, in another form, where a program is named, or another
+/// variable beside it.
+const STATUS_UNREAD: &[&str] = &[
+    "echo $?x",
+    "echo $??",
+    "echo ${?:-1}",
+    "echo ${?}x",
+    "echo \"$?\"x",
+    "echo $?$?",
+    "echo -$?",
+    "echo --rc=$?",
+    "ls /$?",
+    "cat /etc/$?",
+    "ls ~$?",
+    "ls ./$?",
+    "echo $?>f",
+    "echo $?/etc",
+    "echo ($?)",
+    "$?",
+    "X=1 $?",
+    "env $? ls",
+    "echo $#",
+    "echo $$",
+    "echo $!",
+    "echo $0",
+    "echo $@",
+];
+
+#[test]
+fn the_exit_status_is_read_as_a_number() {
+    for cmd in STATUS_READ {
+        assert!(allowed(&check(cmd, true)), "{cmd}: {:?}", check(cmd, true));
+    }
+}
+
+#[test]
+fn the_exit_status_glued_or_beside_another_variable_is_still_unread() {
+    assert!(STATUS_UNREAD.len() >= STATUS_READ.len());
+    for cmd in STATUS_UNREAD {
+        assert_eq!(super::known_vars::with_status(cmd), None, "{cmd}");
+        assert!(!allowed(&check(cmd, true)), "{cmd}");
+    }
+    // Another variable beside it keeps the command unreadable.
+    assert!(!allowed(&check("echo $? $x", true)));
+    // Single quotes and a backslash keep the dollar a dollar.
+    assert_eq!(super::known_vars::with_status("echo '$?'"), None);
+    assert_eq!(super::known_vars::with_status("echo \\$?"), None);
 }

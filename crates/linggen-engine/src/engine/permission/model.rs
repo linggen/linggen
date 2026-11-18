@@ -560,11 +560,11 @@ pub fn check_permission_for(
     coding: bool,
     ceiling: Option<PermissionMode>,
 ) -> PermissionCheckResult {
-    // `$HOME` is read as the shell reads it, so a command naming the home
-    // folder is judged by the path it reaches (`known_vars`).
+    // `$HOME` and `$?` are read as the shell reads them, so a command naming
+    // the home folder is judged by the path it reaches (`known_vars`).
     let read_as = bash_command
         .filter(|_| tool == "Bash")
-        .and_then(super::known_vars::with_home);
+        .and_then(super::known_vars::read_as_the_shell);
     let bash_command = read_as.as_deref().or(bash_command);
     let result = check_grants(
         tool,
