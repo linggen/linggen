@@ -600,8 +600,9 @@ pub(super) fn turn_model(
 /// Set the engine's model for this turn by the one rule
 /// (`model_choice::resolve`), against the agent's own default. A consumer
 /// (proxy room) runs only the room's `shared_models`. The picker's model is
-/// kept as the member's once it runs; a kept or picked model that is
-/// replaced is cleared, so the member stops asking for it.
+/// kept as the member's once it runs — in the day's session it is for the
+/// turn alone ([`turn_only`]); a kept or picked model that is replaced is
+/// cleared, so the member stops asking for it.
 ///
 /// An app's default model is not applied here: branded apps pin it as the
 /// request's model (their skill page sends ?model= only in app_mode), while
@@ -632,6 +633,9 @@ pub(super) async fn resolve_effective_model(
     let Some(sid) = session_id else {
         return;
     };
+    if matches!(asked, TurnModel::Request(_)) && turn_only(manager, sid) {
+        return;
+    }
     match asked {
         TurnModel::Request(_) if choice.is_asked() => {
             let live = Some(choice.model().to_string());
@@ -642,6 +646,14 @@ pub(super) async fn resolve_effective_model(
         }
         _ => {}
     }
+}
+
+/// In the day's session (setting on) a model sent with a message is for
+/// that turn alone: the member keeps one model for the day, set only by the
+/// picker (`PATCH /api/sessions`), so a page opened earlier, or one that
+/// pins its app's model, never moves the other pages onto its own.
+fn turn_only(manager: &AgentManager, session_id: &str) -> bool {
+    manager.daily_session() && crate::server::day_session::is_day(session_id)
 }
 
 /// Promote a session created by the mission scheduler to a user-owned

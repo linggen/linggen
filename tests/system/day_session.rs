@@ -1292,3 +1292,27 @@ async fn clear_at_home_keeps_the_days_summary() {
     assert!(opening(&call).contains("SUMMARY: Alex sent filler"), "the thread lost the summary");
     assert!(!call.text().contains("filler-00001"), "the rows before the summary came back");
 }
+
+/// One model a member a day: only the picker keeps one. A model a page
+/// sends with its message is for that turn; the main page stays on the
+/// picker's.
+#[tokio::test]
+async fn in_the_day_a_pages_model_is_for_its_turn_only() {
+    let setup = Setup::default().script(Agent::Ling, vec![text("Rolled."), text("Home.")]);
+    let (w, _) = day_world_at(12, setup).await;
+    let day = w.api.create_session(json!({"title": "Dice", "skill": "dice"})).await;
+    w.api
+        .patch("/api/sessions", json!({"session_id": day, "agent_id": "ling", "model_id": "fake-sol"}))
+        .await;
+    let mark = w.mark();
+    let body = json!({"session_id": day, "project_root": w.work(), "message": "Roll",
+        "skill_name": "dice", "model_id": "fake-eye"});
+    w.api.post("/api/chat", body).await;
+    w.finish_run(&day, Agent::Ling, mark).await;
+    turn_at(&w, &day, None, "Back on the main page", Agent::Ling).await;
+
+    let models: Vec<String> = w.model.calls_of(Agent::Ling).iter().map(|c| c.model().to_string()).collect();
+    assert_eq!(models, ["fake-eye-1", "fake-sol-1"], "the page's model was kept for the day");
+    let kept = meta(&w, &day);
+    assert!(kept.contains("fake-sol") && !kept.contains("fake-eye"), "{kept}");
+}

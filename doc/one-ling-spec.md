@@ -188,6 +188,9 @@ session, prompt and row is as before. On (decided by the builder 2026-11-15/16):
 - **Clear** takes the rows of the place it is pressed in: an app's page its
   app's, the main page home's. The compaction summary is the day's, no
   place's: no Clear takes it and no page folds it.
+- **One model a member for the day**: only the picker keeps one
+  (`PATCH /api/sessions`); a model a page sends with a message is for that
+  turn and is not kept.
 - **A `!` command** stands where a turn from the same page stands (its page
   names its app as a chat turn does): at an app's page it starts in the
   app's folder, and its `cd` is kept for that place alone; home's starts in
