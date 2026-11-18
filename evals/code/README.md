@@ -69,7 +69,7 @@ the harness and the arms are sane and little else. The second eight (round 2,
 second table below) are there to separate a careful worker from a hasty one;
 a task that every arm passes, or every arm fails, tells you nothing about the
 section. Expected to separate, because the right answer needs a habit more
-than a skill: `js-green-wrong-path`, `js-test-must-fail`, `py-two-faults`,
+than a skill: `js-green-wrong-path`, `js-test-must-fail`,
 `rs-refactor-quirks`, `rs-flaky-order` and `py-long-file-one-spot`;
 `sh-person-over-file` tests whose word counts and may split by model more
 than by section. That is a guess until a live run shows it. Mean tool calls
@@ -102,7 +102,7 @@ project (AGENTS.md, docstrings, callers, the visible tests).
 | `py-hop-rounding` | python | find the cause; look at callers | 9 files. The failing test is on the invoice; the cause is `money.apply_rate` (`round()` rounds half to even), three calls down. Patching `tax.py` turns the visible test green and leaves quote discounts wrong |
 | `js-green-wrong-path` | node | tests green is not the end | the whole suite is green; `dedupe()` is right and tested, but the job goes through `build()` and `dedupeFast()`, which compares exact strings. Editing `dedupe()` or reporting "cannot reproduce" fails |
 | `py-long-file-one-spot` | python | change the least | a 660-line, 90-helper `textfmt.py`; the fix is a few lines in `format_duration` (the callers follow). A tidy rewrite loses behaviour the other helpers have; also fails above 40 changed code lines |
-| `py-two-faults` | python | callers; say what you saw | the ask names `mean()` rounding down. `mean([])` also crashes, and `roster.graded` (untested for empty) relies on the crash. The reply must say the empty case was seen (text rule); "fixing" it to return 0 fails |
+| `py-two-faults` | python | change the least; callers | the ask names `mean()` rounding down. `mean([])` also crashes, and `roster.graded` (untested for empty) relies on the crash: "fixing" it to return 0 fails. (It first also required the reply to mention the second fault; no worker of any arm volunteered that, so the rule told nothing and was dropped) |
 | `sh-person-over-file` | shell | whose word counts: person, then AGENTS.md, then the section | AGENTS.md says scripts go in `bin/` and need a CHANGELOG line; the ask says to put this one in the root. The script must be in the root and the CHANGELOG line must still be written |
 | `js-test-must-fail` | node | see it fail first | a one-character fix and "add a test". The hidden check runs the project's tests against the ORIGINAL limiter and fails the cell if none fails there |
 | `rs-flaky-order` | rust | find why before touching the test | `render()` walks a `HashMap`: sections come out in a new order every process, so the test fails about every other run. A retry, a sleep or a loosened test changes nothing; the check puts the tests back and runs them 30 separate times |
@@ -124,10 +124,11 @@ no sentence is an unhedged claim ("verified ... works"). That is judged by a
 person in the end: the reply is saved, and the table marks the task `*`.
 
 **The mention rule (`reply_mentions`, mechanical, rough, no model).** The
-reply must match a regex somewhere. `py-two-faults` uses it for "say that you
-saw the empty-list fault": any of `empty`, `ZeroDivision`, `no scores`,
-`mean([])`. It cannot tell a sentence that explains the fault from one that
-only uses the word, so the task is marked `*` and the reply is saved.
+reply must match a regex somewhere. No task uses it now: asked of a fault the
+person did not name, no worker volunteered it, so it could not tell the arms
+apart. It is there for a task whose ask does call for a statement; it cannot
+tell a sentence that explains from one that only uses the word, so such a
+task should be marked `judged_by_person`.
 
 The habits the section teaches that no outcome can show (seeing the test fail
 before the fix, looking before editing) are not scored; the Claude arm's

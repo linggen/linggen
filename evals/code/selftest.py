@@ -219,7 +219,8 @@ def main():
             if n != want_n:
                 problems.append("%s/%s tool calls read as %r, want %r" % (task, arm, n, want_n))
         # the checks that can fail on a reply, on their own
-        pattern = check.load_task("py-two-faults")["reply_mentions"]
+        # No task uses the rule now; it is kept working for one that will.
+        pattern = r"empty|ZeroDivision|\bno scores\b|mean\(\[\]\)"
         quiet = "**Changed:** stats.py - mean() uses / now.\n**Verified:** python3 -m unittest passes.\n**NOT verified:** nothing."
         aware = "Changed mean() to /. mean([]) still raises ZeroDivisionError; roster.graded relies on it, so I left it."
         if check.mentions(quiet, pattern)[0] or not check.mentions(aware, pattern)[0]:
