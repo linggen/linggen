@@ -94,6 +94,15 @@ impl AgentEngine {
         self.cached_system_prompt = None;
     }
 
+    /// How much of the memory this engine's member recalls per turn: `count`
+    /// rows at no less than `min_score` (`None`: the store's floor). A
+    /// member's own, in any session it speaks in; the configured recall
+    /// until a member tunes it (the companion's, from her settings).
+    pub fn tune_recall(&mut self, count: usize, min_score: Option<f32>) {
+        self.cfg.memory_recall_count = count;
+        self.cfg.memory_inject_min_score = min_score;
+    }
+
     /// Whether a mission is in charge of this engine.
     pub fn runs_mission(&self) -> bool {
         self.active_mission.is_some()

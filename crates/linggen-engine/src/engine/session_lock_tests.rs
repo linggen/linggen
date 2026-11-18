@@ -52,8 +52,8 @@ const LISTED: &[(&str, usize, &str)] = &[
     ),
     (
         "src/server/resident/turn.rs",
-        4,
-        "the companion's recall; tests (2)",
+        2,
+        "tests",
     ),
     ("src/server/chat/light.rs", 1, "live models"),
     ("src/server/chat/turn_place.rs", 2, "the session's grants"),

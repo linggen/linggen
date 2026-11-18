@@ -458,8 +458,7 @@ pub(crate) fn tune_companion(
     engine: &mut crate::engine::AgentEngine,
     pet: &crate::config::PetConfig,
 ) {
-    engine.cfg.memory_recall_count = pet.recall_count.max(1);
-    engine.cfg.memory_inject_min_score = Some(pet.recall_min_score);
+    engine.tune_recall(pet.recall_count.max(1), Some(pet.recall_min_score));
 }
 
 /// Resolve Yinyue's model from the `pet.model` setting. An explicit id wins;
