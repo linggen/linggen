@@ -384,7 +384,6 @@ async fn tell_in_place(
     drop(gate);
     let mut engine = engine.lock().await;
     engine.set_parent_agent(None);
-    engine.last_assistant_text = None;
     let ctx = super::chat::ChatRunCtx {
         via: None,
         state: state.clone(),
@@ -399,7 +398,7 @@ async fn tell_in_place(
         sender: Some(sender),
         silence_ok: false,
         place: told_at,
-        turn: None,
+        turn: Default::default(),
     };
     super::chat::run_session_turn(&ctx, &mut engine, &state.manager, None).await;
 }

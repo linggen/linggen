@@ -71,7 +71,7 @@ const LISTED: &[(&str, usize, &str)] = &[
         "a delegated child's task (its own fresh engine)",
     ),
     // Bypasses: a turn's settings written by its caller.
-    ("src/server/chat/handler.rs", 5, "a turn started with no settings; a member's seat"),
+    ("src/server/chat/handler.rs", 4, "a member's seat"),
     ("src/server/chat/structured.rs", 11, "a reply's run"),
     ("src/server/chat/plan_flow.rs", 12, "a plan's run and its execution"),
     ("src/server/chat/skill_dispatch.rs", 4, "a skill command's run"),
@@ -81,8 +81,6 @@ const LISTED: &[(&str, usize, &str)] = &[
         5,
         "a cleared chat; the prompt export's seat and withheld tools",
     ),
-    ("src/server/resident/triggers.rs", 1, "a delivery's turn"),
-    ("src/server/tasks.rs", 1, "a background task's end turn"),
     ("src/server/mcp_agent.rs", 2, "an agent_run's task"),
     // Not the engine's: another struct's field of the same name.
     (

@@ -88,8 +88,8 @@ pub(super) struct ChatRunCtx {
     /// ends.
     pub(crate) place: crate::engine::turn_place::TurnPlace,
     /// What this turn sets for itself (`AgentEngine::begin_turn`), put back
-    /// when it ends. `None`: the turn keeps what the engine holds.
-    pub(crate) turn: Option<crate::engine::turn_place::TurnSettings>,
+    /// when it ends.
+    pub(crate) turn: crate::engine::turn_place::TurnSettings,
 }
 
 impl ChatRunCtx {

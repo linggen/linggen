@@ -815,10 +815,7 @@ pub(crate) async fn run_session_turn(
     };
     // The turn's own settings; what closes it names this turn's run, never
     // the last one's.
-    match ctx.turn.clone() {
-        Some(turn) => engine.begin_turn(turn),
-        None => engine.last_run_id = None,
-    }
+    engine.begin_turn(ctx.turn.clone());
     seat_member(engine, ctx).await;
     engine.withhold_session_tools(&manager.global_sessions, ctx.session_id.as_deref());
     super::thread::sync(engine, ctx).await;
@@ -835,10 +832,7 @@ pub(crate) async fn run_session_turn(
     }
     dispatch_turn(ctx, engine, manager, &ctx.clean_msg).await;
     super::thread::mark(engine, ctx);
-    match ctx.turn {
-        Some(_) => engine.end_turn(),
-        None => super::turn_place::leave_turn_place(engine),
-    }
+    engine.end_turn();
 }
 
 /// Her words at a table that isn't her own thread are heard, too.
@@ -1505,7 +1499,7 @@ pub(crate) async fn start_turn(
             via: via.clone(),
             silence_ok: false,
             place: turn_place,
-            turn: Some(turn),
+            turn,
         };
 
         run_session_turn(&ctx, &mut engine, &manager, None).await;
