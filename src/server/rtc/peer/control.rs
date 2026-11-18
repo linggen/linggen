@@ -104,7 +104,7 @@ pub(super) fn handle_control_message(
             // A stage it holds is now its person's.
             if let Some(a) = &resolved {
                 let person = person_for(user_ctx, Some(&a.device));
-                state.yinyue_identify(peer_id, crate::server::day_session::person_of(Some(&person)));
+                state.yinyue_identify(peer_id, crate::server::person::Person::from_wire(Some(&person)));
             }
             if resolved.is_none() && !token.is_empty() {
                 tracing::warn!("[rtc] identify with an unknown device token — staying anonymous");
@@ -227,7 +227,7 @@ pub(super) fn handle_control_message(
                 .and_then(|v| v.as_str())
                 .filter(|sid| crate::server::day_session::may_enter(sid, Some(&person)))
                 .map(str::to_string);
-            let whose = crate::server::day_session::person_of(Some(&person));
+            let whose = crate::server::person::Person::from_wire(Some(&person));
             state.yinyue_subscribe(peer_id, stage, session, whose);
             None
         }

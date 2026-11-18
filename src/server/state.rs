@@ -4,7 +4,7 @@
 
 use crate::engine::agent::AgentManager;
 use crate::server::bridge::BridgeHub;
-use crate::server::day_session::Whose;
+use crate::server::person::Person;
 use crate::server::rtc;
 use crate::util::LockExt;
 use std::collections::HashMap;
@@ -114,8 +114,8 @@ pub struct YinyuePresenter {
     pub stage: bool,
     /// The app chat session of the page the stage stands on, when it has one.
     pub session: Option<String>,
-    /// The person whose device this surface is (`day_session::person_of`).
-    pub person: Whose,
+    /// The person whose device this surface is.
+    pub person: Person,
 }
 
 /// The app chat she is presenting in: the holder's, when the holder is a
@@ -149,7 +149,7 @@ pub fn yinyue_holder_of(reg: &[YinyuePresenter]) -> Option<u64> {
 /// Who holds her for `person`'s lines: with the daily session on
 /// (`Some`), the holder among that person's own surfaces alone — a stage is
 /// held per person; off (`None`), the one holder of all.
-pub fn yinyue_holder_for(reg: &[YinyuePresenter], person: Option<&Whose>) -> Option<u64> {
+pub fn yinyue_holder_for(reg: &[YinyuePresenter], person: Option<&Person>) -> Option<u64> {
     let Some(person) = person else {
         return yinyue_holder_of(reg);
     };
@@ -162,7 +162,7 @@ pub fn yinyue_holder_for(reg: &[YinyuePresenter], person: Option<&Whose>) -> Opt
 }
 
 /// [`yinyue_stage_session_of`] among `person`'s own surfaces (`None`: all).
-pub fn yinyue_stage_session_for(reg: &[YinyuePresenter], person: Option<&Whose>) -> Option<String> {
+pub fn yinyue_stage_session_for(reg: &[YinyuePresenter], person: Option<&Person>) -> Option<String> {
     let Some(person) = person else {
         return yinyue_stage_session_of(reg).map(str::to_string);
     };
@@ -176,7 +176,7 @@ pub fn yinyue_stage_session_for(reg: &[YinyuePresenter], person: Option<&Whose>)
 
 impl ServerState {
     /// The surfaces a line for `person` may reach: theirs alone with the daily session on; every surface with it off.
-    fn yinyue_pool(&self, person: Whose) -> Option<Whose> {
+    fn yinyue_pool(&self, person: Person) -> Option<Person> {
         self.manager.daily_session().then_some(person)
     }
 
@@ -213,7 +213,7 @@ impl ServerState {
 
     /// The app chat session she is presenting in for `person`, if any
     /// ([`yinyue_stage_session_for`]).
-    pub fn yinyue_stage_session(&self, person: Whose) -> Option<String> {
+    pub fn yinyue_stage_session(&self, person: Person) -> Option<String> {
         let pool = self.yinyue_pool(person);
         yinyue_stage_session_for(&self.yinyue_presenters.lock_ok(), pool.as_ref())
     }
@@ -230,7 +230,7 @@ impl ServerState {
         peer_id: u64,
         stage: bool,
         session: Option<String>,
-        person: Whose,
+        person: Person,
     ) {
         // Not met yet: no surface shows her, so none holds her.
         if !self
@@ -266,7 +266,7 @@ impl ServerState {
     /// A subscribed surface says which device it is: it is that device's
     /// person's from now on (a subscribe can come before the device is
     /// named). No-op for a peer that never subscribed.
-    pub fn yinyue_identify(&self, peer_id: u64, person: Whose) {
+    pub fn yinyue_identify(&self, peer_id: u64, person: Person) {
         let changed = {
             let mut reg = self.yinyue_presenters.lock_ok();
             match reg.iter_mut().find(|p| p.peer_id == peer_id) {
@@ -479,7 +479,7 @@ mod yinyue_presenter_tests {
             peer_id,
             stage,
             session: None,
-            person: Whose::Builder,
+            person: Person::test_owner(),
         }
     }
     fn on_page(peer_id: u64, stage: bool, session: &str) -> YinyuePresenter {
@@ -552,25 +552,25 @@ mod yinyue_presenter_tests {
     /// of all, as before.
     #[test]
     fn a_stage_is_held_per_person() {
-        let friend = Whose::Person("u-friend".into());
-        let of = |peer_id, stage, person: &Whose, session: Option<&str>| YinyuePresenter {
+        let friend = Person::for_test(Some("u-friend"));
+        let of = |peer_id, stage, person: &Person, session: Option<&str>| YinyuePresenter {
             person: person.clone(),
             session: session.map(str::to_string),
             ..p(peer_id, stage)
         };
-        let mac = crate::server::day_session::person_of(Some("__local__"));
-        let phone = crate::server::day_session::person_of(None);
+        let mac = Person::for_test(Some("u-owner"));
+        let phone = Person::for_test(None);
         assert_eq!(mac, phone, "the builder is one person");
         let reg = [
             of(1, true, &mac, Some("sess-mine")),
             of(2, true, &phone, Some("sess-mine-2")),
             of(3, true, &friend, Some("sess-theirs")),
         ];
-        assert_eq!(yinyue_holder_for(&reg, Some(&Whose::Builder)), Some(2));
+        assert_eq!(yinyue_holder_for(&reg, Some(&Person::test_owner())), Some(2));
         assert_eq!(yinyue_holder_for(&reg, Some(&friend)), Some(3));
-        assert_eq!(yinyue_holder_for(&reg, Some(&Whose::NoOne)), None);
+        assert_eq!(yinyue_holder_for(&reg, Some(&Person::test_no_one())), None);
         assert_eq!(
-            yinyue_stage_session_for(&reg, Some(&Whose::Builder)).as_deref(),
+            yinyue_stage_session_for(&reg, Some(&Person::test_owner())).as_deref(),
             Some("sess-mine-2")
         );
         assert_eq!(

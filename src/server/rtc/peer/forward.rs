@@ -383,7 +383,7 @@ fn her_cue_session(event: &crate::server::ServerEvent) -> Option<&str> {
 #[cfg(test)]
 mod yinyue_cue_tests {
     use super::yinyue_cue_reaches;
-    use crate::server::day_session::Whose;
+    use crate::server::person::Person;
     use crate::server::state::{yinyue_holder_of, YinyuePresenter};
 
     /// Two Lingjing tabs, each a stage (2026-09-24): her line is addressed
@@ -396,19 +396,19 @@ mod yinyue_cue_tests {
                 peer_id: 1,
                 stage: false,
                 session: None,
-                person: Whose::Builder,
+                person: Person::test_owner(),
             },
             YinyuePresenter {
                 peer_id: 4,
                 stage: true,
                 session: None,
-                person: Whose::Builder,
+                person: Person::test_owner(),
             },
             YinyuePresenter {
                 peer_id: 10,
                 stage: true,
                 session: None,
-                person: Whose::Builder,
+                person: Person::test_owner(),
             },
         ];
         let holder = yinyue_holder_of(&reg);
@@ -436,7 +436,7 @@ mod yinyue_cue_tests {
             peer_id: 2,
             stage: false,
             session: None,
-            person: Whose::Builder,
+            person: Person::test_owner(),
         }];
         assert!(yinyue_cue_reaches("pet_speak", yinyue_holder_of(&reg), 2));
     }

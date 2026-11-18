@@ -329,7 +329,7 @@ pub(crate) async fn chat_handler(
 /// there and she is on. One conversation per app: what the user says to her
 /// then is said in that chat.
 async fn presenting_in_chat(state: &Arc<ServerState>, user_id: Option<&str>) -> Option<String> {
-    let sid = state.yinyue_stage_session(crate::server::day_session::person_of(user_id))?;
+    let sid = state.yinyue_stage_session(crate::server::person::Person::from_wire(user_id))?;
     if crate::server::resident::is_own_session(&sid)
         || !state.manager.get_config_snapshot().await.pet.enabled
     {

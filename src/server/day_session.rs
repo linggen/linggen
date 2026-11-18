@@ -9,6 +9,7 @@
 //! a restart; it is made on first use.
 
 use crate::engine::agent::{AgentManager, COMPANION_AGENT_ID};
+use crate::server::person::Person;
 use crate::state_fs::day_session;
 use crate::state_fs::sessions::{ChatMsg, SessionMeta};
 
@@ -32,7 +33,7 @@ pub(crate) async fn day_for(manager: &AgentManager, user_id: Option<&str>, app: 
     if !enabled(manager).await || !takes(manager, app).await {
         return None;
     }
-    let person = person_of(user_id).day_key()?;
+    let person = Person::from_wire(user_id).day_key()?;
     Some(current(manager, person.as_deref()))
 }
 
@@ -66,10 +67,10 @@ pub(crate) async fn private_app_named(manager: &AgentManager, words: &str) -> Op
 /// their app does not join: the newest of their sessions of it that is not
 /// one of its one-off jobs, else none — a session is then made for it.
 pub(crate) fn own_chat(manager: &AgentManager, app: &str, user_id: Option<&str>) -> Option<String> {
-    let asker = person_of(user_id);
+    let asker = Person::from_wire(user_id);
     let mut sessions: Vec<SessionMeta> = manager.global_sessions.list_sessions().ok()?;
     sessions.retain(|m| m.skill.as_deref() == Some(app) && !kept_apart(m) && !is_day(&m.id));
-    sessions.retain(|m| asker != Whose::NoOne && person_of(m.user_id.as_deref()) == asker);
+    sessions.retain(|m| !asker.is_no_one() && Person::from_wire(m.user_id.as_deref()) == asker);
     sessions.into_iter().max_by_key(|m| m.created_at).map(|m| m.id)
 }
 
@@ -77,7 +78,7 @@ pub(crate) fn own_chat(manager: &AgentManager, app: &str, user_id: Option<&str>)
 /// `session_id` — chat into it, read its state or images, steer, cancel or
 /// clear its runs, answer its questions. The builder enters every session.
 /// Anyone else: a day is its own person's alone, and any other session is
-/// the person it was made for (its meta's `user_id`, [`person_of`]); a
+/// the person it was made for (its meta's `user_id`, [`Person::from_wire`]); a
 /// session not kept yet is theirs to make. No one (a peer that named no
 /// device) enters no kept session. The one rule every check point asks.
 pub(crate) fn may_enter(session_id: &str, user_id: Option<&str>) -> bool {
@@ -87,19 +88,19 @@ pub(crate) fn may_enter(session_id: &str, user_id: Option<&str>) -> bool {
 
 /// [`may_enter`] against the sessions kept in `store`.
 fn may_enter_in(store: &crate::state_fs::SessionStore, session_id: &str, user_id: Option<&str>) -> bool {
-    let asker = person_of(user_id);
+    let asker = Person::from_wire(user_id);
     if let Some(day) = day_session::day_in(session_id) {
         let Some(person) = asker.day_key() else {
             return false;
         };
         return day_session::id_for(day, person.as_deref()) == session_id;
     }
-    if asker == Whose::Builder {
+    if asker.is_owner() {
         return true;
     }
     match kept_for(store, session_id) {
         Kept::No => true,
-        Kept::For(whose) => asker != Whose::NoOne && whose == asker,
+        Kept::For(whose) => !asker.is_no_one() && whose == asker,
         Kept::Unreadable => false,
     }
 }
@@ -107,7 +108,7 @@ fn may_enter_in(store: &crate::state_fs::SessionStore, session_id: &str, user_id
 /// Whether a session is kept, and for whom.
 enum Kept {
     No,
-    For(Whose),
+    For(Person),
     /// Named in a way no session is, or kept but not readable: no one's but
     /// the builder's.
     Unreadable,
@@ -123,14 +124,14 @@ fn kept_for(store: &crate::state_fs::SessionStore, session_id: &str) -> Kept {
     }
     match store.get_session_meta(session_id) {
         Ok(None) => Kept::No,
-        Ok(Some(meta)) => Kept::For(person_of(meta.user_id.as_deref())),
+        Ok(Some(meta)) => Kept::For(Person::from_wire(meta.user_id.as_deref())),
         Err(_) => Kept::Unreadable,
     }
 }
 
 /// Whether the person `user_id` names is the builder (no id is).
 pub(crate) fn is_builder(user_id: Option<&str>) -> bool {
-    person_of(user_id) == Whose::Builder
+    Person::from_wire(user_id).is_owner()
 }
 
 /// Whether the caller `user_id` names is given what is the builder's alone —
@@ -155,63 +156,16 @@ pub(crate) async fn is_builders(manager: &AgentManager, session_id: Option<&str>
         return true;
     }
     let meta = manager.global_sessions.get_session_meta(sid).ok().flatten();
-    person_of(meta.and_then(|m| m.user_id).as_deref()) == Whose::Builder
-}
-
-/// Whose a request's `user_id` is. The channel resolves it once per caller
-/// from the device it named (`rtc::peer::control`, through memory's own
-/// seam, `api::memory::person_behind`); a loopback caller is trusted as it
-/// names itself.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Whose {
-    /// No id, this machine's own (`__local__`), or the builder's account.
-    Builder,
-    /// Another person: a paired phone signed in to another account, or a
-    /// signed-out phone (its device).
-    Person(String),
-    /// A peer that has not said which device it is (`__paired__`,
-    /// `__pairing__`): it is given no day.
-    NoOne,
-}
-
-impl Whose {
-    /// The person a day is kept under (`None`: the builder's day); `None`
-    /// for no one.
-    fn day_key(self) -> Option<Option<String>> {
-        match self {
-            Whose::Builder => Some(None),
-            Whose::Person(id) => Some(Some(id)),
-            Whose::NoOne => None,
-        }
-    }
-}
-
-pub(crate) fn person_of(user_id: Option<&str>) -> Whose {
-    let Some(id) = user_id.map(str::trim).filter(|id| !id.is_empty()) else {
-        return Whose::Builder;
-    };
-    match id {
-        "__local__" => return Whose::Builder,
-        crate::server::rtc::NO_ONE | "__pairing__" => return Whose::NoOne,
-        _ => {}
-    }
-    let builders = crate::account::load_account().and_then(|a| a.user_id);
-    match builders.as_deref() == Some(id) {
-        true => Whose::Builder,
-        false => Whose::Person(id.to_string()),
-    }
+    Person::from_wire(meta.and_then(|m| m.user_id).as_deref()).is_owner()
 }
 
 /// Whose session `session_id` is, as its meta keeps it: a day its own
 /// person's, any other session the person it was made for. `None` (her own
 /// thread, what the engine starts itself) and a session not kept are the
 /// builder's.
-pub(crate) fn whose_session(manager: &AgentManager, session_id: Option<&str>) -> Whose {
-    let Some(sid) = session_id else {
-        return Whose::Builder;
-    };
-    let meta = manager.global_sessions.get_session_meta(sid).ok().flatten();
-    person_of(meta.and_then(|m| m.user_id).as_deref())
+pub(crate) fn whose_session(manager: &AgentManager, session_id: Option<&str>) -> Person {
+    let meta = session_id.and_then(|sid| manager.global_sessions.get_session_meta(sid).ok().flatten());
+    Person::from_wire(meta.and_then(|m| m.user_id).as_deref())
 }
 
 /// Today's session id for `person` (`state_fs::day_session::today`), made
