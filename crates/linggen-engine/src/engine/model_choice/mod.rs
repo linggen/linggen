@@ -229,6 +229,32 @@ impl AgentEngine {
         self.tell_replaced(choice).await;
     }
 
+    /// Run on this engine's own model, as the asker its policy names: an
+    /// owner's stays as it is, a guest's moves to the first model the room
+    /// shares. For an engine that starts a turn with nothing asked (a Task
+    /// child, which takes its parent's policy).
+    pub async fn run_on_own_model(&mut self, place: &str) {
+        let asker = self
+            .tools
+            .builtins
+            .session_policy
+            .as_ref()
+            .map_or(Asker::Owner, |p| p.asker());
+        let rule = Rule {
+            asker,
+            may_switch: true,
+        };
+        let choice = resolve(&self.model_manager, None, &self.default_model_id, rule);
+        self.run_on(&choice, place).await;
+    }
+
+    /// The models a guest's policy on this engine shares, if it is a
+    /// guest's.
+    pub fn guest_models(&self) -> Option<Vec<String>> {
+        let policy = self.tools.builtins.session_policy.as_ref()?;
+        policy.allowed_models.clone()
+    }
+
     async fn tell_replaced(&self, choice: &Choice) {
         let (Outcome::Replaced(why), Some(asked)) = (choice.outcome, choice.asked.as_deref())
         else {

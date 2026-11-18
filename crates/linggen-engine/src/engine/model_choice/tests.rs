@@ -229,3 +229,39 @@ async fn a_model_replaced_before_the_turn_is_told() {
         "nothing replaced, nothing told"
     );
 }
+
+/// An engine that starts on its own model (a Task child) under a guest's
+/// policy runs on a model the room shares, as its parent does; an owner's
+/// stays on its own.
+#[tokio::test]
+async fn an_engine_on_its_own_model_runs_a_shared_one_for_a_guest() {
+    use crate::engine::session_policy::{ConsumerCeiling, SessionPolicy};
+    use crate::engine::{AgentEngine, AgentRole, EngineConfig, InterfaceMode};
+    let engine_on = |model: &str| {
+        let root = std::env::temp_dir();
+        let cfg = EngineConfig::from_app_config(
+            &crate::config::Config::default(),
+            root,
+            InterfaceMode::Web,
+        );
+        AgentEngine::new(
+            cfg,
+            std::sync::Arc::new(models()),
+            model.into(),
+            AgentRole::Lead,
+        )
+        .unwrap()
+    };
+    let mut owner = engine_on("gpt-6.1-terra");
+    owner.run_on_own_model("test").await;
+    assert_eq!(owner.model_id, "gpt-6.1-terra");
+
+    let mut child = engine_on("gpt-6.1-terra");
+    SessionPolicy::consumer(ConsumerCeiling {
+        models: vec!["gpt-6-sol".into()],
+        ..Default::default()
+    })
+    .apply(&mut child);
+    child.run_on_own_model("test").await;
+    assert_eq!(child.model_id, "gpt-6.2-sol");
+}

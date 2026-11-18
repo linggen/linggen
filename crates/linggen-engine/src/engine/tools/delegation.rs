@@ -468,6 +468,11 @@ pub(crate) async fn run_delegation(
         parent_ceiling,
     )
     .apply(&mut engine);
+    // Under a guest's policy the child, like its parent, runs only a model
+    // the room shares.
+    engine
+        .run_on_own_model(&format!("subagent '{target_agent_id}'"))
+        .await;
     // A separate ceiling survives policy and skill changes in the child.
     engine.cfg.delegated_allowed_tools = parent_allowed_tools;
 
