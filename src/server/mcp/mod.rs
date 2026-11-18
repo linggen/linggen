@@ -26,7 +26,7 @@ mod catalog;
 mod dispatch;
 
 use catalog::{catalog, on_legacy_door, Dispatch, Render};
-use ling_mem::catalog::Branch;
+use ling_mem::catalog::{Branch, Resolved, View};
 
 const PROTOCOL_VERSION: &str = "2025-06-18";
 fn rpc_result(id: Value, result: Value) -> Value {
@@ -115,6 +115,47 @@ async fn call_tool(deps: &McpDeps<'_>, name: &str, args: Value) -> Result<Value,
         return Err(format!("unknown tool: {name}"));
     };
     Ok(dispatch::run(deps, branch, args).await)
+}
+
+// ── the twelve-tool door ────────────────────────────────────────────────────
+//
+// Built and tested beside the legacy surface; `/mcp` publishes it when it
+// replaces that surface in one switch, with the plugin that calls it.
+
+/// The view a caller gets: this machine everything, an approved computer
+/// memory only, anyone else nothing.
+#[cfg_attr(not(test), allow(dead_code))]
+fn view_of(caller: &crate::memory_host::caller::Caller) -> Option<View> {
+    use crate::memory_host::caller::Caller;
+    match caller {
+        Caller::Owner => Some(View::Local),
+        Caller::Machine(_) => Some(View::Remote),
+        Caller::Phone(_) | Caller::Unknown => None,
+    }
+}
+
+/// `tools/list` of the twelve-tool door for `view`.
+#[cfg_attr(not(test), allow(dead_code))]
+fn folded_tools_list(view: View) -> Value {
+    json!({ "tools": catalog().tools_list(view) })
+}
+
+/// `tools/call` of the twelve-tool door: resolved against the branches
+/// `view` can call — the same filter as its `tools/list` — checked, then
+/// run by the branch's dispatcher. A refusal is a tool error carrying the
+/// form that works; a tool the view cannot see is unknown.
+#[cfg_attr(not(test), allow(dead_code))]
+async fn call_folded(
+    deps: &McpDeps<'_>,
+    view: View,
+    name: &str,
+    args: Value,
+) -> Result<Value, String> {
+    match catalog().resolve(view, name, args) {
+        Resolved::Unknown => Err(format!("unknown tool: {name}")),
+        Resolved::Refused(why) => Ok(tool_content(why, true)),
+        Resolved::Call { branch, args } => Ok(dispatch::run(deps, branch, args).await),
+    }
 }
 
 /// One status object answering "is memory upkeep due, and did the last
@@ -292,6 +333,9 @@ pub(crate) async fn post_handler(
 pub(crate) async fn get_handler() -> Response {
     one_shot(StatusCode::METHOD_NOT_ALLOWED.into_response())
 }
+
+#[cfg(test)]
+mod folded_tests;
 
 #[cfg(test)]
 mod tests {

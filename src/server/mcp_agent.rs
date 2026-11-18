@@ -1536,10 +1536,18 @@ fn permission_mapping(mode: Option<&str>, has_dir: bool) -> Result<Option<Permis
     Ok(has_dir.then_some(grant))
 }
 
-fn format_models(models: &crate::provider::models::ModelManager, default: Option<&str>) -> String {
-    let default = default.and_then(|id| {
+/// The configured default as the model it resolves to now, if it does.
+fn live_default(
+    models: &crate::provider::models::ModelManager,
+    default: Option<&str>,
+) -> Option<String> {
+    default.and_then(|id| {
         crate::engine::model_choice::live(models, crate::engine::model_choice::Asker::Owner, id).ok()
-    });
+    })
+}
+
+fn format_models(models: &crate::provider::models::ModelManager, default: Option<&str>) -> String {
+    let default = live_default(models, default);
     serde_json::json!({"models": models.list_models().iter().map(|m| serde_json::json!({
         "id": m.id, "provider": m.provider, "default": Some(m.id.as_str()) == default.as_deref()
     })).collect::<Vec<_>>()})
@@ -1553,6 +1561,19 @@ pub async fn models(state: &Arc<ServerState>) -> String {
         &models,
         config.routing.default_models.first().map(String::as_str),
     )
+}
+
+/// Every model with whether it can be used now — `ready`, or the reason,
+/// its reset time and what to do (`ModelManager::readiness_list`) — the
+/// default marked as [`models`] marks it.
+pub async fn readiness(state: &Arc<ServerState>) -> String {
+    let config = state.manager.get_config_snapshot().await;
+    let models = state.manager.models.read().await;
+    let default = live_default(
+        &models,
+        config.routing.default_models.first().map(String::as_str),
+    );
+    models.readiness_list(default.as_deref()).to_string()
 }
 
 fn worktree_decision(linked: bool, clean: bool, merged: bool) -> Result<(), String> {

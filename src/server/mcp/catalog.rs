@@ -57,7 +57,10 @@ pub(crate) enum Render {
 pub(crate) enum AgentOp {
     Run,
     Status,
+    /// The legacy list: configured models and the default.
     Models,
+    /// Every model with whether it can be used now, and why not.
+    Readiness,
     Permit,
     Stop,
     Close,
@@ -626,7 +629,7 @@ const BRANCHES: &[Branch<Dispatch>] = &[
         dispatch: Dispatch::Agent(AgentOp::Stop),
     },
     Branch {
-        tool: Some("agent_status"),
+        tool: None,
         op: "models",
         legacy: Some("agent_models"),
         description: "List configured models and the default; pass a model ID to agent_run for a new session.",
@@ -638,6 +641,21 @@ const BRANCHES: &[Branch<Dispatch>] = &[
         timeout_ms: 0,
         views: Views::LOCAL,
         dispatch: Dispatch::Agent(AgentOp::Models),
+    },
+    // The folded discovery: every model with whether it can be used now.
+    Branch {
+        tool: Some("agent_status"),
+        op: "models",
+        legacy: None,
+        description: "",
+        schema: || json!({"type": "object", "properties": {}}),
+        extra: None,
+        hidden: &[],
+        fixed: &[],
+        check: None,
+        timeout_ms: 0,
+        views: Views::LOCAL,
+        dispatch: Dispatch::Agent(AgentOp::Readiness),
     },
     Branch {
         tool: Some("agent_end"),

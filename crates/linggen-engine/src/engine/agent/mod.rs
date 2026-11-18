@@ -234,7 +234,8 @@ impl AgentManager {
 
         // Nothing else exists: hand back the auth-dead default so the turn
         // fails with its AUTH_REQUIRED sign-in message, not a config error.
-        auth_dead_default.ok_or_else(|| anyhow::anyhow!("No models configured"))
+        auth_dead_default
+            .ok_or_else(|| anyhow::anyhow!(crate::cannot_run::NO_MODELS_CONFIGURED))
     }
 
     /// `ling01-mh3k9x`: the agent's count this process, then the moment the

@@ -80,6 +80,7 @@ async fn agent(deps: &McpDeps<'_>, op: AgentOp, args: Value) -> Value {
             .await
         }
         AgentOp::Models => Ok(crate::server::mcp_agent::models(state).await),
+        AgentOp::Readiness => Ok(crate::server::mcp_agent::readiness(state).await),
         AgentOp::Close => {
             let remove = args
                 .get("remove_worktree")
@@ -175,10 +176,17 @@ async fn memory(verb: &'static str, mut args: Value, timeout_ms: u64) -> Value {
     use ling_mem::catalog::memory::{finish, prepare, read_envelope};
     prepare(&mut args);
     let wait = Duration::from_millis(timeout_ms);
+    use crate::cannot_run::CannotRun;
     let answer = crate::memory_host::post_verb(ling_mem::Who::Owner, verb, args, wait).await;
     let envelope = match answer {
-        Ok((_status, envelope)) => envelope,
-        Err(e) => return tool_content(e.to_string(), true),
+        Ok((status, envelope)) => match CannotRun::of_memory_answer(status, &envelope) {
+            Some(why) => return unavailable(&why),
+            None => envelope,
+        },
+        Err(e) => match CannotRun::of_memory_error(&e.to_string()) {
+            Some(why) => return unavailable(&why),
+            None => return tool_content(e.to_string(), true),
+        },
     };
     match read_envelope(envelope) {
         Ok(mut data) => {
@@ -187,4 +195,13 @@ async fn memory(verb: &'static str, mut args: Value, timeout_ms: u64) -> Value {
         }
         Err(message) => tool_content(message, true),
     }
+}
+
+/// A store that is not there: what it said, then what to do.
+fn unavailable(why: &crate::cannot_run::CannotRun) -> Value {
+    let detail = match why {
+        crate::cannot_run::CannotRun::StoreUnavailable { detail } => detail.as_str(),
+        _ => "",
+    };
+    tool_content(format!("{detail} — {}", why.line()), true)
 }

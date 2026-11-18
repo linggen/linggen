@@ -50,7 +50,21 @@ struct Bench {
     kind: ProviderErrorKind,
     since: SystemTime,
     until: SystemTime,
+    /// When the provider itself said the model takes requests again — a
+    /// usage limit's reset, uncapped. `until` is how long the chain steps
+    /// around the model; this is what a caller is told.
+    reset_at: Option<SystemTime>,
     last_error: String,
+}
+
+/// What the board holds about one model right now.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Standing {
+    pub kind: ProviderErrorKind,
+    /// Benched (stepped around by the fallback chain) until then.
+    pub until: SystemTime,
+    /// The reset the provider named, when it named one.
+    pub reset_at: Option<SystemTime>,
 }
 
 static BOARD: LazyLock<Mutex<HashMap<String, Bench>>> =
@@ -85,7 +99,8 @@ pub fn note_unavailable(model_id: &str, err: &anyhow::Error) {
         ProviderErrorKind::QuotaExhausted => QUOTA_COOLDOWN,
         _ => BLIND_COOLDOWN,
     };
-    let wait = retry_after_of(err).unwrap_or(default).min(MAX_COOLDOWN);
+    let named = retry_after_of(err);
+    let wait = named.unwrap_or(default).min(MAX_COOLDOWN);
     let now = SystemTime::now();
     BOARD.lock_ok().insert(
         model_id.to_string(),
@@ -93,6 +108,7 @@ pub fn note_unavailable(model_id: &str, err: &anyhow::Error) {
             kind,
             since: now,
             until: now + wait,
+            reset_at: named.map(|d| now + d),
             last_error: err.to_string(),
         },
     );
@@ -107,14 +123,31 @@ pub fn note_healthy(model_id: &str) {
 /// dropped as they are read — nothing else sweeps this map.
 pub fn in_cooldown(model_id: &str) -> bool {
     let mut board = BOARD.lock_ok();
+    let now = SystemTime::now();
     match board.get(model_id) {
-        Some(b) if b.until > SystemTime::now() => true,
+        Some(b) if b.until > now => true,
+        Some(b) if b.reset_at.is_some_and(|at| at > now) => false,
         Some(_) => {
             board.remove(model_id);
             false
         }
         None => false,
     }
+}
+
+/// Why this model is refusing now, if it is: benched, or past its bench
+/// but inside a reset the provider named (a usage limit outlasts the
+/// chain's longest bench).
+pub fn standing(model_id: &str) -> Option<Standing> {
+    let board = BOARD.lock_ok();
+    let b = board.get(model_id)?;
+    let now = SystemTime::now();
+    let live = b.until > now || b.reset_at.is_some_and(|at| at > now);
+    live.then(|| Standing {
+        kind: b.kind,
+        until: b.until,
+        reset_at: b.reset_at.filter(|at| *at > now),
+    })
 }
 
 /// Every model benched right now, for `/api/models/health`.
@@ -242,6 +275,32 @@ mod tests {
 
     /// An expired bench clears itself on the next read — nothing sweeps the map.
 
+    /// A usage limit's reset is kept as the provider named it, past the
+    /// chain's longest bench: the chain may try the model again after an
+    /// hour, but a caller asking is told the real reset.
+    #[test]
+    fn a_usage_limit_keeps_its_named_reset_beyond_the_bench() {
+        let body = r#"{"error":{"type":"usage_limit_reached","resets_in_seconds":8973}}"#;
+        note_unavailable("standing-usage", &err(&format!("openai error (429 Too Many Requests): {body}")));
+        let s = standing("standing-usage").expect("a usage limit stands");
+        assert_eq!(s.kind, ProviderErrorKind::RateLimit);
+        let reset = s.reset_at.expect("the provider named a reset");
+        let left = reset.duration_since(SystemTime::now()).unwrap().as_secs();
+        assert!((8900..=8973).contains(&left), "{left}");
+        assert!(s.until < reset, "the bench is capped below the reset");
+
+        // Past the bench, inside the reset: not benched, still standing.
+        BOARD.lock_ok().get_mut("standing-usage").unwrap().until = SystemTime::now();
+        assert!(!in_cooldown("standing-usage"));
+        assert!(standing("standing-usage").is_some());
+        note_healthy("standing-usage");
+        assert!(standing("standing-usage").is_none());
+
+        // A plain 503 names no reset.
+        note_unavailable("standing-down", &err("HTTP error (503) Service Unavailable"));
+        assert_eq!(standing("standing-down").unwrap().reset_at, None);
+    }
+
     #[test]
     fn an_expired_bench_lets_the_model_back() {
         clear_cooldowns();
@@ -251,6 +310,7 @@ mod tests {
                 kind: ProviderErrorKind::RateLimit,
                 since: SystemTime::now() - Duration::from_secs(61),
                 until: SystemTime::now() - Duration::from_secs(1),
+                reset_at: None,
                 last_error: String::new(),
             },
         );

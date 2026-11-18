@@ -16,10 +16,13 @@ mod catalog;
 pub mod chatgpt_catalog;
 mod health;
 mod providers;
+mod readiness;
 mod usage;
 
 pub use catalog::*;
 pub use health::*;
+pub use readiness::{NotReady, Readiness, NONE_READY};
+pub(crate) use readiness::rfc3339;
 pub use usage::*;
 
 use providers::{ChunkStream, Provider, TurnOptions};

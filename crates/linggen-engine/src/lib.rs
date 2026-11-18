@@ -3,6 +3,7 @@
 
 pub mod account;
 pub mod assets;
+pub mod cannot_run;
 pub mod config;
 pub mod credentials;
 pub mod engine;
