@@ -197,6 +197,7 @@ fn me_body(
         "settings": d.settings,
         "models": models,
         "agent_models": agent_models(config),
+        "chatgpt": crate::provider::models::chatgpt_catalog::current().for_phone(),
     })
 }
 
@@ -361,6 +362,20 @@ mod tests {
         assert_eq!(got[1]["kind"], "byok");
         assert_eq!(got[1]["model"], "claude-next");
         assert_eq!(got[2], serde_json::json!({"id": "gpt-6-luna", "kind": "oauth"}));
+    }
+
+    /// The phone takes the ChatGPT client version and what every older id
+    /// now means from the Mac, instead of keeping its own copies.
+    #[test]
+    fn the_phone_is_told_the_chatgpt_version_and_what_old_ids_mean() {
+        let cfg = crate::config::Config::default();
+        let d = crate::state_fs::devices::PairedDevice::default();
+        let body = me_body(&d, &cfg, false);
+        let catalog = crate::provider::models::chatgpt_catalog::current();
+        assert_eq!(body["chatgpt"]["client_version"], catalog.client_version());
+        assert_eq!(body["chatgpt"]["successors"]["gpt-6.1-sol"], "gpt-6.2-sol");
+        assert_eq!(body["chatgpt"]["successors"]["gpt-5.5"], catalog.primary_id());
+        assert_eq!(body["chatgpt"]["builtins"], serde_json::json!(catalog.builtin_ids()));
     }
 
     /// The Mac's provider keys are the owner's: the owner's device is given

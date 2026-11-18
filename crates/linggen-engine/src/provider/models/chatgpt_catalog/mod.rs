@@ -245,6 +245,17 @@ impl Snapshot {
         }
     }
 
+    /// What a paired phone takes from this Mac instead of keeping copies:
+    /// the version to present when it talks to ChatGPT itself, the
+    /// built-ins, and what every older id now means.
+    pub fn for_phone(&self) -> serde_json::Value {
+        serde_json::json!({
+            "client_version": self.client_version(),
+            "builtins": self.builtin_ids(),
+            "successors": self.successors(),
+        })
+    }
+
     /// The context window the backend listed for [slug].
     pub fn context_window(&self, slug: &str) -> Option<u64> {
         self.listed
