@@ -1,5 +1,6 @@
 //! Ordinary shapes the gate reads as the shell does (`permission-spec.md`
-//! § Bash path gating): `git grep`'s pattern is text, and `$?` is a number.
+//! § Bash path gating): `git grep`'s pattern is text, `$?` is a number, and
+//! a `for` loop over words written in the command is its body once per word.
 //! Each step has a table
 //! of what it newly allows and a table, at least as long, of what must still
 //! be judged as before.
@@ -184,4 +185,147 @@ fn the_exit_status_glued_or_beside_another_variable_is_still_unread() {
     // Single quotes and a backslash keep the dollar a dollar.
     assert_eq!(super::known_vars::with_status("echo '$?'"), None);
     assert_eq!(super::known_vars::with_status("echo \\$?"), None);
+}
+
+// ---------------------------------------------------------------------------
+// `for NAME in w1 w2 …; do BODY; done`: the body once for each word
+// ---------------------------------------------------------------------------
+
+/// Run unasked in a coding session: each pass is an ordinary command.
+const LOOPS_READ: &[&str] = &[
+    "for term in A B C; do echo \"$term\"; git grep -wo \"$term\" | sort | uniq -c; done",
+    "for f in a.rs b.rs; do wc -l $f; done",
+    "for name in a b; do cat \"${name}.txt\"; done",
+    "for d in src ui\ndo\n  ls $d\ndone",
+    "for n in 1 2 3; do echo $n; done; echo end",
+    "ls; for t in a b; do git grep -n \"$t\" -- src; done",
+    "for p in foo bar; do grep -c \"$p\" README.md; echo $?; done",
+    "for t in t1 t2; do scripts/scratch-test.sh --lib $t; done",
+    "for x in a; do echo '$x'; done",
+    "for a in 1; do echo $a; done; for b in 2; do echo $b; done",
+    "for v in -n -c; do grep $v foo README.md; done",
+];
+
+/// Blocked as the same commands written out are.
+const LOOPS_BLOCKED: &[&str] = &[
+    "for p in / ~; do rm -rf $p; done",
+    "for p in ~; do rm -rf $p; done",
+    "for c in sudo; do $c ls; done",
+    "for o in -rf; do rm $o /; done",
+];
+
+/// Asked once, as an outward command written out is.
+const LOOPS_OUTWARD: &[&str] = &[
+    "for c in publish; do cargo $c; done",
+    "for r in origin; do git push $r main; done",
+];
+
+/// Still asked: the loop is not of the shape read (and stays unreadable),
+/// or a pass names a path beyond the session's folder.
+const LOOPS_STILL_ASKED: &[&str] = &[
+    "for x in $(ls); do cat $x; done",
+    "for x in *.rs; do cat $x; done",
+    "for x in a; do cat $y; done",
+    "for x in a; do x=/etc; cat $x; done",
+    "for x in a; do read x; cat $x; done",
+    "for x in a; do export x; echo $x; done",
+    "for x in a; do for y in b; do echo $x$y; done; done",
+    "while true; do echo $x; done",
+    "until false; do echo $x; done",
+    "for x; do echo $x; done",
+    "for x in \"a b\"; do rm $x; done",
+    "for x in a\\ b; do rm $x; done",
+    "for x in {a,b}; do echo $x; done",
+    "for x in a; do echo ${x:-/etc}; done",
+    "for PATH in /tmp; do ls $PATH; done",
+    "for x in /etc; do cat $x/passwd; done",
+    "for x in ../..; do cat $x/etc/passwd; done",
+    "for x in a; do echo $x; done | sh",
+    "for x in a; do echo $x; done > /etc/x",
+    "cd /tmp && for x in a; do cat $x; done",
+    "if true; then for x in a; do echo $x; done; fi",
+    "for x in a; do echo $x # ; done",
+    "for x in a; do $x=1 ls; done",
+    "for x in a=b; do $x ls; done",
+    "for x in a; do echo `$x`; done",
+    "for x in a; do sh -c \"rm $x\"; done",
+    "for x in ~alex; do cat $x/.ssh/id_rsa; done",
+    "for p in ~; do cat \"$p\"/.ssh/id_rsa; done",
+    "for x in a; do echo $x; done; echo $x",
+    "for x in a; do echo $x &\ndone",
+    "for x in a; do cat <<EOF\n$x\nEOF\ndone",
+    "IFS=/; for x in a/b; do ls $x; done",
+];
+
+#[test]
+fn a_loop_over_written_words_is_its_body_once_per_word() {
+    for cmd in LOOPS_READ {
+        assert!(allowed(&check(cmd, true)), "{cmd}: {:?}", check(cmd, true));
+    }
+}
+
+#[test]
+fn each_pass_is_judged_as_the_command_written_out() {
+    for cmd in LOOPS_BLOCKED {
+        for coding in [false, true] {
+            let r = check(cmd, coding);
+            assert!(
+                matches!(r, PermissionCheckResult::Blocked(_)),
+                "{cmd}: {r:?}"
+            );
+        }
+    }
+    for cmd in LOOPS_OUTWARD {
+        let r = check(cmd, true);
+        let outward = matches!(
+            r,
+            PermissionCheckResult::NeedsPrompt(PromptKind::ExceedsCeiling { outward: true, .. })
+        );
+        assert!(outward, "{cmd}: {r:?}");
+    }
+}
+
+#[test]
+fn a_loop_of_any_other_shape_is_still_asked() {
+    let still = LOOPS_BLOCKED.len() + LOOPS_OUTWARD.len() + LOOPS_STILL_ASKED.len();
+    assert!(still >= LOOPS_READ.len());
+    for cmd in LOOPS_STILL_ASKED {
+        assert!(!allowed(&check(cmd, true)), "{cmd}");
+    }
+    let many: Vec<String> = (0..=super::for_loop::MAX_VALUES)
+        .map(|i| i.to_string())
+        .collect();
+    let cmd = format!("for n in {}; do echo $n; done", many.join(" "));
+    assert!(!allowed(&check(&cmd, true)), "{} values", many.len());
+}
+
+#[test]
+fn a_loop_is_written_out_as_the_shell_runs_it() {
+    let cases = [
+        (
+            "for t in A B; do echo \"$t\"; done",
+            "echo \"A\"\necho \"B\"",
+        ),
+        (
+            "ls; for n in 1 2; do echo $n; done; echo end",
+            "ls; echo 1\necho 2; echo end",
+        ),
+        (
+            "for x in a; do echo '$x' \\$x ${x}; done",
+            "echo '$x' \\$x a",
+        ),
+        ("for p in / ~; do rm -rf $p; done", "rm -rf /\nrm -rf ~"),
+    ];
+    for (cmd, want) in cases {
+        assert_eq!(
+            super::for_loop::unrolled(cmd).as_deref(),
+            Some(want),
+            "{cmd}"
+        );
+    }
+    // Piped on, the loop's output is one stream: not written out.
+    assert_eq!(
+        super::for_loop::unrolled("for x in a; do cat $x; done | sh"),
+        None
+    );
 }

@@ -16,12 +16,16 @@
 use super::classify::dequote;
 use super::model::{command_run, command_tokens, Joint, Token};
 
-/// `cmd` as the shell would read it, when any of it is read here: `$HOME`
-/// put in, then `$?`. `None` when nothing is.
+/// `cmd` as the shell would read it, when any of it is read here: each
+/// `for` loop over written words written out (`super::for_loop`), then
+/// `$HOME` put in, then `$?`. `None` when nothing is.
 pub(super) fn read_as_the_shell(cmd: &str) -> Option<String> {
-    let home = with_home(cmd);
-    let cmd = home.as_deref().unwrap_or(cmd);
-    with_status(cmd).or(home)
+    let mut read = super::for_loop::unrolled(cmd);
+    for step in [with_home, with_status] {
+        let now = read.as_deref().unwrap_or(cmd);
+        read = step(now).or(read);
+    }
+    read
 }
 
 /// `cmd` with every `$HOME` and `${HOME}` outside single quotes replaced by

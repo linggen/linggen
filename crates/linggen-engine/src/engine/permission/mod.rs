@@ -22,6 +22,7 @@ mod classify;
 #[cfg(test)]
 mod coding_session_tests;
 mod declined;
+mod for_loop;
 mod manifest;
 mod model;
 mod known_vars;
