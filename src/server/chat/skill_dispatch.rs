@@ -31,8 +31,7 @@ pub(super) async fn run_skill_dispatch(ctx: &ChatRunCtx, engine: &mut crate::eng
         .or(skill_default_task)
         .unwrap_or_else(|| "Initialize this workspace and summarize status.".to_string());
 
-    engine.observations.clear();
-    engine.task = Some(task_for_loop);
+    engine.begin_run(crate::engine::turn_place::RunSetup::task(task_for_loop));
 
     // Hydrate session_permissions from permission.json BEFORE activate_skill
     // so the prompt's grant-comparison sees the trusted-policy state already
@@ -423,8 +422,7 @@ pub(super) async fn run_trigger_dispatch(
         .or(skill_default_task)
         .unwrap_or_else(|| "Initialize this workspace and summarize status.".to_string());
 
-    engine.observations.clear();
-    engine.task = Some(task_for_loop);
+    engine.begin_run(crate::engine::turn_place::RunSetup::task(task_for_loop));
 
     push_user_turn_with_recall(ctx, engine).await;
 

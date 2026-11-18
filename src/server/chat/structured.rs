@@ -60,11 +60,9 @@ pub(super) async fn run_structured_loop(ctx: &ChatRunCtx, engine: &mut crate::en
             let _ = ctx.events_tx.send(ServerEvent::StateUpdated);
             return;
         }
-        engine.pending_images = ctx.images.clone();
     }
 
     send_thinking_status(ctx, "Thinking").await;
-    engine.observations.clear();
     // Drop a stale "planned" plan from a previous plan-mode run so it doesn't
     // block execution of the new structured loop.
     if let Some(p) = &engine.plan {
@@ -73,17 +71,17 @@ pub(super) async fn run_structured_loop(ctx: &ChatRunCtx, engine: &mut crate::en
         }
     }
     release_plan_on_move_on(ctx).await;
-    let task_for_loop = ctx.clean_msg.trim().to_string();
-    engine.task = Some(task_for_loop);
-    push_user_turn_with_recall(ctx, engine).await;
-
     let (thinking_tx, thinking_rx) = tokio::sync::mpsc::unbounded_channel();
     // A kickoff that offers silence streams nothing: the reply is shown
     // whole, or — when it is SILENT — not at all.
-    engine.silence_ok = ctx.silence_ok;
-    if !ctx.silence_ok {
-        engine.thinking_tx = Some(thinking_tx);
+    let mut run = crate::engine::turn_place::RunSetup::task(ctx.clean_msg.trim())
+        .silence_ok(ctx.silence_ok)
+        .thinking((!ctx.silence_ok).then_some(thinking_tx));
+    if !ctx.images.is_empty() {
+        run = run.images(ctx.images.clone());
     }
+    engine.begin_run(run);
+    push_user_turn_with_recall(ctx, engine).await;
 
     wire_inbox(ctx, engine);
     wire_engine_bridges(&ctx.state, engine, ctx.session_id.clone());
@@ -106,17 +104,14 @@ pub(super) async fn run_structured_loop(ctx: &ChatRunCtx, engine: &mut crate::en
     )
     .await;
 
-    // Drop the thinking sender so the forwarder task exits.
-    engine.thinking_tx = None;
-    engine.silence_ok = false;
+    // The loop dropped the thinking sender, so the forwarder task exits.
     unwire_inbox(ctx, engine);
 
     // Agent requested plan mode — re-dispatch using existing plan machinery.
-    if let Ok(ref asked @ crate::engine::AgentOutcome::PlanModeRequested { ref reason }) = outcome {
-        // This run ends here; planning runs as a run of its own.
+    if let Ok(ref asked @ crate::engine::AgentOutcome::PlanModeRequested { .. }) = outcome {
+        // This run ends here; planning runs as a run of its own, on the
+        // message's task (`run_plan_dispatch`).
         emit_outcome_event(ctx, asked, engine.last_run_id.as_deref()).await;
-        let plan_task = reason.clone().unwrap_or_else(|| ctx.clean_msg.clone());
-        engine.task = Some(plan_task);
         run_plan_dispatch(ctx, engine).await;
         return;
     }
@@ -161,11 +156,10 @@ pub(super) async fn run_structured_loop(ctx: &ChatRunCtx, engine: &mut crate::en
         )
         .await;
         engine.plan = Some(plan.clone());
-        engine.plan_mode = false;
-        engine.observations.clear();
-        if engine.task.is_none() {
-            engine.task = Some(format!("Execute the approved plan: {}", plan.summary));
-        }
+        let task = engine
+            .get_task()
+            .unwrap_or_else(|| format!("Execute the approved plan: {}", plan.summary));
+        engine.begin_run(crate::engine::turn_place::RunSetup::task(task));
         run_plan_execution(ctx, engine).await;
         return;
     }

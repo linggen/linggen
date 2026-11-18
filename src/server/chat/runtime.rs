@@ -21,8 +21,7 @@ pub(super) async fn run_loop_with_tracking(
         .ok();
     let _life = run_id.as_deref().map(|run| manager.run_life(run));
 
-    engine.set_run_id(run_id.clone());
-    engine.last_run_id = run_id.clone();
+    engine.run_as(run_id.clone());
     let result = super::cloud_gate::run_gated(engine, session_id, events_tx).await;
     engine.set_run_id(None);
     // Taken on every path: only a finished, uncancelled turn forks it.
@@ -115,10 +114,10 @@ pub(super) fn wire_inbox(ctx: &ChatRunCtx, engine: &mut crate::engine::AgentEngi
     let key = crate::server::chat::helpers::fold_key(ctx.session_id.as_deref(), &ctx.agent_id);
     let fold = ctx.state.fold.clone();
     engine.tools.builtins.set_steer(Some(fold.open_turn(&key)));
-    engine.inbox = Some(std::sync::Arc::new(move || {
+    engine.take_messages_from(Some(std::sync::Arc::new(move || {
         let (fold, key) = (fold.clone(), key.clone());
         Box::pin(async move { fold.take(&key).await })
-    }));
+    })));
 }
 
 /// The turn is over: nothing more joins or steers it.
@@ -126,7 +125,7 @@ pub(super) fn unwire_inbox(ctx: &ChatRunCtx, engine: &mut crate::engine::AgentEn
     let key = crate::server::chat::helpers::fold_key(ctx.session_id.as_deref(), &ctx.agent_id);
     ctx.state.fold.close_turn(&key);
     engine.tools.builtins.set_steer(None);
-    engine.inbox = None;
+    engine.take_messages_from(None);
 }
 
 /// Wire server-backed bridges into the engine: the AskUser bridge (emit
