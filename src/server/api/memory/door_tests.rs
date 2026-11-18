@@ -79,6 +79,7 @@ fn phone(id: &str, account: Option<(&str, &str)>) -> PairedDevice {
         settings: serde_json::Map::new(),
         relay_grant: None,
         superseded_grant: None,
+        ..Default::default()
     }
 }
 

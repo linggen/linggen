@@ -18,6 +18,7 @@ pub(crate) async fn get_pair_info(
     let config = state.manager.get_config_snapshot().await;
     let lan_live = state.bound_host != "127.0.0.1" && state.bound_host != "localhost";
     let (mac_name, account_name) = mac_identity();
+    let mac_account = crate::account::load_account().and_then(|a| a.user_id);
     let devices: Vec<serde_json::Value> = load_devices()
         .iter()
         .map(|d| {
@@ -29,6 +30,19 @@ pub(crate) async fn get_pair_info(
                 "kind": d.kind(),
                 "settings": d.settings,
                 "account": d.account,
+                // What it stands at: the owner's device is admin; any other
+                // the level set here (read when none is).
+                "level": crate::server::person::standing_of(&d.id).level(),
+                "verified": d.verified_claim().is_some(),
+                // Whose it is: owner, unverified (claims this Mac's account),
+                // other (another account), signed_out.
+                "whose": crate::server::person::whose_device(d, mac_account.as_deref()),
+                // The level set here for a device not the owner's (what the
+                // choice shows), read when none is.
+                "permission": d.permission.unwrap_or(crate::server::person::DEVICE_DEFAULT),
+                // A phone out of step with this Mac's contract: told to update.
+                "needs_update": d.kind() == crate::state_fs::devices::DeviceKind::Phone
+                    && crate::server::rtc::contract::behind(d.contract.unwrap_or(0)),
                 // Who to call them on screen. `account` above is the truth and
                 // stays absent for a signed-out phone; this is what to print.
                 "person": person_label(&d.account),
@@ -139,6 +153,29 @@ pub(crate) async fn get_pair_me(
     else {
         return err(StatusCode::UNAUTHORIZED, "unknown device");
     };
+    let config = state.manager.get_config_snapshot().await;
+    let mac = crate::account::load_account().and_then(|a| a.user_id);
+    let owner = crate::server::person::is_owners_device(&d, mac.as_deref());
+    let mut body = me_body(&d, &config, owner);
+    // Where to reach this Mac when the phone is off the LAN: the relay
+    // signals per instance. Not a secret — an address. Absent while
+    // signed out, since the relay leg needs the account credential.
+    body["instance_id"] = crate::account::resolve_token()
+        .and(crate::account::instance_id().ok())
+        .into();
+    Json(body).into_response()
+}
+
+/// A paired device's own row as `/api/pair/me` answers it: its name and
+/// settings, and the models it may run — every allow-listed one for the
+/// owner's device (`owner`), a provider's key riding along; for any other
+/// device only those it reaches with its own credentials (Linggen Cloud, a
+/// ChatGPT sign-in), never a key of this Mac's.
+fn me_body(
+    d: &crate::state_fs::devices::PairedDevice,
+    config: &crate::config::Config,
+    owner: bool,
+) -> serde_json::Value {
     let allow: Vec<String> = d
         .settings
         .get("models")
@@ -149,21 +186,18 @@ pub(crate) async fn get_pair_me(
                 .collect()
         })
         .unwrap_or_default();
-    let config = state.manager.get_config_snapshot().await;
-    Json(serde_json::json!({
+    let mut models = resolve_model_catalog(&allow, config);
+    if !owner {
+        models.retain(|m| matches!(m["kind"].as_str(), Some("cloud" | "oauth")));
+    }
+    serde_json::json!({
         "id": d.id,
         "name": d.name,
         "device_id": d.device_id,
         "settings": d.settings,
-        "models": resolve_model_catalog(&allow, &config),
-        "agent_models": agent_models(&config),
-        // Where to reach this Mac when the phone is off the LAN: the relay
-        // signals per instance. Not a secret — an address. Absent while
-        // signed out, since the relay leg needs the account credential.
-        "instance_id": crate::account::resolve_token()
-            .and(crate::account::instance_id().ok()),
-    }))
-    .into_response()
+        "models": models,
+        "agent_models": agent_models(config),
+    })
 }
 
 /// GET /api/pair/qr — the QR as JSON for embedding in Settings → Phone.
@@ -218,8 +252,15 @@ pub(crate) async fn rename_pair_device(
 }
 
 /// DELETE /api/pair/devices/{id} — revoke one device. Its token stops working
-/// on the next request; the phone re-pairs with eyes on this Mac.
-pub(crate) async fn delete_pair_device(Path(id): Path<String>) -> impl IntoResponse {
+/// on the next request; the phone re-pairs with eyes on this Mac. A device
+/// below the owner's standing revokes only itself (`may_revoke`).
+pub(crate) async fn delete_pair_device(
+    Path(id): Path<String>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    if !may_revoke(&headers, &id) {
+        return err(StatusCode::FORBIDDEN, "a device revokes only itself");
+    }
     // Take the relay credential with us: dropping the row here only closes the
     // LAN door, and a revoked phone that kept reaching us from anywhere would
     // make Revoke a lie.
@@ -237,6 +278,60 @@ pub(crate) async fn delete_pair_device(Path(id): Path<String>) -> impl IntoRespo
     }
     tracing::info!("[pair] device {id} revoked");
     Json(serde_json::json!({ "status": "ok" })).into_response()
+}
+
+#[derive(Deserialize)]
+pub(crate) struct LevelUpdate {
+    permission: crate::engine::permission::PermissionMode,
+}
+
+/// PUT /api/pair/devices/{id}/permission — the level a device that is not
+/// the owner's stands at (`server::person::standing_of`): chat, read or edit.
+/// Set only by someone at this Mac (`is_at_this_mac`): never from a paired
+/// device, nor from another machine. The owner's own device stands at admin
+/// whatever is set.
+pub(crate) async fn set_device_level(
+    axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<std::net::SocketAddr>,
+    headers: axum::http::HeaderMap,
+    Path(id): Path<String>,
+    Json(req): Json<LevelUpdate>,
+) -> axum::response::Response {
+    if !crate::server::api::ling_mem_connect::is_at_this_mac(peer, &headers) {
+        return err(StatusCode::FORBIDDEN, "only at this Mac");
+    }
+    let found = modify_devices(|devices| apply_level(devices, &id, req.permission));
+    match found {
+        Ok(Ok(())) => {}
+        Ok(Err(why)) => return err(StatusCode::BAD_REQUEST, why),
+        Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, format!("persist: {e}")),
+    }
+    tracing::info!("[pair] device {id} set to {}", req.permission);
+    Json(serde_json::json!({ "status": "ok", "permission": req.permission })).into_response()
+}
+
+/// Set device `id`'s level: one a device that is not the owner's may stand
+/// at (up to `person::MOST_FOR_ANOTHER`).
+fn apply_level(
+    devices: &mut [PairedDevice],
+    id: &str,
+    level: crate::engine::permission::PermissionMode,
+) -> Result<(), &'static str> {
+    if level > crate::server::person::MOST_FOR_ANOTHER {
+        return Err("admin is the owner's own; set chat, read or edit");
+    }
+    let device = devices
+        .iter_mut()
+        .find(|d| d.id == id)
+        .ok_or("no such device")?;
+    device.permission = Some(level);
+    Ok(())
+}
+
+/// Whether the caller may revoke device `id`: at admin any device; below
+/// it, only the device asking.
+fn may_revoke(headers: &axum::http::HeaderMap, id: &str) -> bool {
+    use crate::engine::permission::PermissionMode;
+    caller_level(headers) == PermissionMode::Admin || caller_device(headers).as_deref() == Some(id)
 }
 
 #[cfg(test)]
@@ -266,6 +361,125 @@ mod tests {
         assert_eq!(got[1]["kind"], "byok");
         assert_eq!(got[1]["model"], "claude-next");
         assert_eq!(got[2], serde_json::json!({"id": "gpt-6-luna", "kind": "oauth"}));
+    }
+
+    /// The Mac's provider keys are the owner's: the owner's device is given
+    /// every allow-listed model with its key; any other device only the
+    /// models it reaches with its own credentials, and no key anywhere in
+    /// the answer.
+    #[test]
+    fn a_key_never_crosses_to_a_device_not_the_owners() {
+        let mut cfg = crate::config::Config::default();
+        let mut byok = configured("my-claude", "anthropic", "claude-next", None);
+        byok.api_key = Some("sk-THE-MACS-KEY".into());
+        cfg.models = vec![byok, configured("my-sol", "chatgpt", "gpt-9-sol", Some("chatgpt_oauth"))];
+        let mut d = crate::state_fs::devices::PairedDevice::default();
+        d.settings.insert(
+            "models".into(),
+            serde_json::json!(["my-claude", "my-sol", crate::provider::models::LINGGEN_CLOUD_MODEL_ID]),
+        );
+        let owners = me_body(&d, &cfg, true);
+        assert!(owners.to_string().contains("sk-THE-MACS-KEY"));
+        assert_eq!(owners["models"].as_array().map(Vec::len), Some(3));
+        let other = me_body(&d, &cfg, false);
+        assert!(!other.to_string().contains("sk-THE-MACS-KEY"), "{other}");
+        let kinds: Vec<_> = other["models"].as_array().unwrap().iter().map(|m| m["kind"].clone()).collect();
+        assert_eq!(kinds, vec![serde_json::json!("oauth"), serde_json::json!("cloud")]);
+
+        // The same phone row: claimed, then verified at its next sync, then
+        // signed in to another account.
+        let mac = Some("u-owner");
+        let keyed = |d: &crate::state_fs::devices::PairedDevice| {
+            me_body(d, &cfg, crate::server::person::is_owners_device(d, mac))
+                .to_string()
+                .contains("sk-THE-MACS-KEY")
+        };
+        let claim = |id: &str| crate::state_fs::devices::AccountRef { id: id.into(), email: None, name: None, at: None };
+        d.kind = Some(crate::state_fs::devices::DeviceKind::Phone);
+        d.contract = Some(crate::server::rtc::contract::CONTRACT);
+        d.account = Some(claim("u-owner"));
+        assert!(!keyed(&d), "a claim alone");
+        d.verified_account = Some("u-owner".into());
+        assert!(keyed(&d), "verified: the owner's");
+        d.account = Some(claim("u-other"));
+        assert!(!keyed(&d), "no longer the owner's");
+    }
+
+    /// The level is set only at this Mac: a paired device's request through
+    /// the tunnel, a relay peer's, and another machine's are refused.
+    #[tokio::test]
+    async fn a_level_is_set_only_at_this_mac() {
+        use crate::engine::permission::PermissionMode;
+        use axum::extract::ConnectInfo;
+        let h = |pairs: &[(&'static str, &'static str)]| {
+            let mut m = axum::http::HeaderMap::new();
+            for (k, v) in pairs {
+                m.insert(*k, v.parse().unwrap());
+            }
+            m
+        };
+        let lo: std::net::SocketAddr = "127.0.0.1:5000".parse().unwrap();
+        let lan: std::net::SocketAddr = "192.168.1.5:5000".parse().unwrap();
+        let tries = [
+            (
+                lo,
+                h(&[
+                    ("host", "127.0.0.1:9527"),
+                    (ACTOR_DEVICE_HEADER, "phone-1"),
+                    (TUNNEL_HEADER, "1"),
+                ]),
+            ),
+            (
+                lo,
+                h(&[("host", "127.0.0.1:9527"), (TUNNEL_HEADER, TUNNEL_OWNER)]),
+            ),
+            (lan, h(&[("host", "192.168.1.2:9527")])),
+        ];
+        for (peer, headers) in tries {
+            let body = Json(LevelUpdate {
+                permission: PermissionMode::Edit,
+            });
+            let res =
+                set_device_level(ConnectInfo(peer), headers, Path("phone-1".into()), body).await;
+            assert_eq!(res.status(), StatusCode::FORBIDDEN);
+        }
+    }
+
+    /// A device is raised to edit or lowered to chat; admin is refused, and
+    /// so is a device that is not there.
+    #[test]
+    fn a_level_up_to_edit_is_set() {
+        use crate::engine::permission::PermissionMode;
+        let mut rows = vec![PairedDevice {
+            id: "p".into(),
+            ..Default::default()
+        }];
+        assert_eq!(apply_level(&mut rows, "p", PermissionMode::Edit), Ok(()));
+        assert_eq!(rows[0].permission, Some(PermissionMode::Edit));
+        assert_eq!(apply_level(&mut rows, "p", PermissionMode::Chat), Ok(()));
+        assert!(apply_level(&mut rows, "p", PermissionMode::Admin).is_err());
+        assert_eq!(rows[0].permission, Some(PermissionMode::Chat));
+        assert!(apply_level(&mut rows, "q", PermissionMode::Read).is_err());
+    }
+
+    /// Below admin a device revokes itself and no other; this machine and
+    /// the owner revoke any.
+    #[test]
+    fn a_device_below_the_owner_revokes_only_itself() {
+        let h = |pairs: &[(&'static str, &'static str)]| {
+            let mut m = axum::http::HeaderMap::new();
+            for (k, v) in pairs {
+                m.insert(*k, v.parse().unwrap());
+            }
+            m
+        };
+        assert!(may_revoke(&h(&[]), "other"));
+        assert!(may_revoke(&h(&[(LEVEL_HEADER, "admin")]), "other"));
+        assert!(!may_revoke(&h(&[(LEVEL_HEADER, "read")]), "other"));
+        assert!(!may_revoke(&h(&[(LEVEL_HEADER, "bogus")]), "other"));
+        // Its own row: the tunnel names the device asking.
+        let own = h(&[(LEVEL_HEADER, "read"), (ACTOR_DEVICE_HEADER, "not-paired")]);
+        assert!(!may_revoke(&own, "other"), "a device not paired is no one");
     }
 
     #[test]

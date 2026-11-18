@@ -16,6 +16,8 @@
 //! - [`store`]  — `SessionPermissions` (load/save permission.json, set_path_mode).
 //! - [`prompt`] — AskUser widget construction and answer parsing.
 
+#[cfg(test)]
+mod ceiling_tests;
 mod classify;
 #[cfg(test)]
 mod coding_session_tests;

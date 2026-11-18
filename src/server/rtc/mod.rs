@@ -8,6 +8,7 @@
 //! str0m is Sans-IO: we drive the event loop ourselves using a UDP socket
 //! in a tokio task per peer connection.
 
+pub(crate) mod contract;
 pub(crate) mod page_state;
 mod peer;
 pub mod proxy_client;
@@ -81,13 +82,11 @@ impl UserPermission {
 /// What a peer is to this machine — the one fact the rest of the label derives
 /// from, so `user_type` can't say one thing here and another there.
 ///
-/// This is provenance, not permission. A paired device carries the owner's
-/// ceiling, and what any peer may actually do is the `(path, mode)` grant on
-/// its session — an ungranted path is `chat`, for owner and phone alike. So
-/// this enum decides no access today. It records how the peer got here: on a
-/// grant this Mac minted, rather than on an account that owns this instance —
-/// worth saying out loud rather than filing under "owner", and the seam if a
-/// device ever needs a ceiling of its own.
+/// This is provenance, not permission. What a paired device may do is its
+/// standing (`server::person::standing_of`): the owner's device at admin, any
+/// other at the level set for it on this Mac. This enum records how the peer
+/// got here: on a grant this Mac minted, rather than on an account that owns
+/// this instance — worth saying out loud rather than filing under "owner".
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PeerKind {
     /// The account that owns this instance, or a local browser on it.
@@ -143,6 +142,11 @@ pub struct UserContext {
     /// How the peer's channel was opened. Decides what the tunnel tells a
     /// handler about a peer that has not named a device ([`Self::tunnel_mark`]).
     pub reached_by: Reach,
+    /// The relay said this peer's account owns this Mac's instance: it dialled
+    /// with that account's credential (the owner's offer), or sent it beside
+    /// its device grant (`owner` on a paired offer). What `identify` verifies
+    /// a phone's claim by; nothing else sets it.
+    pub account_vouched: bool,
 }
 
 /// How a peer's channel was opened.
@@ -175,16 +179,17 @@ impl UserContext {
             room_name: None,
             consumer_type: None,
             reached_by: Reach::Relay,
+            account_vouched: false,
         }
     }
 
     /// Build for a device this Mac paired, arriving on the grant it minted.
     ///
     /// The ceiling is *the owner's* — taken from [`Self::owner`] rather than
-    /// written out again, so it stays the owner's if that ever moves. This is
-    /// only a ceiling: what a session may actually do is the `(path, mode)`
-    /// grant, and a path nobody granted is `chat` — no tools. The ceiling caps
-    /// that lookup; it never opens anything by itself.
+    /// written out again. It is only a ceiling: what reaches this Mac through
+    /// the peer is bounded by the device's standing
+    /// (`server::person::standing_of`), and what a session may do by its
+    /// `(path, mode)` grant. The ceiling never opens anything by itself.
     ///
     /// Identity is what differs. This peer's real one arrives later, as a
     /// device token on the channel's `identify`, so the user id stays a
@@ -213,6 +218,7 @@ impl UserContext {
             room_name: None,
             consumer_type: None,
             reached_by: Reach::Relay,
+            account_vouched: false,
         }
     }
 
@@ -234,6 +240,7 @@ impl UserContext {
             room_name,
             consumer_type: Some(consumer_type),
             reached_by: Reach::Relay,
+            account_vouched: false,
         }
     }
 

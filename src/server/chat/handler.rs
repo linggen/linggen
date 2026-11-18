@@ -729,13 +729,14 @@ async fn promote_mission_session_to_user(
 
 /// The spec of a turn a person typed into `session_id` (its meta read after
 /// any promotion): the session's preset, typed by `policy`, its memory that
-/// of who the turn belongs to (`turn_place::turn_creator`).
+/// of who the turn belongs to (`turn_place::turn_creator`), at no more than
+/// the level its request was judged at (`ChatRequest::level`).
 fn typed_spec(
     state: &Arc<ServerState>,
     session_id: &str,
     engine: &crate::engine::AgentEngine,
     policy: &crate::engine::session_policy::SessionPolicy,
-    turn_owner: &str,
+    (turn_owner, level): (&str, Option<crate::engine::permission::PermissionMode>),
 ) -> crate::engine::session_spec::SessionSpec {
     use crate::engine::session_spec::{Memory, SessionSpec};
     let meta = state.manager.global_sessions.get_session_meta(session_id).ok().flatten();
@@ -743,7 +744,7 @@ fn typed_spec(
         Some(meta) => SessionSpec::of(&meta),
         None => SessionSpec::unclaimed(engine.session_spec().creator.clone()),
     };
-    base.typed(policy.clone(), Memory::of_turn(turn_owner))
+    base.typed(policy.clone(), Memory::of_turn(turn_owner), level)
 }
 
 /// Route the turn to one of three flows in order: slash-command skill
@@ -967,8 +968,10 @@ pub(crate) enum TurnOrigin {
 
 pub(crate) async fn chat_handler(
     State(state): State<Arc<ServerState>>,
-    Json(req): Json<ChatRequest>,
+    headers: axum::http::HeaderMap,
+    Json(mut req): Json<ChatRequest>,
 ) -> axum::response::Response {
+    req.level = Some(crate::server::api::pair::caller_level(&headers));
     start_turn(state, req, TurnOrigin::Person).await
 }
 
@@ -1006,6 +1009,7 @@ pub(crate) async fn say_in_app(state: Arc<ServerState>, app: &str, agent_id: &st
         via_note: None,
         followups: false,
         client_id: None,
+        level: None,
     };
     start_turn(state, req, TurnOrigin::Person).await;
 }
@@ -1036,6 +1040,7 @@ async fn turn_in_session(
         via_note: None,
         followups: false,
         client_id: None,
+        level: None,
     };
     start_turn(state, req, TurnOrigin::Person).await;
     true
@@ -1191,6 +1196,10 @@ pub(crate) async fn start_turn(
             .flatten()
     });
     if let Some(meta) = meta.as_ref().filter(|m| !m.runtime.is_linggen()) {
+        let level = req.level.unwrap_or(crate::engine::permission::PermissionMode::Admin);
+        if let Some(refused) = crate::server::person::owners_only(level) {
+            return refused;
+        }
         return crate::server::claude::start_turn(state, req, meta.clone()).await;
     }
     // Where this turn stands: the page's app, else the session's own.
@@ -1370,6 +1379,7 @@ pub(crate) async fn start_turn(
     });
     let session_id_for_queue = effective_session_id.clone();
     let req_user_type = req.user_type;
+    let req_level = req.level;
     let req_model_id = req.model_id.clone();
     let req_images = req.images.clone();
     let req_followups = req.followups;
@@ -1503,7 +1513,7 @@ pub(crate) async fn start_turn(
         // A person's turn: the session's spec typed by this policy — the
         // lead's tools, verbatim, its memory the turn's (an app's or a
         // mission's keeps less of the biography).
-        typed_spec(&state_clone, &session_id_for_queue, &engine, &policy, session_creator)
+        typed_spec(&state_clone, &session_id_for_queue, &engine, &policy, (session_creator, req_level))
             .apply(&mut engine);
         engine.suggest_followups = req_followups
             && !is_consumer

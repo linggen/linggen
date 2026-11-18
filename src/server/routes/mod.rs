@@ -3,6 +3,7 @@
 
 mod apps;
 mod chat;
+pub(crate) mod classes;
 mod devices;
 mod settings;
 mod workspace;

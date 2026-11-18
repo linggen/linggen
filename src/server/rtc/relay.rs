@@ -161,52 +161,8 @@ async fn offer_poll_loop(link: &Link, state: Arc<ServerState>) {
                         let sdp = data["sdp"].as_str().unwrap_or("").to_string();
 
                         if !nonce.is_empty() && !sdp.is_empty() {
-                            // Build UserContext for this peer
-                            let user_ctx = if data["pairing"].as_bool() == Some(true) {
-                                // A phone that scanned our QR: the relay let it
-                                // through because our pairing window is open and
-                                // its secret hashes to ours. It still has to hand
-                                // that secret over on the channel to become a
-                                // paired device — until then it can call nothing
-                                // else. See UserContext::pairing_only.
-                                info!("Received pairing offer (nonce: {nonce})");
-                                super::UserContext::pairing()
-                            } else if data["paired"].as_bool() == Some(true) {
-                                // A device we paired, dialling on the grant we
-                                // minted for it. Admin like the owner, but it
-                                // is not the owner — it may hold a different
-                                // account, or none. Say which.
-                                info!("Received paired-device offer (nonce: {nonce})");
-                                super::UserContext::paired()
-                            } else if let Some(ct) = data["consumer_type"].as_str() {
-                                // Consumer — check if room is enabled first
-                                let room_cfg = super::room_config::load_room_config();
-                                if !room_cfg.room_enabled {
-                                    info!(
-                                        "Rejecting consumer offer (room disabled, nonce: {nonce})"
-                                    );
-                                    continue;
-                                }
-                                // Derive permission from room_config
-                                let permission = super::room_config::tools_to_permission(
-                                    &room_cfg.allowed_tools,
-                                );
-                                let user_id =
-                                    data["consumer_user_id"].as_str().unwrap_or("").to_string();
-                                info!("Received proxy room offer (nonce: {nonce}, type: {ct}, perm: {:?})", permission);
-                                super::UserContext::consumer(
-                                    user_id,
-                                    ct.to_string(),
-                                    permission,
-                                    data["token_budget_daily"].as_i64(),
-                                    data["room_name"].as_str().map(|s| s.to_string()),
-                                )
-                            } else {
-                                // Owner — Admin permission
-                                info!("Received remote offer (nonce: {nonce})");
-                                super::UserContext::owner(
-                                    crate::account::load_account().and_then(|a| a.user_id),
-                                )
+                            let Some(user_ctx) = context_for_offer(&data, &nonce) else {
+                                continue;
                             };
 
                             let lk = link.clone();
@@ -254,6 +210,59 @@ async fn offer_poll_loop(link: &Link, state: Arc<ServerState>) {
     }
 }
 
+/// Who an offer's peer is, by what the relay said of it; `None` for a room
+/// consumer while the room is off.
+fn context_for_offer(data: &serde_json::Value, nonce: &str) -> Option<super::UserContext> {
+    if data["pairing"].as_bool() == Some(true) {
+        // A phone that scanned our QR: the relay let it through because our
+        // pairing window is open and its secret hashes to ours. It still has
+        // to hand that secret over on the channel to become a paired device —
+        // until then it can call nothing else. See UserContext::pairing_only.
+        info!("Received pairing offer (nonce: {nonce})");
+        return Some(super::UserContext::pairing());
+    }
+    if data["paired"].as_bool() == Some(true) {
+        // A device we paired, dialling on the grant we minted for it. Its
+        // standing follows its account (`person::standing_of`); `owner` says
+        // the relay checked the account credential it sent beside the grant
+        // and that account owns this instance.
+        let vouched = data["owner"].as_bool() == Some(true);
+        info!("Received paired-device offer (nonce: {nonce}, owner account: {vouched})");
+        return Some(super::UserContext {
+            account_vouched: vouched,
+            ..super::UserContext::paired()
+        });
+    }
+    if let Some(ct) = data["consumer_type"].as_str() {
+        // Consumer — check if room is enabled first
+        let room_cfg = super::room_config::load_room_config();
+        if !room_cfg.room_enabled {
+            info!("Rejecting consumer offer (room disabled, nonce: {nonce})");
+            return None;
+        }
+        // Derive permission from room_config
+        let permission = super::room_config::tools_to_permission(&room_cfg.allowed_tools);
+        let user_id = data["consumer_user_id"].as_str().unwrap_or("").to_string();
+        info!(
+            "Received proxy room offer (nonce: {nonce}, type: {ct}, perm: {:?})",
+            permission
+        );
+        return Some(super::UserContext::consumer(
+            user_id,
+            ct.to_string(),
+            permission,
+            data["token_budget_daily"].as_i64(),
+            data["room_name"].as_str().map(|s| s.to_string()),
+        ));
+    }
+    // The owner's own account dialled: the relay checked it owns this instance.
+    info!("Received remote offer (nonce: {nonce})");
+    Some(super::UserContext {
+        account_vouched: true,
+        ..super::UserContext::owner(crate::account::load_account().and_then(|a| a.user_id))
+    })
+}
+
 /// Process a remote SDP offer: create peer connection and post answer back.
 async fn handle_remote_offer(
     link: &Link,
@@ -294,5 +303,26 @@ async fn handle_remote_offer(
         Err(e) => {
             warn!("Failed to create peer for remote offer: {}", e);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::context_for_offer;
+    use serde_json::json;
+
+    /// A paired offer's account is vouched for only when the relay says it
+    /// owns the instance; the owner's own offer always is; a pairing offer
+    /// never is.
+    #[test]
+    fn an_offer_is_vouched_only_as_the_relay_says() {
+        let paired = context_for_offer(&json!({"paired": true}), "n").unwrap();
+        assert!(!paired.account_vouched);
+        let owners = context_for_offer(&json!({"paired": true, "owner": true}), "n").unwrap();
+        assert!(owners.account_vouched);
+        assert_eq!(owners.kind, crate::server::rtc::PeerKind::Paired);
+        assert!(context_for_offer(&json!({}), "n").unwrap().account_vouched);
+        let pairing = context_for_offer(&json!({"pairing": true, "owner": true}), "n").unwrap();
+        assert!(!pairing.account_vouched);
     }
 }

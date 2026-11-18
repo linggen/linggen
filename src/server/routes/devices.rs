@@ -3,7 +3,7 @@
 
 use super::Routes;
 use crate::server::{anthropic_gateway, api, bridge, mcp, rtc};
-use axum::routing::{get, patch, post};
+use axum::routing::{get, patch, post, put};
 
 pub(super) fn routes() -> Routes {
     Routes::new()
@@ -51,6 +51,11 @@ pub(super) fn routes() -> Routes {
         .route(
             "/api/pair/devices/{id}",
             patch(api::pair::rename_pair_device).delete(api::pair::delete_pair_device),
+        )
+        // The level a device that is not the owner's stands at — set at this Mac only
+        .route(
+            "/api/pair/devices/{id}/permission",
+            put(api::pair::set_device_level),
         )
         .route("/pair", get(api::pair::get_pair_page))
         // A LAN machine asking ling-mem to share memory: Allow / Deny here

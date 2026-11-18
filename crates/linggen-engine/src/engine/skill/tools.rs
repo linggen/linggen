@@ -41,6 +41,11 @@ pub enum Refusal {
     NotRunnable(String),
     SignedOut,
     BeyondGrant(String),
+    /// The tool's tier is above the level its caller stands at.
+    BeyondLevel {
+        level: PermissionMode,
+        needs: PermissionMode,
+    },
     NotForPet(String),
     BadCall(String),
     Crashed(String),
@@ -50,6 +55,12 @@ impl std::fmt::Display for Refusal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Refusal::SignedOut => f.write_str(AUTH_REQUIRED),
+            Refusal::BeyondLevel { level, needs } => {
+                write!(
+                    f,
+                    "beyond_level: the caller stands at {level}; the tool needs {needs}"
+                )
+            }
             Refusal::NoSkill(m)
             | Refusal::NoTool(m)
             | Refusal::NotRunnable(m)
@@ -81,12 +92,26 @@ fn skill_lock(skill: &str) -> SkillLock {
 }
 
 /// Run `tool_name` of `skill` with `args` (an object), for a session bound
-/// to `params` (the skill's session parameters; empty: none).
+/// to `params` (the skill's session parameters; empty: none), as this
+/// machine asks it.
 pub async fn run(
     skill: &Skill,
     tool_name: &str,
     args: &Value,
     params: &SessionParams,
+) -> Result<ToolResult, Refusal> {
+    run_at(skill, tool_name, args, params, PermissionMode::Admin).await
+}
+
+/// [`run`] for a caller standing at `caller` (a device from off this
+/// machine, through the page's door): the tool's tier must be within the
+/// skill's grant and within `caller` ([`Refusal::BeyondLevel`]).
+pub async fn run_at(
+    skill: &Skill,
+    tool_name: &str,
+    args: &Value,
+    params: &SessionParams,
+    caller: PermissionMode,
 ) -> Result<ToolResult, Refusal> {
     let tool = shell_tool(skill, tool_name)?;
     if skill.cloud.is_some() && crate::account::resolve_token().is_none() {
@@ -94,6 +119,7 @@ pub async fn run(
     }
     let cwd = working_folder(skill);
     within_grant(skill, &tool, &cwd)?;
+    within_level(&tool, caller)?;
 
     let lock = skill_lock(&skill.name);
     let _one = lock.lock().await;
@@ -434,6 +460,18 @@ fn within_grant(skill: &Skill, tool: &SkillToolDef, cwd: &Path) -> Result<(), Re
     Ok(())
 }
 
+/// The tool's tier must be within the level its caller stands at.
+fn within_level(tool: &SkillToolDef, caller: PermissionMode) -> Result<(), Refusal> {
+    let needs = tier_of(tool);
+    if needs > caller {
+        return Err(Refusal::BeyondLevel {
+            level: caller,
+            needs,
+        });
+    }
+    Ok(())
+}
+
 /// A call changed the save: push it now, never pull (a pull happens at a
 /// turn's edges and on the page's own sync).
 async fn push_save(skill: &Skill) {
@@ -532,6 +570,46 @@ body
 
     fn args() -> Value {
         serde_json::json!({ "who": "alex" })
+    }
+
+    /// A page's call from a device is judged by the lower of the skill's
+    /// grant and the caller's level: a read tool runs at read; an edit tool
+    /// is refused at read, with the level and what it needs, and runs at
+    /// edit; this machine's own call (`run`) is unchanged.
+    #[tokio::test]
+    async fn a_tool_is_judged_by_the_callers_level_too() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = skill(dir.path());
+        let p = SessionParams::new();
+        assert!(run_at(&s, "Hidden", &args(), &p, PermissionMode::Read)
+            .await
+            .is_ok());
+        let err = run_at(&s, "Write", &args(), &p, PermissionMode::Read)
+            .await
+            .unwrap_err();
+        match err {
+            Refusal::BeyondLevel { level, needs } => {
+                assert_eq!((level, needs), (PermissionMode::Read, PermissionMode::Edit));
+            }
+            other => panic!("not refused by level: {other}"),
+        }
+        assert!(run_at(&s, "Write", &args(), &p, PermissionMode::Edit)
+            .await
+            .is_ok());
+        assert!(run_at(&s, "Hidden", &args(), &p, PermissionMode::Chat)
+            .await
+            .is_err());
+        assert!(
+            run(&s, "Write", &args(), &p).await.is_ok(),
+            "this machine's call"
+        );
+        let beyond = run_at(&s, "WipeAll", &args(), &p, PermissionMode::Admin)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(beyond, Refusal::BeyondGrant(_)),
+            "the skill's own grant still holds"
+        );
     }
 
     #[tokio::test]

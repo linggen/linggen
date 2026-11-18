@@ -203,21 +203,23 @@ pub const DIRTY_ALL: u64 = DIRTY_GLOBAL | DIRTY_SCOPED;
 /// Build the page state from server state + view context + user context.
 /// All data is filtered by user_id. Permission level controls what data categories are included.
 /// `person`: the person behind the peer (`peer::control::person_for`) — a
-/// day is shown only to its own person.
+/// day is shown only to its own person. `whose`: whose sessions a peer below
+/// the owner's standing is shown (`peer::standing::seen_as`); `None` for the
+/// owner, who is shown all.
 pub async fn build_page_state(
     state: &Arc<ServerState>,
     ctx: &ViewContext,
     dirty: u64,
     (user, identified): (&super::UserContext, bool),
-    person: &str,
+    (whose, person): (Option<&str>, &str),
 ) -> PageState {
     let (shown, refused) = ctx.shown_to(person);
     let ctx = &shown;
     let theirs = |sid: &str| crate::server::day_session::may_enter(sid, Some(person));
     let include_global = (dirty & DIRTY_GLOBAL) != 0;
     let include_scoped = (dirty & DIRTY_SCOPED) != 0;
-    let is_admin = user.permission.is_admin();
-    let user_id = &user.user_id;
+    let is_admin = whose.is_none() && user.permission.is_admin();
+    let user_id = &whose.unwrap_or(&user.user_id).to_string();
 
     // Load room config — needed for consumer filtering and owner room_enabled status.
     let room_cfg = super::room_config::load_room_config();

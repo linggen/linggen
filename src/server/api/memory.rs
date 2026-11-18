@@ -192,6 +192,26 @@ fn scope_phone(verb: &str, args: &mut Value, person: Option<&Person>) -> Result<
 /// Why the door refused: status, message, envelope code.
 type Refusal = (StatusCode, String, &'static str);
 
+/// Where a device's rows go when it gains `gained`: `Some(true)` to the
+/// owner (the device is the owner's, verified), `Some(false)` to that
+/// account, `None` nowhere (this Mac's account, claimed but not verified).
+fn restamp_to_owner(device_id: &str, gained: &str, owner: Option<&str>) -> Option<bool> {
+    let devices = crate::state_fs::devices::load_devices();
+    let device = devices.iter().find(|d| d.id == device_id);
+    owners_rows(device, gained, owner)
+}
+
+fn owners_rows(
+    device: Option<&crate::server::api::pair::PairedDevice>,
+    gained: &str,
+    owner: Option<&str>,
+) -> Option<bool> {
+    if owner != Some(gained) {
+        return Some(false);
+    }
+    device.is_some_and(|d| d.is_owners(owner)).then_some(true)
+}
+
 /// Memory's refusal, in the shape the door answers its own refusals with
 /// (memory's own envelope).
 fn refused(e: ling_mem::MemError) -> Response {
@@ -223,29 +243,26 @@ pub(crate) fn own_name_of(caller: &Caller) -> OwnName {
     }
 }
 
-/// The person behind paired device `device_id`, as memory resolves it
-/// ([`person_of`]) — the one seam the day's lookup takes its person from
-/// too: `Some(None)` for the owner's own device, `Some(Some(id))` for
-/// another person (a signed-out phone is its device), `None` for a device
-/// nobody paired.
-pub(crate) fn person_behind(device_id: &str) -> Option<Option<String>> {
-    let devices = crate::state_fs::devices::load_devices();
-    let device = devices.iter().find(|d| d.id == device_id)?;
-    Some(person_behind_device(device))
-}
-
-/// [`person_behind`] for a device found: the owner's other computer is the
-/// owner, as memory's door reads it (`asker_of`); a phone is its person.
-fn person_behind_device(device: &crate::server::api::pair::PairedDevice) -> Option<String> {
+/// The person behind a paired device, as memory resolves it ([`person_for`])
+/// — the one seam the day's lookup takes its person from too
+/// (`server::person::standing_of`), with this Mac's account (`owner_id`):
+/// `None` for the owner's own device, `Some(id)` for another person (a
+/// signed-out phone, and an unverified claim of this Mac's account, are
+/// their device).
+pub(crate) fn person_behind_for(
+    device: &crate::server::api::pair::PairedDevice,
+    owner_id: Option<&str>,
+) -> Option<String> {
     match Caller::of(device.clone()) {
-        Caller::Phone(phone) => person_of(&phone).map(|p| p.id),
+        Caller::Phone(phone) => person_for(&phone, owner_id).map(|p| p.id),
         _ => None,
     }
 }
 
-/// Who is behind this device, for the store. The Mac's own account is the
-/// owner and gets no stamp; any other account is stamped as itself; a
-/// signed-out phone is stamped as its device until it signs in.
+/// Who is behind this device, for the store. The owner's own phone (its
+/// claim of this Mac's account verified, `PairedDevice::is_owners`) gets no
+/// stamp; any other account is stamped as itself; a signed-out phone, and a
+/// phone claiming this Mac's account unverified, are stamped as their device.
 fn person_of(device: &crate::server::api::pair::PairedDevice) -> Option<Person> {
     let owner = crate::account::load_account().and_then(|a| a.user_id);
     person_for(device, owner.as_deref())
@@ -255,8 +272,15 @@ fn person_for(
     device: &crate::server::api::pair::PairedDevice,
     owner_id: Option<&str>,
 ) -> Option<Person> {
+    if device.is_owners(owner_id) {
+        return None;
+    }
+    let as_device = || Person {
+        id: device_stamp(&device.id),
+        name: Some(device.name.clone()),
+    };
     match &device.account {
-        Some(a) if Some(a.id.as_str()) == owner_id => None,
+        Some(a) if Some(a.id.as_str()) == owner_id => Some(as_device()),
         Some(a) => Some(Person {
             id: a.id.clone(),
             name: a
@@ -265,10 +289,7 @@ fn person_for(
                 .or_else(|| a.email.clone())
                 .filter(|s| !s.trim().is_empty()),
         }),
-        None => Some(Person {
-            id: device_stamp(&device.id),
-            name: Some(device.name.clone()),
-        }),
+        None => Some(as_device()),
     }
 }
 
@@ -277,13 +298,17 @@ fn device_stamp(device_id: &str) -> String {
     format!("device:{device_id}")
 }
 
-/// A phone that signed in just now: hand the rows it wrote as `device:<id>`
-/// to the person it turned out to be — or back to the owner, if it was the
-/// owner's phone all along. Failure is logged, not surfaced: the rows are
-/// still there under the device stamp, and the next sign-in tries again.
+/// A phone that signed in, or was verified as the owner's, just now: hand the
+/// rows it wrote as `device:<id>` to the person it turned out to be — or to
+/// the owner, when its claim of this Mac's account is verified. A claim of
+/// this Mac's account not verified hands them to no one: they stay the
+/// device's. Failure is logged, not surfaced: the rows are still there under
+/// the device stamp, and the next sign-in tries again.
 pub async fn restamp_device(device_id: &str, gained: &crate::server::api::pair::AccountRef) {
     let owner = crate::account::load_account().and_then(|a| a.user_id);
-    let to_owner = owner.as_deref() == Some(gained.id.as_str());
+    let Some(to_owner) = restamp_to_owner(device_id, &gained.id, owner.as_deref()) else {
+        return;
+    };
     let body = json!({
         "from": device_stamp(device_id),
         "account_id": if to_owner { Value::Null } else { json!(gained.id) },
@@ -367,6 +392,7 @@ mod tests {
             settings: serde_json::Map::new(),
             relay_grant: None,
             superseded_grant: None,
+            ..Default::default()
         }
     }
 
@@ -379,26 +405,45 @@ mod tests {
             kind: Some(crate::state_fs::devices::DeviceKind::Machine),
             ..device(None)
         };
-        assert_eq!(person_behind_device(&machine), None);
+        assert_eq!(person_behind_for(&machine, None), None);
         let phone = PairedDevice {
             kind: Some(crate::state_fs::devices::DeviceKind::Phone),
             ..device(Some(("u-2", None)))
         };
-        assert_eq!(person_behind_device(&phone).as_deref(), Some("u-2"));
+        assert_eq!(person_behind_for(&phone, None).as_deref(), Some("u-2"));
         let signed_out = PairedDevice {
             kind: Some(crate::state_fs::devices::DeviceKind::Phone),
             ..device(None)
         };
-        assert_eq!(person_behind_device(&signed_out).as_deref(), Some("device:dev-1"));
+        assert_eq!(person_behind_for(&signed_out, None).as_deref(), Some("device:dev-1"));
     }
 
     #[test]
     fn owner_phone_is_nobody_special() {
-        // Signed in to the Mac's own account: unstamped, like the Mac itself.
-        assert_eq!(
-            person_for(&device(Some(("u-owner", Some("Alex")))), Some("u-owner")),
-            None
-        );
+        // Signed in to the Mac's own account, verified: unstamped, like the
+        // Mac itself.
+        let verified = PairedDevice {
+            verified_account: Some("u-owner".into()),
+            ..device(Some(("u-owner", Some("Alex"))))
+        };
+        assert_eq!(person_for(&verified, Some("u-owner")), None);
+    }
+
+    /// A claim of the Mac's own account that the relay never vouched for is
+    /// not the owner: the phone is stamped as its device, and the rows it
+    /// wrote signed out go to no one when it says it signed in.
+    #[test]
+    fn an_unverified_claim_of_the_owners_account_is_its_device() {
+        let claimed = device(Some(("u-owner", Some("Alex"))));
+        let p = person_for(&claimed, Some("u-owner")).unwrap();
+        assert_eq!(p.id, "device:dev-1");
+        assert_eq!(owners_rows(Some(&claimed), "u-owner", Some("u-owner")), None);
+        let verified = PairedDevice {
+            verified_account: Some("u-owner".into()),
+            ..claimed
+        };
+        assert_eq!(owners_rows(Some(&verified), "u-owner", Some("u-owner")), Some(true));
+        assert_eq!(owners_rows(None, "u-2", Some("u-owner")), Some(false));
     }
 
     #[test]
@@ -753,9 +798,10 @@ mod tests {
         let mut files = code_under(&root.join("src"));
         files.extend(code_under(&root.join("crates/linggen-engine/src")));
         assert!(files.len() > 100, "scanned {} files", files.len());
-        const ALLOWED: [&str; 3] = [
+        const ALLOWED: [&str; 4] = [
             "format!(\"{}/api/memory/{verb}\", url())",
             ".route(\"/api/memory/{verb}\", post(api::memory::passthrough))",
+            "(\"POST\", \"/api/memory/{verb}\", Own),",
             "\"a phone reaches memory at /api/memory/<verb>, and sees its own person's rows\",",
         ];
         for (path, code) in &files {

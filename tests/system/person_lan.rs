@@ -4,6 +4,7 @@
 //! the request as theirs whatever `user_id` it named.
 
 use crate::day_session::{day_world_at, say};
+use crate::support::engine::RunEnd;
 use crate::support::model::Agent;
 use crate::support::{text, tool, Setup, World};
 use serde_json::{json, Value};
@@ -384,6 +385,219 @@ async fn a_body_past_the_limit_is_answered_over_the_lan_as_here() {
     let small = post(lan.base.clone(), Some(TOKEN), json!({"focused": true}).to_string().into()).await;
     if small != 200 {
         wrong.push(format!("a short body over the LAN: {small}"));
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+/// The friend's phone row with `extra` fields (its contract, its level).
+fn pair_friends_phone_with(w: &World, extra: Value) {
+    let mut row = json!({
+        "id": "phone-friend", "name": "Friend's phone", "secret": TOKEN, "created_at": 0,
+        "kind": "phone", "account": {"id": "u-friend", "name": "Friend"},
+    });
+    for (k, v) in extra.as_object().cloned().unwrap_or_default() {
+        row[k] = v;
+    }
+    std::fs::write(w.home.linggen_home().join("paired-devices.json"), json!([row]).to_string()).unwrap();
+}
+
+/// A phone's standing over plain HTTP from the LAN (doc/permission-spec.md
+/// § Remote trust): one that never said its contract stands at chat; at
+/// this release's contract, read — a read route passes, an edit route and
+/// the raw shell are refused with its level and what they need; raised to
+/// edit at this Mac, the edit route passes and the shell is still refused.
+/// The level is set only at this Mac, never from the phone. `/api/health`
+/// says the contract numbers.
+#[tokio::test]
+async fn a_phone_over_the_lan_stands_at_its_level() {
+    let w = World::start(Setup {
+        lan: true,
+        ..Setup::default()
+    })
+    .await;
+    let lan = Lan::new(&w);
+    let beyond = |level: &str, needs: &str| json!({"error": "beyond_level", "level": level, "needs": needs});
+    // Waits out the store's re-read after a rewrite of the row: asks until
+    // the answer is (`is`) or is no longer (`!is`) `body`.
+    let until = |path: &'static str, body: Value, is: bool| {
+        let lan = &lan;
+        async move {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            loop {
+                let got = lan.send(reqwest::Method::GET, path, None).await;
+                if (got.1 == body) == is || std::time::Instant::now() > deadline {
+                    return got;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+        }
+    };
+    let mut wrong = Vec::new();
+    let health = lan.get("/api/health").await;
+    if health["contract"] != json!(1) || health["oldest_peer"] != json!(1) {
+        wrong.push(format!("health does not say the contract: {health}"));
+    }
+
+    pair_friends_phone(&w);
+    let old = until("/api/topic/latest?topic=t", beyond("chat", "read"), true).await;
+    if old != (403, beyond("chat", "read")) {
+        wrong.push(format!("a phone with no contract was not held at chat: {old:?}"));
+    }
+
+    pair_friends_phone_with(&w, json!({"contract": 1}));
+    let read = until("/api/topic/latest?topic=t", beyond("chat", "read"), false).await;
+    if read.0 == 403 {
+        wrong.push(format!("a read route was refused at read: {read:?}"));
+    }
+    let edit = lan.send(reqwest::Method::POST, "/api/media/backup", Some(json!({}))).await;
+    if edit != (403, beyond("read", "edit")) {
+        wrong.push(format!("an edit route at read: {edit:?}"));
+    }
+    let shell = lan.send(reqwest::Method::POST, "/api/bash", Some(json!({"command": "true"}))).await;
+    if shell != (403, beyond("read", "admin")) {
+        wrong.push(format!("the raw shell at read: {shell:?}"));
+    }
+    let raise = json!({"permission": "edit"});
+    let own_try = lan
+        .send(reqwest::Method::PUT, "/api/pair/devices/phone-friend/permission", Some(raise.clone()))
+        .await;
+    if own_try.0 != 403 {
+        wrong.push(format!("the phone raised its own level: {own_try:?}"));
+    }
+
+    let at_mac = reqwest::Client::new()
+        .put(format!("{}/api/pair/devices/phone-friend/permission", w.engine.base_url()))
+        .json(&raise)
+        .send()
+        .await
+        .expect("PUT at this Mac")
+        .status()
+        .as_u16();
+    if at_mac != 200 {
+        wrong.push(format!("the level was not set at this Mac: {at_mac}"));
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let raised = loop {
+        let got = lan.send(reqwest::Method::POST, "/api/media/backup", Some(json!({}))).await;
+        if got.1 != beyond("read", "edit") || std::time::Instant::now() > deadline {
+            break got;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    };
+    if raised.1.get("error") == Some(&json!("beyond_level")) {
+        wrong.push(format!("an edit route at edit: {raised:?}"));
+    }
+    let shell = lan.send(reqwest::Method::POST, "/api/bash", Some(json!({"command": "true"}))).await;
+    if shell != (403, beyond("edit", "admin")) {
+        wrong.push(format!("the raw shell at edit: {shell:?}"));
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+/// A session is its person's (doc/permission-spec.md § A paired device's
+/// standing): another person's phone, even at edit, may not name the
+/// builder's ordinary session — chat into it, clear it, read its pictures
+/// or state — while a session it made itself is its own.
+#[tokio::test]
+async fn another_persons_phone_over_the_lan_may_not_name_the_builders_session() {
+    use reqwest::Method;
+    let w = World::start(Setup {
+        lan: true,
+        ..Setup::default()
+    })
+    .await;
+    pair_friends_phone_with(&w, json!({"contract": 1, "permission": "edit"}));
+    let lan = Lan::new(&w);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while lan.status("/api/pair/me", Some(TOKEN)).await != 200 {
+        assert!(std::time::Instant::now() < deadline, "the phone is not known");
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    let made = w.api.post("/api/sessions", json!({"title": "Builder's"})).await;
+    let mine = made["id"].as_str().expect("the builder's session").to_string();
+    let enc = |s: &str| urlencoding::encode(s).into_owned();
+    let not_theirs = json!({"error": "that session is another person's"});
+    let mut wrong = Vec::new();
+    let mut probe = |what: &str, got: (u16, Value)| {
+        if got != (403, not_theirs.clone()) {
+            wrong.push(format!("{what}: {got:?}"));
+        }
+    };
+    let chat = json!({"session_id": mine, "project_root": w.work(), "message": "FRIEND-WORDS"});
+    probe("chat", lan.send(Method::POST, "/api/chat", Some(chat)).await);
+    probe("clear", lan.send(Method::POST, "/api/chat/clear", Some(json!({"session_id": mine}))).await);
+    let pic = format!("/api/sessions/images?session_id={}&name=x.png", enc(&mine));
+    probe("pictures", lan.send(Method::GET, &pic, None).await);
+    let state = format!("/api/skill-sessions/state?skill=dice&session_id={}", enc(&mine));
+    probe("state", lan.send(Method::GET, &state, None).await);
+    let steer = json!({"session_id": mine, "agent_id": "ling", "id": "q-1"});
+    probe("remove a queued message", lan.send(Method::POST, "/api/queue/remove", Some(steer)).await);
+
+    let own = lan.send(Method::POST, "/api/sessions", Some(json!({"title": "Friend's"}))).await;
+    let theirs = own.1["id"].as_str().unwrap_or_default().to_string();
+    let cleared = lan.send(Method::POST, "/api/chat/clear", Some(json!({"session_id": theirs}))).await;
+    if theirs.is_empty() || cleared.0 == 403 {
+        wrong.push(format!("the friend's own session: {own:?} then {cleared:?}"));
+    }
+    let rows = serde_json::to_string(&w.raw_rows(&mine)).unwrap();
+    if rows.contains("FRIEND-WORDS") {
+        wrong.push("the friend's words are in the builder's session".into());
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+/// A turn a phone sends runs at no more than its level (doc/permission-spec.md
+/// § A paired device's standing): at read its model may not write, and is
+/// told so at once, never asking; her own thread and a session another
+/// runtime hosts take no turn below admin.
+#[tokio::test]
+async fn a_phones_turn_runs_at_its_level() {
+    use reqwest::Method;
+    let w = World::start(Setup { lan: true, ..Setup::default() }.script(
+        Agent::Ling,
+        vec![tool("Write", json!({"path": "FRIEND.txt", "content": "x"})), text("Could not.")],
+    ))
+    .await;
+    pair_friends_phone_with(&w, json!({"contract": 1}));
+    let lan = Lan::new(&w);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while lan.status("/api/pair/me", Some(TOKEN)).await != 200 {
+        assert!(std::time::Instant::now() < deadline, "the phone is not known");
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    let mut wrong = Vec::new();
+    let own = lan.send(Method::POST, "/api/sessions", Some(json!({"title": "Friend's"}))).await;
+    let sid = own.1["id"].as_str().unwrap_or_default().to_string();
+    let mark = w.mark();
+    let chat = json!({"session_id": sid, "project_root": w.work(), "message": "Write FRIEND.txt"});
+    let sent = lan.send(Method::POST, "/api/chat", Some(chat)).await;
+    if sent.0 != 200 {
+        wrong.push(format!("the friend's chat at read: {sent:?}"));
+    } else if let RunEnd::Asked(ask) = w.wait_run(&sid, Agent::Ling, mark).await {
+        wrong.push(format!("a turn at read asked: {ask}"));
+    }
+    let rows = serde_json::to_string(&w.raw_rows(&sid)).unwrap();
+    if !rows.contains("Beyond this turn's level") {
+        wrong.push(format!("the write was not refused as beyond the level: {rows}"));
+    }
+    if w.home.work().join("FRIEND.txt").exists() || w.home.linggen_home().join("workspace/FRIEND.txt").exists() {
+        wrong.push("the turn at read wrote a file".into());
+    }
+    let her = lan.send(Method::POST, "/api/yinyue/chat", Some(json!({"text": "hi"}))).await;
+    if her.0 != 403 {
+        wrong.push(format!("her own thread at read: {her:?}"));
+    }
+    let claude = lan.send(Method::POST, "/api/sessions", Some(json!({"title": "c", "runtime": "claude_agent_sdk", "project_root": w.work()}))).await;
+    match claude.1["id"].as_str() {
+        Some(cid) => {
+            let into = json!({"session_id": cid, "project_root": w.work(), "message": "hi"});
+            let got = lan.send(Method::POST, "/api/chat", Some(into)).await;
+            let beyond = json!({"error": "beyond_level", "level": "read", "needs": "admin"});
+            if got != (403, beyond) {
+                wrong.push(format!("a Claude session's turn at read: {got:?}"));
+            }
+        }
+        None => wrong.push(format!("no Claude session was made to try: {claude:?}")),
     }
     assert!(wrong.is_empty(), "{wrong:#?}");
 }

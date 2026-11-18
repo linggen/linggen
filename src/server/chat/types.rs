@@ -56,6 +56,12 @@ pub(crate) struct ChatRequest {
     /// `@name`, which differ from what was typed.
     #[serde(default)]
     pub(crate) client_id: Option<String>,
+    /// The level the request was judged at off this machine
+    /// (`x-linggen-level`, `api::pair::caller_level`), the turn's ceiling.
+    /// Never read from the body: `chat_handler` sets it from the header;
+    /// `None` is this machine's own turn.
+    #[serde(skip)]
+    pub(crate) level: Option<crate::engine::permission::PermissionMode>,
 }
 
 #[derive(Deserialize)]

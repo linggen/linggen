@@ -436,6 +436,22 @@ pub(super) fn is_under_temp(target: &Path) -> bool {
     temp_roots().iter().any(|root| is_within(&t, root))
 }
 
+/// Under a turn's ceiling, Linggen's own folder is the owner's alone: its
+/// settings, its credentials, every session's record. Nothing in it is
+/// reached by a turn another device sent — whatever the session's grants
+/// or a skill's cover — but the session's own folder, read.
+fn owners_alone(
+    perms: &SessionPermissions,
+    (tier, ceiling): (PermissionMode, Option<PermissionMode>),
+    target: &Path,
+) -> bool {
+    if ceiling.is_none() || reads_own_dir(perms, tier, target) {
+        return false;
+    }
+    let home = normalize_path(&crate::paths::linggen_home().to_string_lossy());
+    is_within(&normalize_path(&target.to_string_lossy()), &home)
+}
+
 /// A read inside the session's own folder (its tasks' logs): allowed
 /// without a grant. Never a write, and never another session's folder —
 /// both sides are resolved, so `<own>/../<other>` is the other one.
@@ -527,12 +543,16 @@ pub fn check_permission(
         session_perms,
         action_tier_override,
         false,
+        None,
     )
 }
 
 /// [`check_permission`] for a session that is, or is not, a coding session
 /// (`work: code`): one runs its programs where it may edit, without asking
-/// ([`super::classify`]'s `coding_class` says which).
+/// ([`super::classify`]'s `coding_class` says which); and for a turn under a
+/// `ceiling` (`SessionSpec::ceiling`, the level of the device that sent it):
+/// an action that needs more is refused, never asked for, whatever the
+/// session's grants.
 #[allow(clippy::too_many_arguments)]
 pub fn check_permission_for(
     tool: &str,
@@ -542,6 +562,7 @@ pub fn check_permission_for(
     session_perms: &SessionPermissions,
     action_tier_override: Option<PermissionMode>,
     coding: bool,
+    ceiling: Option<PermissionMode>,
 ) -> PermissionCheckResult {
     // `$HOME` is read as the shell reads it, so a command naming the home
     // folder is judged by the path it reaches (`known_vars`).
@@ -555,13 +576,29 @@ pub fn check_permission_for(
         file_path,
         session_cwd,
         session_perms,
-        action_tier_override,
+        (action_tier_override, ceiling),
         coding,
     );
-    match bash_command.filter(|cmd| tool == "Bash" && super::outward::is_outward(cmd)) {
+    let result = match bash_command.filter(|cmd| tool == "Bash" && super::outward::is_outward(cmd)) {
         Some(cmd) => ask_outward(result, cmd, session_cwd),
         None => result,
+    };
+    match (&result, ceiling) {
+        (PermissionCheckResult::NeedsPrompt(PromptKind::ExceedsCeiling { target_mode, .. }), Some(c))
+            if *target_mode > c =>
+        {
+            beyond_ceiling(*target_mode, c)
+        }
+        _ => result,
     }
+}
+
+/// An action above a turn's ceiling: refused, with what it needs and the
+/// level the turn's device stands at.
+fn beyond_ceiling(needs: PermissionMode, ceiling: PermissionMode) -> PermissionCheckResult {
+    PermissionCheckResult::Blocked(format!(
+        "Beyond this turn's level: the action needs {needs}, and the device that sent the turn stands at {ceiling}."
+    ))
 }
 
 /// The check against the session's grants: the deny floor, then the
@@ -572,7 +609,7 @@ fn check_grants(
     file_path: Option<&str>,
     session_cwd: &Path,
     session_perms: &SessionPermissions,
-    action_tier_override: Option<PermissionMode>,
+    (action_tier_override, ceiling): (Option<PermissionMode>, Option<PermissionMode>),
     coding: bool,
 ) -> PermissionCheckResult {
     // 0a. Hardcoded deny floor (admin mode does not bypass).
@@ -595,6 +632,11 @@ fn check_grants(
         return PermissionCheckResult::Allowed;
     }
 
+    // 0b'. Under a turn's ceiling no tool runs ungated below: an MCP tool
+    // (the memory server's among them — its store is the owner's) is judged
+    // by its tier like any other, and refused above the ceiling.
+    let ungated_mcp = crate::mcp_client::is_mcp_tool(tool) && !crate::mcp_client::registry().is_gated(tool);
+
     // 0c. An MCP server whose entry declares `gated = false`. The user, who
     // is the host, said they trust it — the direct analogue of a Claude Code
     // allow rule covering a whole server, and the only direction trust flows.
@@ -609,7 +651,7 @@ fn check_grants(
     //
     // `enabled = false` on the entry is how memory is turned off. This
     // decides whether tools *prompt*, never whether they exist.
-    if crate::mcp_client::is_mcp_tool(tool) && !crate::mcp_client::registry().is_gated(tool) {
+    if ungated_mcp && ceiling.is_none() {
         return PermissionCheckResult::Allowed;
     }
 
@@ -643,6 +685,12 @@ fn check_grants(
         tool_action_tier(tool)
     };
 
+    // 1b. A turn under a ceiling: an action above it is refused, whatever
+    // the grants say.
+    if let Some(c) = ceiling.filter(|c| action_tier > *c) {
+        return beyond_ceiling(action_tier, c);
+    }
+
     // 1a. Chat-tier tools (AskUser) are at the floor. Nothing exceeds Chat,
     // and they don't touch the workspace — nothing in `session_cwd`.
     // Path-gating them produces a bogus
@@ -671,6 +719,9 @@ fn check_grants(
                     } else {
                         PermissionMode::Read
                     };
+                    if let Some(c) = ceiling.filter(|_| owners_alone(session_perms, (tier, ceiling), arg_path)) {
+                        return beyond_ceiling(PermissionMode::Admin, c);
+                    }
                     // OS temp dir is always-available scratch, and a session
                     // reads its own folder — don't gate them.
                     if is_under_temp(arg_path) || reads_own_dir(session_perms, tier, arg_path) {
@@ -721,6 +772,10 @@ fn check_grants(
             }
         })
         .unwrap_or_else(|| session_cwd.to_path_buf());
+
+    if let Some(c) = ceiling.filter(|_| owners_alone(session_perms, (action_tier, ceiling), &target_path)) {
+        return beyond_ceiling(PermissionMode::Admin, c);
+    }
 
     // 3b. OS temp dir is always-available scratch (deny floor still applies);
     // a session reads its own folder.

@@ -27,6 +27,7 @@ mod inbound;
 mod inference;
 mod media_channel;
 mod response;
+mod standing;
 mod stun;
 use control::{handle_control_message, process_control_request_async};
 use forward::{forward_event_to_channels, EventFilter};
@@ -63,19 +64,36 @@ fn exit_on_control_close() -> Flow {
 /// written by an anonymous peer carry no `by` — unattributed beats wrong.
 pub(super) type PeerActor = Arc<std::sync::Mutex<Option<crate::server::api::pair::Actor>>>;
 
-/// The `user_info` frame: who we think this peer is, and what its room allows.
+/// The `user_info` frame: who we think this peer is, the level it stands at
+/// (`person::standing_of`), this Mac's contract numbers (`rtc::contract`), and
+/// what its room allows.
 ///
 /// Built in one place because it is sent twice — once when the control channel
-/// opens, and again if `identify` changes the answer. Two builders would be two
-/// chances to describe the same peer differently.
-pub(super) fn user_info_msg(user_ctx: &super::UserContext, identified: bool) -> serde_json::Value {
-    let user = serde_json::json!({
-        "user_id": user_ctx.user_id,
+/// opens, and again after every `identify`, which is how a device learns its
+/// level. Two builders would be two chances to describe the same peer
+/// differently.
+pub(super) fn user_info_msg(
+    user_ctx: &super::UserContext,
+    identified: bool,
+    (standing, unverified_owner): (&crate::server::person::Standing, bool),
+) -> serde_json::Value {
+    // The channel's account (on the LAN, this Mac's owner) is told only to
+    // the owner and to a room consumer, whose own it is; any other peer is
+    // told its own person.
+    let told = user_ctx.is_consumer() || standing.is_owner();
+    let mut user = serde_json::json!({
+        "user_id": if told { user_ctx.user_id.as_str() } else { standing.person() },
         "user_type": user_ctx.user_type_for(identified),
-        "user_name": user_ctx.user_name,
-        "avatar_url": user_ctx.avatar_url,
+        "user_name": if told { user_ctx.user_name.clone() } else { None },
+        "avatar_url": if told { user_ctx.avatar_url.clone() } else { None },
+        "level": standing.level(),
     });
-    let data = if user_ctx.is_consumer() {
+    // Its claim is this Mac's own account, not verified yet: it may dial the
+    // relay once to be vouched for (doc/webrtc-spec.md § Verifying a phone).
+    if unverified_owner {
+        user["unverified_owner"] = true.into();
+    }
+    let mut data = if user_ctx.is_consumer() {
         let room_cfg = super::room_config::load_room_config();
         serde_json::json!({
             "user": user,
@@ -90,6 +108,8 @@ pub(super) fn user_info_msg(user_ctx: &super::UserContext, identified: bool) -> 
     } else {
         serde_json::json!({ "user": user })
     };
+    data["contract"] = super::contract::CONTRACT.into();
+    data["oldest_peer"] = super::contract::OLDEST_PEER.into();
     serde_json::json!({ "kind": "user_info", "data": data })
 }
 
@@ -339,8 +359,11 @@ struct PeerLoop {
     /// the peer to name its device is counted from here (`IDENTIFY_GRACE`).
     first_request: Option<Instant>,
     /// Track which session IDs belong to this user (for event filtering).
-    /// Populated from session store on connect, updated on SessionCreated events.
+    /// Populated from session store on connect and again when the peer's
+    /// person changes, updated on SessionCreated events.
     user_session_ids: HashSet<String>,
+    /// The standing this peer is judged by (`standing::PeerStanding`).
+    standing: standing::PeerStanding,
     // -- Page state push (replaces HTTP polling storm) --
     view_ctx: super::page_state::ViewContext,
     dirty_flags: u64,
@@ -530,7 +553,50 @@ async fn run_peer(
     }
 }
 
+/// Whether a peer may start a media upload: it writes into the owner's
+/// library, so a fully paired peer under the owner's ceiling standing at edit.
+fn may_put(user_ctx: &super::UserContext, level: crate::engine::permission::PermissionMode) -> bool {
+    !user_ctx.pairing_only()
+        && user_ctx.permission.is_admin()
+        && level >= crate::engine::permission::PermissionMode::Edit
+}
+
+/// Whether a peer may be streamed a session: the owner (`whose` is none)
+/// any; another only its own person's (`owns`: the session is among its
+/// known ones; `owner_of`: the session's owner, from the store).
+fn may_stream(whose: Option<&str>, owns: bool, owner_of: Option<&str>) -> bool {
+    match whose {
+        None => true,
+        Some(whose) => owns || owner_of == Some(whose),
+    }
+}
+
+/// The ids of the sessions `user_id` owns.
+fn sessions_of(state: &ServerState, user_id: &str) -> HashSet<String> {
+    let Ok(sessions) = state.manager.global_sessions.list_sessions() else {
+        return HashSet::new();
+    };
+    sessions
+        .into_iter()
+        .filter(|s| s.user_id.as_deref() == Some(user_id))
+        .map(|s| s.id)
+        .collect()
+}
+
 impl PeerLoop {
+    /// The standing this peer is judged by now; when its person changed,
+    /// the sessions it is given are that person's.
+    fn standing(&mut self) -> crate::server::person::Standing {
+        let device = self.peer_actor.lock_ok().as_ref().map(|a| a.device.clone());
+        let (now, moved) = self.standing.current(&self.user_ctx, device);
+        if moved {
+            let whose = standing::seen_as(&self.user_ctx, &now);
+            self.user_session_ids =
+                sessions_of(&self.state, whose.as_deref().unwrap_or(&self.user_ctx.user_id));
+        }
+        now
+    }
+
     async fn new(
         rtc: Rtc,
         state: Arc<ServerState>,
@@ -547,14 +613,10 @@ impl PeerLoop {
             let (consumer_used, _) = store.get_usage(&user_ctx.user_id);
             tokens_used.store(consumer_used, std::sync::atomic::Ordering::Relaxed);
         }
-        let mut user_session_ids = HashSet::new();
-        if let Ok(sessions) = state.manager.global_sessions.list_sessions() {
-            for s in sessions {
-                if s.user_id.as_deref() == Some(&user_ctx.user_id) {
-                    user_session_ids.insert(s.id);
-                }
-            }
-        }
+        let device = peer_actor.lock_ok().as_ref().map(|a| a.device.clone());
+        let standing = standing::PeerStanding::new(&user_ctx, device);
+        let whose = standing::seen_as(&user_ctx, standing.resolved());
+        let user_session_ids = sessions_of(&state, whose.as_deref().unwrap_or(&user_ctx.user_id));
         Self {
             rtc,
             state,
@@ -581,6 +643,7 @@ impl PeerLoop {
             born: Instant::now(),
             first_request: None,
             user_session_ids,
+            standing,
             view_ctx: super::page_state::ViewContext::default(),
             dirty_flags: 0,
             force_page_state: false,
@@ -690,11 +753,11 @@ impl PeerLoop {
                 self.born.elapsed().as_millis()
             );
             // Send connection metadata: user info + room info.
-            // A LAN peer has not identified yet, so this says
-            // "owner" for a phone; `identify` corrects it with
-            // a second one of these rather than leaving the
-            // greeting to disagree with everything after it.
-            let info_msg = user_info_msg(&self.user_ctx, false);
+            // A peer that has not identified yet is greeted as
+            // what the channel knows; `identify` answers with a
+            // second one of these, with the device's level.
+            let standing = self.standing();
+            let info_msg = user_info_msg(&self.user_ctx, false, (&standing, false));
             self.queue_text(id, info_msg.to_string());
             // Privacy warning for consumers
             if self.user_ctx.is_consumer() {
@@ -718,33 +781,36 @@ impl PeerLoop {
     /// Whether this peer's person may be streamed session `session_id`: a
     /// day only to its own person, resolved from the device the peer named
     /// (`control::person_for`); any other session as before.
-    fn may_stream_day(&self, session_id: &str) -> bool {
+    fn may_stream_day(&mut self, session_id: &str) -> bool {
         if !crate::server::day_session::is_day(session_id) {
             return true;
         }
-        let device = self.peer_actor.lock_ok().as_ref().map(|a| a.device.clone());
-        let person = control::person_for(&self.user_ctx, device.as_deref());
+        let person = self.standing().person().to_string();
         crate::server::day_session::may_enter(session_id, Some(&person))
     }
 
     fn open_session_channel(&mut self, id: str0m::channel::ChannelId, session_id: &str) {
-        // Verify session ownership for non-admin users.
+        // Verify session ownership below the owner's standing: a peer is
+        // streamed only its own person's sessions (`standing::seen_as`).
         // Check user_session_ids first (fast), then fall back to session store
         // (handles race where channel opens before session_created event).
-        let mut allowed =
-            self.user_ctx.permission.is_admin() || self.user_session_ids.contains(session_id);
+        let now = self.standing();
+        let whose = standing::seen_as(&self.user_ctx, &now);
+        let owns = self.user_session_ids.contains(session_id);
+        let mut allowed = may_stream(whose.as_deref(), owns, None);
         if !allowed {
             // Check session store — session may have just been created
-            if let Ok(Some(meta)) = self
+            let owner_of = self
                 .state
                 .manager
                 .global_sessions
                 .get_session_meta(session_id)
-            {
-                if meta.user_id.as_deref() == Some(&self.user_ctx.user_id) {
-                    self.user_session_ids.insert(session_id.to_string());
-                    allowed = true;
-                }
+                .ok()
+                .flatten()
+                .and_then(|m| m.user_id);
+            if may_stream(whose.as_deref(), false, owner_of.as_deref()) {
+                self.user_session_ids.insert(session_id.to_string());
+                allowed = true;
             }
         }
         if !allowed {
@@ -800,21 +866,25 @@ impl PeerLoop {
 
     async fn on_media_data(&mut self, data: str0m::channel::ChannelData) {
         // Uploads write into the owner's library, so only a
-        // fully paired admin peer may start one; gets follow
-        // the control channel's endpoint rules.
-        let pairing = self.user_ctx.pairing_only();
-        let may_put = !pairing && self.user_ctx.permission.is_admin();
+        // fully paired peer standing at edit may start one;
+        // gets follow the control channel's endpoint rules.
+        let level = self.standing().level();
+        let may_put = may_put(&self.user_ctx, level);
         let reply = if data.binary {
             media_channel::handle_binary(&data.data, &mut self.media_transfer).await
         } else {
             let text = String::from_utf8_lossy(&data.data).to_string();
-            let perm = self.user_ctx.permission.clone();
+            // A get is judged as the same GET on the control channel
+            // (`control::media_get`).
+            let ctx = self.user_ctx.clone();
+            let device = self.peer_actor.lock_ok().as_ref().map(|a| a.device.clone());
+            let may_get = move |url: &str| control::media_get(&ctx, device.as_deref(), url);
             if media_channel::spawn_get(
                 &text,
                 self.state.port,
                 data.id,
                 self.media_out_tx.clone(),
-                move |url| !pairing && perm.can_access_endpoint("GET", url),
+                may_get,
             ) {
                 return;
             }
@@ -885,8 +955,9 @@ impl PeerLoop {
 
         if req.msg_type == "inference" || req.msg_type == "list_models" {
             // Inference/model-list: may stream multiple responses
+            let standing = self.standing();
             tokio::spawn(async move {
-                process_inference_request(&req, &st, &ctx_clone, &tok, &tx, cid).await;
+                process_inference_request(&req, &st, (&ctx_clone, &standing), &tok, &tx, cid).await;
             });
         } else {
             tokio::spawn(async move {
@@ -968,11 +1039,16 @@ impl PeerLoop {
             let ctx_clone = self.user_ctx.clone();
             let tok = self.tokens_used.clone();
             let cid = channel;
+            let standing = self.standing();
             tokio::spawn(async move {
-                process_inference_request(&req, &st, &ctx_clone, &tok, &tx, cid).await;
+                process_inference_request(&req, &st, (&ctx_clone, &standing), &tok, &tx, cid).await;
             });
         } else if msg_type == "room_chat" {
-            self.on_room_chat(&msg);
+            // A room's chat is its consumers' and the owner's: no other peer
+            // speaks into it.
+            if self.user_ctx.is_consumer() || self.standing().is_owner() {
+                self.on_room_chat(&msg);
+            }
         } else {
             tracing::warn!("Unknown inference channel message type: {msg_type}");
         }
@@ -1099,10 +1175,12 @@ impl PeerLoop {
         if !self.view_ctx.wants_pushes() {
             return;
         }
+        let now = self.standing();
+        let whose = standing::seen_as(&self.user_ctx, &now);
         let mut filter = EventFilter {
             session_ids: &mut self.user_session_ids,
-            user_id: &self.user_ctx.user_id,
-            is_admin: self.user_ctx.permission.is_admin(),
+            user_id: whose.as_deref().unwrap_or(&self.user_ctx.user_id),
+            is_admin: whose.is_none() && self.user_ctx.permission.is_admin(),
             view: self.view_ctx.view.as_deref(),
             pinned_session_id: if self.view_ctx.view.as_deref() == Some("embed") {
                 self.view_ctx.session_id.as_deref()
@@ -1171,17 +1249,19 @@ impl PeerLoop {
 
     /// Build page state off-loop and hand it back through the control reply
     /// channel. A forced push logs its size.
-    fn spawn_page_state(&self, cid: str0m::channel::ChannelId, flags: u64, forced: bool) {
+    fn spawn_page_state(&mut self, cid: str0m::channel::ChannelId, flags: u64, forced: bool) {
         let st = self.state.clone();
         let tx = self.ctrl_resp_tx.clone();
         let user_ctx_clone = self.user_ctx.clone();
         let ctx = self.view_ctx.clone();
-        let device = self.peer_actor.lock_ok().as_ref().map(|a| a.device.clone());
-        let identified = device.is_some();
-        let person = control::person_for(&self.user_ctx, device.as_deref());
+        let identified = self.peer_actor.lock_ok().is_some();
+        let now = self.standing();
+        let person = now.person().to_string();
+        let whose = standing::seen_as(&self.user_ctx, &now);
         tokio::spawn(async move {
             let who = (&user_ctx_clone, identified);
-            let ps = super::page_state::build_page_state(&st, &ctx, flags, who, &person).await;
+            let seen = (whose.as_deref(), &person[..]);
+            let ps = super::page_state::build_page_state(&st, &ctx, flags, who, seen).await;
             if let Ok(data) = serde_json::to_value(&ps) {
                 if forced {
                     let size = data.to_string().len();
@@ -1276,5 +1356,83 @@ mod tests {
             stall_deadline(&mut since, t0 + SPIN_LIMIT + Duration::from_millis(1)),
             Some(t0)
         );
+    }
+}
+
+#[cfg(test)]
+mod greeting_tests {
+    use crate::engine::permission::PermissionMode;
+
+    /// An upload needs edit; a peer mid-pairing and a room consumer never
+    /// start one.
+    #[test]
+    fn a_media_upload_needs_edit() {
+        let paired = crate::server::rtc::UserContext::paired();
+        assert!(!super::may_put(&paired, PermissionMode::Chat));
+        assert!(!super::may_put(&paired, PermissionMode::Read));
+        assert!(super::may_put(&paired, PermissionMode::Edit));
+        assert!(!super::may_put(&crate::server::rtc::UserContext::pairing(), PermissionMode::Admin));
+        let room = crate::server::rtc::UserContext::consumer(
+            "u".into(),
+            "browser".into(),
+            crate::server::rtc::UserPermission::Edit,
+            None,
+            None,
+        );
+        assert!(!super::may_put(&room, PermissionMode::Edit));
+    }
+
+    /// Below the owner a peer is streamed only its own person's sessions.
+    #[test]
+    fn a_session_stream_below_the_owner_is_its_persons_only() {
+        assert!(super::may_stream(None, false, Some("u-owner")), "the owner, any");
+        assert!(!super::may_stream(Some("u-friend"), false, Some("u-owner")));
+        assert!(!super::may_stream(Some("u-friend"), false, None));
+        assert!(super::may_stream(Some("u-friend"), false, Some("u-friend")));
+        assert!(super::may_stream(Some("u-friend"), true, None));
+    }
+
+    /// The greeting says the level the peer stands at.
+    #[test]
+    fn the_greeting_says_the_level() {
+        let read = crate::server::person::for_test("u-friend", PermissionMode::Read);
+        let msg = super::user_info_msg(&crate::server::rtc::UserContext::paired(), true, (&read, false));
+        assert_eq!(msg["kind"], "user_info");
+        assert_eq!(msg["data"]["user"]["level"], "read");
+        assert_eq!(msg["data"]["user"]["user_type"], "paired");
+    }
+
+    /// The greeting tells the channel's account (on the LAN, the owner's)
+    /// only to the owner; another peer is told its own person, and whether
+    /// its claim is this Mac's account unverified — never the account itself.
+    #[test]
+    fn the_greeting_tells_the_owners_account_only_to_the_owner() {
+        let lan = crate::server::rtc::UserContext {
+            user_name: Some("Owner Name".into()),
+            ..crate::server::rtc::UserContext::owner(Some("u-owner".into()))
+        };
+        let lan = crate::server::rtc::UserContext {
+            reached_by: crate::server::rtc::Reach::Lan,
+            ..lan
+        };
+        let below = crate::server::person::standing_of("not-paired");
+        let msg = super::user_info_msg(&lan, true, (&below, true));
+        let told = msg.to_string();
+        assert!(!told.contains("u-owner") && !told.contains("Owner Name"), "{told}");
+        assert_eq!(msg["data"]["user"]["unverified_owner"], true);
+        let owner = crate::server::person::unnamed(true, "u-owner");
+        let msg = super::user_info_msg(&lan, true, (&owner, false));
+        assert_eq!(msg["data"]["user"]["user_id"], "u-owner");
+        assert_eq!(msg["data"]["user"]["user_name"], "Owner Name");
+        assert!(msg["data"]["user"].get("unverified_owner").is_none());
+    }
+
+    /// The greeting carries this Mac's contract numbers.
+    #[test]
+    fn the_greeting_says_the_contract() {
+        let read = crate::server::person::for_test("u-friend", PermissionMode::Read);
+        let msg = super::user_info_msg(&crate::server::rtc::UserContext::paired(), true, (&read, false));
+        assert_eq!(msg["data"]["contract"], crate::server::rtc::contract::CONTRACT);
+        assert_eq!(msg["data"]["oldest_peer"], crate::server::rtc::contract::OLDEST_PEER);
     }
 }

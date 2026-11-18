@@ -944,6 +944,7 @@ mod tests {
             settings: Default::default(),
             relay_grant: None,
             superseded_grant: None,
+            ..Default::default()
         };
         assert!(door_open_to(&Caller::Owner));
         assert!(door_open_to(&Caller::Machine(row(DeviceKind::Machine))));

@@ -69,15 +69,31 @@ pub(super) fn handle_control_message(
                 .get("device_token")
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
-            let account = msg
+            let account: Option<crate::server::api::pair::AccountRef> = msg
                 .get("account")
                 .and_then(|v| serde_json::from_value(v.clone()).ok());
-            let identified = crate::server::api::pair::set_device_account(token, account);
+            // The relay vouched for this channel's account: a claim of this
+            // Mac's own account is verified by it (`set_device_account`).
+            let vouched_for = user_ctx
+                .account_vouched
+                .then(|| crate::account::load_account().and_then(|a| a.user_id))
+                .flatten();
+            let contract = crate::server::rtc::contract::told(&msg);
+            let identified = crate::server::api::pair::set_device_account(
+                token,
+                account.clone(),
+                vouched_for.as_deref(),
+                contract,
+            );
             // A phone that wrote memory while signed out did so under its
-            // device id; now that it is somebody, those rows become theirs.
-            // Once, here, because this is the only place a sign-in is seen.
+            // device id; now that it is somebody — or now that it is verified
+            // as the owner's — those rows become theirs. Here, because this
+            // is the only place a sign-in or a verification is seen.
             if let Some(id) = identified.as_ref() {
-                if let Some(gained) = id.signed_in.clone() {
+                let gained = id.signed_in.clone().or_else(|| {
+                    id.verified_now.as_ref().and(account.clone())
+                });
+                if let Some(gained) = gained {
                     let device = id.actor.device.clone();
                     tokio::spawn(async move {
                         crate::server::api::memory::restamp_device(&device, &gained).await;
@@ -93,7 +109,6 @@ pub(super) fn handle_control_message(
             if resolved.is_none() && !token.is_empty() {
                 tracing::warn!("[rtc] identify with an unknown device token — staying anonymous");
             }
-            let was_identified = actor.lock_ok().is_some();
             let now_identified = resolved.is_some();
             // This is the moment the Mac learns a device is on the other end,
             // on the LAN as over the relay — so it is where perception learns
@@ -103,18 +118,17 @@ pub(super) fn handle_control_message(
             }
             *actor.lock_ok() = resolved;
 
-            // On the relay the Mac already knew this was a paired device; on
-            // the LAN it could not, and greeted the phone as the owner. Now it
-            // knows, so it says so — the peer is told rather than left holding
-            // a label the rest of this connection contradicts.
-            if now_identified != was_identified
-                && user_ctx.effective_kind(now_identified)
-                    != user_ctx.effective_kind(was_identified)
-            {
-                if let Some(mut ch) = rtc.channel(channel_id) {
-                    let msg = super::user_info_msg(user_ctx, now_identified);
-                    let _ = ch.write(false, msg.to_string().as_bytes());
-                }
+            // Every identify is answered with the greeting: what the peer is
+            // now (on the LAN the Mac greeted a phone as the owner until it
+            // knew), and the level its device stands at.
+            let device = actor.lock_ok().as_ref().map(|a| a.device.clone());
+            let standing = standing_for(user_ctx, device.as_deref());
+            let unverified = device
+                .as_deref()
+                .is_some_and(crate::server::person::claims_the_owners_unverified);
+            if let Some(mut ch) = rtc.channel(channel_id) {
+                let msg = super::user_info_msg(user_ctx, now_identified, (&standing, unverified));
+                let _ = ch.write(false, msg.to_string().as_bytes());
             }
             None
         }
@@ -140,8 +154,9 @@ pub(super) fn handle_control_message(
         // device is this channel's bound identity, never the payload.
         "fact" => {
             // With the daily session on, another person's facts stamp
-            // nothing of the builder's.
-            if !shares_builders(state, user_ctx, actor) {
+            // nothing of the builder's; below read, a peer's facts are not
+            // taken at all.
+            if !shares_builders(state, user_ctx, actor) || !reads(user_ctx, actor) {
                 return None;
             }
             let device = actor.lock_ok().as_ref().map(|a| a.device.clone());
@@ -168,8 +183,11 @@ pub(super) fn handle_control_message(
                 .filter(|s| !s.is_empty())
                 .map(|s| s.to_string());
             // Remember the focused session so agent_chat can deliver into the
-            // chat the user actually has open.
-            if let Some(sid) = &view_ctx.session_id {
+            // chat the user actually has open — the owner's chat: a peer
+            // below the owner's standing never moves where it lands.
+            let device = actor.lock_ok().as_ref().map(|a| a.device.clone());
+            let owners = standing_for(user_ctx, device.as_deref()).is_owner();
+            if let Some(sid) = view_ctx.session_id.as_ref().filter(|_| owners) {
                 *state.current_view.lock_ok() = Some((
                     sid.clone(),
                     view_ctx.project_root.clone().unwrap_or_default(),
@@ -197,7 +215,13 @@ pub(super) fn handle_control_message(
             // person may enter. A stage is held per person: the surface is
             // its device's person's.
             let device = actor.lock_ok().as_ref().map(|a| a.device.clone());
-            let person = person_for(user_ctx, device.as_deref());
+            let standing = standing_for(user_ctx, device.as_deref());
+            // With the daily session off every surface holds her for the
+            // owner: one below the owner's standing holds none.
+            if !state.manager.daily_session() && !standing.is_owner() {
+                return None;
+            }
+            let person = standing.person().to_string();
             let session = msg
                 .get("session")
                 .and_then(|v| v.as_str())
@@ -223,8 +247,8 @@ pub(super) fn handle_control_message(
             }
             // With the daily session on, a topic is the builder's devices':
             // another person's neither replaces a kept reading nor reaches
-            // the builder's surfaces.
-            if !shares_builders(state, user_ctx, actor) {
+            // the builder's surfaces. Below read, it is not taken.
+            if !shares_builders(state, user_ctx, actor) || !reads(user_ctx, actor) {
                 return None;
             }
             tracing::info!("[topic] {topic}/{op} published by a device");
@@ -300,21 +324,30 @@ pub(super) fn handle_control_message(
     }
 }
 
-/// The person a peer's request is for, resolved once from the device it
-/// named, through memory's own seam (`api::memory::person_behind`): the
-/// owner's own device is the owner; a phone signed in to another account is
-/// that account, a signed-out phone its device. A peer with no device named
-/// is its channel's user when the tunnel knows it as the owner (this
-/// machine's page, the owner's account on the relay), else no one
-/// (`rtc::NO_ONE`) — never the owner by default.
-pub(super) fn person_for(user_ctx: &crate::server::rtc::UserContext, device: Option<&str>) -> String {
+/// The standing a peer's request is judged by, resolved from the device it
+/// named (`person::standing_of`). A room consumer is its own account
+/// (`person::consumer`). A peer with no device named is its
+/// channel's user at admin when the tunnel knows it as the owner (this
+/// machine's page, the owner's account on the relay), else no one at chat
+/// (`person::unnamed`) — never the owner by default.
+pub(super) fn standing_for(
+    user_ctx: &crate::server::rtc::UserContext,
+    device: Option<&str>,
+) -> crate::server::person::Standing {
     use crate::server::api::pair::{TUNNEL_LOCAL, TUNNEL_OWNER};
-    let no_one = || crate::server::rtc::NO_ONE.to_string();
+    if user_ctx.is_consumer() {
+        return crate::server::person::consumer(&user_ctx.user_id);
+    }
     let Some(device) = device else {
         let owner = matches!(user_ctx.tunnel_mark(), TUNNEL_LOCAL | TUNNEL_OWNER);
-        return if owner { user_ctx.user_id.clone() } else { no_one() };
+        return crate::server::person::unnamed(owner, &user_ctx.user_id);
     };
-    crate::server::person::of_device(device)
+    crate::server::person::standing_of(device)
+}
+
+/// The person a peer's request is for ([`standing_for`]).
+pub(super) fn person_for(user_ctx: &crate::server::rtc::UserContext, device: Option<&str>) -> String {
+    standing_for(user_ctx, device).person().to_string()
 }
 
 /// Whether this peer is given what is the builder's alone
@@ -332,11 +365,63 @@ fn shares_builders(
     crate::server::day_session::is_builder(Some(&person_for(user_ctx, device.as_deref())))
 }
 
+/// Whether this peer stands at read or above, as the frames that publish
+/// (a fact, a topic) need; a room consumer by its room.
+fn reads(user_ctx: &crate::server::rtc::UserContext, actor: &super::PeerActor) -> bool {
+    if user_ctx.is_consumer() {
+        return true;
+    }
+    let device = actor.lock_ok().as_ref().map(|a| a.device.clone());
+    standing_for(user_ctx, device.as_deref()).level() >= crate::engine::permission::PermissionMode::Read
+}
+
 /// The `http_request` answer for a request refused at the seam
-/// (`person::send_as`): a 403, as the LAN gate answers it.
-fn refused_reply(refused: &crate::server::person::NotTheirs) -> serde_json::Value {
-    let body = serde_json::json!({ "error": refused.reason() }).to_string();
+/// (`person::send_judged`): a 403, as the LAN gate answers it.
+fn refused_reply(refused: &crate::server::person::Refused) -> serde_json::Value {
+    let body = refused.body().to_string();
     serde_json::json!({ "data": reply_data(403, "application/json", body.as_bytes()) })
+}
+
+/// A request from this peer sent as its person, through the seam. A room
+/// consumer is judged by its room (`PeerLoop::may_make_request`) and sent
+/// unjudged here; any other peer is judged by its standing
+/// ([`standing_for`]).
+/// A media channel `get` of `url` by this peer: the URL to fetch and the
+/// level to stamp on it, judged and sent as its person as the same GET on
+/// the control channel is; `None` when refused. A peer mid-pairing gets
+/// nothing; a room consumer is judged by its room.
+pub(super) fn media_get(
+    user_ctx: &crate::server::rtc::UserContext,
+    device: Option<&str>,
+    url: &str,
+) -> Option<(String, crate::engine::permission::PermissionMode)> {
+    let room_allows = user_ctx.permission.can_access_endpoint("GET", url);
+    if user_ctx.pairing_only() || !room_allows {
+        return None;
+    }
+    let mut none = serde_json::Value::Null;
+    let user_type = user_ctx.user_type_for(device.is_some());
+    send_for_peer(user_ctx, device, ("GET", url, &mut none), user_type).ok()
+}
+
+/// Returns the URL to send and the level to stamp on it.
+pub(super) fn send_for_peer(
+    user_ctx: &crate::server::rtc::UserContext,
+    device: Option<&str>,
+    (method, url_path, body): (&str, &str, &mut serde_json::Value),
+    user_type: &str,
+) -> Result<(String, crate::engine::permission::PermissionMode), crate::server::person::Refused> {
+    let standing = standing_for(user_ctx, device);
+    let level = standing.level();
+    if user_ctx.is_consumer() {
+        if !crate::server::routes::classes::sent_unchanged(url_path) {
+            return Err(crate::server::person::Refused::BadPath);
+        }
+        return crate::server::person::send_as(method, url_path, body, (standing.person(), user_type))
+            .map(|url| (url, level))
+            .map_err(crate::server::person::Refused::NotTheirs);
+    }
+    crate::server::person::send_judged(method, url_path, body, &standing, user_type).map(|url| (url, level))
 }
 
 /// Wrap a loopback response for the control channel: a success body rides as
@@ -409,14 +494,15 @@ fn is_text(content_type: &str) -> bool {
 
 /// One loopback request to this engine's own HTTP API. GET carries no body;
 /// every other method sends `body` as JSON. `actor_device` names the paired
-/// device asking, for handlers that keep per-device state.
+/// device asking, for handlers that keep per-device state; `level` is the
+/// standing it was judged at (`LEVEL_HEADER`), for handlers that judge
+/// within a route.
 async fn loopback(
     client: &reqwest::Client,
-    method: &str,
-    url: &str,
-    body: &serde_json::Value,
+    (method, url, body): (&str, &str, &serde_json::Value),
     tunnel_mark: &str,
     actor_device: Option<&str>,
+    level: crate::engine::permission::PermissionMode,
 ) -> reqwest::Result<reqwest::Response> {
     let req = match method {
         "POST" => client.post(url).json(body),
@@ -425,7 +511,9 @@ async fn loopback(
         "DELETE" => client.delete(url).json(body),
         _ => client.get(url),
     };
-    let req = req.header(crate::server::api::pair::TUNNEL_HEADER, tunnel_mark);
+    let req = req
+        .header(crate::server::api::pair::TUNNEL_HEADER, tunnel_mark)
+        .header(crate::server::api::pair::LEVEL_HEADER, level.to_string());
     let req = match actor_device {
         Some(d) => req.header(crate::server::api::pair::ACTOR_DEVICE_HEADER, d),
         None => req,
@@ -510,6 +598,7 @@ pub(super) async fn process_control_request_async(
                 || url_path == "/index.html"
                 || url_path == "/logo.svg";
             if !path_ok
+                || !crate::server::routes::classes::sent_unchanged(&url_path)
                 || url_path.contains('@')
                 || url_path.contains("://")
                 || url_path.contains("..")
@@ -521,21 +610,21 @@ pub(super) async fn process_control_request_async(
             // paired device is asking — which is what per-phone state, like the
             // delete queue, needs to be correct with more than one phone.
             let actor_device = named_device(user_ctx, actor, first_request).await;
-            let person = person_for(user_ctx, actor_device.as_deref());
             let mut body_val = req
                 .body
                 .get("body")
                 .unwrap_or(&serde_json::Value::Null)
                 .clone();
-            // A request that comes into a session is sent as this peer's person.
+            // A request is judged by this peer's standing and, when it comes
+            // into a session, sent as its person.
             let user_type = user_ctx.user_type_for(actor.lock_ok().is_some());
-            let url_path = match crate::server::person::send_as(
-                method,
-                &url_path,
-                &mut body_val,
-                (&person, user_type),
+            let (url_path, level) = match send_for_peer(
+                user_ctx,
+                actor_device.as_deref(),
+                (method, &url_path, &mut body_val),
+                user_type,
             ) {
-                Ok(url) => url,
+                Ok(sent) => sent,
                 Err(refused) => return refused_reply(&refused),
             };
             let url = format!("http://127.0.0.1:{port}{url_path}");
@@ -545,11 +634,10 @@ pub(super) async fn process_control_request_async(
             let mark = user_ctx.tunnel_mark();
             match loopback(
                 client,
-                method,
-                &url,
-                &body_val,
+                (method, &url, &body_val),
                 mark,
                 actor_device.as_deref(),
+                level,
             )
             .await
             {
@@ -570,16 +658,18 @@ pub(super) async fn process_control_request_async(
                 "ask_user_response" => "/api/ask-user-response",
                 _ => unreachable!(),
             };
-            // Sent as this peer's person, resolved from the device it named.
+            // Judged by this peer's standing and sent as its person,
+            // resolved from the device it named.
             let actor_device = named_device(user_ctx, actor, first_request).await;
-            let person = person_for(user_ctx, actor_device.as_deref());
             let mut body = req.body.clone();
             let user_type = user_ctx.user_type_for(actor.lock_ok().is_some());
-            if let Err(refused) = crate::server::person::send_as("POST", endpoint, &mut body, (&person, user_type)) {
-                return serde_json::json!({ "error": refused.reason() });
-            }
+            let sent = send_for_peer(user_ctx, actor_device.as_deref(), ("POST", endpoint, &mut body), user_type);
+            let level = match sent {
+                Ok((_, level)) => level,
+                Err(refused) => return refused.body(),
+            };
             let url = format!("http://127.0.0.1:{port}{endpoint}");
-            match loopback(client, "POST", &url, &body, user_ctx.tunnel_mark(), None).await {
+            match loopback(client, ("POST", &url, &body), user_ctx.tunnel_mark(), None, level).await {
                 Ok(r) => {
                     let status = r.status().as_u16();
                     let body: serde_json::Value = r.json().await.unwrap_or(serde_json::Value::Null);
@@ -632,6 +722,26 @@ mod tests {
 
     /// A phone's first request can overtake the message that names it: the
     /// request waits, and is re-issued as that phone's.
+    /// A media get is judged as the control channel's GET: a peer that named
+    /// no device stands at chat and is refused a read route; this machine's
+    /// page reaches it at admin, sent as its person; a path that parsing
+    /// moves is refused to anyone; a peer mid-pairing gets nothing.
+    #[test]
+    fn a_media_get_is_judged_like_the_channels() {
+        use crate::engine::permission::PermissionMode;
+        assert_eq!(super::media_get(&UserContext::paired(), None, "/api/topic/latest?topic=t"), None);
+        let here = UserContext {
+            reached_by: crate::server::rtc::Reach::ThisMachine,
+            ..UserContext::owner(Some("u-owner".into()))
+        };
+        let got = super::media_get(&here, None, "/api/sessions/day").unwrap();
+        assert_eq!(got, ("/api/sessions/day?user_id=u-owner".to_string(), PermissionMode::Admin));
+        assert_eq!(super::media_get(&here, None, "/apps/x/.\t./.\t./api/credentials"), None);
+        assert_eq!(super::media_get(&UserContext::pairing(), None, "/shared/a.js"), None);
+        let unknown = super::media_get(&UserContext::paired(), Some("not-paired"), "/api/skills");
+        assert_eq!(unknown, None, "a device not paired is no one at chat");
+    }
+
     #[tokio::test]
     async fn a_request_waits_for_its_peer_to_name_itself() {
         let actor: super::super::PeerActor = Arc::new(Mutex::new(None));

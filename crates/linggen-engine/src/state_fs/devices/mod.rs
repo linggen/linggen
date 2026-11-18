@@ -12,11 +12,11 @@ use rand::RngExt;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-/// Who is holding the phone — the linggen.dev account signed in on it.
+/// Who is holding the phone — the linggen.dev account signed in on it, as the
+/// phone claims it on `identify`.
 ///
-/// Phone-asserted: the Mac records what the phone claims rather than verifying
-/// it against linggen.dev. That is enough for a household ledger ("whose photo
-/// is this"), and deliberately not enough to be a security boundary.
+/// A claim names a person; it never makes the phone the owner by itself. The
+/// owner's standing needs the claim to be verified ([`PairedDevice::is_owners`]).
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct AccountRef {
     pub id: String,
@@ -48,7 +48,7 @@ pub enum DeviceKind {
     Machine,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct PairedDevice {
     pub id: String,
     pub name: String,
@@ -63,6 +63,22 @@ pub struct PairedDevice {
     /// never only at pair time.
     #[serde(default)]
     pub account: Option<AccountRef>,
+    /// The account the relay vouched for this phone: linggen.dev said, when
+    /// the phone dialled, that the account credential it sent owns this Mac's
+    /// instance, and the phone's claim named that account. Kept only while the
+    /// claim stays that account — a different claim, or signing out, clears
+    /// it ([`refresh_account`]); a reconnect with no relay keeps it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verified_account: Option<String>,
+    /// The most this device may do when it is not the owner's, as set at
+    /// this Mac (`server::person::standing_of`); unset, read. The owner's own
+    /// device stands at admin whatever this says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission: Option<crate::engine::permission::PermissionMode>,
+    /// The contract number this phone said it speaks on its last
+    /// `identify`; unset, it has said none (contract 0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contract: Option<u32>,
     /// Stable per-phone install id. Re-pairing the same phone replaces its row
     /// (matched on this) rather than stacking duplicates. Optional so rows
     /// written before this field, and older apps that don't send one, still load.
@@ -92,6 +108,23 @@ impl PairedDevice {
     pub fn kind(&self) -> DeviceKind {
         self.kind.unwrap_or(DeviceKind::Phone)
     }
+
+    /// The account this phone claims, when the relay has vouched for it.
+    pub fn verified_claim(&self) -> Option<&str> {
+        let claim = self.account.as_ref().map(|a| a.id.as_str())?;
+        (self.verified_account.as_deref() == Some(claim)).then_some(claim)
+    }
+
+    /// Whether this row is the owner's: a machine approved with Allow, or a
+    /// phone whose verified claim is this Mac's own account (`mac_account`).
+    /// The one place a device is decided to be the owner's.
+    pub fn is_owners(&self, mac_account: Option<&str>) -> bool {
+        if self.kind() == DeviceKind::Machine {
+            return true;
+        }
+        let mac = mac_account.filter(|m| !m.is_empty());
+        mac.is_some() && self.verified_claim() == mac
+    }
 }
 
 /// The header a paired device presents its token in.
@@ -111,6 +144,28 @@ pub const ACTOR_DEVICE_HEADER: &str = "x-linggen-actor-device";
 /// involved. Its value says what the tunnel knows of a peer that has not
 /// named a device: [`TUNNEL_LOCAL`], [`TUNNEL_OWNER`], or anything else.
 pub const TUNNEL_HEADER: &str = "x-linggen-tunnel";
+
+/// Header the WebRTC tunnel and the LAN gate stamp on every request they
+/// send on for a caller from off this machine: the level it was judged at
+/// (`server::person::send_judged`), for a handler that judges within its
+/// route (a skill tool's tier, a device revoking only itself). Set over
+/// whatever the caller sent; absent, the request is from this machine and
+/// at admin. It can only lower what a request may do ([`caller_level`]).
+pub const LEVEL_HEADER: &str = "x-linggen-level";
+
+/// The level a request stands at, from [`LEVEL_HEADER`]: absent is this
+/// machine, at admin; a value that is not a level is chat.
+pub fn caller_level(headers: &axum::http::HeaderMap) -> crate::engine::permission::PermissionMode {
+    use crate::engine::permission::PermissionMode;
+    let Some(value) = headers.get(LEVEL_HEADER) else {
+        return PermissionMode::Admin;
+    };
+    value
+        .to_str()
+        .ok()
+        .and_then(|v| serde_json::from_value(serde_json::Value::String(v.to_string())).ok())
+        .unwrap_or(PermissionMode::Chat)
+}
 
 /// The peer's channel was opened from this machine (the local web UI, the
 /// app shell).
@@ -256,11 +311,19 @@ pub fn commit_device(
             .as_deref()
             .and_then(|did| devices.iter().find(|d| d.device_id.as_deref() == Some(did)));
         let carried = prior.map(|d| d.settings.clone());
+        // The level set for it on this Mac stays the phone's across a re-pair.
+        let level = prior.and_then(|d| d.permission);
         let superseded_grant = prior.and_then(|d| d.relay_grant.clone());
         let device = PairedDevice {
             id: uuid::Uuid::new_v4().to_string(),
             name,
             account: account.map(stamp_account),
+            // Vouched for on a later `identify`, never at pairing.
+            verified_account: None,
+            // Set at this Mac; unset reads as read.
+            permission: level,
+            // Said on the next `identify`.
+            contract: None,
             secret: random_hex(24),
             created_at: chrono::Utc::now().timestamp(),
             kind: Some(DeviceKind::Phone),
@@ -326,16 +389,29 @@ pub struct Identified {
     /// and has one now. A sign-in, and the one moment its device-stamped
     /// memory rows should be handed to the person.
     pub signed_in: Option<AccountRef>,
+    /// The account the relay vouched for on this call, when the device was
+    /// not already verified as it: the moment rows it wrote before become the
+    /// owner's.
+    pub verified_now: Option<String>,
 }
 
 /// Refresh the account a phone claims. Sign-in and sign-out both happen long
 /// after pairing, so the connect-time claim wins over the pair-time one —
-/// including `None`, which is how a sign-out is recorded.
-pub fn set_device_account(token: &str, account: Option<AccountRef>) -> Option<Identified> {
+/// including `None`, which is how a sign-out is recorded. `vouched_for` is
+/// the account the relay vouched for on this channel (this Mac's own, when
+/// the relay said the phone's account owns the instance).
+pub fn set_device_account(
+    token: &str,
+    account: Option<AccountRef>,
+    vouched_for: Option<&str>,
+    contract: u32,
+) -> Option<Identified> {
     device_by_token(token)?;
     let result = modify_devices(|devices| {
         let d = devices.iter_mut().find(|d| token_matches(d, token))?;
-        Some(refresh_account(d, account))
+        // The contract it speaks, as it said on this `identify`.
+        d.contract = Some(contract);
+        Some(refresh_account(d, account, vouched_for))
     });
     match result {
         Ok(found) => found,
@@ -346,14 +422,35 @@ pub fn set_device_account(token: &str, account: Option<AccountRef>) -> Option<Id
     }
 }
 
-fn refresh_account(d: &mut PairedDevice, account: Option<AccountRef>) -> Identified {
+/// The claim replaces the last one. A verification is kept only while the
+/// claim stays the account it was made for; it is made only when the relay
+/// vouched for exactly the account claimed. A claim alone never verifies.
+fn refresh_account(
+    d: &mut PairedDevice,
+    account: Option<AccountRef>,
+    vouched_for: Option<&str>,
+) -> Identified {
     let next = account.map(stamp_account);
-    let changed = d.account.as_ref().map(|a| a.id.clone()) != next.as_ref().map(|a| a.id.clone());
+    let claim = next.as_ref().map(|a| a.id.clone());
+    let changed = d.account.as_ref().map(|a| a.id.clone()) != claim;
     let signed_in = match (&d.account, &next) {
         (None, Some(a)) => Some(a.clone()),
         _ => None,
     };
+    let was_verified = d.verified_claim().map(str::to_string);
     d.account = next;
+    if d.verified_account != claim {
+        d.verified_account = None;
+    }
+    if let (Some(v), Some(c)) = (vouched_for, claim.as_deref()) {
+        if v == c {
+            d.verified_account = Some(c.to_string());
+        }
+    }
+    let verified_now = d
+        .verified_claim()
+        .filter(|v| was_verified.as_deref() != Some(*v))
+        .map(str::to_string);
     let actor = Actor {
         device: d.id.clone(),
         account: d.account.as_ref().map(|a| a.id.clone()),
@@ -365,7 +462,11 @@ fn refresh_account(d: &mut PairedDevice, account: Option<AccountRef>) -> Identif
             person_label(&d.account)
         );
     }
-    Identified { actor, signed_in }
+    Identified {
+        actor,
+        signed_in,
+        verified_now,
+    }
 }
 
 /// Constant-time: a token compare must not leak how many bytes matched.
@@ -415,12 +516,78 @@ mod tests {
             secret: format!("s-{id}"),
             created_at: 0,
             kind,
-            account: None,
-            device_id: None,
-            settings: Default::default(),
-            relay_grant: None,
-            superseded_grant: None,
+            ..Default::default()
         }
+    }
+
+    fn claim(id: &str) -> Option<AccountRef> {
+        Some(AccountRef {
+            id: id.into(),
+            email: None,
+            name: None,
+            at: None,
+        })
+    }
+
+    /// A claim of the Mac's own account is not the owner until the relay
+    /// vouches for it; vouched, it is; a vouch for another account than the
+    /// one claimed verifies nothing.
+    #[test]
+    fn only_a_vouched_claim_of_the_macs_account_is_the_owner() {
+        let mut d = row("p", Some(DeviceKind::Phone));
+        refresh_account(&mut d, claim("u-owner"), None);
+        assert!(!d.is_owners(Some("u-owner")), "an unverified claim is not the owner");
+        assert_eq!(d.verified_claim(), None);
+        let id = refresh_account(&mut d, claim("u-owner"), Some("u-other"));
+        assert!(!d.is_owners(Some("u-owner")));
+        assert_eq!(id.verified_now, None);
+        let id = refresh_account(&mut d, claim("u-owner"), Some("u-owner"));
+        assert!(d.is_owners(Some("u-owner")), "vouched for the account it claims");
+        assert_eq!(id.verified_now.as_deref(), Some("u-owner"));
+        assert!(!d.is_owners(Some("u-someone")), "the owner is this Mac's account only");
+        assert!(!d.is_owners(None), "a Mac signed out has no owner's phone");
+    }
+
+    /// A verification survives a reconnect with no relay (the LAN, no
+    /// internet) while the claim stays; a changed claim or a sign-out clears
+    /// it, and claiming the account again does not bring it back.
+    #[test]
+    fn a_verification_lasts_while_the_claim_does() {
+        let mut d = row("p", Some(DeviceKind::Phone));
+        refresh_account(&mut d, claim("u-owner"), Some("u-owner"));
+        let again = refresh_account(&mut d, claim("u-owner"), None);
+        assert!(d.is_owners(Some("u-owner")), "kept on a reconnect with no relay");
+        assert_eq!(again.verified_now, None, "not verified anew");
+        refresh_account(&mut d, claim("u-friend"), None);
+        assert!(!d.is_owners(Some("u-owner")));
+        refresh_account(&mut d, claim("u-owner"), None);
+        assert!(!d.is_owners(Some("u-owner")), "a changed claim cleared it");
+        refresh_account(&mut d, claim("u-owner"), Some("u-owner"));
+        refresh_account(&mut d, None, None);
+        assert_eq!(d.verified_account, None, "signing out cleared it");
+    }
+
+    /// A machine approved with Allow is the owner's with no verification.
+    #[test]
+    fn an_approved_machine_is_the_owners() {
+        assert!(row("m", Some(DeviceKind::Machine)).is_owners(Some("u-owner")));
+        assert!(row("m", Some(DeviceKind::Machine)).is_owners(None));
+        assert!(!row("p", None).is_owners(Some("u-owner")));
+    }
+
+    /// A verification written by the Mac is kept on disk; a row from before
+    /// it reads as unverified.
+    #[test]
+    fn a_verification_round_trips() {
+        let mut d = row("p", Some(DeviceKind::Phone));
+        refresh_account(&mut d, claim("u-owner"), Some("u-owner"));
+        let back: PairedDevice = serde_json::from_str(&serde_json::to_string(&d).unwrap()).unwrap();
+        assert!(back.is_owners(Some("u-owner")));
+        let old: PairedDevice = serde_json::from_str(
+            r#"{"id":"a","name":"n","secret":"s","created_at":0,"account":{"id":"u-owner"}}"#,
+        )
+        .unwrap();
+        assert!(!old.is_owners(Some("u-owner")));
     }
 
     /// Rows from before kinds: the Allow ceremony's own list names the

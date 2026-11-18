@@ -77,7 +77,7 @@ pub(crate) async fn cancel_agent_run(
 ) -> impl IntoResponse {
     let session = state.manager.run_store.get_run(&req.run_id).map(|r| r.session_id);
     if session.is_some_and(|sid| !crate::server::day_session::may_enter(&sid, req.user_id.as_deref())) {
-        return (StatusCode::FORBIDDEN, "that day is another person's").into_response();
+        return (StatusCode::FORBIDDEN, "that session is another person's").into_response();
     }
     if let Some(result) = crate::server::claude::subagents::cancel(&state, &req.run_id).await {
         return match result {

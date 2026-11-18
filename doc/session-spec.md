@@ -176,6 +176,20 @@ person typing into a session runs it under their policy, verbatim, with the
 memory of whom the turn belongs to; in an `agent_run` delegate's session the
 delegate's toolset stays and its caller still answers beyond the grants.
 
+**A turn's ceiling.** A turn a paired device sent below the owner's level
+runs at no more than that level: `SessionSpec::typed` takes the level the
+request was judged at (`x-linggen-level`, never the body) as the spec's
+`ceiling`, and the permission check refuses — never asks for — any action
+above it, whatever the session's grants. At read a turn may look, not
+change; at chat it uses no tool that needs more; at edit it writes but runs
+nothing admin. Such a turn acts within the session's grants and asks no
+one, carries none of the owner's memory (the store is the owner's), and
+runs no MCP tool ungated — each is judged by its tier under the ceiling.
+A `Task` child keeps its parent turn's ceiling. The owner's turns, and this
+machine's, have none, so a session the owner started keeps its grants for
+the owner's turns. A session another runtime hosts (Claude) and the
+companion's own thread take no turn below admin.
+
 ### Creator inheritance
 
 When a session is created, it inherits configuration from its creator:
