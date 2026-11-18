@@ -236,6 +236,20 @@ export interface RuntimeModelInfo extends Partial<ModelInfo> {
   id: string;
   is_builtin?: boolean;
   auth_mode?: string | null;
+  /** A ChatGPT built-in whose family moved to a newer model. */
+  moved?: ModelMove;
+}
+
+/** Where a ChatGPT family moved: `current` is its newest model that has
+ *  answered, `previous` what it was on; `staying` when the person chose to
+ *  stay there, `can_stay` while the backend still lists it. */
+export interface ModelMove {
+  family: string;
+  current: string;
+  previous: string;
+  since?: number | null;
+  staying: boolean;
+  can_stay: boolean;
 }
 
 export interface OllamaPsModel {

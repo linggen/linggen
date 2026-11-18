@@ -242,6 +242,28 @@ pub(crate) async fn update_credentials_api(
     Json(serde_json::json!({ "status": "ok" })).into_response()
 }
 
+#[derive(serde::Deserialize)]
+pub(crate) struct StayRequest {
+    family: String,
+    stay: bool,
+}
+
+/// POST /api/models/chatgpt/stay — stay on a ChatGPT family's previous model
+/// (while the backend lists it), or follow the family again. Kept in the
+/// catalog, so it survives refreshes; what follows the family moves with it.
+pub(crate) async fn set_chatgpt_stay(
+    State(state): State<Arc<ServerState>>,
+    Json(req): Json<StayRequest>,
+) -> impl IntoResponse {
+    let catalog = match crate::provider::models::chatgpt_catalog::set_stay(&req.family, req.stay) {
+        Ok(c) => c,
+        Err(why) => return (StatusCode::BAD_REQUEST, why).into_response(),
+    };
+    crate::server::background::follow_chatgpt_catalog(&state, &catalog).await;
+    reload_models(&state).await;
+    Json(serde_json::json!({ "status": "ok", "builtins": catalog.builtin_ids() })).into_response()
+}
+
 /// Rebuild the model manager from the config in force (fresh keys, tokens,
 /// catalog), drop the session engines holding the old one, and restore the
 /// proxy models the rebuild drops.

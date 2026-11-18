@@ -156,7 +156,7 @@ async fn catalog_pass(state: &Arc<ServerState>, force: bool) {
 /// every paired device's allow-list — to the families in [catalog]. (A
 /// room's shares follow at load; sessions and missions resolve at their
 /// turn.)
-async fn follow_chatgpt_catalog(
+pub(crate) async fn follow_chatgpt_catalog(
     state: &Arc<ServerState>,
     catalog: &crate::provider::models::chatgpt_catalog::Snapshot,
 ) {

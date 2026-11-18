@@ -245,6 +245,36 @@ impl Snapshot {
         }
     }
 
+    /// For the models page: when [id] is a built-in whose family moved,
+    /// which model the family is on now, what it was on, since when, and
+    /// whether the person stays on (or may go back to) the previous one.
+    pub fn moved_note(&self, id: &str) -> Option<serde_json::Value> {
+        let fam = self.families.iter().find(|f| self.effective(f) == id)?;
+        let previous = fam.previous.as_deref()?;
+        Some(serde_json::json!({
+            "family": fam.name,
+            "current": fam.current,
+            "previous": previous,
+            "since": fam.moved_at,
+            "staying": self.effective(fam) == previous,
+            "can_stay": self.still_served(previous),
+        }))
+    }
+
+    /// Stay on [family]'s previous model, or follow it again. Staying needs
+    /// a previous model the backend still lists.
+    pub fn set_stay(&mut self, family: &str, stay: bool) -> Result<(), &'static str> {
+        let served = |id: &str| self.still_served(id);
+        let fam = self.families.iter().find(|f| f.name == family).ok_or("no such family")?;
+        if stay && !fam.previous.as_deref().is_some_and(served) {
+            return Err("nothing to go back to");
+        }
+        if let Some(fam) = self.family_mut(family) {
+            fam.stay = stay;
+        }
+        Ok(())
+    }
+
     /// What a paired phone takes from this Mac instead of keeping copies:
     /// the version to present when it talks to ChatGPT itself, the
     /// built-ins, and what every older id now means.
@@ -419,6 +449,14 @@ pub fn successor(id: &str) -> Option<String> {
 /// What an exact pin to [id] should run on now.
 pub fn pin_successor(id: &str) -> Option<String> {
     current().pinned(id)
+}
+
+/// Stay on [family]'s previous model or follow it again, in the snapshot in
+/// force (kept on disk, so it survives refreshes and restarts).
+pub fn set_stay(family: &str, stay: bool) -> Result<Arc<Snapshot>, &'static str> {
+    let mut next = (*current()).clone();
+    next.set_stay(family, stay)?;
+    Ok(publish(next))
 }
 
 /// The Codex client version to present to the ChatGPT backend.

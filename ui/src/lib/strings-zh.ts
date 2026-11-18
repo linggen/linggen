@@ -396,6 +396,10 @@ export const ZH: Record<string, string> = {
   'Remove model': '移除模型',
   'Set as default': '设为默认',
   'Sign in with ChatGPT': '用 ChatGPT 登录',
+  'Moved up from {from} on {date}.': '已于 {date} 从 {from} 升级。',
+  'Staying on {from}; {to} is newer.': '留在 {from}；{to} 更新。',
+  'Stay on {from}': '留在 {from}',
+  'Use {to}': '改用 {to}',
   'Remove from defaults': '从默认中移除',
   'Add to defaults': '加入默认',
   // ── Phone ──

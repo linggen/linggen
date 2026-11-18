@@ -129,3 +129,66 @@ fn the_generation_reader_finds_the_number() {
     assert_eq!(openai_generation("gpt-oss"), None);
     assert_eq!(openai_generation("claude"), None);
 }
+
+/// A Sol that moved from 6.2 to a synthetic 7, both listed.
+fn moved_sol() -> Snapshot {
+    let mut s = Snapshot::seed();
+    s.listed = measured_list();
+    s.listed.insert(0, Listed { slug: "gpt-7-sol".into(), priority: 0, context_window: None });
+    let sol = s.family_mut("sol").unwrap();
+    sol.previous = Some("gpt-6.2-sol".into());
+    sol.current = "gpt-7-sol".into();
+    sol.history.push("gpt-6.2-sol".into());
+    sol.moved_at = Some(1_700);
+    s
+}
+
+#[test]
+fn the_models_page_is_told_a_family_moved_and_since_when() {
+    let s = moved_sol();
+    let note = s.moved_note("gpt-7-sol").unwrap();
+    assert_eq!(note["family"], "sol");
+    assert_eq!(note["current"], "gpt-7-sol");
+    assert_eq!(note["previous"], "gpt-6.2-sol");
+    assert_eq!(note["since"], 1_700);
+    assert_eq!(note["staying"], false);
+    assert_eq!(note["can_stay"], true);
+    assert!(s.moved_note("gpt-6-luna").is_none(), "Luna never moved");
+    assert!(Snapshot::seed().moved_note("gpt-6.2-sol").is_none());
+}
+
+#[tokio::test]
+async fn staying_is_kept_in_the_snapshot_and_survives_a_refresh() {
+    use super::listing::{read_list, tests::Answers};
+    use super::promote::{promote, Prober};
+
+    struct Never;
+    #[async_trait::async_trait]
+    impl Prober for Never {
+        async fn answers(&self, _slug: &str) -> bool {
+            false
+        }
+    }
+
+    let mut s = moved_sol();
+    assert!(s.set_stay("sol", true).is_ok());
+    assert_eq!(s.builtin_ids()[0], "gpt-6.2-sol");
+    let note = s.moved_note("gpt-6.2-sol").unwrap();
+    assert_eq!(note["staying"], true);
+
+    let mut answer = super::listing::tests::measured_answer();
+    answer["models"].as_array_mut().unwrap().insert(
+        0,
+        serde_json::json!({"slug": "gpt-7-sol", "visibility": "list", "priority": 0}),
+    );
+    read_list(&mut s, &Answers(Ok(answer)), 2_000).await;
+    promote(&mut s, &Never, 2_000).await;
+    let text = serde_json::to_string(&s).unwrap();
+    let back: Snapshot = serde_json::from_str(&text).unwrap();
+    assert_eq!(back.normalized().builtin_ids()[0], "gpt-6.2-sol");
+
+    assert!(s.set_stay("sol", false).is_ok());
+    assert_eq!(s.builtin_ids()[0], "gpt-7-sol");
+    assert!(s.set_stay("luna", true).is_err(), "nothing to go back to");
+    assert!(s.set_stay("astra", true).is_err());
+}

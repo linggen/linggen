@@ -57,6 +57,7 @@ pub(super) fn routes() -> Routes {
         .route("/api/memory/{verb}", post(api::memory::passthrough))
         .route("/api/skills", get(list_skills))
         .route("/api/models/health", get(get_models_health))
+        .route("/api/models/chatgpt/stay", post(api::config::set_chatgpt_stay))
         .route("/api/config", get(get_config_api).post(update_config_api))
         .route(
             "/api/credentials",

@@ -95,6 +95,9 @@ export const modelsApi = {
   credentials: <T>() => apiGet<T>('/api/credentials'),
   saveCredentials: (body: Record<string, { api_key: string | null; provider: string; url: string }>) =>
     apiPut<void>('/api/credentials', body),
+  /** Stay on a ChatGPT family's previous model, or follow it again. */
+  stayChatgpt: (family: string, stay: boolean) =>
+    apiPost<void>('/api/models/chatgpt/stay', { family, stay }),
 };
 
 /** A provider's browser login (codex, claude): start it, poll its status. */

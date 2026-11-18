@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Eye, EyeOff, LogIn, LogOut, Moon, Plus, Star, Trash2 } from 'lucide-react';
-import type { AppConfig, ModelConfigUI, ModelHealthInfo, OllamaPsResponse } from '../types';
+import type { AppConfig, ModelConfigUI, ModelHealthInfo, ModelMove, OllamaPsResponse } from '../types';
 import { UsageMeter } from './UsageMeter';
 import { CodexUsage } from './CodexUsage';
 import { useServerStore } from '../stores/serverStore';
@@ -451,6 +451,7 @@ export const ModelsTab: React.FC<{
                         {m.provided_by}
                       </span>
                     )}
+                    {m.moved && <FamilyMoved move={m.moved} onChanged={refetchRuntimeModels} />}
                   </span>
                   {isChatgptOauth && codexAuthStatus?.authenticated && <span className="text-[11px] text-slate-500">{healthMap[m.id]?.context_window ? `Context ${Math.round(healthMap[m.id].context_window! / 1000)}K` : 'Context unavailable'} <CodexUsage /></span>}
                   {isChatgptOauth ? (
@@ -738,3 +739,37 @@ export const ModelsTab: React.FC<{
     </div>
   );
 };
+
+/** One line on a ChatGPT built-in whose family moved — to what, since when —
+ *  and the one control to stay on the previous model or follow again. */
+function FamilyMoved({ move, onChanged }: { move: ModelMove; onChanged: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const date = move.since ? new Date(move.since * 1000).toLocaleDateString() : '';
+  const toggle = async () => {
+    setBusy(true);
+    try {
+      await modelsApi.stayChatgpt(move.family, !move.staying);
+      onChanged();
+    } finally {
+      setBusy(false);
+    }
+  };
+  const line = move.staying
+    ? `Staying on ${move.previous}; ${move.current} is newer.`
+    : `Moved up from ${move.previous} on ${date}.`;
+  const action = move.staying ? `Use ${move.current}` : `Stay on ${move.previous}`;
+  return (
+    <span className="block mt-0.5 text-[11px] font-normal text-slate-500">
+      <span>{line}</span>
+      {(move.staying || move.can_stay) && (
+        <button
+          onClick={toggle}
+          disabled={busy}
+          className="ml-2 text-[11px] font-semibold text-blue-600 hover:text-blue-700 disabled:opacity-50"
+        >
+          {action}
+        </button>
+      )}
+    </span>
+  );
+}

@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 pub(crate) async fn list_models_api(State(state): State<Arc<ServerState>>) -> impl IntoResponse {
     let models_guard = state.manager.models.read().await;
+    let catalog = crate::provider::models::chatgpt_catalog::current();
     // `auth_ok` rides beside the config rather than on ModelConfig itself:
     // it is a runtime reading (are this model's credentials present NOW),
     // and the config round-trip must never persist it.
@@ -23,6 +24,10 @@ pub(crate) async fn list_models_api(State(state): State<Arc<ServerState>>) -> im
             let mut v = serde_json::to_value(m).unwrap_or_default();
             if let Some(obj) = v.as_object_mut() {
                 obj.insert("auth_ok".into(), auth_ok.into());
+                // A ChatGPT built-in whose family moved: to what, since when.
+                if let Some(note) = catalog.moved_note(&m.id).filter(|_| m.is_builtin) {
+                    obj.insert("moved".into(), note);
+                }
             }
             v
         })
