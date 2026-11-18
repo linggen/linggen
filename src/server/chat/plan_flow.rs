@@ -30,19 +30,18 @@ pub(super) async fn run_plan_dispatch(ctx: &ChatRunCtx, engine: &mut crate::engi
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| ctx.clean_msg.trim());
 
-    engine.plan_mode = true;
     engine.plan = None;
-    engine.observations.clear();
-    engine.task = Some(task_text.to_string());
+    let (thinking_tx, thinking_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut run = crate::engine::turn_place::RunSetup::task(task_text)
+        .planning()
+        .thinking(Some(thinking_tx));
     // Forward images so the plan-mode sub-loop can see them (pending_images
     // was consumed by std::mem::take in the previous loop's prepare_loop_messages).
     if engine.pending_images.is_empty() && !ctx.images.is_empty() {
-        engine.pending_images = ctx.images.clone();
+        run = run.images(ctx.images.clone());
     }
+    engine.begin_run(run);
     push_user_turn_with_recall(ctx, engine).await;
-
-    let (thinking_tx, thinking_rx) = tokio::sync::mpsc::unbounded_channel();
-    engine.thinking_tx = Some(thinking_tx);
 
     wire_inbox(ctx, engine);
     wire_engine_bridges(&ctx.state, engine, ctx.session_id.clone());
@@ -65,9 +64,7 @@ pub(super) async fn run_plan_dispatch(ctx: &ChatRunCtx, engine: &mut crate::engi
     )
     .await;
 
-    engine.thinking_tx = None;
     unwire_inbox(ctx, engine);
-    engine.plan_mode = false;
 
     match outcome {
         Ok(ref out) => {
@@ -120,11 +117,16 @@ pub(super) async fn run_plan_dispatch(ctx: &ChatRunCtx, engine: &mut crate::engi
     let _ = ctx.events_tx.send(ServerEvent::StateUpdated);
 }
 
-/// Run the execution loop for an approved plan. Wires thinking/interrupt channels,
-/// runs the loop, and emits outcome events. Engine must already have plan + task set.
-pub(super) async fn run_plan_execution(ctx: &ChatRunCtx, engine: &mut crate::engine::AgentEngine) {
+/// Run the execution loop for an approved plan on `task`. Wires
+/// thinking/interrupt channels, runs the loop, and emits outcome events.
+/// Engine must already have the plan set.
+pub(super) async fn run_plan_execution(
+    ctx: &ChatRunCtx,
+    engine: &mut crate::engine::AgentEngine,
+    task: String,
+) {
     let (thinking_tx, thinking_rx) = tokio::sync::mpsc::unbounded_channel();
-    engine.thinking_tx = Some(thinking_tx);
+    engine.begin_run(crate::engine::turn_place::RunSetup::task(task).thinking(Some(thinking_tx)));
     wire_inbox(ctx, engine);
     wire_engine_bridges(&ctx.state, engine, ctx.session_id.clone());
 
@@ -148,7 +150,6 @@ pub(super) async fn run_plan_execution(ctx: &ChatRunCtx, engine: &mut crate::eng
     )
     .await;
 
-    engine.thinking_tx = None;
     unwire_inbox(ctx, engine);
 
     match exec_outcome {
@@ -417,17 +418,11 @@ async fn run_approved_plan_task(
     let events_tx = state.events_tx.clone();
     let sid_default = session_id.as_deref().unwrap_or("default").to_string();
 
+    // Its run is a turn of its own: nothing the turn that made the plan
+    // left (its last words) is shown as this run's.
+    engine.begin_turn(Default::default());
+    let task = format!("Execute the approved plan: {}", plan.summary);
     engine.plan = Some(plan);
-    engine.plan_mode = false;
-    engine.observations.clear();
-    engine.task = Some(format!(
-        "Execute the approved plan: {}",
-        engine
-            .plan
-            .as_ref()
-            .map(|p| p.summary.as_str())
-            .unwrap_or("Plan")
-    ));
 
     // Where it runs, kept before anything of the run is written: in a day's
     // session its rows are the place it was made in (`turn_place::keep_in_day`).
@@ -460,8 +455,9 @@ async fn run_approved_plan_task(
         place,
         turn: Default::default(),
     };
-    run_plan_in_place(&ctx, &mut engine).await;
+    run_plan_in_place(&ctx, &mut engine, task).await;
     complete_plan(&mut engine, &manager, &root, (&sid_default, &agent_id, &stamp)).await;
+    engine.end_turn();
 
     let run_id = engine.last_run_id.clone();
     super::runtime::close_turn(&state, agent_id, session_id, run_id).await;
@@ -473,13 +469,13 @@ async fn run_approved_plan_task(
 /// engine's cached thread may have been read for another place.
 /// Only a day's session is read again: elsewhere every turn of a session
 /// stands in one place, and the plan runs on the thread it was made on.
-async fn run_plan_in_place(ctx: &ChatRunCtx, engine: &mut AgentEngine) {
+async fn run_plan_in_place(ctx: &ChatRunCtx, engine: &mut AgentEngine, task: String) {
     let day = ctx.session_id.as_deref().is_some_and(crate::state_fs::day_session::is_day_session);
     if day {
         super::thread::sync(engine, ctx).await;
     }
     super::turn_place::bind_turn_place(engine, ctx).await;
-    run_plan_execution(ctx, engine).await;
+    run_plan_execution(ctx, engine, task).await;
     if day {
         super::thread::mark(engine, ctx);
     }

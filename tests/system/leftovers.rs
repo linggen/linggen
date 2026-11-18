@@ -99,3 +99,40 @@ async fn a_delivery_after_her_sealed_moment_is_not_sealed() {
 fn offers(call: &Call, tool: &str) -> bool {
     call.tool_names().iter().any(|t| t == tool)
 }
+
+/// An approved plan's run is a turn of its own. The turn that made the plan
+/// left its last words (the plan's text) on the engine; a run that ends
+/// with no words of its own (the model answers nothing) shows nothing, not
+/// those.
+#[tokio::test]
+async fn an_approved_plans_run_never_shows_the_last_turns_words() {
+    const SID: &str = "sess-1790000002-c0ac7ed2";
+    let plan = "## Plan\n\n1. PLAN-WORDS: add a flag";
+    let w = World::start(Setup::default().script(
+        Agent::Ling,
+        vec![
+            tool("EnterPlanMode", json!({"reason": "plan the flag"})),
+            tool("ExitPlanMode", json!({"plan_text": plan})),
+            text(""),
+            text(""),
+            text(""),
+        ],
+    ))
+    .await;
+    let mark = w.mark();
+    w.api.chat(SID, &w.work(), "Add a flag, plan it first.").await;
+    w.finish_run(SID, Agent::Ling, mark).await;
+    let made = w.events().len();
+
+    let mark = w.mark();
+    let action = json!({"project_root": w.work(), "agent_id": "ling", "session_id": SID});
+    w.api.post("/api/plan/approve", action).await;
+    w.finish_run(SID, Agent::Ling, mark).await;
+    let events = w.events_when(|e| e.iter().skip(made).any(|e| e["kind"] == "turn_complete")).await;
+    let shown: Vec<_> = events[made..]
+        .iter()
+        .filter(|e| e["kind"] == "message" && e["text"].as_str().is_some_and(|t| t.contains("PLAN-WORDS")))
+        .collect();
+    assert!(shown.is_empty(), "the plan's turn's words were shown again: {shown:#?}");
+    w.assert_all_scripted();
+}

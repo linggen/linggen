@@ -159,8 +159,7 @@ pub(super) async fn run_structured_loop(ctx: &ChatRunCtx, engine: &mut crate::en
         let task = engine
             .get_task()
             .unwrap_or_else(|| format!("Execute the approved plan: {}", plan.summary));
-        engine.begin_run(crate::engine::turn_place::RunSetup::task(task));
-        run_plan_execution(ctx, engine).await;
+        run_plan_execution(ctx, engine, task).await;
         return;
     }
 

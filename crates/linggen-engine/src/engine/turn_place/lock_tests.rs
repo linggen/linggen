@@ -72,7 +72,6 @@ const LISTED: &[(&str, usize, &str)] = &[
     ),
     // Bypasses: a turn's settings written by its caller.
     ("src/server/chat/handler.rs", 4, "a member's seat"),
-    ("src/server/chat/plan_flow.rs", 12, "a plan's run and its execution"),
     (
         "src/server/chat/admin.rs",
         5,
