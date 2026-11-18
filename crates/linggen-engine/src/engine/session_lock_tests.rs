@@ -41,8 +41,8 @@ const LISTED: &[(&str, usize, &str)] = &[
     // A session's settings written by a door, not their owner.
     (
         "src/server/chat/handler.rs",
-        7,
-        "the thread trimmed; ChatRequest's session and agent (5)",
+        5,
+        "ChatRequest's session and agent",
     ),
     (
         "crates/linggen-engine/src/extensions/missions/enter.rs",
@@ -55,12 +55,12 @@ const LISTED: &[(&str, usize, &str)] = &[
         "tests",
     ),
     // The thread's cache.
-    ("src/server/chat/thread.rs", 6, "the thread module itself"),
+    ("src/server/chat/thread.rs", 9, "the thread module itself"),
     ("src/server/chat/runtime.rs", 1, "a turn's last call, taken"),
     (
         "src/server/mcp_agent.rs",
-        3,
-        "the thread; SessionSpec::tools, a run record (tests)",
+        2,
+        "SessionSpec::tools; a run record (a test)",
     ),
     // Not the engine's: another struct's field of the same name.
     (

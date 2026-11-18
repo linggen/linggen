@@ -11,7 +11,6 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
-use super::restored_tools;
 use super::skill_dispatch::{run_skill_dispatch, run_trigger_dispatch};
 use super::structured::run_structured_loop;
 use super::types::ChatRequest;
@@ -853,10 +852,7 @@ fn bind_turn_session(engine: &mut crate::engine::AgentEngine, session_id: Option
 /// blocks are not messages and do not count toward the cap.
 fn trim_capped(engine: &mut crate::engine::AgentEngine, cap: Option<usize>) {
     if let Some(cap) = cap {
-        trim_live_history_by(&mut engine.chat_history, cap, |m| {
-            !crate::engine::prompt::world::is_world_note(m)
-        });
-        restored_tools::drop_leading_results(&mut engine.chat_history);
+        super::thread::trim(engine, cap);
     }
 }
 
@@ -895,7 +891,7 @@ fn trim_live_history<T>(history: &mut Vec<T>, cap: usize) {
 
 /// [`trim_live_history`], counting only the entries `counts` names: the cut
 /// leaves `cap` of them, and whatever lies among them.
-fn trim_live_history_by<T>(history: &mut Vec<T>, cap: usize, counts: impl Fn(&T) -> bool) {
+pub(super) fn trim_live_history_by<T>(history: &mut Vec<T>, cap: usize, counts: impl Fn(&T) -> bool) {
     let counted: Vec<usize> = (0..history.len()).filter(|&i| counts(&history[i])).collect();
     if counted.len() > cap + cap / 2 {
         let keep_from = counted[counted.len() - cap];

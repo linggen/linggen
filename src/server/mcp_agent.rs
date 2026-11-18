@@ -648,7 +648,7 @@ async fn drive(
     .await;
     engine.set_run_id(None);
     engine.end_turn();
-    seed_first_prompt(&mut engine.chat_history, &prompt);
+    crate::server::chat::thread::seed_task(&mut engine, &prompt);
     drop(engine);
 
     let _ = state
@@ -760,14 +760,6 @@ async fn with_turn_status<T, F: std::future::Future<Output = ()>>(
     let result = run.await;
     close().await;
     result
-}
-
-/// Keep the bootstrap task in the cached thread, before the agent's replies.
-fn seed_first_prompt(history: &mut Vec<crate::message::ChatMessage>, prompt: &str) {
-    history.insert(
-        0,
-        crate::message::ChatMessage::new("user", prompt.to_string()),
-    );
 }
 
 /// What a caller gets while the run goes on: where to watch, and any
@@ -1698,7 +1690,7 @@ mod tests {
     #[test]
     fn mcp_agent_first_prompt_enters_cached_thread() {
         let mut history = vec![crate::message::ChatMessage::new("assistant", "first reply")];
-        seed_first_prompt(&mut history, "first prompt");
+        crate::server::chat::thread::seed_first_prompt(&mut history, "first prompt");
         assert_eq!(
             (history[0].role.as_str(), history[0].content.as_str()),
             ("user", "first prompt")

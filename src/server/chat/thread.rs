@@ -82,6 +82,27 @@ pub(crate) fn add(engine: &mut AgentEngine, message: ChatMessage) {
     engine.chat_history.push(message);
 }
 
+/// Keep the engine's thread near `cap` messages, in chunks
+/// (`handler::trim_live_history_by`), never opening on a tool result whose
+/// call was cut away. Kept world blocks are not messages and do not count.
+pub(super) fn trim(engine: &mut AgentEngine, cap: usize) {
+    super::handler::trim_live_history_by(&mut engine.chat_history, cap, |m| {
+        !crate::engine::prompt::world::is_world_note(m)
+    });
+    restored_tools::drop_leading_results(&mut engine.chat_history);
+}
+
+/// Keep a delegated run's task first in the engine's thread, before the
+/// agent's replies (`agent_run`: the task is no row of the session's file).
+pub(crate) fn seed_task(engine: &mut AgentEngine, task: &str) {
+    seed_first_prompt(&mut engine.chat_history, task);
+}
+
+/// Put `prompt` first in `history`, as the person's.
+pub(crate) fn seed_first_prompt(history: &mut Vec<ChatMessage>, prompt: &str) {
+    history.insert(0, ChatMessage::new("user", prompt.to_string()));
+}
+
 /// Forget the engine's thread (a Clear, a `/compact`): its next turn reads
 /// the session's file again.
 pub(crate) fn forget(engine: &mut AgentEngine) {
