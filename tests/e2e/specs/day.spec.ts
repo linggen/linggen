@@ -194,6 +194,39 @@ test.describe('a turn running from the main page', () => {
     await expect(bash).toHaveAttribute('data-status', 'done');
     await expectScriptedCalls(world, ['ling', 'ling']);
   });
+
+  // The main page is the one that lists the day's running run (an app's page
+  // does not), so its Clear is the one that could stop it. In the day Clear
+  // takes rows and stops nothing: the turn goes on to its reply.
+  test('Clear at the main page does not stop it either', async ({ page, world, request, httpRequests }) => {
+    const day = await settingOn(request, world.url);
+    const main = page;
+    await main.goto(`${world.url}/?session=${day}`);
+    await expectWebRtc(main, httpRequests);
+    await expect(composer(main)).toBeVisible();
+    await openBar(main);
+
+    await send(main, 'Take a nap.');
+    const c = chat(main);
+    await c.getByTestId('permission-card').getByTestId('permission-directory').last().click();
+    const bash = c.locator('[data-testid="tool-call"][data-tool="Bash"]');
+    await expect(bash).toHaveAttribute('data-status', 'running');
+    await main.getByTestId('clear-chat').click();
+
+    // The turn goes on: the model is asked again after the tool ends.
+    await expect.poll(async () => (await world.calls()).length, { timeout: 30_000 }).toBe(2);
+    await expectTurnOver(main);
+    await expectScriptedCalls(world, ['ling', 'ling']);
+    // Its reply is the day's: there after a reload.
+    await main.reload();
+    await expect(composer(main)).toBeVisible();
+    await expect(shown(main, 'Slept well.')).toHaveCount(1, { timeout: 15_000 });
+  });
+
+  test.fixme('a reply that arrives after Clear shows without a reload', async () => {
+    // Today the page shows nothing of the turn it cleared under: the reply
+    // lands in the day and appears only when the page is loaded again.
+  });
 });
 
 test.describe('a model chosen in the picker', () => {
