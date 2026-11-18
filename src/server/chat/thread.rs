@@ -76,6 +76,12 @@ pub(super) async fn sync(engine: &mut AgentEngine, ctx: &ChatRunCtx) -> bool {
     rebuild(engine, ctx).await
 }
 
+/// Add what a turn puts in the thread itself, after its sync: its own
+/// message, a recall note, a reminder, a fresh thread's last words before.
+pub(crate) fn add(engine: &mut AgentEngine, message: ChatMessage) {
+    engine.chat_history.push(message);
+}
+
 /// Forget the engine's thread (a Clear, a `/compact`): its next turn reads
 /// the session's file again.
 pub(crate) fn forget(engine: &mut AgentEngine) {

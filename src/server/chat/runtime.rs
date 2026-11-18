@@ -528,10 +528,10 @@ pub(super) async fn push_user_turn_with_recall(
         // CC's recall.sh and the engine's always-on block — one protocol
         // across all surfaces.
         let model_text = format_recall_for_model(&rows);
-        engine.chat_history.push(crate::message::ChatMessage::new(
-            "system",
-            model_text.clone(),
-        ));
+        super::thread::add(
+            engine,
+            crate::message::ChatMessage::new("system", model_text.clone()),
+        );
 
         persist_recall(ctx, &model_text).await;
     }
@@ -543,15 +543,19 @@ pub(super) async fn push_user_turn_with_recall(
     // instruction to the agent, not a recalled row. Mirrors CC/Codex
     // recall.sh so the per-turn reminder is identical across hosts.
     if engine.prompt_profile.include_memory {
-        engine.chat_history.push(crate::message::ChatMessage::new(
-            "system",
-            crate::engine::prompt::core_block::CAPTURE_REMINDER.to_string(),
-        ));
+        super::thread::add(
+            engine,
+            crate::message::ChatMessage::new(
+                "system",
+                crate::engine::prompt::core_block::CAPTURE_REMINDER.to_string(),
+            ),
+        );
     }
 
-    engine
-        .chat_history
-        .push(crate::message::ChatMessage::new("user", ctx.labeled_msg()));
+    super::thread::add(
+        engine,
+        crate::message::ChatMessage::new("user", ctx.labeled_msg()),
+    );
     keep_world(ctx, engine);
 }
 

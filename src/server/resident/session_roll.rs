@@ -99,10 +99,10 @@ pub(super) fn seed_previously_if_fresh(
     let Some(prev_line) = last_spoken_line(state, session_id) else {
         return;
     };
-    engine.chat_history.push(crate::message::ChatMessage::new(
-        "system",
-        format!("Previously with Han Li: {prev_line}"),
-    ));
+    crate::server::chat::thread::add(
+        engine,
+        crate::message::ChatMessage::new("system", format!("Previously with Han Li: {prev_line}")),
+    );
 }
 
 /// The last spoken (assistant) line from the most recent *other* Yinyue session.
