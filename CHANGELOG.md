@@ -2,65 +2,91 @@
 
 ## [Unreleased]
 
-- **What an app gives a turn now belongs to the turn.** A turn's place (the
-  page's skill, or home) sets the skill's instructions, tools, folder, memory
-  scope and values when it starts and clears them when it ends; grants are
-  kept per place in `permission.json`, a message from another app's page waits
-  for the running turn, saved rows carry their `place`, and a skill may
-  declare `private-talk: true`. Today every turn of a session stands in the
-  session's own place, so nothing changes in use.
-- **A private app keeps a session of its own** (with
-  `agent.daily_session` on). An app that declares `private-talk: true`,
-  or does not resolve, never joins the day's session, by any way in. From
-  its turns a message to another agent, a note, a wider memory write, or an
-  app tool or launch into another app is refused; a question waiting there
-  reaches Yinyue only as that the app waits. Each person has a day of their
-  own — a paired phone signed in to another account gets its person's day,
-  resolved from the device as memory resolves it, on the channel and on
-  plain HTTP from the LAN alike; a page viewing a day is shown it only when
-  it is its person's — and Clear takes only the part of the place it is
-  pressed in. In the day a private app is never the place or active skill
-  of a turn: `/<app>` or its trigger is carried to the app's own chat, and
-  the Skill tool is refused it, nor is its waiting question framed into her
-  turn at home or answered from there. From off this Mac every request is
-  sent as its person, and one naming another person's day is refused (403).
-  An agent's notes and her own thread are the builder's (shared as before
-  with the setting off); the day's row in the session list is marked
-  `day: true`; a queued message keeps its `client_id`.
-- **Yinyue keeps notes of her own and looks again when she said she would.**
-  `note_write` (at most 8 notes of 200 characters, an optional look-again
-  such as `+40m`, `HH:MM`, `tomorrow 09:00`) and `note_done`; her open notes
-  are in front of her at every turn of hers. When a look-again time comes she
-  is woken once with that note, and may speak, ask, keep notes or stay
-  silent, never act. What she says unprompted (glances, app moments, woken
-  notes) is capped per hour (`pet.unprompted_per_hour`, default 6) and held
-  in quiet hours (`pet.quiet_hours`, default 23:00-07:00), both in Settings →
-  Agents; a held line is recorded in the activity log (verb `hold`). Quiet
-  hours do not hold an unasked moment from the app being used (its page in
-  front, input in the last 5 minutes); the hourly cap still does.
-- **A mission fault waits for the morning, and is never dropped.** The wake
-  that hands Yinyue a failed unattended run is held by quiet hours (a wait is
-  one `hold` record), is not counted by the hourly cap, and is never held or
-  dropped by it.
-- **A fault is told to Yinyue once.** The turn that hands her a failed
-  mission run no longer also hears, in the world block, that the Mac recorded
-  it.
-- **Ling keeps notes too.** `note_write` and `note_done` are in Ling's tool
-  list, with his own open notes in front of him at his next turn; only
-  Yinyue's notes can carry a look-again time (on another's it is refused), so
-  no wake fires for Ling.
-- **Every session a person is in sees the same world.** Ling's chats, app chats
-  and Yinyue's thread now get the world block beside each turn (the machine,
-  the Linggen page in front, the phone, the doorbell); missions and delegated
-  runs do not. A skill adds its app's line with `world-line: {file, fields}`.
-- **The activity log answers longer questions.** It is kept 400 days, and
-  `recent_activity` (and `GET /api/activity`) filters by `since`/`until`
-  (ISO times, dates, `today`, `yesterday`, `-6h`, `-3d`), `app`, `verb` and
-  `text`, with `totals: true` for counts and summed durations per app and
-  verb, in seconds and as a readable time. It returns JSON. The engine records
-  how long each Linggen page was in front while the user was active (verb
-  `used`); these stay out of the doorbell. `POST /api/activity` takes a verb
-  only when the skill named by `app` declares it in `activity-verbs:`.
+- **One Ling and one Yinyue across apps, behind a setting.** Turn on
+  Settings → Session → Linggen's daily session and app chats, Yinyue's moments
+  and the phone's hand-offs share one conversation a day; it is off by default.
+- **A private app keeps its talk to itself.** An app that declares its talk
+  private, such as Money, keeps its own chat and never joins the day.
+- **Each person has a day of their own.** A phone signed in to another account
+  gets that person's day, never yours.
+- **Every chat sees the same world.** Ling's chats, app chats and Yinyue's
+  thread are shown the page you are on, the machine and the phone, and each
+  app adds a line of its own.
+- **Yinyue and Ling keep notes.** Notes ride beside their next turn, and she
+  can ask to look again at a set time.
+- **What Yinyue says unprompted has limits.** At most 6 lines an hour and none
+  from 23:00 to 07:00 by default, both set in Settings → Agents.
+- **A failed mission waits for the morning.** Yinyue is told once, and the
+  fault is never dropped.
+- **The activity log keeps 400 days.** Ask it by day, app, verb or text, and
+  for totals of time spent in each app.
+- **Coding sessions.** Switch Coding on in a chat, or start an `agent_run`
+  with a folder to write, and the session works on code with care.
+- **A coding session runs its work in its folder without asking.** Anything
+  outside the folder, or leaving the machine, still asks first.
+- **Outward commands always ask, once.** Publishing, ssh and a push to main
+  ask whatever you have granted.
+- **Fewer questions for harmless commands.** Running a program or copying one
+  is judged at read, and `$HOME` in a command is read as the shell reads it.
+- **A plugin run can come with its folders preset.** `agent_run` takes the
+  folders and tools a new run may use without asking, within the caller's own
+  level.
+- **A paired phone's standing follows its account.** A phone signed in to
+  your Mac's account is yours, and any other phone starts at read.
+- **You set another person's phone on the Mac.** Settings → Phone shows whose
+  each device is and lets you choose Chat, Read or Edit there, and only there.
+- **A phone that is not yours gets none of your memory, models or keys,** and
+  permission checks were tightened on every route a phone can use.
+- **A phone and a Mac too far apart in version say so once**, in plain words.
+- **The phone's Settings shows what it may do on its Mac.** A refusal is
+  worded by Yinyue.
+- **Yinyue says a problem once, with something to do about it.** She raises it
+  again only when it worsens or comes back, with buttons that fix it.
+- **A tap runs the fix as your own button.** A destructive one asks first,
+  and "not now" keeps a problem quiet for a week unless it gets worse.
+- **She never drops a problem.** One she sat out, or could not be asked about,
+  is asked again later.
+- **The phone offers to free its storage.** Take the songs off the phone, clear
+  leftover share pictures, or delete photos already backed up to the Mac.
+- **Apple Shifu offers a disk scan** when the Mac's disk runs out.
+- **A Mac out of reach is news, not a problem.** A sleeping Mac no longer
+  makes her raise it.
+- **GPT models follow new generations by themselves.** A ChatGPT model family
+  moves to its newer model once that has answered, and Sol is now GPT-6.2.
+- **Models tab: stay or follow.** It says when a ChatGPT family moved and lets
+  you stay on the previous model.
+- **A paired phone takes the ChatGPT version and old model names from the
+  Mac**, and a model you added there is asked for by its provider's name.
+- **The phone sends the Mac no shell text.** Music, Money, Health and
+  灵境's book sync through tools the apps declare.
+- **The iPhone app is smaller.** 灵境's later chapters are fetched after
+  install, taking its part of the app from 106.7 to 86.1 MB (measured).
+- **Chat on the phone** shows Ling's and Yinyue's notes while the day is on,
+  and a hand-off waits only for its own turn.
+- **Write no longer overwrites a file** that changed since the session last
+  saw it; it asks for a fresh read first.
+- **Stopping a background task** right after its turn ended no longer fails.
+- **An agent set to a retired model** now runs on its successor.
+- **A long name on a crowded 灵境 field card** no longer runs into its status.
+
+### For developers / under the hood
+
+- Every kind of session is one spec applied in one place (`session-spec.md`),
+  and a turn's place, settings and grants are set only in the listed places,
+  each held by a test.
+- One rule decides which model a turn runs on (`model_choice::resolve`, in
+  `doc/models.md`); the ChatGPT catalog lives in one module.
+- One `Person` type says who a request, a session or a row is for, and one
+  ladder of permission levels; the legacy tool permission setting is retired.
+- A route has a class, and a request above its caller's level is refused;
+  each phone and Mac carry a contract number kept equal by a test.
+- Skills may declare `world-line`, `activity-verbs` and `private-talk`, and
+  phone sync as `page_only` tools.
+- `evals/code` runs sixteen small tasks with hidden checks three ways: with the
+  coding section, without it, and in a Claude Code session.
+- The small helpers have one copy each, and a session file's changes go
+  through one writer; the agent wait socket's `finished` frame carries
+  `followup`.
 
 ## [2.3.1] - 2026-11-16 — memory on newer embedding and vector-database libraries
 
