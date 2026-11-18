@@ -41,14 +41,14 @@ const LISTED: &[(&str, usize, &str)] = &[
     // A session's settings written by a door, not their owner.
     (
         "src/server/chat/handler.rs",
-        10,
-        "bash prefixes, live models, a promotion's prompt; the thread trimmed; \
+        9,
+        "live models, a promotion's prompt; the thread trimmed; \
          ChatRequest's session and agent (5)",
     ),
     (
         "crates/linggen-engine/src/extensions/missions/scheduler.rs",
-        2,
-        "bash prefixes; an attended run's AskUser",
+        1,
+        "an attended run's AskUser",
     ),
     (
         "crates/linggen-engine/src/extensions/missions/enter.rs",

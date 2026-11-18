@@ -1443,9 +1443,6 @@ pub(crate) async fn start_turn(
         }
         engine.tools.builtins.set_session_id(session_id.clone());
 
-        // Mission-only bash prefixes never reach a person's turn.
-        engine.cfg.bash_allow_prefixes = None;
-
         promote_mission_session_to_user(&mut engine, &state_clone, session_id.as_deref()).await;
 
         let policy =

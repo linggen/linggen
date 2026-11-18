@@ -140,9 +140,6 @@ pub struct EngineConfig {
     pub permission_mode: crate::engine::permission::PermissionMode,
     pub prompt_loop_breaker: Option<String>,
     pub interface_mode: InterfaceMode,
-    /// When set, Bash commands must match one of these prefixes.
-    /// Used by mission "standard" tier to restrict commands to build/test/git-read.
-    pub bash_allow_prefixes: Option<Vec<String>>,
     /// When set, restricts available tools to this set (mission permission tiers).
     /// This is applied at engine level, before the agent spec tool list.
     pub mission_allowed_tools: Option<std::collections::HashSet<String>>,
@@ -190,7 +187,6 @@ impl EngineConfig {
             permission_mode: config.agent.default_permission_mode.unwrap_or_default(),
             prompt_loop_breaker: config.agent.prompt_loop_breaker.clone(),
             interface_mode,
-            bash_allow_prefixes: None,
             mission_allowed_tools: None,
             consumer_allowed_tools: None,
             skill_allowed_tools: None,

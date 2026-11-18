@@ -813,7 +813,6 @@ async fn dispatch_mission_prompt(
     // its own skill's tools.
     let owning_skill =
         super::enter::enter_mission(&mut engine, mission, &state.missions, &state.skills).await;
-    engine.cfg.bash_allow_prefixes = None; // frontmatter controls bash, not tier
     info!(
         "mission '{}' entered (skill: {:?}, tool scope: {:?})",
         mission.id,

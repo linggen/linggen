@@ -541,8 +541,7 @@ impl AgentEngine {
     }
 
     /// Restriction gates (defense-in-depth), in order: the config-level tool
-    /// set, tools withheld this turn, a consumer's skill list, and a
-    /// mission's bash prefixes.
+    /// set, tools withheld this turn, and a consumer's skill list.
     async fn gate_restrictions(
         &mut self,
         t: &ToolTurn<'_>,
@@ -551,8 +550,7 @@ impl AgentEngine {
         let msg = self
             .config_restriction(t)
             .or_else(|| self.withheld_restriction(t))
-            .or_else(|| self.consumer_skill_restriction(t))
-            .or_else(|| self.bash_prefix_restriction(t))?;
+            .or_else(|| self.consumer_skill_restriction(t))?;
         self.refuse_saved(t, messages, msg).await
     }
 
@@ -598,27 +596,6 @@ impl AgentEngine {
             .unwrap_or("");
         (!allowed_skills.contains(skill_name))
             .then(|| format!("Skill '{}' is not available to consumers.", skill_name))
-    }
-
-    /// Mission bash prefix restriction (legacy, kept for backward compat).
-    fn bash_prefix_restriction(&self, t: &ToolTurn<'_>) -> Option<String> {
-        if t.canonical != "Bash" {
-            return None;
-        }
-        let prefixes = self.cfg.bash_allow_prefixes.as_ref()?;
-        let cmd = bash_command_arg(t.args);
-        let cmd_trimmed = cmd.as_deref().unwrap_or("").trim();
-        let allowed = prefixes
-            .iter()
-            .any(|prefix| cmd_trimmed.starts_with(prefix));
-        (!allowed).then(|| {
-            format!(
-                "Bash command not allowed by this mission's permission tier. \
-                 Command: '{}'. Allowed prefixes: {}",
-                cmd_trimmed,
-                prefixes.join(", ")
-            )
-        })
     }
 
     /// The path/tier permission gate (permission-spec.md), asking the user
