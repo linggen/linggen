@@ -9,6 +9,15 @@
   private, such as Money, keeps its own chat and never joins the day.
 - **Each person has a day of their own.** A phone signed in to another account
   gets that person's day, never yours.
+- **In the day, each app's page is still that app.** A `!` command starts in
+  the app's folder, Copy system prompt gives the app's prompt, and Yinyue
+  keeps her own tools.
+- **A page says whose work it shows.** Work from another app reads "Working in
+  Music", folds to one line, and its waiting message can be changed only there.
+- **One model a day.** The model picker sets it; a page opened earlier no
+  longer changes it back.
+- **Clear takes only this page's part of the day.** It stops no running turn
+  and never removes the day's summary.
 - **Every chat sees the same world.** Ling's chats, app chats and Yinyue's
   thread are shown the page you are on, the machine and the phone, and each
   app adds a line of its own.
@@ -29,6 +38,11 @@
 - **Fewer questions for harmless commands.** Running a script in the folder,
   or copying a file out of somewhere you may read, no longer asks; `$HOME` is
   read as the shell reads it.
+- **More of an ordinary command is read.** A `git grep` pattern, `$?`, a
+  loop over words written in the command, and `if … then … fi` are judged
+  by what they run.
+- **Permission checks read a command more exactly.** A program or a path is
+  recognised however it is quoted or cased, on every line of a command.
 - **A plugin run can come with its folders preset.** `agent_run` takes the
   folders and tools a new run may use without asking, within the caller's own
   level.
@@ -85,6 +99,10 @@
   each phone and Mac carry a contract number kept equal by a test.
 - Skills may declare `world-line`, `activity-verbs` and `private-talk`, and
   phone sync as `page_only` tools.
+- An app's page removes only its own app's sessions: `DELETE
+  /api/skill-sessions` must name the session's skill.
+- In a day's session, run and stream events, the running run and queued
+  messages carry `place`; a page's `compact_config` is not stored there.
 - `evals/code` runs sixteen small tasks with hidden checks three ways: with the
   coding section, without it, and in a Claude Code session.
 - The small helpers have one copy each, and a session file's changes go
