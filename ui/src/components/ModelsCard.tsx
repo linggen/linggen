@@ -8,8 +8,9 @@ import type { AgentInfo, ModelInfo, OllamaPsResponse } from '../types';
 function supportsReasoningEffort(model: ModelInfo): boolean {
   const m = (model.model || '').toLowerCase();
   const p = (model.provider || '').toLowerCase();
-  // OpenAI reasoning models
-  if (m.includes('gpt-5') || m.includes('o3') || m.includes('o4') || m.includes('o1')) return true;
+  // OpenAI reasoning models: GPT from generation 5 on, and the o-series
+  const gpt = /gpt-(\d+)/.exec(m);
+  if ((gpt && Number(gpt[1]) >= 5) || m.includes('o3') || m.includes('o4') || m.includes('o1')) return true;
   // Gemini 2.5 thinking models
   if (m.includes('gemini') && m.includes('2.5')) return true;
   // Claude models with extended thinking

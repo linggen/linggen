@@ -194,6 +194,16 @@ impl Snapshot {
         self.family_of(id).map(|f| self.effective(f).to_string())
     }
 
+    /// Whether [id] is a model a built-in family has been on and left (or an
+    /// old id of the seed) — what an older release may have written as a
+    /// copy of a built-in. A listed model no family has been on is not.
+    pub fn is_former(&self, id: &str) -> bool {
+        if self.is_builtin(id) {
+            return false;
+        }
+        seed_family_of(id).is_some() || self.families.iter().any(|f| f.has_been_on(id))
+    }
+
     /// What an exact pin (a session's or a mission's model) should run on
     /// instead of [id]: nothing while the backend still lists [id], else
     /// what [`follow`](Self::follow) says.
@@ -454,9 +464,48 @@ pub fn pin_successor(id: &str) -> Option<String> {
 /// Stay on [family]'s previous model or follow it again, in the snapshot in
 /// force (kept on disk, so it survives refreshes and restarts).
 pub fn set_stay(family: &str, stay: bool) -> Result<Arc<Snapshot>, &'static str> {
-    let mut next = (*current()).clone();
-    next.set_stay(family, stay)?;
-    Ok(publish(next))
+    let mut refused = None;
+    let kept = InForce.modify(&mut |cur| {
+        let mut next = cur.clone();
+        match next.set_stay(family, stay) {
+            Ok(()) => Some(next),
+            Err(why) => {
+                refused = Some(why);
+                None
+            }
+        }
+    });
+    refused.map_or(Ok(kept), Err)
+}
+
+/// Where a snapshot is kept: the process-wide one ([`InForce`]) or a
+/// test's own. Every change is a read-modify-write under one writer, so a
+/// refresh and a person's choice never overwrite each other.
+pub trait Store: Send + Sync {
+    fn current(&self) -> Arc<Snapshot>;
+    /// Give [change] the snapshot kept now; what it returns, if anything,
+    /// is kept instead. Returns what is kept after.
+    fn modify(&self, change: &mut dyn FnMut(&Snapshot) -> Option<Snapshot>) -> Arc<Snapshot>;
+}
+
+/// The process-wide snapshot, kept on disk.
+pub struct InForce;
+
+static WRITER: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+impl Store for InForce {
+    fn current(&self) -> Arc<Snapshot> {
+        current()
+    }
+
+    fn modify(&self, change: &mut dyn FnMut(&Snapshot) -> Option<Snapshot>) -> Arc<Snapshot> {
+        let _one = WRITER.lock().unwrap_or_else(|e| e.into_inner());
+        let cur = current();
+        match change(&cur) {
+            Some(next) => publish(next),
+            None => cur,
+        }
+    }
 }
 
 /// The Codex client version to present to the ChatGPT backend.

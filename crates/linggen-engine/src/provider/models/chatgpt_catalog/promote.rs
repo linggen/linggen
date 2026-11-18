@@ -84,6 +84,9 @@ pub fn candidate(snap: &Snapshot, family: &str) -> Option<String> {
 /// family moved.
 pub async fn promote(snap: &mut Snapshot, prober: &dyn Prober, now: u64) -> bool {
     let names: Vec<String> = snap.families.iter().map(|f| f.name.clone()).collect();
+    // A refusal is remembered only while the backend still lists the model.
+    let listed: Vec<String> = snap.listed.iter().map(|m| m.slug.clone()).collect();
+    snap.refused.retain(|slug, _| listed.contains(slug));
     let mut moved = false;
     for name in names {
         let Some(next) = candidate(snap, &name) else {

@@ -6,7 +6,7 @@
 use super::listing::{self, Backend};
 use super::promote::{self, Prober};
 use super::version::{self, PublicListing};
-use super::Snapshot;
+use super::{Snapshot, Store};
 
 /// How long a read stays fresh.
 pub const REFRESH_EVERY_SECS: u64 = 24 * 60 * 60;
@@ -67,31 +67,60 @@ pub async fn refresh_in_force(force: bool) -> bool {
     else {
         return false;
     };
-    let before = super::current();
-    let now = now();
+    let listing = version::CodexReleases::new();
+    let prober = promote::ChatgptProber::new(probe_client);
+    let src = Sources { listing: &listing, backend: &backend, prober: &prober };
+    run_pass(&super::InForce, &src, force, now()).await
+}
+
+/// One pass at a time: a sign-in's refresh and the timer's never overlap.
+static PASS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// One refresh against [store]: the version is kept (put in force) before
+/// the list is read — every request to the backend presents the one in
+/// force — then the list and each family's move. A choice the person made
+/// meanwhile (staying) is carried over, never overwritten. True when the
+/// models to register changed.
+pub async fn run_pass(store: &dyn Store, src: &Sources<'_>, force: bool, now: u64) -> bool {
+    let _one = PASS.lock().await;
+    let before = store.current();
     if !force && !due(&before, now) {
         return false;
     }
-    // The version is put in force before the list is read: every request
-    // to the backend presents the one in force.
-    let versioned = refresh_version((*before).clone(), &version::CodexReleases::new(), now).await;
-    keep_if_changed(&before, versioned.clone());
-    let prober = promote::ChatgptProber::new(probe_client);
-    let after = refresh_models(versioned, &backend, &prober, now).await;
-    keep_if_changed(&before, after.clone());
-    registered_changed(&before, &after)
+    let versioned = refresh_version((*before).clone(), src.listing, now).await;
+    keep(store, &before, &versioned);
+    let after = refresh_models(versioned, src.backend, src.prober, now).await;
+    let kept = keep(store, &before, &after);
+    registered_changed(&before, &kept)
+}
+
+/// Keep [after] in [store], with any choice made since [before] carried
+/// over.
+fn keep(store: &dyn Store, before: &Snapshot, after: &Snapshot) -> std::sync::Arc<Snapshot> {
+    store.modify(&mut |in_force| {
+        let mut next = after.clone();
+        carry_choices(before, in_force, &mut next);
+        (next != *in_force).then_some(next)
+    })
+}
+
+/// A family's stay the person changed while the pass ran wins — as long as
+/// it still names the same previous model.
+fn carry_choices(before: &Snapshot, in_force: &Snapshot, next: &mut Snapshot) {
+    for fam in next.families.iter_mut() {
+        let (Some(was), Some(now)) = (before.family(&fam.name), in_force.family(&fam.name)) else {
+            continue;
+        };
+        if was.stay != now.stay && fam.previous == now.previous {
+            fam.stay = now.stay;
+        }
+    }
 }
 
 /// Whether the models a manager registers differ: the built-ins, or the
 /// older listed models kept for exact pins.
 pub fn registered_changed(before: &Snapshot, after: &Snapshot) -> bool {
     before.builtin_ids() != after.builtin_ids() || before.kept_ids() != after.kept_ids()
-}
-
-fn keep_if_changed(before: &Snapshot, after: Snapshot) {
-    if after != *before && after != *super::current() {
-        super::publish(after);
-    }
 }
 
 #[cfg(test)]
@@ -138,6 +167,104 @@ mod tests {
         assert!(!due(&s, 10));
         // The measured list moves no family: each one's newest is current.
         assert_eq!(s.builtin_ids(), Snapshot::seed().builtin_ids());
+    }
+
+    /// A test's own store.
+    struct Held(std::sync::Mutex<std::sync::Arc<Snapshot>>);
+
+    impl Held {
+        fn new(s: Snapshot) -> Self {
+            Self(std::sync::Mutex::new(std::sync::Arc::new(s)))
+        }
+    }
+
+    impl Store for Held {
+        fn current(&self) -> std::sync::Arc<Snapshot> {
+            self.0.lock().unwrap().clone()
+        }
+        fn modify(
+            &self,
+            change: &mut dyn FnMut(&Snapshot) -> Option<Snapshot>,
+        ) -> std::sync::Arc<Snapshot> {
+            let mut g = self.0.lock().unwrap();
+            if let Some(next) = change(&g) {
+                *g = std::sync::Arc::new(next);
+            }
+            g.clone()
+        }
+    }
+
+    /// Answers the measured list plus a newer Sol; on its read it records
+    /// the version in force, and (when asked) the person presses Stay.
+    struct Midway<'a> {
+        store: &'a Held,
+        in_force_at_read: std::sync::Mutex<Option<String>>,
+        press_stay: bool,
+    }
+
+    #[async_trait]
+    impl Backend for Midway<'_> {
+        async fn models(&self, _v: &str) -> anyhow::Result<serde_json::Value> {
+            *self.in_force_at_read.lock().unwrap() = Some(self.store.current().client_version());
+            if self.press_stay {
+                self.store.modify(&mut |cur| {
+                    let mut next = cur.clone();
+                    next.set_stay("sol", true).ok()?;
+                    Some(next)
+                });
+            }
+            let mut answer = listing::tests::measured_answer();
+            answer["models"].as_array_mut().unwrap().insert(
+                0,
+                serde_json::json!({"slug": "gpt-7-sol", "visibility": "list", "priority": 0}),
+            );
+            Ok(answer)
+        }
+    }
+
+    struct Yes;
+
+    #[async_trait]
+    impl Prober for Yes {
+        async fn answers(&self, _slug: &str) -> bool {
+            true
+        }
+    }
+
+    #[tokio::test]
+    async fn a_pass_puts_the_version_in_force_before_the_list_and_moves_a_family() {
+        let store = Held::new(Snapshot::seed());
+        let backend = Midway { store: &store, in_force_at_read: Default::default(), press_stay: false };
+        let src = Sources { listing: &Listing("0.170.0"), backend: &backend, prober: &Yes };
+        assert!(run_pass(&store, &src, false, 100).await);
+        assert_eq!(backend.in_force_at_read.lock().unwrap().as_deref(), Some("0.170.0"));
+        assert_eq!(store.current().builtin_ids()[0], "gpt-7-sol");
+        assert!(!run_pass(&store, &src, false, 101).await, "not due again");
+    }
+
+    #[tokio::test]
+    async fn staying_pressed_during_a_pass_is_not_overwritten() {
+        let mut moved = Snapshot::seed();
+        let sol = moved.family_mut("sol").unwrap();
+        sol.previous = Some("gpt-6.1-sol".into());
+        sol.history.push("gpt-6.1-sol".into());
+        sol.moved_at = Some(50);
+        let store = Held::new(moved);
+        let backend = Midway { store: &store, in_force_at_read: Default::default(), press_stay: true };
+        // The newer Sol is tried and refuses; the press lands mid-pass.
+        struct No;
+        #[async_trait]
+        impl Prober for No {
+            async fn answers(&self, _slug: &str) -> bool {
+                false
+            }
+        }
+        let src = Sources { listing: &Listing("0.169.1"), backend: &backend, prober: &No };
+        run_pass(&store, &src, true, 100).await;
+        let kept = store.current();
+        assert!(kept.family("sol").unwrap().stay, "the press survived the pass");
+        assert_eq!(kept.builtin_ids()[0], "gpt-6.1-sol");
+        assert_eq!(kept.listed_at, Some(100));
     }
 
     #[test]

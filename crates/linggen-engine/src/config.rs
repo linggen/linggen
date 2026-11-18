@@ -485,7 +485,7 @@ impl Config {
             self.pet.model.clone(),
         );
         self.models.retain(|m| {
-            !(catalog.follow(&m.id).is_some() && m.auth_mode.as_deref() == Some("chatgpt_oauth"))
+            !(catalog.is_former(&m.id) && m.auth_mode.as_deref() == Some("chatgpt_oauth"))
         });
 
         let surviving: std::collections::HashSet<String> =
@@ -1112,6 +1112,23 @@ mod tests {
         snap.family_mut("sol").unwrap().stay = true;
         assert!(cfg.follow_chatgpt_catalog(&snap));
         assert_eq!(cfg.routing.default_models, vec!["gpt-6.2-sol".to_string()]);
+    }
+
+    /// A model the person added on the ChatGPT sign-in under a listed slug
+    /// no family has been on is theirs: kept, and a default naming it stays.
+    #[test]
+    fn a_users_chatgpt_model_under_a_newer_listed_slug_is_kept() {
+        use crate::provider::models::chatgpt_catalog::{tests::measured_list, Listed, Snapshot};
+        let mut snap = Snapshot::seed();
+        snap.listed = measured_list();
+        snap.listed.insert(0, Listed { slug: "gpt-7-sol".into(), priority: 0, context_window: None });
+        let mut cfg = valid_config();
+        cfg.models[0].id = "gpt-7-sol".into();
+        cfg.models[0].auth_mode = Some("chatgpt_oauth".into());
+        cfg.routing.default_models = vec!["gpt-7-sol".into()];
+        assert!(!cfg.follow_chatgpt_catalog(&snap));
+        assert_eq!(cfg.models.len(), 1);
+        assert_eq!(cfg.routing.default_models, vec!["gpt-7-sol".to_string()]);
     }
 
     /// A retired Linggen Cloud id persisted as a default or a pet pin follows

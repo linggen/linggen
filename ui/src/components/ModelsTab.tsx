@@ -174,6 +174,15 @@ export const ModelsTab: React.FC<{
       setLinggenLoginBusy(false);
     }
   };
+  // A Stay (or following again) moved the family on the engine: the
+  // defaults and the companion's model in this page's copy follow, so a
+  // later Save does not post the old id back.
+  const followMove = (from: string, to: string) => {
+    const swap = (id: string) => (id === from ? to : id);
+    const routing = config.routing ? { ...config.routing, default_models: (config.routing.default_models ?? []).map(swap) } : config.routing;
+    const pet = config.pet?.model ? { ...config.pet, model: swap(config.pet.model) } : config.pet;
+    onChange({ ...config, routing, pet });
+  };
   const builtinModels = runtimeModels.filter((m) => m.id && m.is_builtin);
   // A model always renders as its built-in card, never as a raw editable
   // entry below — even if the user's config file happens to still list the
@@ -451,7 +460,7 @@ export const ModelsTab: React.FC<{
                         {m.provided_by}
                       </span>
                     )}
-                    {m.moved && <FamilyMoved move={m.moved} onChanged={refetchRuntimeModels} />}
+                    {m.moved && <FamilyMoved move={m.moved} onChanged={(from, to) => { followMove(from, to); refetchRuntimeModels(); }} />}
                   </span>
                   {isChatgptOauth && codexAuthStatus?.authenticated && <span className="text-[11px] text-slate-500">{healthMap[m.id]?.context_window ? `Context ${Math.round(healthMap[m.id].context_window! / 1000)}K` : 'Context unavailable'} <CodexUsage /></span>}
                   {isChatgptOauth ? (
@@ -742,14 +751,15 @@ export const ModelsTab: React.FC<{
 
 /** One line on a ChatGPT built-in whose family moved — to what, since when —
  *  and the one control to stay on the previous model or follow again. */
-function FamilyMoved({ move, onChanged }: { move: ModelMove; onChanged: () => void }) {
+function FamilyMoved({ move, onChanged }: { move: ModelMove; onChanged: (from: string, to: string) => void }) {
   const [busy, setBusy] = useState(false);
   const date = move.since ? new Date(move.since * 1000).toLocaleDateString() : '';
   const toggle = async () => {
     setBusy(true);
     try {
       await modelsApi.stayChatgpt(move.family, !move.staying);
-      onChanged();
+      if (move.staying) onChanged(move.previous, move.current);
+      else onChanged(move.current, move.previous);
     } finally {
       setBusy(false);
     }

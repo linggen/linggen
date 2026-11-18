@@ -78,11 +78,17 @@ pub(super) fn inject_linggen_cloud(configs: &mut Vec<ModelConfig>) {
 /// lists ([`Snapshot::kept_ids`]), so a session or mission pinned to one keeps
 /// running on it. Their ids are returned — they are never offered.
 pub(super) fn inject_chatgpt_builtin(configs: &mut Vec<ModelConfig>, snap: &Snapshot) -> Vec<String> {
-    let kept = snap.kept_ids();
-    for id in snap.builtin_ids().iter().chain(&kept) {
-        configs.retain(|c| &c.id != id);
-        configs.push(chatgpt_config(id, snap));
+    for id in snap.builtin_ids() {
+        configs.retain(|c| c.id != id);
+        configs.push(chatgpt_config(&id, snap));
     }
+    // A kept id the person configured themselves is theirs, and stays listed.
+    let kept: Vec<String> = snap
+        .kept_ids()
+        .into_iter()
+        .filter(|id| !configs.iter().any(|c| &c.id == id))
+        .collect();
+    configs.extend(kept.iter().map(|id| chatgpt_config(id, snap)));
     kept
 }
 

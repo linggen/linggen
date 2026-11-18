@@ -36,6 +36,9 @@ pub(crate) async fn update_config_api(
         // Always strip from TOML
         model.api_key = None;
     }
+    // A page opened before a ChatGPT family moved (or a Stay was pressed)
+    // posts the old ids back: they follow the catalog again here.
+    new_config.follow_chatgpt_catalog(&crate::provider::models::chatgpt_catalog::current());
     // An override belongs to a model row; a deleted row takes it along.
     if creds.prune_overrides(&new_config.models) > 0 {
         creds_changed = true;

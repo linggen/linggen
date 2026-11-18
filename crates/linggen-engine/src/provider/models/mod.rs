@@ -654,6 +654,17 @@ mod tests {
         assert_eq!(m.resolve_id("gpt-6.1-sol").as_deref(), Some("gpt-6.2-sol"));
     }
 
+    /// With a list read, a person's own model under a listed older id is
+    /// still theirs and still offered.
+    #[test]
+    fn a_user_model_reusing_a_listed_older_id_stays_theirs() {
+        let mut snap = chatgpt_catalog::Snapshot::seed();
+        snap.listed = chatgpt_catalog::tests::measured_list();
+        let m = ModelManager::new_with_catalog(vec![byok("gpt-6-sol")], &Credentials::default(), &snap);
+        assert_eq!(m.provider_kind("gpt-6-sol"), Some("openai"));
+        assert!(m.list_models().iter().any(|c| c.id == "gpt-6-sol"));
+    }
+
     #[test]
     fn a_user_model_reusing_a_retired_id_stays_theirs() {
         let m =
