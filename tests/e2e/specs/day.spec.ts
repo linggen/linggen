@@ -184,8 +184,9 @@ test.describe('a turn running from the main page', () => {
     await c.getByTestId('permission-card').getByTestId('permission-directory').last().click();
     const bash = c.locator('[data-testid="tool-call"][data-tool="Bash"]');
     await expect(bash).toHaveAttribute('data-status', 'running');
-    // The app's page knows a run is going on in the day — Clear is pressed with it running.
-    await expect(dice.getByText('Running', { exact: true })).toBeVisible();
+    // The app's page knows a run is going on in the day, and says it is the
+    // main page's — Clear is pressed with it running.
+    await expect(dice.getByText('Working in Linggen', { exact: true })).toBeVisible();
     await dice.getByTestId('clear-chat').click();
 
     await expect(shown(main, 'Slept well.')).toHaveCount(1, { timeout: 30_000 });
