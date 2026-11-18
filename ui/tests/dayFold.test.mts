@@ -2,6 +2,15 @@
 // The day's session on a page: other places' stretches fold to a line each.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+
+test('an opened stretch still renders its fold button and toggles closed', () => {
+  const list = readFileSync(new URL('../src/components/chat/ChatMessageList.tsx', import.meta.url), 'utf8');
+  assert.doesNotMatch(list, /if \(opened\.has\(key\)\) return rows\.map/);
+  assert.match(list, /<FoldedStretch[\s\S]*?expanded=\{expanded\}[\s\S]*?\{expanded && rows\.map\(renderRow\)\}/);
+  assert.match(list, /if \(next\.has\(key\)\) next\.delete\(key\)/);
+  assert.match(list, /aria-expanded=\{expanded\}/);
+});
 import { clearCancelsRun, foldOthers, pagePlace, placeName, HOME_PLACE } from '../src/lib/dayFold.mts';
 
 test("another app's stretch is one fold; this page's messages stand", () => {

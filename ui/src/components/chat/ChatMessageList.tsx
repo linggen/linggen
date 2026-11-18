@@ -200,14 +200,15 @@ function isShown(msg: ChatMessage): boolean {
 
 /** Another place's stretch of the day's session: its app and how many
  *  messages (or that it works, while its turn streams), one line that
- *  opens it. */
-function FoldedStretch({ place, count, working, onOpen }: { place: string; count: number; working: boolean; onOpen: () => void }) {
+ *  opens or closes it. */
+function FoldedStretch({ place, count, working, expanded, onToggle }: { place: string; count: number; working: boolean; expanded: boolean; onToggle: () => void }) {
   const skills = useServerStore((s) => s.skills);
   const what = foldLabel(placeName(place, skills), count, working);
   return (
     <button
       type="button"
-      onClick={onOpen}
+      onClick={onToggle}
+      aria-expanded={expanded}
       className="self-center my-1 px-3 py-0.5 rounded-full text-[11px] text-slate-500 dark:text-slate-400 border border-dashed border-slate-200 dark:border-white/10 hover:bg-slate-50 dark:hover:bg-white/5"
     >
       {what}
@@ -316,16 +317,24 @@ export const ChatMessageList = React.memo<{
         const rows = item.indexes.map((j) => from + j);
         const count = rows.filter((i) => isShown(messages[i])).length;
         const key = `fold-${messages[rows[0]].timestamp}-${rows[0]}`;
-        if (opened.has(key)) return rows.map(renderRow);
         if (count === 0) return null;
+        const expanded = opened.has(key);
         return (
-          <FoldedStretch
-            key={key}
-            place={item.place}
-            count={count}
-            working={rows.some((i) => messages[i].isGenerating)}
-            onOpen={() => setOpened((prev) => new Set(prev).add(key))}
-          />
+          <React.Fragment key={key}>
+            <FoldedStretch
+              place={item.place}
+              count={count}
+              working={rows.some((i) => messages[i].isGenerating)}
+              expanded={expanded}
+              onToggle={() => setOpened((prev) => {
+                const next = new Set(prev);
+                if (next.has(key)) next.delete(key);
+                else next.add(key);
+                return next;
+              })}
+            />
+            {expanded && rows.map(renderRow)}
+          </React.Fragment>
         );
       })}
     </>
