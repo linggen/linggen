@@ -647,6 +647,11 @@ mod tests {
         assert_eq!(m.resolve_id("gpt-6.1-sol").as_deref(), Some("gpt-6.1-sol"));
         assert_eq!(m.provider_kind("gpt-5.6-luna"), Some("chatgpt"));
         assert_eq!(m.resolve_id("gpt-5.5"), Some(snap.primary_id()));
+
+        // Once the backend stops listing it, a pin moves to its family.
+        snap.listed.retain(|l| l.slug != "gpt-6.1-sol");
+        let m = ModelManager::new_with_catalog(vec![], &Credentials::default(), &snap);
+        assert_eq!(m.resolve_id("gpt-6.1-sol").as_deref(), Some("gpt-6.2-sol"));
     }
 
     #[test]

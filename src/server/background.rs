@@ -143,9 +143,31 @@ pub(crate) fn refresh_chatgpt_catalog(state: Arc<ServerState>, force: bool) {
 }
 
 async fn catalog_pass(state: &Arc<ServerState>, force: bool) {
-    if crate::provider::models::chatgpt_catalog::refresh::refresh_in_force(force).await {
-        api::config::reload_models(state).await;
-        info!("ChatGPT catalog changed; models reloaded");
+    use crate::provider::models::chatgpt_catalog;
+    if !chatgpt_catalog::refresh::refresh_in_force(force).await {
+        return;
+    }
+    follow_chatgpt_catalog(state, &chatgpt_catalog::current()).await;
+    api::config::reload_models(state).await;
+    info!("ChatGPT catalog changed; models reloaded");
+}
+
+/// Move what follows a family — the config's defaults and the pet's model,
+/// every paired device's allow-list — to the families in [catalog]. (A
+/// room's shares follow at load; sessions and missions resolve at their
+/// turn.)
+async fn follow_chatgpt_catalog(
+    state: &Arc<ServerState>,
+    catalog: &crate::provider::models::chatgpt_catalog::Snapshot,
+) {
+    let mut config = state.manager.get_config_snapshot().await;
+    if config.follow_chatgpt_catalog(catalog) {
+        if let Err(e) = state.manager.apply_config(config).await {
+            tracing::warn!("ChatGPT catalog: could not move the defaults: {e}");
+        }
+    }
+    if let Err(e) = crate::state_fs::devices::follow_chatgpt_catalog() {
+        tracing::warn!("ChatGPT catalog: could not move the devices' models: {e}");
     }
 }
 

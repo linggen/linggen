@@ -251,30 +251,42 @@ fn connect_allowed_ids() -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// A GPT generation bump moves each retired ChatGPT id in a phone's
-/// allow-list to its successor (deduped), so the phone never keeps offering
-/// a model the backend no longer serves. True when the list changed.
+/// A phone's allow-list follows the ChatGPT catalog in force.
 fn migrate_retired_models(settings: &mut serde_json::Map<String, serde_json::Value>) -> bool {
-    use crate::provider::models::chatgpt_catalog::successor as chatgpt_successor;
+    follow_catalog(settings, &crate::provider::models::chatgpt_catalog::current())
+}
+
+/// Move each older ChatGPT id in a phone's allow-list to its family's model
+/// in [catalog] (deduped), so the phone never keeps offering a model the
+/// family has moved on from. True when the list changed.
+fn follow_catalog(
+    settings: &mut serde_json::Map<String, serde_json::Value>,
+    catalog: &crate::provider::models::chatgpt_catalog::Snapshot,
+) -> bool {
     let Some(list) = settings.get_mut("models").and_then(|v| v.as_array_mut()) else {
         return false;
     };
-    if !list
-        .iter()
-        .any(|x| x.as_str().is_some_and(|id| chatgpt_successor(id).is_some()))
-    {
+    let follow = |x: &serde_json::Value| x.as_str().and_then(|id| catalog.follow(id));
+    if !list.iter().any(|x| follow(x).is_some()) {
         return false;
     }
     let mut seen = std::collections::HashSet::new();
     *list = std::mem::take(list)
         .into_iter()
-        .map(|x| match x.as_str().and_then(chatgpt_successor) {
-            Some(next) => serde_json::Value::from(next),
-            None => x,
-        })
+        .map(|x| follow(&x).map(serde_json::Value::from).unwrap_or(x))
         .filter(|x| seen.insert(x.to_string()))
         .collect();
     true
+}
+
+/// Move every paired device's allow-list along with the catalog in force —
+/// what a family move asks for. True when a list changed.
+pub fn follow_chatgpt_catalog() -> std::io::Result<bool> {
+    modify_devices(|devices| {
+        devices
+            .iter_mut()
+            .fold(false, |changed, d| migrate_retired_models(&mut d.settings) | changed)
+    })
 }
 
 /// What a brand-new phone's allow-list starts with: the zero-setup Linggen
@@ -616,6 +628,22 @@ mod tests {
         let machine = row("m", Some(DeviceKind::Machine));
         let text = serde_json::to_string(&machine).unwrap();
         assert!(text.contains(r#""kind":"machine""#));
+    }
+
+    #[test]
+    fn a_phone_allow_list_follows_a_family_that_moved() {
+        use crate::provider::models::chatgpt_catalog::{tests::measured_list, Listed, Snapshot};
+        let mut snap = Snapshot::seed();
+        snap.listed = measured_list();
+        snap.listed.insert(0, Listed { slug: "gpt-7-sol".into(), priority: 0, context_window: None });
+        let mut s = serde_json::Map::new();
+        s.insert("models".into(), serde_json::json!(["deepseek-flash", "gpt-6.2-sol"]));
+        assert!(!follow_catalog(&mut s, &snap), "not moved until it answered");
+        let sol = snap.family_mut("sol").unwrap();
+        sol.previous = Some("gpt-6.2-sol".into());
+        sol.current = "gpt-7-sol".into();
+        assert!(follow_catalog(&mut s, &snap));
+        assert_eq!(s["models"], serde_json::json!(["deepseek-flash", "gpt-7-sol"]));
     }
 
     #[test]

@@ -463,21 +463,34 @@ impl Config {
         Ok((Config::default(), None))
     }
 
-    /// Migrate persisted state left behind by a ChatGPT built-in generation
-    /// bump: drop stale copies of a retired built-in (same id + chatgpt_oauth
-    /// — a custom API-key entry that happens to reuse the id is kept), and
-    /// move routing defaults and the pet's pin to the retired id's successor
-    /// when the retired id no longer resolves to any configured model.
+    /// Bring persisted references in line with the ChatGPT catalog in force.
     fn migrate_retired_chatgpt_builtins(&mut self) {
-        use crate::provider::models::chatgpt_catalog::successor as chatgpt_successor;
+        self.follow_chatgpt_catalog(&crate::provider::models::chatgpt_catalog::current());
+    }
 
+    /// Follow the ChatGPT families in [catalog]: drop stale copies of an old
+    /// built-in (same id + chatgpt_oauth — a custom API-key entry that
+    /// happens to reuse the id is kept), and move routing defaults and the
+    /// pet's pin from an older id of a family to the family's model now,
+    /// when the older id no longer names any configured model. A family's
+    /// model is only ever one that has answered, so a default never moves
+    /// to a model that cannot. True when anything changed.
+    pub fn follow_chatgpt_catalog(
+        &mut self,
+        catalog: &crate::provider::models::chatgpt_catalog::Snapshot,
+    ) -> bool {
+        let before = (
+            self.models.len(),
+            self.routing.default_models.clone(),
+            self.pet.model.clone(),
+        );
         self.models.retain(|m| {
-            !(chatgpt_successor(&m.id).is_some() && m.auth_mode.as_deref() == Some("chatgpt_oauth"))
+            !(catalog.follow(&m.id).is_some() && m.auth_mode.as_deref() == Some("chatgpt_oauth"))
         });
 
         let surviving: std::collections::HashSet<String> =
             self.models.iter().map(|m| m.id.clone()).collect();
-        let successor = |id: &str| chatgpt_successor(id).filter(|_| !surviving.contains(id));
+        let successor = |id: &str| catalog.follow(id).filter(|_| !surviving.contains(id));
         for dm in &mut self.routing.default_models {
             if let Some(next) = successor(dm) {
                 *dm = next;
@@ -490,6 +503,12 @@ impl Config {
         if let Some(next) = successor(&self.pet.model) {
             self.pet.model = next;
         }
+        before
+            != (
+                self.models.len(),
+                self.routing.default_models.clone(),
+                self.pet.model.clone(),
+            )
     }
 
     /// Re-point persisted references to a retired Linggen Cloud id (routing
@@ -1063,6 +1082,36 @@ mod tests {
         own.routing.default_models = vec!["gpt-5.6-sol".into()];
         own.migrate_retired_chatgpt_builtins();
         assert_eq!(own.routing.default_models, vec!["gpt-5.6-sol".to_string()]);
+    }
+
+    /// Defaults and the pet follow a family only to a model that has
+    /// answered: a newer Sol the backend lists but that has not answered
+    /// leaves them where they are; once it has, they move.
+    #[test]
+    fn defaults_follow_a_family_only_to_a_model_that_answered() {
+        use crate::provider::models::chatgpt_catalog::{tests::measured_list, Listed, Snapshot};
+        let mut snap = Snapshot::seed();
+        snap.listed = measured_list();
+        snap.listed.insert(0, Listed { slug: "gpt-7-sol".into(), priority: 0, context_window: None });
+        let mut cfg = Config::default();
+        cfg.routing.default_models = vec!["gpt-6.2-sol".into(), "gpt-6.1-sol".into()];
+        cfg.pet.model = "gpt-6.2-sol".into();
+        cfg.follow_chatgpt_catalog(&snap);
+        assert_eq!(cfg.routing.default_models, vec!["gpt-6.2-sol".to_string()]);
+        assert_eq!(cfg.pet.model, "gpt-6.2-sol");
+
+        let sol = snap.family_mut("sol").unwrap();
+        sol.previous = Some("gpt-6.2-sol".into());
+        sol.current = "gpt-7-sol".into();
+        assert!(cfg.follow_chatgpt_catalog(&snap));
+        assert_eq!(cfg.routing.default_models, vec!["gpt-7-sol".to_string()]);
+        assert_eq!(cfg.pet.model, "gpt-7-sol");
+        assert!(!cfg.follow_chatgpt_catalog(&snap), "followed once");
+
+        // Staying on the previous Sol brings them back.
+        snap.family_mut("sol").unwrap().stay = true;
+        assert!(cfg.follow_chatgpt_catalog(&snap));
+        assert_eq!(cfg.routing.default_models, vec!["gpt-6.2-sol".to_string()]);
     }
 
     /// A retired Linggen Cloud id persisted as a default or a pet pin follows
