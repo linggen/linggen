@@ -131,6 +131,18 @@ Settings → Models sets one default per kind of session:
 - **Star** — the default for Linggen sessions (`routing.default_models`).
 - **Moon** — the default for Claude sessions (`routing.claude_default_model`). Only Anthropic API-key models can take it. Unset, or the model no longer usable, Claude sessions fall back to the star, then to the first Claude API-key model in the list.
 
+## Which model a turn runs on
+
+One rule, `engine/model_choice::resolve(asked, standing, rule)`, for a chat turn, the companion's turn, a mission's run and a delegated run:
+
+- **Asked** — the picker's model, the one a session keeps for a member, the companion's Pet setting (`auto`: Linggen Cloud when signed in, else nothing), or a mission's `model:`. A retired built-in id runs, and is kept, as its successor.
+- **Nothing asked** — the place's standing model: the agent's own, from its chain (config override, frontmatter, the star, the first configured model).
+- **Asked but cannot run** (not on this machine, or not shared with a room's guest) — the standing model runs instead, the kept pin is cleared, and the same `ModelFallback` notice as a mid-call fallback says which model answers and why.
+- **Switching off** (`model_fallback: false`; a delegated `agent_run` session by default) — the asked model is kept and the turn fails on it, named. A guest's shared list is an access rule, not a failure: it holds either way.
+- **A room's guest** runs only the models the room shares — before the turn and in the fallback below. A room that shares none refuses the turn.
+
+`AgentEngine::run_on` is the one writer of a turn's model; a lock test fails on any other.
+
 ## Auto-fallback
 
 When the active model refuses for a reason about itself — a rate limit or usage window, an empty wallet (402, `insufficient_quota`), a context overflow, a server error or overload, an unreachable backend, an empty answer — the engine tries the next available model. A bad request or a missing key is shown instead: another model would only hide it. On successful fallback, the engine switches to the fallback model for the rest of that run.
