@@ -447,8 +447,7 @@ pub(crate) async fn compact_config_api(
 
     for arc in engines {
         let mut engine = arc.lock().await;
-        engine.compact_threshold = threshold;
-        engine.compact_focus = focus.clone();
+        engine.set_compaction(threshold, focus.clone());
     }
 
     // Persist to session.yaml so the config survives engine restart and is

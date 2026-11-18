@@ -558,8 +558,7 @@ impl AgentManager {
         // skill's previously-set threshold + focus survive engine restart
         // without needing to be re-pushed on every iframe mount.
         if let Some(meta) = &meta {
-            engine.compact_threshold = meta.compact_threshold;
-            engine.compact_focus = meta.compact_focus.clone();
+            engine.set_compaction(meta.compact_threshold, meta.compact_focus.clone());
             let creator = meta.creator.clone();
             engine.respec(|spec| spec.creator = Some(creator));
         }

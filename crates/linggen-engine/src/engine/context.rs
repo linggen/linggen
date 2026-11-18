@@ -21,6 +21,14 @@ impl AgentEngine {
         self.context_window_model = Some(self.model_id.clone());
     }
 
+    /// The session's compaction settings (`session.yaml`, set by
+    /// `POST /api/chat/compact_config`): the trigger fraction of the window
+    /// and the hint the summary is written to. `None` keeps the default.
+    pub fn set_compaction(&mut self, threshold: Option<f32>, focus: Option<String>) {
+        self.compact_threshold = threshold;
+        self.compact_focus = focus;
+    }
+
     pub(crate) fn context_soft_token_limit(&self) -> usize {
         // Three layers, highest to lowest:
         //   1. Per-session override (POST /api/chat/compact_config)

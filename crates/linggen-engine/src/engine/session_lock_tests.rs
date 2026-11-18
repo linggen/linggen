@@ -60,7 +60,7 @@ const LISTED: &[(&str, usize, &str)] = &[
     ("src/server/chat/skill_dispatch.rs", 2, "the session's grants"),
     ("src/server/chat/structured.rs", 2, "the plan"),
     ("src/server/chat/plan_flow.rs", 3, "the plan"),
-    ("src/server/chat/admin.rs", 4, "compaction settings; the thread"),
+    ("src/server/chat/admin.rs", 2, "the thread"),
     // The thread's cache.
     ("src/server/chat/thread.rs", 3, "the thread module itself"),
     ("src/server/chat/runtime.rs", 4, "the thread; a turn's last call"),
