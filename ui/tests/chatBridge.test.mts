@@ -164,3 +164,23 @@ test('a refused turn on a spent allowance reaches the page as a fact', async () 
   emit('allowance_spent', { reason: 'trial', agent: 'ling', sessionId: 'sess-1' });
   assert.deepEqual(facts, [['allowance_spent', { reason: 'trial', agent: 'ling', sessionId: 'sess-1' }]]);
 });
+
+test("an app's own scripts read only their own place's rows of the day", async () => {
+  // /shared/api.js `fetchSessionMessages`: in a day each row names its place.
+  const { fetchSessionMessages } = await import(pathToFileURL(join(dir, 'api.mjs')).href);
+  const channel = (g.window as { LinggenChannel: { fetch: unknown } }).LinggenChannel;
+  const was = channel.fetch;
+  const rows = [
+    [{ from: 'yinyue', to: 'user', place: 'health' }, 'from Health'],
+    [{ from: 'yinyue', to: 'user', place: 'demo' }, 'from the app'],
+    [{ from: 'ling', to: 'user' }, 'no place told'],
+    [{ from: 'ling', to: 'user', place: ':home' }, 'from the main page'],
+  ];
+  channel.fetch = async () => ({ ok: true, json: async () => ({ messages: rows }) });
+  try {
+    const kept = await fetchSessionMessages('demo', 'sess-day-2026-11-18');
+    assert.deepEqual(kept.map((r: unknown[]) => r[1]), ['from the app', 'no place told']);
+  } finally {
+    channel.fetch = was;
+  }
+});

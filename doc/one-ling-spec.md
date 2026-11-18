@@ -205,8 +205,10 @@ session, prompt and row is as before. On (decided by the builder 2026-11-15/16):
   run's stream, blocks, end and signs of life to the app's page
   (`/shared/chat-bridge.js` handlers) only when the run stands in that
   page's place, as the engine first told it; another place's turn stays in
-  the chat, folded. With no place told (setting off, any other session)
-  every run is relayed as before.
+  the chat, folded. The rows an app's scripts read back (`/shared/api.js`
+  `fetchSessionMessages`) are likewise only those written in its place.
+  With no place told (setting off, any other session) every run is relayed
+  and every row read as before.
 - **A question names where it was asked**: a question card shows at every
   page of the day and is answered from any of them (it is the person's to
   answer), and when the asking turn stands in another place the card says

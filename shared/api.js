@@ -98,12 +98,22 @@ export async function removeSkillSession(skill, sessionId, { keepalive = false }
   if (!res.ok) throw new Error(`Failed to delete session: ${res.status}`);
 }
 
+/** A session's rows (`[meta, text]`) as `skill`'s own scripts read them. In
+ *  Linggen's daily session each row names the place it was written in
+ *  (`meta.place`), and only `skill`'s own are handed on — another app's or
+ *  the main page's talk never reaches these scripts. A row with no place
+ *  (any other session) is always handed on. */
 export async function fetchSessionMessages(skill, sessionId) {
   const params = new URLSearchParams({ skill, session_id: sessionId });
   const res = await overChannel(`/api/skill-sessions/state?${params}`);
   if (!res.ok) return [];
   const data = await res.json();
-  return data.messages || [];
+  return (data.messages || []).filter((row) => writtenAt(row, skill));
+}
+
+function writtenAt(row, skill) {
+  const place = Array.isArray(row) ? row[0]?.place : null;
+  return !place || place === skill;
 }
 
 /// The skill's cloud as the engine sees it: `{signed_in, meter}` — the
