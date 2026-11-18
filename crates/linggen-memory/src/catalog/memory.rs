@@ -80,7 +80,7 @@ pub const BRANCHES: &[Branch<&str>] = &[
         // silently narrows recall to zero rows. Omitted here, the daemon's
         // store-wide `recall_min_score` applies.
         extra: None,
-        hidden: &["min_score"],
+        hidden: &["min_score", "from", "outcome"],
         fixed: &[],
         check: None,
         timeout_ms: CALL_TIMEOUT_MS,
@@ -108,7 +108,7 @@ pub const BRANCHES: &[Branch<&str>] = &[
             }
         }),
         extra: None,
-        hidden: &[],
+        hidden: &["from", "outcome"],
         fixed: &[],
         check: Some(list_rule),
         timeout_ms: CALL_TIMEOUT_MS,
@@ -179,7 +179,7 @@ pub const BRANCHES: &[Branch<&str>] = &[
             "required": ["content"]
         }),
         extra: Some(add_extra),
-        hidden: &["skip_dedup", "force"],
+        hidden: &["outcome", "skip_dedup", "force"],
         fixed: &[],
         check: None,
         timeout_ms: CALL_TIMEOUT_MS,

@@ -9,7 +9,7 @@ status: BUILT, complete. Phase 1 2026-07-29 (client, tool surface, project scope
 
 # Ling as an MCP client
 
-Linggen could be *driven by* MCP and not *consume* it: `src/server/mcp.rs` and
+Linggen could be *driven by* MCP and not *consume* it: `src/server/mcp/` and
 `src/server/mcp_agent.rs` were both servers, with no outbound `tools/list`
 anywhere in the tree.
 

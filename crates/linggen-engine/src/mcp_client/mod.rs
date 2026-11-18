@@ -1,6 +1,6 @@
 //! Ling as an MCP **client** — see `doc/mcp-client-spec.md`.
 //!
-//! The engine has always been able to be *driven by* MCP (`server/mcp.rs`)
+//! The engine has always been able to be *driven by* MCP (`server/mcp/`)
 //! and never to consume it. Every peer — Claude Code, Codex, Cursor, Cline,
 //! Zed — connects to arbitrary MCP servers; this is what lets Linggen do the
 //! same.

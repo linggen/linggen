@@ -22,7 +22,7 @@ mod usage;
 pub use catalog::*;
 pub use health::*;
 pub use readiness::{NotReady, Readiness, NONE_READY};
-pub(crate) use readiness::rfc3339;
+pub(crate) use readiness::{cloud_sign_in, rfc3339, usage_limit_line, usage_limit_until};
 pub use usage::*;
 
 use providers::{ChunkStream, Provider, TurnOptions};

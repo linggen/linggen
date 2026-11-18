@@ -88,7 +88,10 @@ fn implied<'a, D: Copy + 'static>(
     visible: &[&'a Branch<D>],
     obj: &Map<String, Value>,
 ) -> Result<&'a Branch<D>, String> {
-    let fits = |b: &Branch<D>| obj.keys().all(|k| b.accepts(k));
+    // A soft-empty field is a field not given (`check` drops it), so it
+    // decides nothing about the branch.
+    let given: Vec<&String> = obj.iter().filter(|(_, v)| !soft_empty(v)).map(|(k, _)| k).collect();
+    let fits = |b: &Branch<D>| given.iter().all(|k| b.accepts(k));
     if let Some(b) = implicit.and_then(|op| visible.iter().copied().find(|b| b.op == op)) {
         let complete = b.required().iter().all(|k| obj.contains_key(k));
         if fits(b) && complete {
@@ -97,7 +100,7 @@ fn implied<'a, D: Copy + 'static>(
     }
     let fitting: Vec<&&Branch<D>> = visible
         .iter()
-        .filter(|b| !obj.is_empty() && Some(b.op) != implicit && fits(b))
+        .filter(|b| !given.is_empty() && Some(b.op) != implicit && fits(b))
         .collect();
     if let Some(b) = fitting.first() {
         return Err(format!(
@@ -402,8 +405,8 @@ mod tests {
         assert!(why.contains("memory_add takes no op"), "{why}");
         let why = refused("memory_add", json!({}));
         assert!(why.contains("memory_add needs `content`"), "{why}");
-        let why = refused("memory_add", json!({"content": "x", "tags": ["a"]}));
-        assert!(why.contains("unknown field `tags`"), "{why}");
+        let why = refused("memory_add", json!({"content": "x", "colour": ["a"]}));
+        assert!(why.contains("unknown field `colour`"), "{why}");
         let why = refused("memory_add", json!({"content": "x", "from": "someone"}));
         assert!(why.contains("`from` must be one of"), "{why}");
         assert_eq!(call("memory_update", json!({"id": "a", "summary": "s"})).0, "update");

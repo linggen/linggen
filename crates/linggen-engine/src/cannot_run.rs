@@ -9,7 +9,7 @@
 //! request the store refused as bad) is not one of these.
 
 use crate::provider::error::{kind_of, kind_of_message, named_reset, retry_after_of, ProviderErrorKind};
-use crate::provider::models::rfc3339;
+use crate::provider::models::{cloud_sign_in, rfc3339, usage_limit_line, usage_limit_until, NotReady};
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::time::{Duration, SystemTime};
@@ -120,10 +120,7 @@ impl CannotRun {
         match self {
             Self::NoModel => "To run a Linggen agent, add a model in Settings → Models or sign in to use Linggen Cloud.".into(),
             Self::CloudSignIn { .. } => "This model needs a Linggen account; create one or sign in at linggen.dev with `ling account login`, or choose another model in Settings → Models.".into(),
-            Self::UsageLimit { model, resets_at, .. } => format!(
-                "Usage limit on {} until {resets_at}; pick a ready model (agent_status op=models) or come back after it — never retry before.",
-                named(model)
-            ),
+            Self::UsageLimit { model, resets_at, .. } => usage_limit_line(model.as_deref(), resets_at),
             Self::Provider { model, kind: ProviderErrorKind::Auth } => format!(
                 "{}'s sign-in or key was refused; fix it in Settings → Models or choose another model.",
                 named(model)
@@ -163,15 +160,15 @@ fn provider(
 ) -> Option<CannotRun> {
     let model = model.map(str::to_string);
     if kind == ProviderErrorKind::Auth && cloud {
-        let expired = crate::account::resolve_token().is_some();
+        let expired = cloud_sign_in() == NotReady::SignInExpired;
         return Some(CannotRun::CloudSignIn { model, expired });
     }
-    let limited = matches!(kind, ProviderErrorKind::RateLimit | ProviderErrorKind::QuotaExhausted);
-    if let (true, Some(left)) = (limited, reset) {
+    let now = SystemTime::now();
+    if let Some(at) = usage_limit_until(kind, reset.map(|left| now + left)) {
         return Some(CannotRun::UsageLimit {
             model,
-            resets_at: rfc3339(SystemTime::now() + left),
-            resets_in_secs: left.as_secs(),
+            resets_at: rfc3339(at),
+            resets_in_secs: at.duration_since(now).unwrap_or_default().as_secs(),
         });
     }
     (kind != ProviderErrorKind::Other).then_some(CannotRun::Provider { model, kind })

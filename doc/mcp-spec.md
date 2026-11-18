@@ -11,7 +11,7 @@ status: all shipped — /mcp live (24 tools incl agent_run, agent_permit), lingg
 
 One MCP server, on the daemon, for **every** outside agent (Claude Code, Codex,
 Cursor and others): `http://127.0.0.1:9527/mcp`, streamable HTTP, stateless
-JSON-RPC (`src/server/mcp.rs`). Tools are grouped by prefix; each group fronts
+JSON-RPC (`src/server/mcp/`; its tools come from one catalogue, `src/server/mcp/catalog.rs` composed with memory's `crates/linggen-memory/src/catalog/`). Tools are grouped by prefix; each group fronts
 a Linggen component the daemon already talks to. One config line installs the
 whole platform's capabilities; every new group makes the same install more
 valuable.

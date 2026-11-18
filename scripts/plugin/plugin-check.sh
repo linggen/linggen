@@ -257,8 +257,8 @@ SURFACES=(
   "$CCP/skills/linggen" "$CCP/commands" "$CCP/README.md" "$CCP/hooks"
 )
 ENGINE_SURFACES=(
-  "$ENGINE/src/server/mcp.rs" "$ENGINE/crates/linggen-engine/src/engine/tools/memory_mcp.rs"
-  "$ENGINE/crates/linggen-memory/src/http/mcp.rs" "$ENGINE/agents/memory.md"
+  "$ENGINE/src/server/mcp" "$ENGINE/crates/linggen-engine/src/engine/tools/memory_mcp.rs"
+  "$ENGINE/crates/linggen-memory/src/http/mcp.rs" "$ENGINE/crates/linggen-memory/src/catalog" "$ENGINE/agents/memory.md"
 )
 for m in "$ENGINE"/missions/*dream* "$ENGINE"/agents/missions/*dream*; do
   [ -e "$m" ] && ENGINE_SURFACES+=("$m")

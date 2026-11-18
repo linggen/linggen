@@ -185,6 +185,14 @@ pub(crate) fn clear_cooldowns() {
     BOARD.lock_ok().clear();
 }
 
+/// Tests that clear the board, or read back what they put on it, take
+/// this first, so one never wipes another's entry mid-test.
+#[cfg(test)]
+pub(crate) fn board_test_guard() -> std::sync::MutexGuard<'static, ()> {
+    static GUARD: Mutex<()> = Mutex::new(());
+    GUARD.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -245,6 +253,7 @@ mod tests {
 
     #[test]
     fn a_model_that_refused_is_benched_until_it_said_it_would_be_back() {
+        let _board = board_test_guard();
         clear_cooldowns();
         let quota = err(
             "openai error (429 Too Many Requests): {\"error\":{\"type\":\
@@ -280,6 +289,7 @@ mod tests {
     /// hour, but a caller asking is told the real reset.
     #[test]
     fn a_usage_limit_keeps_its_named_reset_beyond_the_bench() {
+        let _board = board_test_guard();
         let body = r#"{"error":{"type":"usage_limit_reached","resets_in_seconds":8973}}"#;
         note_unavailable("standing-usage", &err(&format!("openai error (429 Too Many Requests): {body}")));
         let s = standing("standing-usage").expect("a usage limit stands");
@@ -303,6 +313,7 @@ mod tests {
 
     #[test]
     fn an_expired_bench_lets_the_model_back() {
+        let _board = board_test_guard();
         clear_cooldowns();
         BOARD.lock_ok().insert(
             "bench-e".to_string(),

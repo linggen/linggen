@@ -143,18 +143,18 @@ impl ModelManager {
 /// auth mode, never by the message's words.
 fn signed_out(cfg: &ModelConfig, err: &anyhow::Error) -> Readiness {
     if cfg.auth_mode.as_deref() == Some("linggen_account") {
-        if crate::account::resolve_token().is_none() {
-            return Readiness::not(
-                NotReady::NotSignedIn,
+        return match cloud_sign_in() {
+            NotReady::SignInExpired => Readiness::not(
+                NotReady::SignInExpired,
+                "Linggen sign-in expired: run `ling account login` again, or pick another model."
+                    .into(),
+            ),
+            reason => Readiness::not(
+                reason,
                 "Needs a Linggen account: sign in with `ling account login`, or pick another model."
                     .into(),
-            );
-        }
-        return Readiness::not(
-            NotReady::SignInExpired,
-            "Linggen sign-in expired: run `ling account login` again, or pick another model."
-                .into(),
-        );
+            ),
+        };
     }
     let said = err.to_string();
     let line = said
@@ -164,23 +164,44 @@ fn signed_out(cfg: &ModelConfig, err: &anyhow::Error) -> Readiness {
     Readiness::not(NotReady::ProviderSignIn, line)
 }
 
+/// The one rule for a usage limit: a rate limit or a spent quota whose
+/// provider named when it lifts. Readiness and a run's typed reason
+/// (`cannot_run`) both ask this.
+pub(crate) fn usage_limit_until(
+    kind: ProviderErrorKind,
+    reset_at: Option<SystemTime>,
+) -> Option<SystemTime> {
+    let limited = matches!(kind, ProviderErrorKind::RateLimit | ProviderErrorKind::QuotaExhausted);
+    reset_at.filter(|_| limited)
+}
+
+/// What to do about a usage limit, in one line.
+pub(crate) fn usage_limit_line(model: Option<&str>, resets_at: &str) -> String {
+    let on = model.map(|m| format!(" on {m}")).unwrap_or_default();
+    format!(
+        "Usage limit{on} until {resets_at}; pick a ready model (agent_status op=models) or come back after it — never retry before."
+    )
+}
+
+/// Whether this machine has no Linggen sign-in, or one the site refused:
+/// the one reading for a Linggen Cloud model's refusal.
+pub(crate) fn cloud_sign_in() -> NotReady {
+    match crate::account::resolve_token() {
+        None => NotReady::NotSignedIn,
+        Some(_) => NotReady::SignInExpired,
+    }
+}
+
 /// What the health board's standing refusal means for a caller.
 pub(crate) fn refusing(
     kind: ProviderErrorKind,
     until: SystemTime,
     reset_at: Option<SystemTime>,
 ) -> Readiness {
+    if let Some(at) = usage_limit_until(kind, reset_at) {
+        return Readiness::not(NotReady::UsageLimit, usage_limit_line(None, &rfc3339(at))).until(at);
+    }
     match (kind, reset_at) {
-        (ProviderErrorKind::RateLimit | ProviderErrorKind::QuotaExhausted, Some(at)) => {
-            Readiness::not(
-                NotReady::UsageLimit,
-                format!(
-                    "Usage limit until {}; pick a ready model or come back after it.",
-                    rfc3339(at)
-                ),
-            )
-            .until(at)
-        }
         (ProviderErrorKind::RateLimit, None) => Readiness::not(
             NotReady::RateLimited,
             "Rate-limited just now; pick another model or try again shortly.".into(),
@@ -204,7 +225,9 @@ pub(crate) fn refusing(
 /// model signed in another way or a room's proxy.
 fn needs_key(cfg: &ModelConfig) -> bool {
     let has_key = cfg.api_key.as_deref().is_some_and(|k| !k.trim().is_empty());
-    let signs_in = cfg.auth_mode.is_some();
+    // The model manager treats a `chatgpt` provider as signed in with
+    // ChatGPT whatever its auth mode says; so does this.
+    let signs_in = cfg.auth_mode.is_some() || cfg.provider == "chatgpt";
     let keyless = matches!(cfg.provider.as_str(), "ollama" | "proxy");
     !(has_key || signs_in || keyless || on_this_network(&cfg.url))
 }
@@ -259,6 +282,7 @@ mod tests {
         assert!(needs_key(&model("m", "anthropic", "https://api.anthropic.com", Some(" "), None)));
         assert!(!needs_key(&model("m", "anthropic", "https://api.anthropic.com", Some("k"), None)));
         assert!(!needs_key(&model("m", "openai", "https://x", None, Some("chatgpt_oauth"))));
+        assert!(!needs_key(&model("m", "chatgpt", "https://chatgpt.com/backend-api", None, None)));
     }
 
     /// A usage limit is a fact with its reset; a blind rate limit and a
@@ -288,6 +312,7 @@ mod tests {
     /// to do.
     #[test]
     fn the_list_marks_each_model_and_says_what_to_do_only_when_none_is_ready() {
+        let _board = crate::provider::models::board_test_guard();
         let local = model("ready-local", "ollama", "http://127.0.0.1:11434", None, None);
         let hosted = model("readiness-hosted", "acme", "https://api.acme.example/v1", None, None);
         let limited = model("readiness-limited", "acme", "https://api.acme.example/v1", Some("k"), None);

@@ -159,3 +159,17 @@ async fn a_remote_computer_sees_every_memory_branch() {
     assert_eq!(local, remote);
     assert_eq!(remote.len(), 5);
 }
+
+/// The legacy soft-empty search, through the folded tool with no op: the
+/// empty fields decide nothing and the call is the plain semantic search.
+#[tokio::test]
+async fn a_soft_empty_search_needs_no_op_either() {
+    let m = Mem::start().await;
+    folded(&m, "memory_add", json!({"content": "Alex keeps bees", "tier": "semantic"}))
+        .await
+        .unwrap();
+    let args = json!({"query": "Alex keeps bees", "type": "", "from": "", "until": "", "since": "", "apps": [], "tier": null});
+    let hits = folded(&m, "memory_search", args.clone()).await.unwrap();
+    assert_eq!(hits.as_array().unwrap().len(), 1);
+    assert_eq!(hits, legacy(&m, "memory_search", args).await.unwrap());
+}
