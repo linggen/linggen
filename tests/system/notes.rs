@@ -140,6 +140,9 @@ async fn a_woken_note_may_have_her_speak() {
     the_clock_moves(&w);
     w.wait_agent(Agent::Yinyue, mark).await;
     assert_woken_with_the_note(w.model.calls_of(Agent::Yinyue).last().unwrap());
+    // The turn ends before the speech cue is emitted and logged.
+    w.events_when(|events| events.iter().any(|e| e["kind"] == "pet_speak" && e["text"] == line))
+        .await;
     let said = spoken(&w);
     assert_eq!(said.last().map(String::as_str), Some(line), "{said:?}");
     assert_open_without_a_time(&w);
