@@ -27,6 +27,8 @@ pub mod run_faults;
 mod run_scope;
 pub mod session_policy;
 pub mod session_spec;
+#[cfg(test)]
+mod session_lock_tests;
 pub mod shown_images;
 pub mod skill;
 pub mod skill_activation;
