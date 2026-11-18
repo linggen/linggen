@@ -6,6 +6,7 @@
 
 use std::sync::Arc;
 
+use crate::engine::permission::PermissionMode;
 use crate::server::ServerState;
 
 use super::ControlRequest;
@@ -22,7 +23,7 @@ pub(super) fn refusal(
 ) -> Option<serde_json::Value> {
     if user_ctx.is_consumer() {
         let linggen = user_ctx.consumer_type.as_deref() == Some("linggen");
-        return (!linggen && !user_ctx.permission.is_admin()).then(|| {
+        return (!linggen && user_ctx.permission != PermissionMode::Admin).then(|| {
             serde_json::json!({
                 "error": "Inference endpoint is only available for linggen server consumers"
             })
@@ -290,7 +291,8 @@ pub(super) async fn process_inference_request(
 
 #[cfg(test)]
 mod tests {
-    use crate::server::rtc::{UserContext, UserPermission};
+    use super::PermissionMode;
+    use crate::server::rtc::UserContext;
 
     /// This Mac's models are the owner's: a device below the owner and a
     /// peer that named none are refused with the level fact; the owner and
@@ -306,7 +308,7 @@ mod tests {
             Some(serde_json::json!({"error": "beyond_level", "level": "chat", "needs": "admin"}))
         );
         let consumer = |kind: &str| {
-            UserContext::consumer("u-room".into(), kind.into(), UserPermission::Read, None, None)
+            UserContext::consumer("u-room".into(), kind.into(), PermissionMode::Read, None, None)
         };
         let room = crate::server::person::consumer("u-room");
         assert_eq!(super::refusal(&consumer("linggen"), &room), None);

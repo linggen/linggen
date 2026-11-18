@@ -325,7 +325,7 @@ fn most_for_contract(device: &crate::state_fs::devices::PairedDevice) -> Permiss
 }
 
 /// The standing of a proxy room's consumer: its own account, at chat (its
-/// room judges what it reaches, `PeerLoop::may_make_request`).
+/// RTC HTTP and media requests use `routes::classes::tunnel_allows`).
 pub(crate) fn consumer(user_id: &str) -> Standing {
     Standing {
         person: user_id.to_string(),

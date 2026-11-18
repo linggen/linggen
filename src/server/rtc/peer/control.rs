@@ -382,10 +382,6 @@ fn refused_reply(refused: &crate::server::person::Refused) -> serde_json::Value 
     serde_json::json!({ "data": reply_data(403, "application/json", body.as_bytes()) })
 }
 
-/// A request from this peer sent as its person, through the seam. A room
-/// consumer is judged by its room (`PeerLoop::may_make_request`) and sent
-/// unjudged here; any other peer is judged by its standing
-/// ([`standing_for`]).
 /// A media channel `get` of `url` by this peer: the URL to fetch and the
 /// level to stamp on it, judged and sent as its person as the same GET on
 /// the control channel is; `None` when refused. A peer mid-pairing gets
@@ -395,8 +391,9 @@ pub(super) fn media_get(
     device: Option<&str>,
     url: &str,
 ) -> Option<(String, crate::engine::permission::PermissionMode)> {
-    let room_allows = user_ctx.permission.can_access_endpoint("GET", url);
-    if user_ctx.pairing_only() || !room_allows {
+    use crate::server::routes::classes::tunnel_allows;
+
+    if user_ctx.pairing_only() || !tunnel_allows(user_ctx.permission, "GET", url) {
         return None;
     }
     let mut none = serde_json::Value::Null;

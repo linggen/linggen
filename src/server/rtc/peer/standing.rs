@@ -101,7 +101,7 @@ mod tests {
         let room = UserContext::consumer(
             "u-room".into(),
             "browser".into(),
-            crate::server::rtc::UserPermission::Read,
+            crate::engine::permission::PermissionMode::Read,
             None,
             None,
         );

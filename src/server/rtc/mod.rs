@@ -17,67 +17,7 @@ pub mod relay;
 pub mod room_config;
 pub mod token_store;
 
-/// User-level permission ceiling — the maximum level this user can operate at.
-/// Session permission (read/edit/admin) is per-session and changeable by the user,
-/// but always capped by UserPermission.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum UserPermission {
-    Chat,  // Conversation only — no tools
-    Read,  // Browse + search (WebSearch, WebFetch)
-    Edit,  // Full coding tools (Read, Write, Edit, Bash, etc.)
-    Admin, // Full access — settings, config, everything
-}
-
-impl UserPermission {
-    pub fn is_admin(&self) -> bool {
-        matches!(self, UserPermission::Admin)
-    }
-
-    /// Check if this permission level allows accessing an HTTP endpoint.
-    /// Admin can access everything. Others are restricted to static assets + session creation.
-    pub fn can_access_endpoint(&self, method: &str, url: &str) -> bool {
-        if self.is_admin() {
-            return true;
-        }
-        // Static assets (tunnel loading) and skill app files
-        if (url == "/index.html"
-            || url.starts_with("/assets/")
-            || url.starts_with("/apps/")
-            || url.starts_with("/shared/"))
-            && method == "GET"
-        {
-            return true;
-        }
-        // Session creation + deletion (consumers can manage their own sessions)
-        if url == "/api/sessions" && method == "POST" {
-            return true;
-        }
-        if url == "/api/sessions/all" && method == "DELETE" {
-            return true;
-        }
-        // Workspace state — chat history on page load / refresh
-        if method == "GET"
-            && (url.starts_with("/api/workspace/state")
-                || url.starts_with("/api/skill-sessions/state"))
-        {
-            return true;
-        }
-        // The language pages write in — harmless, and every page needs it.
-        if url == "/api/user/language" && method == "GET" {
-            return true;
-        }
-        false
-    }
-
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            UserPermission::Admin => "admin",
-            UserPermission::Edit => "edit",
-            UserPermission::Read => "read",
-            UserPermission::Chat => "chat",
-        }
-    }
-}
+use crate::engine::permission::PermissionMode;
 
 /// What a peer is to this machine — the one fact the rest of the label derives
 /// from, so `user_type` can't say one thing here and another there.
@@ -132,7 +72,7 @@ pub struct UserContext {
     /// permission level, and the source of every `user_type` on the wire.
     pub kind: PeerKind,
     /// Permission ceiling — max session permission this user can use.
-    pub permission: UserPermission,
+    pub permission: PermissionMode,
     /// Optional daily token budget (None = unlimited).
     pub token_budget_daily: Option<i64>,
     /// Room name (only for room consumers).
@@ -174,7 +114,7 @@ impl UserContext {
                 .or_else(|| Some(crate::account::instance_name())),
             avatar_url: account.as_ref().and_then(|a| a.avatar_url.clone()),
             kind: PeerKind::Owner,
-            permission: UserPermission::Admin,
+            permission: PermissionMode::Admin,
             token_budget_daily: None,
             room_name: None,
             consumer_type: None,
@@ -213,7 +153,7 @@ impl UserContext {
             user_name: None,
             avatar_url: None,
             kind: PeerKind::Pairing,
-            permission: UserPermission::Chat,
+            permission: PermissionMode::Chat,
             token_budget_daily: None,
             room_name: None,
             consumer_type: None,
@@ -226,7 +166,7 @@ impl UserContext {
     pub fn consumer(
         user_id: String,
         consumer_type: String,
-        permission: UserPermission,
+        permission: PermissionMode,
         token_budget_daily: Option<i64>,
         room_name: Option<String>,
     ) -> Self {
@@ -390,6 +330,7 @@ fn whip_reach(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::server::routes::classes::tunnel_allows;
 
     /// Only this machine's own page or shell opens a `local` channel; a
     /// loopback request from another origin (an extension, a rebound name)
@@ -465,8 +406,7 @@ mod tests {
 
     #[test]
     fn tunnel_endpoint_access_matches_the_baseline() {
-        use crate::engine::permission::PermissionMode;
-        use UserPermission::{Admin, Chat, Edit, Read};
+        use PermissionMode::{Admin, Chat, Edit, Read};
         // Raw tunnel URL: exact matches retain the query, as do the prefixes.
         // The room gate and the named-device route seam are independent.
         let all = [true; 4];
@@ -498,18 +438,9 @@ mod tests {
             ("GET", "/api/config", admin, admin),
             ("POST", "/api/engine/restart", admin, admin),
         ] {
-            for (i, (ceiling, level)) in [Chat, Read, Edit, Admin]
-                .into_iter()
-                .zip([
-                    PermissionMode::Chat,
-                    PermissionMode::Read,
-                    PermissionMode::Edit,
-                    PermissionMode::Admin,
-                ])
-                .enumerate()
-            {
+            for (i, level) in [Chat, Read, Edit, Admin].into_iter().enumerate() {
                 assert_eq!(
-                    ceiling.can_access_endpoint(method, url),
+                    tunnel_allows(level, method, url),
                     room[i],
                     "room gate: {method} {url} at {level}"
                 );
@@ -534,32 +465,28 @@ mod tests {
     fn a_room_member_can_load_the_shared_page_helpers() {
         // A skill app opened through a room imports /shared/*.js; without it
         // the page is blank for everyone but the owner.
-        let read = UserPermission::Read;
-        assert!(read.can_access_endpoint("GET", "/shared/chat-bridge.js"));
-        assert!(read.can_access_endpoint("GET", "/apps/cfo/scripts/cfo.html"));
-        assert!(!read.can_access_endpoint("POST", "/shared/chat-bridge.js"));
-        assert!(!read.can_access_endpoint("GET", "/api/config"));
+        let read = PermissionMode::Read;
+        assert!(tunnel_allows(read, "GET", "/shared/chat-bridge.js"));
+        assert!(tunnel_allows(read, "GET", "/apps/cfo/scripts/cfo.html"));
+        assert!(!tunnel_allows(read, "POST", "/shared/chat-bridge.js"));
+        assert!(!tunnel_allows(read, "GET", "/api/config"));
     }
 
     #[test]
     fn only_admin_peers_can_restart_the_engine() {
-        for perm in [
-            UserPermission::Chat,
-            UserPermission::Read,
-            UserPermission::Edit,
-        ] {
-            assert!(!perm.can_access_endpoint("POST", "/api/restart/current"));
-            assert!(!perm.can_access_endpoint("POST", "/api/engine/restart"));
+        for perm in [PermissionMode::Chat, PermissionMode::Read, PermissionMode::Edit] {
+            assert!(!tunnel_allows(perm, "POST", "/api/restart/current"));
+            assert!(!tunnel_allows(perm, "POST", "/api/engine/restart"));
         }
-        assert!(UserPermission::Admin.can_access_endpoint("POST", "/api/restart/current"));
+        assert!(tunnel_allows(PermissionMode::Admin, "POST", "/api/restart/current"));
     }
 
     #[test]
     fn any_peer_may_read_the_language_but_not_the_config() {
-        for perm in [UserPermission::Read, UserPermission::Chat] {
-            assert!(perm.can_access_endpoint("GET", "/api/user/language"));
-            assert!(!perm.can_access_endpoint("POST", "/api/user/language"));
-            assert!(!perm.can_access_endpoint("GET", "/api/config"));
+        for perm in [PermissionMode::Read, PermissionMode::Chat] {
+            assert!(tunnel_allows(perm, "GET", "/api/user/language"));
+            assert!(!tunnel_allows(perm, "POST", "/api/user/language"));
+            assert!(!tunnel_allows(perm, "GET", "/api/config"));
         }
     }
 
@@ -570,7 +497,7 @@ mod tests {
         let room = UserContext::consumer(
             "u1".into(),
             "linggen".into(),
-            UserPermission::Read,
+            PermissionMode::Read,
             None,
             None,
         );

@@ -218,7 +218,7 @@ pub async fn build_page_state(
     let theirs = |sid: &str| crate::server::day_session::may_enter(sid, Some(person));
     let include_global = (dirty & DIRTY_GLOBAL) != 0;
     let include_scoped = (dirty & DIRTY_SCOPED) != 0;
-    let is_admin = whose.is_none() && user.permission.is_admin();
+    let is_admin = whose.is_none() && user.permission == crate::engine::permission::PermissionMode::Admin;
     let user_id = &whose.unwrap_or(&user.user_id).to_string();
 
     // Load room config — needed for consumer filtering and owner room_enabled status.
@@ -229,7 +229,7 @@ pub async fn build_page_state(
         // names this peer. Reading the raw kind here made page state the one
         // place a paired phone still answered to the owner's name.
         user_type: Some(user.user_type_for(identified).to_string()),
-        permission: Some(user.permission.as_str().to_string()),
+        permission: Some(user.permission.to_string()),
         room_name: user.room_name.clone(),
         room_enabled: if !user.is_consumer() {
             Some(room_cfg.room_enabled)

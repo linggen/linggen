@@ -19,7 +19,8 @@ use str0m::change::SdpOffer;
 use str0m::net::{Protocol, Receive};
 use str0m::{Candidate, Event, IceConnectionState, Input, Output, Rtc, RtcConfig};
 
-use crate::server::ServerState;
+use crate::engine::permission::PermissionMode;
+use crate::server::{routes::classes::tunnel_allows, ServerState};
 
 mod control;
 mod forward;
@@ -98,7 +99,7 @@ pub(super) fn user_info_msg(
         serde_json::json!({
             "user": user,
             "room": {
-                "permission": user_ctx.permission.as_str(),
+                "permission": user_ctx.permission,
                 "room_name": user_ctx.room_name,
                 "token_budget_daily": user_ctx.token_budget_daily,
                 "allowed_tools": room_cfg.allowed_tools,
@@ -557,7 +558,7 @@ async fn run_peer(
 /// library, so a fully paired peer under the owner's ceiling standing at edit.
 fn may_put(user_ctx: &super::UserContext, level: crate::engine::permission::PermissionMode) -> bool {
     !user_ctx.pairing_only()
-        && user_ctx.permission.is_admin()
+        && user_ctx.permission == PermissionMode::Admin
         && level >= crate::engine::permission::PermissionMode::Edit
 }
 
@@ -999,7 +1000,7 @@ impl PeerLoop {
         let allowed = if self.user_ctx.pairing_only() {
             url == "/api/pair/qr-confirm"
         } else {
-            self.user_ctx.permission.can_access_endpoint(method, url)
+            tunnel_allows(self.user_ctx.permission, method, url)
         };
         if !allowed {
             if let Some(rid) = &req.request_id {
@@ -1180,7 +1181,7 @@ impl PeerLoop {
         let mut filter = EventFilter {
             session_ids: &mut self.user_session_ids,
             user_id: whose.as_deref().unwrap_or(&self.user_ctx.user_id),
-            is_admin: whose.is_none() && self.user_ctx.permission.is_admin(),
+            is_admin: whose.is_none() && self.user_ctx.permission == PermissionMode::Admin,
             view: self.view_ctx.view.as_deref(),
             pinned_session_id: if self.view_ctx.view.as_deref() == Some("embed") {
                 self.view_ctx.session_id.as_deref()
@@ -1375,7 +1376,7 @@ mod greeting_tests {
         let room = crate::server::rtc::UserContext::consumer(
             "u".into(),
             "browser".into(),
-            crate::server::rtc::UserPermission::Edit,
+            PermissionMode::Edit,
             None,
             None,
         );

@@ -4,6 +4,7 @@
 //! This is separate from the room metadata on linggen.dev (which stores name, type, etc.)
 //! because the model list is local to each instance.
 
+use crate::engine::permission::PermissionMode;
 use crate::util::default_true;
 use serde::{Deserialize, Serialize};
 
@@ -100,9 +101,8 @@ impl RoomConfig {
     }
 }
 
-/// Derive UserPermission from the allowed tools list.
-/// Maps the tool preset pattern to a permission level.
-pub fn tools_to_permission(tools: &[String]) -> super::UserPermission {
+/// Derive the room ceiling from its allowed tools.
+pub fn tools_to_permission(tools: &[String]) -> PermissionMode {
     let has_write = tools
         .iter()
         .any(|t| matches!(t.as_str(), "Write" | "Edit" | "Bash"));
@@ -113,13 +113,13 @@ pub fn tools_to_permission(tools: &[String]) -> super::UserPermission {
         )
     });
     if has_write {
-        super::UserPermission::Edit
+        PermissionMode::Edit
     } else if has_read {
-        super::UserPermission::Read
+        PermissionMode::Read
     } else if tools.is_empty() {
-        super::UserPermission::Chat
+        PermissionMode::Chat
     } else {
-        super::UserPermission::Read
+        PermissionMode::Read
     }
 }
 

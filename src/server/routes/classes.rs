@@ -226,6 +226,29 @@ pub(crate) const CLASSES: &[(&str, &str, RouteClass)] = &[
     ("*", "/mem/{*rest}", At(Admin)),
 ];
 
+/// The RTC HTTP/media ceiling, independent of device standing. A room
+/// consumer uses this policy instead of the device route classes; other
+/// peers must still pass `person::send_judged`. Match the raw tunnel URL:
+/// exact entries do not accept a query, while prefixes do.
+pub(crate) fn tunnel_allows(level: PermissionMode, method: &str, url: &str) -> bool {
+    let needs = match (method, url) {
+        ("GET", "/index.html" | "/api/user/language")
+        | ("POST", "/api/sessions")
+        | ("DELETE", "/api/sessions/all") => Chat,
+        ("GET", _) if TUNNEL_GET_PREFIXES.iter().any(|prefix| url.starts_with(prefix)) => Chat,
+        _ => Admin,
+    };
+    level >= needs
+}
+
+const TUNNEL_GET_PREFIXES: &[&str] = &[
+    "/assets/",
+    "/apps/",
+    "/shared/",
+    "/api/workspace/state",
+    "/api/skill-sessions/state",
+];
+
 /// The way in, all a peer that has named no device reaches (no one,
 /// `person::unnamed`): health, pairing's bootstrap, and the files the page
 /// shares — plus page files ([`STATIC_PAGE`]).
