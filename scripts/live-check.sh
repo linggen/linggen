@@ -238,7 +238,7 @@ finish_ling() { # sid mark
 
 rows_py() { # cmd sid from [args…]
   python3 - "$@" "$LG" <<'PY'
-import json, sys, os
+import json, re, sys, os
 cmd, sid, start, *args = sys.argv[1:]
 lg = args.pop()
 rows = []
@@ -272,6 +272,10 @@ elif cmd == "look_place":     # place and people names from Ling's latest Look r
             try:
                 j = json.loads(body)
             except Exception:
+                # A long result is kept with its middle cut out, so it is no
+                # longer JSON; the player's `name` sits at its head.
+                head = re.search(r'"name"\s*:\s*"([^"]{2,})"', body[:4000])
+                names = [head.group(1)] if head else names
                 continue
             scene = j.get("scene") or {}
             ps = [(j.get("place") or {}).get("name") or "", scene.get("place") or ""]
