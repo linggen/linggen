@@ -2,6 +2,7 @@
 // finished messages (the streaming row renders beside it, so a token only
 // re-renders that one row).
 import React, { useCallback, useMemo } from 'react';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 import { cn } from '../../lib/cn';
 import { UNSPOKEN_SENDERS } from '../../lib/messageUtils';
 import { useUserStore } from '../../stores/userStore';
@@ -202,8 +203,14 @@ function FoldedStretch({ place, count, working, expanded, onToggle }: { place: s
       type="button"
       onClick={onToggle}
       aria-expanded={expanded}
-      className="self-center my-1 px-3 py-0.5 rounded-full text-[11px] text-slate-500 dark:text-slate-400 border border-dashed border-slate-200 dark:border-white/10 hover:bg-slate-50 dark:hover:bg-white/5"
+      className={`self-center my-1 pl-2 pr-3 py-0.5 rounded-full text-[11px] inline-flex items-center gap-1 border hover:bg-slate-50 dark:hover:bg-white/5 ${
+        expanded
+          ? 'border-solid border-slate-300 dark:border-white/25 bg-slate-50 dark:bg-white/5 text-slate-700 dark:text-slate-200'
+          : 'border-dashed border-slate-200 dark:border-white/10 text-slate-500 dark:text-slate-400'
+      }`}
     >
+      {/* Folded: a closed arrow on a dashed bar. Open: a down arrow on a solid one. */}
+      {expanded ? <ChevronDown size={12} aria-hidden /> : <ChevronRight size={12} aria-hidden />}
       {what}
     </button>
   );
