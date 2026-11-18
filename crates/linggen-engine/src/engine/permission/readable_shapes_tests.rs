@@ -349,6 +349,9 @@ const FLOOR_SEES_THE_PROGRAM: &[&str] = &[
     "select x in a; do sudo ls; done",
     "for x in *; do sudo ls; done",
     "for x in a\ndo sudo ls\ndone",
+    "set -- a; for x do sudo ls; done",
+    "for x do sudo ls",
+    "select x do sudo ls; done",
     "if true\nthen sudo ls\nfi",
     "echo hi\nsudo ls",
     "echo hi & sudo ls",
@@ -385,6 +388,7 @@ const STILL_BEYOND_THE_FOLDER: &[&str] = &[
     "if true; then eval \"ls\"; fi",
     "if true; then git push origin main; fi",
     "declare -i x; for x in a; do echo $x; done",
+    "set -- a; for x do curl http://x; done",
 ];
 
 /// Asked wherever the session's folder is all it may touch: the path is
@@ -475,9 +479,30 @@ fn the_floor_leaves_text_alone() {
         "echo \"first\nsudo is a word here\"",
         "git commit -m \"docs\n\nsudo apt install x\"",
         "cat > notes.md <<'EOF'\nsudo apt install x\nEOF",
+        "cat > n.md <<'EOF'\nit's here\nsudo apt install x\nEOF",
+        "cat <<EOF > notes.md\nsudo apt install x\nEOF",
+        "python3 - <<'EOF'\nsudo = 1\nEOF",
+        "python3 - <<EOF\nimport os\nsudo = 1\nEOF",
+        "git commit -F - <<'EOF'\nsudo is no longer needed\nEOF",
+        "cat <<'EOF' | tee x\nrm -rf /\nEOF",
+        "psql <<'SQL'\nrm -rf /\nSQL",
         "echo fi done then",
         "grep -n sudo README.md",
     ] {
         assert!(!is_hardcoded_deny(cmd), "{cmd:?}");
+    }
+}
+
+
+/// A program whose file is named like one of the shell's words is a
+/// program: judged as any other the folder holds, never read past.
+#[test]
+fn a_file_named_like_a_shell_word_is_a_program() {
+    for cmd in ["./then sudo ls", "bin/if sudo ls", "./for x do sudo ls"] {
+        assert!(!is_hardcoded_deny(cmd), "{cmd:?}");
+    }
+    use super::classify::classify_bash;
+    for cmd in ["./for x", "./select x", "./if x", "bin/done"] {
+        assert_eq!(classify_bash(cmd, true).0, super::model::BashClass::Write, "{cmd:?}");
     }
 }

@@ -128,10 +128,25 @@ pub fn is_hardcoded_deny(cmd: &str) -> bool {
         }
     }
     // And each command as the shell splits them: by line and by `&` too,
-    // with a quoted span kept whole and a heredoc's body left out.
-    command_segments(&super::shell_text::strip_heredoc_bodies(trimmed))
+    // with a quoted span kept whole.
+    let stripped = super::shell_text::strip_heredoc_bodies(trimmed);
+    command_segments(before_a_heredoc_body(&stripped))
         .iter()
         .any(|words| words_are_hardcoded_deny(words))
+}
+
+/// `cmd` up to the end of its first line that opens a heredoc: the lines
+/// after it are a body some program reads (a script for `python3`, a
+/// message for `git commit`), not commands — a line of text is never
+/// blocked for starting with a word of the floor.
+fn before_a_heredoc_body(cmd: &str) -> &str {
+    let Some(at) = cmd.find("<<") else {
+        return cmd;
+    };
+    match cmd[at..].find('\n') {
+        Some(end) => &cmd[..at + end],
+        None => cmd,
+    }
 }
 
 /// The words of each command in `cmd`, as [`command_tokens`] splits them
@@ -227,11 +242,12 @@ pub(super) fn command_run<'a>(tokens: &'a [&'a str]) -> &'a [&'a str] {
 /// (`x)` before a command). A list head (`for x in …`) leaves nothing.
 fn past_shell_words<'a>(rest: &'a [&'a str]) -> Option<&'a [&'a str]> {
     let first = *rest.first()?;
-    let name = file_name(first);
-    if LISTS_ONLY.contains(&name.as_str()) {
-        return Some(&[]);
+    // A shell word is the word itself: `./for` and `bin/if` are programs.
+    let word = first.trim_start_matches('(').trim_end_matches(')');
+    if LISTS_ONLY.contains(&word) {
+        return Some(past_the_do(&rest[1..]));
     }
-    match name.as_str() {
+    match word {
         "function" => return Some(rest.get(2..).unwrap_or(&[])),
         "case" => return Some(past_first_label(&rest[1..])),
         // `coproc NAME { cmd`: the name is not the program.
@@ -240,7 +256,8 @@ fn past_shell_words<'a>(rest: &'a [&'a str]) -> Option<&'a [&'a str]> {
         }
         _ => {}
     }
-    if name.is_empty() || SHELL_KEYWORDS.contains(&name.as_str()) || first.ends_with("()") {
+    let only_parens = first.chars().all(|c| matches!(c, '(' | ')'));
+    if only_parens || SHELL_KEYWORDS.contains(&word) || first.ends_with("()") {
         return Some(&rest[1..]);
     }
     let next = rest.get(1).copied();
@@ -248,9 +265,22 @@ fn past_shell_words<'a>(rest: &'a [&'a str]) -> Option<&'a [&'a str]> {
         return Some(&rest[2..]);
     }
     // `x) cmd`: an arm's label. `(cmd) >out` is a subshell and its redirect.
-    let redirect = |w: &str| w.trim_start_matches(|c: char| c.is_ascii_digit() || c == '&').starts_with(['>', '<']);
+    let redirect = |w: &str| {
+        w.trim_start_matches(|c: char| c.is_ascii_digit() || c == '&')
+            .starts_with(['>', '<'])
+    };
     let label = first.ends_with(')') && next.is_some_and(|w| !redirect(w));
     label.then(|| &rest[1..])
+}
+
+/// A loop head's words past its `do` (`for x do cmd` loops over the
+/// shell's own arguments, with its body on the same line); none when the
+/// head only lists its words.
+fn past_the_do<'a>(words: &'a [&'a str]) -> &'a [&'a str] {
+    match words.iter().position(|w| *w == "do") {
+        Some(at) => &words[at + 1..],
+        None => &[],
+    }
 }
 
 /// Whether a segment that names no program is made of the shell's own
