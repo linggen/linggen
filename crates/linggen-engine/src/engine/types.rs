@@ -447,11 +447,11 @@ pub struct AgentEngine {
     /// Per-session override of the auto-compact trigger fraction of
     /// `context_window_tokens`. None = use default (0.95). Set runtime-only
     /// via POST /api/chat/compact_config. Skills replay on iframe load.
-    pub compact_threshold: Option<f32>,
+    pub(crate) compact_threshold: Option<f32>,
     /// Per-session hint passed to the summarization model on every
     /// auto-compact pass. None = no hint (matches default behavior).
     /// Set runtime-only via the same endpoint.
-    pub compact_focus: Option<String>,
+    pub(crate) compact_focus: Option<String>,
     /// Token usage from the most recent API response.
     pub last_token_usage: Option<crate::provider::models::TokenUsage>,
     /// Every model call this engine made since the caller last took it —
@@ -476,7 +476,7 @@ pub struct AgentEngine {
     /// The running next-prompt fork, aborted when the next turn begins.
     pub(crate) suggestion_fork: Option<tokio::task::AbortHandle>,
     /// Cached stable portion of the system prompt.
-    pub cached_system_prompt: Option<CachedSystemPrompt>,
+    pub(crate) cached_system_prompt: Option<CachedSystemPrompt>,
     /// The cwd the memory index was last loaded for; a change rebuilds the
     /// prompt (see `check_working_folder_change`).
     pub(crate) memory_cwd: Option<std::path::PathBuf>,

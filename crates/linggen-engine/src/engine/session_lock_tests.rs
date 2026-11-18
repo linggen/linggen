@@ -223,6 +223,32 @@ fn an_engines_fields_are_written_by_the_engine() {
     );
 }
 
+/// A session's settings the binary cannot write at all: each is set
+/// through the spec's writer or an engine method, and read through one.
+/// The thread's cache (`chat_history`, `thread_mark`, `reload_thread`)
+/// stays open: its owner, the chat's thread module, is the binary's.
+const PRIVATE: &[&str] = &[
+    "active_mission",
+    "cached_system_prompt",
+    "compact_threshold",
+    "compact_focus",
+    "last_call",
+    "plan",
+    "session_dir",
+    "session_permissions",
+];
+
+#[test]
+fn a_sessions_settings_are_private_to_the_engine() {
+    let types = include_str!("types.rs");
+    let open: Vec<&str> = PRIVATE
+        .iter()
+        .copied()
+        .filter(|f| !types.contains(&format!("pub(crate) {f}:")))
+        .collect();
+    assert!(open.is_empty(), "a session's setting the binary may write: {open:?}");
+}
+
 #[test]
 fn the_engines_fields_are_read_from_its_struct() {
     let fields = engine_fields();

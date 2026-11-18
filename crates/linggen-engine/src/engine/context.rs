@@ -29,6 +29,21 @@ impl AgentEngine {
         self.compact_focus = focus;
     }
 
+    /// The session's trigger fraction, when it set one.
+    pub fn compact_threshold(&self) -> Option<f32> {
+        self.compact_threshold
+    }
+
+    /// The session's summary hint, when it set one.
+    pub fn compact_focus(&self) -> Option<&str> {
+        self.compact_focus.as_deref()
+    }
+
+    /// The system prompt as last built, when one is cached.
+    pub fn cached_system_prompt(&self) -> Option<&str> {
+        self.cached_system_prompt.as_ref().map(|c| c.content.as_str())
+    }
+
     pub(crate) fn context_soft_token_limit(&self) -> usize {
         // Three layers, highest to lowest:
         //   1. Per-session override (POST /api/chat/compact_config)

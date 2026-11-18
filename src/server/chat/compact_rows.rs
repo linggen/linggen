@@ -194,16 +194,15 @@ pub(super) async fn compact_if_due(engine: &mut AgentEngine, ctx: &ChatRunCtx) -
         return false;
     };
     let threshold = engine
-        .compact_threshold
+        .compact_threshold()
         .or(engine.cfg.compact_threshold_default)
         .unwrap_or(DEFAULT_THRESHOLD);
     let limit = trigger_tokens(&models.windows, threshold);
     // The system prompt as last built (rebuilding it here would fetch the
     // core block again); a first turn counts the thread alone.
     let system = engine
-        .cached_system_prompt
-        .as_ref()
-        .map_or(0, |c| AgentEngine::estimate_tokens_for_text(&c.content));
+        .cached_system_prompt()
+        .map_or(0, AgentEngine::estimate_tokens_for_text);
     let used = AgentEngine::estimate_tokens_for_messages(&engine.chat_history)
         + system
         + AgentEngine::estimate_tokens_for_text(&ctx.clean_msg);
@@ -211,7 +210,7 @@ pub(super) async fn compact_if_due(engine: &mut AgentEngine, ctx: &ChatRunCtx) -
         return false;
     }
     tracing::info!("[compact] {sid}: thread ~{used} tokens over {limit} — compacting");
-    let focus = engine.compact_focus.clone();
+    let focus = engine.compact_focus().map(str::to_string);
     if compact_session(&ctx.manager, sid, &models, focus.as_deref())
         .await
         .is_none()
