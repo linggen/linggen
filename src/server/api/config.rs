@@ -236,16 +236,23 @@ pub(crate) async fn update_credentials_api(
     // is built, and the settings page saves config before credentials — so
     // without this rebuild a freshly entered key stayed dead until the next
     // config save or restart.
+    reload_models(&state).await;
+    tracing::info!("Reloaded models after credentials update");
+
+    Json(serde_json::json!({ "status": "ok" })).into_response()
+}
+
+/// Rebuild the model manager from the config in force (fresh keys, tokens,
+/// catalog), drop the session engines holding the old one, and restore the
+/// proxy models the rebuild drops.
+pub(crate) async fn reload_models(state: &std::sync::Arc<crate::server::ServerState>) {
     let config = state.manager.get_config_snapshot().await;
     let new_models = std::sync::Arc::new(crate::provider::models::ModelManager::new(
         config.models.clone(),
     ));
     *state.manager.models.write().await = new_models;
     state.manager.session_engines.lock().await.clear();
-    crate::server::rtc::proxy_room::reapply_proxy_models(&state).await;
-    tracing::info!("Reloaded models after credentials update");
-
-    Json(serde_json::json!({ "status": "ok" })).into_response()
+    crate::server::rtc::proxy_room::reapply_proxy_models(state).await;
 }
 
 // ---------------------------------------------------------------------------
@@ -302,23 +309,16 @@ pub(crate) async fn start_codex_auth_login(
         }
     }
 
-    let manager = state.manager.clone();
     let state_for_task = state.clone();
     let handle = tokio::spawn(async move {
         match codex_auth::browser_login().await {
             Ok(_) => {
                 tracing::info!("ChatGPT OAuth login completed via Web UI");
                 // Rebuild ModelManager so it picks up the fresh token
-                let config = manager.get_config_snapshot().await;
-                let new_models = std::sync::Arc::new(crate::provider::models::ModelManager::new(
-                    config.models.clone(),
-                ));
-                *manager.models.write().await = new_models;
-                // Clear all session engines so they use the new models
-                manager.session_engines.lock().await.clear();
-                // Restore proxy models that the rebuild above dropped.
-                crate::server::rtc::proxy_room::reapply_proxy_models(&state_for_task).await;
+                reload_models(&state_for_task).await;
                 tracing::info!("Reloaded models after ChatGPT OAuth login");
+                // A fresh sign-in reads the catalog now, in the background.
+                crate::server::background::refresh_chatgpt_catalog(state_for_task.clone(), true);
             }
             Err(e) => tracing::warn!("ChatGPT OAuth login failed: {}", e),
         }

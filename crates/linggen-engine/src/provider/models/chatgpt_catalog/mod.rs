@@ -17,6 +17,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
 mod seed;
+pub mod refresh;
+pub mod version;
 
 #[cfg(test)]
 mod scan_tests;

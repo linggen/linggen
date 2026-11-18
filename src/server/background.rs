@@ -25,6 +25,7 @@ pub(super) fn spawn_background_tasks(
     prewarm_runtime(state);
     prewarm_voice(state, pet_enabled);
     connect_mcp_servers(state);
+    spawn_chatgpt_catalog(state);
     // Memory lives in this process, and other tools on the machine use it
     // whether or not a Linggen window is open — so the engine stays up. App
     // shells before 2.3 still pass the flag; it is accepted and ignored.
@@ -114,6 +115,38 @@ fn prewarm_runtime(state: &Arc<ServerState>) {
     // The region fact (which services are unreachable here) is probed now,
     // so a skill's first ask does not wait on it.
     tokio::spawn(crate::reach::region());
+}
+
+/// How often the ChatGPT catalog checks whether a refresh is due (it reads
+/// about once a day), and how long after start the first check waits.
+const CATALOG_TICK_SECS: u64 = 60 * 60;
+const CATALOG_FIRST_SECS: u64 = 30;
+
+/// The ChatGPT catalog's background refresh: the public version listing,
+/// then the backend's list, never on a turn's path. Only for someone signed
+/// in to ChatGPT; a sign-in elsewhere (`ling auth login`) is caught by the
+/// next tick, since a never-read snapshot is always due.
+fn spawn_chatgpt_catalog(state: &Arc<ServerState>) {
+    let state = state.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(CATALOG_FIRST_SECS)).await;
+        loop {
+            catalog_pass(&state, false).await;
+            tokio::time::sleep(std::time::Duration::from_secs(CATALOG_TICK_SECS)).await;
+        }
+    });
+}
+
+/// One refresh now, in the background — what a fresh sign-in asks for.
+pub(crate) fn refresh_chatgpt_catalog(state: Arc<ServerState>, force: bool) {
+    tokio::spawn(async move { catalog_pass(&state, force).await });
+}
+
+async fn catalog_pass(state: &Arc<ServerState>, force: bool) {
+    if crate::provider::models::chatgpt_catalog::refresh::refresh_in_force(force).await {
+        api::config::reload_models(state).await;
+        info!("ChatGPT built-ins changed; models reloaded");
+    }
 }
 
 /// The voice providers' own weights (Kokoro, ~300 MB, the fallback voice)

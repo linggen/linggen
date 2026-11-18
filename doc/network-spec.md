@@ -182,6 +182,8 @@ and a device token, not a store of its own.
 | `ling` | `linggen.dev` | register the instance, poll for SDP offers |
 | `ling` | `linggen.dev/api/saves`, `/api/meters` | a skill's declared cloud save and token meter (skill-spec § Cloud) |
 | `ling` | GitHub (our repos), then `linggen.dev/dl/*` | self-update, Python runtime, built-in skills; the mirror only on connect/timeout/5xx (`src/mirror.rs`) |
+| `ling` | `registry.npmjs.org/@openai/codex/latest`, else GitHub's latest `openai/codex` release | the Codex client version presented to ChatGPT — a plain GET with no token, only while signed in to ChatGPT, about once a day and at sign-in (`provider/models/chatgpt_catalog`) |
+| `ling` | the ChatGPT backend's `models?client_version=` | the account's model list, read after the version; a family moves to a newer listed model only after one tiny request on it answers |
 | Phone | `linggen.dev/api/llm`, `/api/search` | Yinyue's model and web search |
 
 Everything else the phone does — skills, memory, DJ files, photos, Ling's
