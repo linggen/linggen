@@ -1027,12 +1027,15 @@ async fn a_bang_cd_at_an_apps_page_never_moves_homes() {
     let (w, _) = day_world_at(12, Setup::default()).await;
     let day = w.api.create_session(json!({"title": "Dice", "skill": "dice"})).await;
     let home = bang_pwd(&w, &day, None, "pwd").await;
+    let cwd = |w: &World| meta(w, &day).lines().find(|l| l.starts_with("cwd:")).map(str::to_string);
+    let before = cwd(&w);
     let tmp = w.home.linggen_home().join("skills");
     let moved = bang_pwd(&w, &day, Some("dice"), &format!("cd {} && pwd", tmp.display())).await;
     assert_eq!(moved, tmp.display().to_string());
     assert_eq!(bang_pwd(&w, &day, None, "pwd").await, home, "home's `!` moved");
     assert_eq!(bang_pwd(&w, &day, Some("dice"), "pwd").await, moved, "the app's `cd` was lost");
-    assert!(!meta(&w, &day).contains("skills/dice"), "{}", meta(&w, &day));
+    assert!(before.is_some(), "no cwd line: {}", meta(&w, &day));
+    assert_eq!(cwd(&w), before, "the day's folder moved: {}", meta(&w, &day));
 }
 
 /// A private app is never a place in the day: a `!` sent from its page

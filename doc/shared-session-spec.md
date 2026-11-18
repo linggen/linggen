@@ -93,7 +93,9 @@ agent's context is built from it:
 
 - The tool set belongs to the session, set by what created it: an ordinary
   chat gets Ling's set; Yinyue's daily thread gets hers; a skill session gets
-  its `allowed-tools`. A member who joins later uses the session's set.
+  its `allowed-tools`. A member who joins later uses the session's set —
+  except at home in a day's session, where each member keeps its own
+  (`one-ling-spec.md` § Linggen's daily session).
 - A skill may name what a member who isn't its lead uses at its table
   (`place.<agent>.tools`, `skill-spec.md` § Place) — Lingjing names her read
   of the game, never its moves or its question widget.

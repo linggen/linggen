@@ -228,7 +228,13 @@ async fn seat_for_export(
 ) {
     let home = crate::engine::turn_place::TurnPlace::home();
     let (sid, place) = at.unwrap_or(("", &home));
-    let seat = super::members::seat_of(&state.manager, root, members, agent_id, sid, place).await;
+    // The lead is read as a turn's seat reads it: from the session's own
+    // members (`handler::seat_member`).
+    let seated = match at {
+        Some(_) => super::members::of_session(&state.manager, sid).await,
+        None => members.to_vec(),
+    };
+    let seat = super::members::seat_of(&state.manager, root, &seated, agent_id, sid, place).await;
     if seat.is_some() {
         engine.seat_at(seat);
     }
