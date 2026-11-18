@@ -245,8 +245,6 @@ async fn run_at(
             state.manager.mark_agent_chat_session(session_id);
         }
         let policy = ready_for_turn(&mut engine, turn, pet);
-        // Per turn, like the tools: the next one hears its doorbell whole.
-        engine.turn_fault = trigger_source == super::triggers::FAULT_SOURCE;
         apply_her_model(state, &mut engine, session_id, pet).await;
         // At an app's table the session's recall policy is the app's: no
         // biography, no core block (`chat::turn_place::turn_creator`).
@@ -277,7 +275,7 @@ async fn run_at(
             // At a table, silence is an answer and leaves no row there.
             silence_ok: !turn.home && trigger_source != "asked",
             place: turn.place.clone(),
-            turn: None,
+            turn: Some(turn_settings(turn, trigger_source)),
         };
         let cap = turn.home.then_some(YINYUE_MAX_LIVE_MSGS);
         crate::server::chat::run_session_turn(&ctx, &mut engine, &state.manager, cap).await;
@@ -410,6 +408,20 @@ fn her_choice(
     resolve(&engine.model_manager, wanted, &engine.default_model_id, rule)
 }
 
+/// What her turn sets for itself, put back when it ends: what its reach
+/// withholds (a quiet turn only speaks), the moment's language, and whether
+/// its kickoff tells a fault — so the next one hears its doorbell whole.
+fn turn_settings(turn: &Turn, trigger_source: &str) -> crate::engine::turn_place::TurnSettings {
+    crate::engine::turn_place::TurnSettings {
+        withheld: withheld_for(turn.reach),
+        allowlist: (turn.reach == Reach::SpeakOnly)
+            .then(|| QUIET_TOOLS.iter().map(|t| t.to_string()).collect()),
+        language: turn.language.clone(),
+        fault: trigger_source == super::triggers::FAULT_SOURCE,
+        ..Default::default()
+    }
+}
+
 /// Set her engine up for one turn. Idempotent — her engine outlives the
 /// turn, and this picks up live settings edits. Returns the policy the turn
 /// runs under.
@@ -419,14 +431,6 @@ fn ready_for_turn(
     pet: &crate::config::PetConfig,
 ) -> crate::engine::session_policy::SessionPolicy {
     engine.set_parent_agent(None);
-    engine.withheld_tools = withheld_for(turn.reach);
-    engine.turn_tool_allowlist = (turn.reach == Reach::SpeakOnly)
-        .then(|| QUIET_TOOLS.iter().map(|t| t.to_string()).collect());
-    // Per turn, like the tools: a moment's language never outlives it.
-    engine.turn_language = turn.language.clone();
-    // Clear so we read THIS turn's final line — the engine is reused across
-    // turns and would otherwise hold the prior one.
-    engine.last_assistant_text = None;
 
     // Her turn is a person's session, not a task: the owner policy's
     // profile, applied to the engine (a fresh engine's default profile
@@ -478,6 +482,13 @@ pub(crate) fn resolve_pet_model(setting: &str) -> Option<String> {
 mod tests {
     use super::*;
 
+    /// Her engine as her turn starts: made ready, and begun with what the
+    /// turn sets for itself (`run_session_turn` begins it).
+    fn ready(engine: &mut crate::engine::AgentEngine, turn: &Turn) {
+        ready_for_turn(engine, turn, &Default::default());
+        engine.begin_turn(turn_settings(turn, "test"));
+    }
+
     /// A moment turn cannot reach another agent; her own turns can.
     #[test]
     fn a_sealed_turn_withholds_agent_chat_and_an_open_one_nothing() {
@@ -489,7 +500,7 @@ mod tests {
     fn quiet_turn_classifies_declared_tools_and_open_turn_restores_them() {
         let mut engine = her_engine();
         let quiet = Turn { reach: Reach::SpeakOnly, ..turn(true) };
-        ready_for_turn(&mut engine, &quiet, &Default::default());
+        ready(&mut engine, &quiet);
         let (spec, _) = crate::extensions::agents::parse_agent_markdown(include_str!("../../../agents/yinyue.md")).unwrap();
         let classified = ["mcp__memory", "WebSearch", "WebFetch", "Express", "Voice", "sense", "recent_activity", "note_write", "note_done", "answer_prompt", "agent_chat", "AppTool"];
         for tool in &spec.tools {
@@ -497,7 +508,7 @@ mod tests {
             assert_eq!(!engine.is_withheld(tool), QUIET_TOOLS.contains(&tool.as_str()), "{tool}");
         }
         for tool in ["agent_chat", "AppTool", "Write", "mcp__memory__memory_add"] { assert!(engine.is_withheld(tool)); }
-        ready_for_turn(&mut engine, &Turn { reach: Reach::Open, ..turn(true) }, &Default::default());
+        ready(&mut engine, &Turn { reach: Reach::Open, ..turn(true) });
         for tool in ["agent_chat", "AppTool"] { assert!(!engine.is_withheld(tool)); }
     }
 
@@ -509,7 +520,7 @@ mod tests {
         let mut engine = her_engine();
         engine.agent_id = Some(YINYUE_AGENT.to_string());
         let woken = Turn { reach: Reach::SpeakOnly, ..turn(true) };
-        ready_for_turn(&mut engine, &woken, &Default::default());
+        ready(&mut engine, &woken);
         let (_, allowed, _) = engine.prepare_loop_messages(
             "[HIDDEN] You set a time to look again at your note n1.",
             true,
@@ -607,7 +618,7 @@ mod tests {
             engine.prompt_profile.task_bootstrap,
             "a fresh engine frames a task"
         );
-        ready_for_turn(&mut engine, &turn(false), &Default::default());
+        ready(&mut engine, &turn(false));
         engine
             .chat_history
             .push(crate::message::ChatMessage::new("user", "[User]: 你好"));
@@ -637,7 +648,7 @@ mod tests {
             language: Some("en".to_string()),
             ..turn(false)
         };
-        ready_for_turn(&mut engine, &english, &Default::default());
+        ready(&mut engine, &english);
         let task = "[HIDDEN] While the user was in the app, this happened: lost.";
         let (messages, _, _) =
             engine.prepare_loop_messages(task, true, crate::engine::prompt::PromptPurpose::Preview);
@@ -647,7 +658,7 @@ mod tests {
             .map(|m| m.content.as_str())
             .collect();
         assert!(system.contains("Reply in English."), "{system}");
-        ready_for_turn(&mut engine, &turn(false), &Default::default());
+        ready(&mut engine, &turn(false));
         assert_eq!(engine.turn_language, None);
     }
 
@@ -657,7 +668,7 @@ mod tests {
     #[test]
     fn at_a_table_her_tools_act_for_that_session() {
         let mut engine = her_engine();
-        ready_for_turn(&mut engine, &turn(false), &Default::default());
+        ready(&mut engine, &turn(false));
         assert_eq!(
             engine.tools.builtins.session_id.as_deref(),
             Some("sess-1758700000-cfo")

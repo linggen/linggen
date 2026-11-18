@@ -1,8 +1,9 @@
 //! What one turn sets for itself never reaches a later turn on the same
 //! engine (doc/session-spec.md § How a turn is set up).
 
-use crate::support::model::Agent;
-use crate::support::{text, Setup, World};
+use crate::day_session::{day_world_at, turn_at};
+use crate::support::model::{Agent, Call};
+use crate::support::{text, tool, Setup, World};
 use serde_json::json;
 use std::path::Path;
 
@@ -59,4 +60,42 @@ async fn a_finished_runs_kickoff_never_reaches_a_persons_turn() {
     assert!(leaked.is_empty(), "the run's kickoff reached the chat: {leaked:#?}");
     assert_eq!(w.model.calls_of(Agent::Ling).len(), 2);
     w.assert_all_scripted();
+}
+
+/// Her moment at an app's table is sealed: it reaches no other agent. A
+/// message Ling then hands her in the same day is a turn of its own, open
+/// as any delivery: nothing of the moment's seal is left on it.
+#[tokio::test]
+async fn a_delivery_after_her_sealed_moment_is_not_sealed() {
+    let setup = Setup::default()
+        .script(Agent::Yinyue, vec![text("Clouds over the harbor."), text("Noted.")])
+        .script(
+            Agent::Ling,
+            vec![
+                tool("agent_chat", json!({"to": "yinyue", "message": "The dice are back."})),
+                text("Told her."),
+            ],
+        );
+    let (w, _) = day_world_at(12, setup).await;
+    let day = w.api.get("/api/sessions/day").await["id"].as_str().unwrap().to_string();
+
+    let mark = w.mark();
+    let moment = json!({"app": "dice", "text": "The player looks at the sky.", "asked": true});
+    assert_eq!(w.api.post("/api/yinyue/event", moment).await, json!("ok"));
+    w.finish_run(&day, Agent::Yinyue, mark).await;
+
+    let mark = w.mark();
+    turn_at(&w, &day, None, "Tell her the dice are back", Agent::Ling).await;
+    w.finish_run(&day, Agent::Yinyue, mark).await;
+    let delivered = w.model.calls_of(Agent::Yinyue).pop().expect("her delivery's call");
+    assert!(
+        offers(&delivered, "agent_chat"),
+        "the moment's seal reached the delivery: {:?}",
+        delivered.tool_names()
+    );
+    w.assert_all_scripted();
+}
+
+fn offers(call: &Call, tool: &str) -> bool {
+    call.tool_names().iter().any(|t| t == tool)
 }

@@ -81,11 +81,6 @@ const LISTED: &[(&str, usize, &str)] = &[
         5,
         "a cleared chat; the prompt export's seat and withheld tools",
     ),
-    (
-        "src/server/resident/turn.rs",
-        5,
-        "the companion's turn: its reach, language and fault",
-    ),
     ("src/server/resident/triggers.rs", 1, "a delivery's turn"),
     ("src/server/tasks.rs", 1, "a background task's end turn"),
     ("src/server/mcp_agent.rs", 2, "an agent_run's task"),
