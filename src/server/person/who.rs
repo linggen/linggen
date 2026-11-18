@@ -202,6 +202,82 @@ mod tests {
         assert_eq!(Person::from_wire_with(Some("u-owner"), None), Person::account("u-owner"));
     }
 
+    fn rust_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                rust_files(&path, out);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                out.push(path);
+            }
+        }
+    }
+
+    /// Each file's count of `patterns` (this file aside), against `listed`.
+    fn check(patterns: &[&str], listed: &[(&str, usize, &str)], what: &str) {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut files = Vec::new();
+        for dir in ["src", "crates/linggen-engine/src"] {
+            rust_files(&root.join(dir), &mut files);
+        }
+        for file in files {
+            let rel = file.strip_prefix(root).unwrap().to_string_lossy().to_string();
+            if rel == "src/server/person/who.rs" {
+                continue;
+            }
+            let text = std::fs::read_to_string(&file).unwrap();
+            let found: usize = patterns.iter().map(|p| text.matches(p).count()).sum();
+            let want = listed.iter().find(|(f, _, _)| *f == rel).map_or(0, |e| e.1);
+            assert_eq!(found, want, "{rel} {what}: go through person::Person, or look at it and list it");
+        }
+    }
+
+    /// The strings a person is kept as, outside this file: tests that pin
+    /// what is on the wire and on disk, nothing else. A new comparison of
+    /// one fails here — read it with [`Person::from_wire`] instead.
+    const KEPT_STRINGS: &[(&str, usize, &str)] = &[
+        ("src/server/day_session.rs", 2, "tests: a session kept under this machine's id"),
+        ("src/server/rtc/mod.rs", 1, "test: a paired peer's placeholder id"),
+        ("src/server/person.rs", 3, "tests: a device's stamp"),
+        ("src/server/api/memory.rs", 6, "tests: memory's stamp"),
+        ("src/server/api/memory/door_tests.rs", 3, "tests: the door's stamp, through memory"),
+    ];
+
+    /// The reads of this Mac's account outside this file: none says who
+    /// someone is ([`mac_account`] does, here).
+    const ACCOUNT_READS: &[(&str, usize, &str)] = &[
+        ("crates/linggen-engine/src/account/mod.rs", 4, "the account module itself"),
+        ("src/server/rtc/mod.rs", 1, "the owner's name and face on its channel"),
+        ("src/server/api/account.rs", 1, "the account's own status route"),
+        ("src/server/api/pair/identity.rs", 1, "the account's name, told when pairing"),
+        ("src/cli/account.rs", 1, "the CLI's account command"),
+    ];
+
+    /// Who takes this Mac's account from [`mac_account`], and for what:
+    /// each compares it the way `person` resolves people, or hands it there.
+    const OWNERS_ACCOUNT: &[(&str, usize, &str)] = &[
+        ("src/server/person.rs", 3, "a device's standing, its unverified claim, a room consumer"),
+        ("src/server/rtc/peer/control.rs", 1, "the relay's vouching, at identify"),
+        ("src/server/api/memory.rs", 2, "memory's stamp, and where a device's rows go"),
+        ("src/server/api/skill_save.rs", 1, "the same-account rule of a skill's save"),
+        ("src/server/api/pair/manage.rs", 2, "whose each device is in Settings; /api/pair/me"),
+    ];
+
+    /// Who a person is is written and read in this file alone, and this
+    /// Mac's account read for who the owner is here alone.
+    #[test]
+    fn a_persons_strings_and_the_owners_account_are_read_here_alone() {
+        let kept = [
+            concat!("__lo", "cal__"),
+            concat!("__pai", "red__"),
+            concat!("__pai", "ring__"),
+            concat!("\"dev", "ice:"),
+        ];
+        check(&kept, KEPT_STRINGS, "names a person's kept string");
+        check(&[concat!("load_", "account(")], ACCOUNT_READS, "reads this Mac's account");
+        check(&[concat!("mac_", "account()")], OWNERS_ACCOUNT, "takes this Mac's account");
+    }
+
     /// The day a person is kept under: none for the owner, their string for
     /// another, no day for no one.
     #[test]
