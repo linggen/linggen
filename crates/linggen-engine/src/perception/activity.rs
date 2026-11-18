@@ -34,7 +34,7 @@ pub const ENGINE_VERBS: [&str; 7] = [
     "restart",
     "used",
     "hold",
-    "fault",
+    super::activity_verbs::FAULT_VERB,
 ];
 
 /// Who a record may name. Closed, because `by` is rendered as the subject of a

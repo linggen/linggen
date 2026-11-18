@@ -3,11 +3,8 @@
 
 use crate::engine::mission::record::{Mission, MissionRunEntry};
 use crate::engine::run_faults::{self, RunFaults};
+use crate::perception::activity_verbs::FAULT_VERB;
 use crate::provider::models::RunUsage;
-
-/// The activity verb the engine writes for a run that had something go
-/// wrong. The engine's own, like `restart`.
-pub const FAULT_VERB: &str = "fault";
 
 /// What a finished run leaves in its record.
 #[derive(Debug, Default)]

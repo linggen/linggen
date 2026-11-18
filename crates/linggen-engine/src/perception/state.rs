@@ -337,7 +337,7 @@ pub(crate) fn doorbell(
 }
 
 fn is_fault(record: &super::activity::Activity) -> bool {
-    record.verb == crate::extensions::missions::outcome::FAULT_VERB
+    record.verb == super::activity_verbs::FAULT_VERB
 }
 
 fn ring(
@@ -467,7 +467,7 @@ mod tests {
         Activity {
             by: "system".into(),
             app: "system".into(),
-            verb: crate::extensions::missions::outcome::FAULT_VERB.into(),
+            verb: crate::perception::activity_verbs::FAULT_VERB.into(),
             object: Some("Harbor digest: fetch exited with status 3".into()),
             ..thing()
         }

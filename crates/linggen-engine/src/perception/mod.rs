@@ -22,6 +22,7 @@
 //! and again only when it is worse or has come back.
 
 pub mod activity;
+pub(crate) mod activity_verbs;
 pub mod apps;
 pub mod conditions;
 pub mod devices;
