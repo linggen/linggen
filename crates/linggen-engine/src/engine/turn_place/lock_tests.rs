@@ -77,7 +77,6 @@ const LISTED: &[(&str, usize, &str)] = &[
         5,
         "a cleared chat; the prompt export's seat and withheld tools",
     ),
-    ("src/server/mcp_agent.rs", 2, "an agent_run's task"),
     // Not the engine's: another struct's field of the same name.
     (
         "crates/linggen-engine/src/engine/background.rs",

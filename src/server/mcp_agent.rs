@@ -536,6 +536,9 @@ async fn drive(
         .await
         .map_err(|e| format!("failed to create agent '{agent_id}': {e}"))?;
     let mut engine = agent.lock().await;
+    // A run is a turn of its own: it starts with nothing an earlier turn
+    // in the session set, and puts back what it set when it ends.
+    engine.begin_turn(Default::default());
     if let Some(model) = model {
         // Checked (or chosen by the agent's chain) already; a delegated run
         // never switches models.
@@ -575,8 +578,7 @@ async fn drive(
             session_id: Some(session_id.clone()),
         }));
 
-    engine.observations.clear();
-    engine.task = Some(prompt.to_string());
+    engine.begin_run(crate::engine::turn_place::RunSetup::task(prompt.as_str()));
     engine.set_parent_agent(None);
     engine.set_run_id(Some(run_id.clone()));
 
@@ -645,6 +647,7 @@ async fn drive(
     )
     .await;
     engine.set_run_id(None);
+    engine.end_turn();
     seed_first_prompt(&mut engine.chat_history, &prompt);
     drop(engine);
 
