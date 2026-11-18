@@ -373,6 +373,24 @@ fn an_attended_missions_askuser_is_in_its_spec() {
     assert!(!engine.session_permissions.interactive);
 }
 
+/// A mission taken up again with the same spec still drops the prompt
+/// cached before: the cache predates the mission's body.
+#[test]
+fn taking_up_a_mission_drops_the_cached_prompt() {
+    let mut engine = engine();
+    engine.cached_system_prompt = Some(crate::engine::types::CachedSystemPrompt {
+        input_hash: 1,
+        content: "before".into(),
+    });
+    let frame = crate::engine::ActiveMission {
+        body: "Body".into(),
+        mission_dir: None,
+    };
+    engine.take_up_mission(frame, |_| {});
+    assert!(engine.runs_mission());
+    assert!(engine.cached_system_prompt.is_none());
+}
+
 /// An `agent_run` delegate (`server::mcp_agent`): its toolset, the owner's
 /// sections framed as a task, its caller answering beyond the grants.
 #[test]

@@ -325,7 +325,7 @@ pub struct AgentEngine {
     // Active mission frame, set when the scheduler dispatches a mission.
     // The mission's body is injected into the system prompt like a skill's
     // body, so the agent treats it as instructions rather than a user turn.
-    pub active_mission: Option<ActiveMission>,
+    pub(crate) active_mission: Option<ActiveMission>,
     /// Metadata for skills available to the model via the Skill tool: (name, description).
     pub available_skills_metadata: Vec<(String, String, bool)>,
     /// Metadata for agents available for delegation via the Task tool: (id, description).

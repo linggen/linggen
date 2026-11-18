@@ -80,6 +80,24 @@ impl AgentEngine {
         spec.write(self, Some(kept));
     }
 
+    /// Put a mission in charge of this engine: its body is the prompt's
+    /// runbook, and `change` makes the spec its run's (its tools, its
+    /// memory, who answers). A prompt cached before predates the body.
+    pub fn take_up_mission(
+        &mut self,
+        mission: crate::engine::ActiveMission,
+        change: impl FnOnce(&mut SessionSpec),
+    ) {
+        self.active_mission = Some(mission);
+        self.respec(change);
+        self.cached_system_prompt = None;
+    }
+
+    /// Whether a mission is in charge of this engine.
+    pub fn runs_mission(&self) -> bool {
+        self.active_mission.is_some()
+    }
+
     /// Whether this engine runs a coding session: its spec's work is `code`
     /// (a preset that takes the tag, or a `Task` child of such a session),
     /// and the session's stored tag still says so — turning Coding off takes

@@ -47,8 +47,8 @@ const LISTED: &[(&str, usize, &str)] = &[
     ),
     (
         "crates/linggen-engine/src/extensions/missions/enter.rs",
-        3,
-        "the mission run and its prompt; SessionSpec::tools (1)",
+        1,
+        "SessionSpec::tools",
     ),
     (
         "src/server/resident/turn.rs",

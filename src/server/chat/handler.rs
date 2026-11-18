@@ -761,7 +761,7 @@ async fn dispatch_turn(
 /// attended dream session built its prompt with `active_mission=false,
 /// include_memory=true`).
 async fn apply_session_bound_mission(engine: &mut crate::engine::AgentEngine, ctx: &ChatRunCtx) {
-    if engine.active_mission.is_some() {
+    if engine.runs_mission() {
         return;
     }
     let Some(sid) = ctx.session_id.as_deref() else {

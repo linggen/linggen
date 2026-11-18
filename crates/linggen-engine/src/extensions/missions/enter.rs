@@ -21,10 +21,6 @@ pub async fn enter_mission(
     missions: &dyn MissionRegistry,
     skills: &dyn SkillRegistry,
 ) -> Option<Skill> {
-    engine.active_mission = Some(crate::engine::ActiveMission {
-        body: mission.prompt.clone(),
-        mission_dir: Some(missions.mission_dir(&mission.id)),
-    });
     let skill = owning_skill(mission, skills).await;
     if let Some(ref skill) = skill {
         engine.lend_skill_tools(skill).await;
@@ -32,13 +28,15 @@ pub async fn enter_mission(
     // Mission sessions don't write to the user's biographical memory,
     // don't carry the core block + memory protocol, and never prompt.
     let scope = tool_scope(mission, skill.as_ref());
-    engine.respec(|spec| {
+    let frame = crate::engine::ActiveMission {
+        body: mission.prompt.clone(),
+        mission_dir: Some(missions.mission_dir(&mission.id)),
+    };
+    engine.take_up_mission(frame, |spec| {
         spec.tools = Tools::Mission(scope);
         spec.memory = Memory::None;
         spec.permission = Permission::Unattended;
     });
-    // Any cached prompt predates the mission body.
-    engine.cached_system_prompt = None;
     skill
 }
 
