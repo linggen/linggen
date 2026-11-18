@@ -565,8 +565,8 @@ impl AgentEngine {
                     native_tools.is_some(),
                 );
                 let m = self.model_id.to_lowercase();
-                let is_reasoning_model = m.contains("gpt-5")
-                    || m.contains("gpt-6")
+                let is_reasoning_model = crate::provider::models::chatgpt_catalog::openai_generation(&m)
+                    .is_some_and(|(n, _)| n >= 5)
                     || m.contains("o1")
                     || m.contains("o3")
                     || m.contains("o4")

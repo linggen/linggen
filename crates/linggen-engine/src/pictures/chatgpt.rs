@@ -39,7 +39,7 @@ pub async fn draw(ask: &Ask) -> Result<Drawn> {
     let started = std::time::Instant::now();
     let drawn = client
         .draw_picture(&PictureRequest {
-            model: crate::provider::models::CHATGPT_BUILTIN_MODEL_ID,
+            model: &crate::provider::models::chatgpt_catalog::primary_id(),
             prompt: &ask.prompt,
             size: size(ask.shape),
             reference: reference.as_ref().map(|(b, m)| (b.as_slice(), *m)),

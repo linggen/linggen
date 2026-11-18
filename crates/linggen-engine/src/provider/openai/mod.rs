@@ -18,10 +18,6 @@ use anyhow::Result;
 use futures_util::{Stream, StreamExt};
 use reqwest::Client;
 
-/// The Codex CLI version this engine presents to the ChatGPT backend, which
-/// routes model slugs by it: one place, bumped with each built-in generation.
-const CODEX_CLI_VERSION: &str = "0.169.0";
-
 /// Reads one SSE `data:` payload of a turn into the chunks it carries. It may
 /// keep state across the stream (the Responses API tracks output items).
 type Parser = Box<dyn FnMut(&str) -> Vec<Result<StreamChunk>> + Send>;
@@ -167,10 +163,9 @@ impl OpenAiClient {
             // using Codex with a ChatGPT account" — gpt-6-* under 0.144.1,
             // gpt-6.1-sol under 0.159; gpt-6.2-sol launched 2026-11-17, when
             // the CLI was at 0.169). Identify as a current Codex CLI
-            // (openai/codex#31967); bump the version with each built-in
-            // generation.
+            // (openai/codex#31967); the catalog says which version that is.
             rb = rb.header("originator", "codex_cli_rs");
-            rb = rb.header("version", CODEX_CLI_VERSION);
+            rb = rb.header("version", crate::provider::models::chatgpt_catalog::client_version());
         } else if self.linggen_account_live {
             if let Some((token, _)) = crate::account::resolve_token() {
                 rb = rb.header("Authorization", format!("Bearer {}", token));
@@ -317,7 +312,10 @@ impl OpenAiClient {
 
     pub(crate) async fn codex_context_window(&self, model: &str) -> anyhow::Result<usize> {
         let json = self
-            .codex_metadata(&format!("models?client_version={CODEX_CLI_VERSION}"))
+            .codex_metadata(&format!(
+                "models?client_version={}",
+                crate::provider::models::chatgpt_catalog::client_version()
+            ))
             .await?;
         json.get("models").and_then(|v| v.as_array())
             .and_then(|models| models.iter().find(|m| m.get("slug").and_then(|v| v.as_str()) == Some(model)))
@@ -362,8 +360,9 @@ impl OpenAiClient {
     pub(super) fn model_supports_reasoning(model: &str, is_gemini: bool) -> bool {
         let m = model.to_lowercase();
         // OpenAI reasoning models
-        if m.contains("gpt-5")
-            || m.contains("gpt-6")
+        let gpt_reasoning = crate::provider::models::chatgpt_catalog::openai_generation(&m)
+            .is_some_and(|(n, _)| n >= 5);
+        if gpt_reasoning
             || m.contains("o3")
             || m.contains("o4")
             || m.contains("o1")

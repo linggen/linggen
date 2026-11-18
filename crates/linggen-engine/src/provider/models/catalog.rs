@@ -1,6 +1,7 @@
 //! The built-in models every install carries: Linggen Cloud and the ChatGPT
 //! sign-in models, and the ids they used to go by.
 
+use super::chatgpt_catalog::{self, Snapshot};
 use crate::config::ModelConfig;
 use crate::provider::codex_auth;
 
@@ -19,17 +20,28 @@ pub const LINGGEN_CLOUD_MODEL_ID: &str = "deepseek-flash";
 /// persisted defaults and pins to the current id.
 pub const LINGGEN_CLOUD_RETIRED_MODEL_IDS: &[&str] = &["deepseek-v4-flash"];
 
-/// The id a model lookup should use: a retired Linggen Cloud id maps to the
-/// current one, a retired ChatGPT built-in to its successor, everything
-/// else is itself. A saved id (session, mission `model:`, agent override,
-/// room share) written against an old generation keeps resolving instead of
-/// falling silently into the default. Callers holding the configured models
-/// check an exact match first — a user model reusing an old id is theirs.
-pub fn canonical_model_id(id: &str) -> &str {
+/// The id an exact pin (a session's or mission's `model:`, an agent
+/// override) should run on: a retired Linggen Cloud id maps to the current
+/// one; a ChatGPT id the backend no longer lists to its family's model now
+/// ([`chatgpt_catalog::pin_successor`]); everything else is itself. A pin
+/// written against an old generation keeps resolving instead of falling
+/// silently into the default. Callers holding the configured models check an
+/// exact match first — a user model reusing an old id is theirs.
+pub fn canonical_model_id(id: &str) -> String {
     if LINGGEN_CLOUD_RETIRED_MODEL_IDS.contains(&id) {
-        return LINGGEN_CLOUD_MODEL_ID;
+        return LINGGEN_CLOUD_MODEL_ID.to_string();
     }
-    chatgpt_successor(id).unwrap_or(id)
+    chatgpt_catalog::pin_successor(id).unwrap_or_else(|| id.to_string())
+}
+
+/// The id a reference that follows its family (a room's shared models)
+/// should say: like [`canonical_model_id`], but an older ChatGPT id moves to
+/// its family's model even while the backend still lists it.
+pub fn follow_model_id(id: &str) -> String {
+    if LINGGEN_CLOUD_RETIRED_MODEL_IDS.contains(&id) {
+        return LINGGEN_CLOUD_MODEL_ID.to_string();
+    }
+    chatgpt_catalog::successor(id).unwrap_or_else(|| id.to_string())
 }
 
 pub(super) fn inject_linggen_cloud(configs: &mut Vec<ModelConfig>) {
@@ -54,61 +66,40 @@ pub(super) fn inject_linggen_cloud(configs: &mut Vec<ModelConfig>) {
     });
 }
 
-/// Primary built-in ChatGPT model — the default routing target and the
-/// successor for any retired id without a closer match.
-/// Bumping to a newer OpenAI generation: change the ids here AND list each
-/// old id with its successor in CHATGPT_RETIRED_MODEL_IDS so persisted
-/// configs migrate on load, then release.
-pub const CHATGPT_BUILTIN_MODEL_ID: &str = "gpt-6-luna";
-
-/// All built-in ChatGPT models — always present, using the user's own
-/// ChatGPT subscription via OAuth (no API key). The GPT-6 family: Sol 6.2
-/// (everyday work, paid plans), Terra 6.1 (balanced) and Luna (fast, every
-/// plan). Unlike the
-/// Linggen Cloud built-in, these ALWAYS win: any user-configured entry
-/// with one of these ids is replaced, not deferred to, so it's never
-/// rendered as a raw editable duplicate — sign in and star one, nothing to
-/// configure. A user wanting a different/custom ChatGPT-backed model
-/// should give it a different id.
-pub const CHATGPT_BUILTIN_MODEL_IDS: &[&str] = &["gpt-6.2-sol", "gpt-6.1-terra", "gpt-6-luna"];
-
-/// Previous ChatGPT built-in ids, each with the built-in it moves to.
-/// Config::load and the paired-device list migrate these, so a bump never
-/// leaves a dangling default, pet pin, or orphaned editable card.
-pub const CHATGPT_RETIRED_MODEL_IDS: &[(&str, &str)] = &[
-    ("gpt-5.5", CHATGPT_BUILTIN_MODEL_ID),
-    ("gpt-5.6-sol", "gpt-6.2-sol"),
-    ("gpt-5.6-terra", "gpt-6.1-terra"),
-    ("gpt-5.6-luna", "gpt-6-luna"),
-    ("gpt-6-sol", "gpt-6.2-sol"),
-    ("gpt-6.1-sol", "gpt-6.2-sol"),
-];
-
-/// The current built-in a retired ChatGPT id moves to, if it is retired.
-pub fn chatgpt_successor(id: &str) -> Option<&'static str> {
-    CHATGPT_RETIRED_MODEL_IDS
-        .iter()
-        .find(|(old, _)| *old == id)
-        .map(|(_, new)| *new)
+/// The ChatGPT built-ins, one per family, as the catalog has them now
+/// ([`chatgpt_catalog`](super::chatgpt_catalog) owns which models those
+/// are). Unlike the Linggen Cloud built-in, these ALWAYS win: any
+/// user-configured entry with one of these ids is replaced, not deferred to,
+/// so it's never rendered as a raw editable duplicate — sign in and star one,
+/// nothing to configure. A user wanting a different/custom ChatGPT-backed
+/// model should give it a different id.
+///
+/// Also registered: every older model of a built-in family the backend still
+/// lists ([`Snapshot::kept_ids`]), so a session or mission pinned to one keeps
+/// running on it. Their ids are returned — they are never offered.
+pub(super) fn inject_chatgpt_builtin(configs: &mut Vec<ModelConfig>, snap: &Snapshot) -> Vec<String> {
+    let kept = snap.kept_ids();
+    for id in snap.builtin_ids().iter().chain(&kept) {
+        configs.retain(|c| &c.id != id);
+        configs.push(chatgpt_config(id, snap));
+    }
+    kept
 }
 
-pub(super) fn inject_chatgpt_builtin(configs: &mut Vec<ModelConfig>) {
-    for id in CHATGPT_BUILTIN_MODEL_IDS {
-        configs.retain(|c| c.id != *id);
-        configs.push(ModelConfig {
-            id: id.to_string(),
-            provider: "chatgpt".to_string(),
-            url: codex_auth::CHATGPT_API_BASE.to_string(),
-            model: id.to_string(),
-            api_key: None,
-            keep_alive: None,
-            context_window: None,
-            tags: vec![],
-            supports_tools: Some(true),
-            auth_mode: Some("chatgpt_oauth".to_string()),
-            reasoning_effort: None,
-            provided_by: Some("ChatGPT".to_string()),
-            is_builtin: true,
-        });
+fn chatgpt_config(id: &str, snap: &Snapshot) -> ModelConfig {
+    ModelConfig {
+        id: id.to_string(),
+        provider: "chatgpt".to_string(),
+        url: codex_auth::CHATGPT_API_BASE.to_string(),
+        model: id.to_string(),
+        api_key: None,
+        keep_alive: None,
+        context_window: snap.context_window(id).map(|w| w as usize),
+        tags: vec![],
+        supports_tools: Some(true),
+        auth_mode: Some("chatgpt_oauth".to_string()),
+        reasoning_effort: None,
+        provided_by: Some("ChatGPT".to_string()),
+        is_builtin: true,
     }
 }

@@ -255,7 +255,7 @@ fn connect_allowed_ids() -> Vec<String> {
 /// allow-list to its successor (deduped), so the phone never keeps offering
 /// a model the backend no longer serves. True when the list changed.
 fn migrate_retired_models(settings: &mut serde_json::Map<String, serde_json::Value>) -> bool {
-    use crate::provider::models::chatgpt_successor;
+    use crate::provider::models::chatgpt_catalog::successor as chatgpt_successor;
     let Some(list) = settings.get_mut("models").and_then(|v| v.as_array_mut()) else {
         return false;
     };
@@ -289,7 +289,7 @@ pub(crate) fn default_device_settings() -> serde_json::Map<String, serde_json::V
         "models".to_string(),
         serde_json::json!([
             crate::provider::models::LINGGEN_CLOUD_MODEL_ID,
-            crate::provider::models::CHATGPT_BUILTIN_MODEL_ID,
+            crate::provider::models::chatgpt_catalog::primary_id(),
         ]),
     );
     settings

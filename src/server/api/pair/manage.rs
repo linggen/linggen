@@ -85,7 +85,7 @@ pub(super) fn resolve_model_catalog(
     allow
         .iter()
         .map(|id| {
-            if crate::provider::models::CHATGPT_BUILTIN_MODEL_IDS.contains(&id.as_str()) {
+            if crate::provider::models::chatgpt_catalog::is_builtin(id) {
                 return serde_json::json!({ "id": id, "kind": "oauth" });
             }
             if id == crate::provider::models::LINGGEN_CLOUD_MODEL_ID {

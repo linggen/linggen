@@ -88,7 +88,7 @@ impl RoomConfig {
         let next: Vec<String> = self
             .shared_models
             .iter()
-            .map(|id| crate::provider::models::canonical_model_id(id).to_string())
+            .map(|id| crate::provider::models::follow_model_id(id))
             .filter(|id| !self.shared_models.contains(id))
             .collect();
         for id in next {

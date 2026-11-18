@@ -13,6 +13,7 @@ use tokio::sync::OnceCell;
 use tokio::sync::Semaphore;
 
 mod catalog;
+pub mod chatgpt_catalog;
 mod health;
 mod providers;
 mod usage;
@@ -34,6 +35,9 @@ fn hold_permit(stream: ChunkStream, permit: tokio::sync::OwnedSemaphorePermit) -
 
 pub struct ModelManager {
     models: HashMap<String, ModelInstance>,
+    /// Registered for exact pins only (older ChatGPT models the backend still
+    /// lists): reachable by id, never listed.
+    hidden: std::collections::HashSet<String>,
 }
 
 struct ModelInstance {
@@ -114,9 +118,19 @@ impl ModelManager {
     }
 
     pub fn new_with_credentials(configs: Vec<ModelConfig>, creds: &Credentials) -> Self {
+        Self::new_with_catalog(configs, creds, &chatgpt_catalog::current())
+    }
+
+    /// As [`new_with_credentials`](Self::new_with_credentials), with the
+    /// ChatGPT built-ins taken from [catalog] rather than the one in force.
+    pub fn new_with_catalog(
+        configs: Vec<ModelConfig>,
+        creds: &Credentials,
+        catalog: &chatgpt_catalog::Snapshot,
+    ) -> Self {
         let mut configs = configs;
         inject_linggen_cloud(&mut configs);
-        inject_chatgpt_builtin(&mut configs);
+        let hidden = inject_chatgpt_builtin(&mut configs, catalog).into_iter().collect();
         let mut models = HashMap::new();
 
         // Load ChatGPT OAuth tokens if any model uses chatgpt_oauth
@@ -200,7 +214,7 @@ impl ModelManager {
                 },
             );
         }
-        Self { models }
+        Self { models, hidden }
     }
 
     pub async fn chat_text_stream(
@@ -212,7 +226,7 @@ impl ModelManager {
     ) -> Result<ChunkStream> {
         let instance = self
             .models
-            .get(self.key(model_id))
+            .get(self.key(model_id).as_ref())
             .ok_or_else(|| anyhow::anyhow!("Model {} not found", model_id))?;
         self.chat_text_stream_with_keep_alive(
             model_id,
@@ -234,7 +248,7 @@ impl ModelManager {
     ) -> Result<ChunkStream> {
         let instance = self
             .models
-            .get(self.key(model_id))
+            .get(self.key(model_id).as_ref())
             .ok_or_else(|| anyhow::anyhow!("Model {} not found", model_id))?;
 
         Self::check_provider_auth(&instance.config)?;
@@ -269,7 +283,7 @@ impl ModelManager {
     ) -> Result<ChunkStream> {
         let instance = self
             .models
-            .get(self.key(model_id))
+            .get(self.key(model_id).as_ref())
             .ok_or_else(|| anyhow::anyhow!("Model {} not found", model_id))?;
 
         Self::check_provider_auth(&instance.config)?;
@@ -293,7 +307,11 @@ impl ModelManager {
     }
 
     pub fn list_models(&self) -> Vec<&ModelConfig> {
-        self.models.values().map(|m| &m.config).collect()
+        self.models
+            .values()
+            .filter(|m| !self.hidden.contains(&m.config.id))
+            .map(|m| &m.config)
+            .collect()
     }
 
     /// Register proxy models from a remote room owner.
@@ -363,7 +381,11 @@ impl ModelManager {
 
     /// Return all registered model IDs (for fallback iteration).
     pub fn model_ids(&self) -> Vec<String> {
-        self.models.keys().cloned().collect()
+        self.models
+            .keys()
+            .filter(|id| !self.hidden.contains(*id))
+            .cloned()
+            .collect()
     }
 
     /// Best-effort cached model context window (num_ctx).
@@ -371,7 +393,7 @@ impl ModelManager {
     pub async fn context_window(&self, model_id: &str) -> Result<Option<usize>> {
         let instance = self
             .models
-            .get(self.key(model_id))
+            .get(self.key(model_id).as_ref())
             .ok_or_else(|| anyhow::anyhow!("Model {} not found", model_id))?;
 
         // Config override takes priority (useful for cloud/remote models).
@@ -414,22 +436,9 @@ impl ModelManager {
         if m.contains("claude") {
             return 200_000;
         }
-        // GPT models
-        if m.contains("gpt-4o")
-            || m.contains("gpt-5")
-            || m.contains("gpt-6")
-            || m.contains("gpt-4.1")
-        {
-            return 128_000;
-        }
-        if m.contains("gpt-4-turbo") || m.contains("gpt-4-1106") {
-            return 128_000;
-        }
-        if m.contains("gpt-4") {
-            return 8_192;
-        }
-        if m.contains("gpt-3.5") {
-            return 16_385;
+        // GPT models, by generation
+        if let Some(window) = gpt_context_window(&m) {
+            return window;
         }
         // DeepSeek
         if m.contains("deepseek") {
@@ -449,7 +458,7 @@ impl ModelManager {
     pub async fn has_vision(&self, model_id: &str) -> Result<bool> {
         let instance = self
             .models
-            .get(self.key(model_id))
+            .get(self.key(model_id).as_ref())
             .ok_or_else(|| anyhow::anyhow!("Model {} not found", model_id))?;
 
         instance
@@ -481,10 +490,7 @@ impl ModelManager {
             return m.contains("vision") || m.contains("-vl");
         }
         m.contains("gemini")
-            || m.contains("gpt-4o")
-            || m.contains("gpt-4.1")
-            || m.contains("gpt-5")
-            || m.contains("gpt-6")
+            || gpt_sees(&m)
             || m.contains("claude")
             || m.contains("vision")
             || m.contains("-vl")
@@ -494,7 +500,7 @@ impl ModelManager {
     /// Check if a model supports native tool calling.
     /// Uses explicit config if set, otherwise auto-detects based on provider.
     pub fn supports_tools(&self, model_id: &str) -> bool {
-        let Some(instance) = self.models.get(self.key(model_id)) else {
+        let Some(instance) = self.models.get(self.key(model_id).as_ref()) else {
             tracing::warn!(
                 "supports_tools: model '{}' not found in configured models (have: {:?}), defaulting to true",
                 model_id,
@@ -509,11 +515,11 @@ impl ModelManager {
 
     /// The registered key a lookup of [id] lands on: the id itself when a
     /// model is configured under it, else its canonical (current) id.
-    fn key<'a>(&self, id: &'a str) -> &'a str {
+    fn key<'a>(&self, id: &'a str) -> std::borrow::Cow<'a, str> {
         if self.models.contains_key(id) {
-            id
+            std::borrow::Cow::Borrowed(id)
         } else {
-            canonical_model_id(id)
+            std::borrow::Cow::Owned(canonical_model_id(id))
         }
     }
 
@@ -521,12 +527,12 @@ impl ModelManager {
     /// of a retired one — so a caller can store the live id.
     pub fn resolve_id(&self, model_id: &str) -> Option<String> {
         let key = self.key(model_id);
-        self.models.contains_key(key).then(|| key.to_string())
+        self.models.contains_key(key.as_ref()).then(|| key.into_owned())
     }
 
     /// Check if a model ID exists in the configured models.
     pub fn has_model(&self, model_id: &str) -> bool {
-        self.models.contains_key(self.key(model_id))
+        self.models.contains_key(self.key(model_id).as_ref())
     }
 
     /// Whether [model_id]'s credentials are present right now — the same
@@ -535,7 +541,7 @@ impl ModelManager {
     /// instead of learning it from a failed turn.
     pub fn model_auth_ok(&self, model_id: &str) -> bool {
         self.models
-            .get(self.key(model_id))
+            .get(self.key(model_id).as_ref())
             .is_some_and(|m| Self::check_provider_auth(&m.config).is_ok())
     }
 
@@ -546,13 +552,37 @@ impl ModelManager {
     /// system-prompt panel matches what gets sent on the wire.
     pub fn provider_kind(&self, model_id: &str) -> Option<&str> {
         self.models
-            .get(self.key(model_id))
+            .get(self.key(model_id).as_ref())
             .map(|m| m.config.provider.as_str())
     }
 
     /// Return the first OllamaClient found among configured models.
     pub fn first_ollama_client(&self) -> Option<&OllamaClient> {
         self.models.values().find_map(|m| m.client.as_ollama())
+    }
+}
+
+/// The context window an OpenAI model name implies: 128K from GPT-4o and
+/// GPT-4.1 on (and GPT-4 Turbo), 8K for the first GPT-4, 16K for GPT-3.5.
+fn gpt_context_window(name: &str) -> Option<usize> {
+    let (generation, rest) = chatgpt_catalog::openai_generation(name)?;
+    let wide_four = ["o", ".1", "-turbo", "-1106"].iter().any(|p| rest.starts_with(p));
+    match generation {
+        n if n >= 5 => Some(128_000),
+        4 if wide_four => Some(128_000),
+        4 => Some(8_192),
+        3 if rest.starts_with(".5") => Some(16_385),
+        _ => None,
+    }
+}
+
+/// Whether an OpenAI model name sees images: GPT-4o, GPT-4.1, and every
+/// generation from 5 on.
+fn gpt_sees(name: &str) -> bool {
+    match chatgpt_catalog::openai_generation(name) {
+        Some((n, _)) if n >= 5 => true,
+        Some((4, rest)) => rest.starts_with('o') || rest.starts_with(".1"),
+        _ => false,
     }
 }
 
@@ -587,8 +617,8 @@ mod tests {
         assert_eq!(m.resolve_id("gpt-6.1-sol").as_deref(), Some("gpt-6.2-sol"));
         assert_eq!(m.provider_kind("gpt-6-sol"), Some("chatgpt"));
         assert_eq!(
-            m.resolve_id("gpt-5.5").as_deref(),
-            Some(CHATGPT_BUILTIN_MODEL_ID)
+            m.resolve_id("gpt-5.5"),
+            Some(chatgpt_catalog::primary_id())
         );
         assert_eq!(
             m.resolve_id("deepseek-v4-flash").as_deref(),
@@ -596,6 +626,27 @@ mod tests {
         );
         assert_eq!(m.resolve_id("gpt-6.2-sol").as_deref(), Some("gpt-6.2-sol"));
         assert!(m.resolve_id("no-such-model").is_none());
+    }
+
+    /// With the backend's list read, an older listed model runs for a pin
+    /// that names it, but the pickers still offer exactly the built-ins.
+    #[test]
+    fn a_listed_older_model_is_reachable_by_pin_and_never_offered() {
+        let mut snap = chatgpt_catalog::Snapshot::seed();
+        snap.listed = chatgpt_catalog::tests::measured_list();
+        let m = ModelManager::new_with_catalog(vec![], &Credentials::default(), &snap);
+        let mut offered: Vec<String> = m.list_models().iter().map(|c| c.id.clone()).collect();
+        offered.sort();
+        let mut want = snap.builtin_ids();
+        want.push(LINGGEN_CLOUD_MODEL_ID.to_string());
+        want.sort();
+        assert_eq!(offered, want);
+        let mut ids = m.model_ids();
+        ids.sort();
+        assert_eq!(ids, want);
+        assert_eq!(m.resolve_id("gpt-6.1-sol").as_deref(), Some("gpt-6.1-sol"));
+        assert_eq!(m.provider_kind("gpt-5.6-luna"), Some("chatgpt"));
+        assert_eq!(m.resolve_id("gpt-5.5"), Some(snap.primary_id()));
     }
 
     #[test]

@@ -469,7 +469,7 @@ impl Config {
     /// move routing defaults and the pet's pin to the retired id's successor
     /// when the retired id no longer resolves to any configured model.
     fn migrate_retired_chatgpt_builtins(&mut self) {
-        use crate::provider::models::chatgpt_successor;
+        use crate::provider::models::chatgpt_catalog::successor as chatgpt_successor;
 
         self.models.retain(|m| {
             !(chatgpt_successor(&m.id).is_some() && m.auth_mode.as_deref() == Some("chatgpt_oauth"))
@@ -480,7 +480,7 @@ impl Config {
         let successor = |id: &str| chatgpt_successor(id).filter(|_| !surviving.contains(id));
         for dm in &mut self.routing.default_models {
             if let Some(next) = successor(dm) {
-                *dm = next.to_string();
+                *dm = next;
             }
         }
         let mut seen = std::collections::HashSet::new();
@@ -488,7 +488,7 @@ impl Config {
             .default_models
             .retain(|id| seen.insert(id.clone()));
         if let Some(next) = successor(&self.pet.model) {
-            self.pet.model = next.to_string();
+            self.pet.model = next;
         }
     }
 
@@ -611,7 +611,7 @@ impl Config {
         // Built-in models (injected at ModelManager build) are valid defaults.
         for dm in &self.routing.default_models {
             if dm == crate::provider::models::LINGGEN_CLOUD_MODEL_ID
-                || crate::provider::models::CHATGPT_BUILTIN_MODEL_IDS.contains(&dm.as_str())
+                || crate::provider::models::chatgpt_catalog::is_builtin(dm)
             {
                 continue;
             }
@@ -630,7 +630,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             // No hardcoded models — the built-in Linggen Cloud (deepseek-flash)
-            // and ChatGPT (CHATGPT_BUILTIN_MODEL_ID) models are always injected by ModelManager
+            // and ChatGPT (chatgpt_catalog) models are always injected by ModelManager
             // at runtime (see inject_linggen_cloud / inject_chatgpt_builtin in
             // provider/models.rs), so a fresh install needs nothing here.
             models: Vec::new(),
