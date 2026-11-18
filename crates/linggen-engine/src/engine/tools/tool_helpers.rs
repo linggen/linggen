@@ -18,25 +18,18 @@ pub(super) fn build_globset(globs: Option<&[String]>) -> Result<Option<GlobSet>>
     Ok(Some(builder.build()?))
 }
 
-/// Expand `~/` prefix to the user's home directory.
-pub(crate) fn expand_tilde(path: &str) -> String {
-    expand_tilde_with_home(path, dirs::home_dir().as_deref())
-}
-
-fn expand_tilde_with_home(path: &str, home: Option<&Path>) -> String {
-    if let Some(rest) = path.strip_prefix("~/") {
-        if let Some(home) = home {
-            return home.join(rest).to_string_lossy().to_string();
-        }
-    }
-    path.to_string()
+/// A bare `~` stays workspace-relative, including as a Glob pattern.
+pub(super) fn expand_file_tool_path(path: &str, home: Option<&Path>) -> String {
+    crate::util::expand_tilde(Path::new(path), home.filter(|_| path != "~"))
+        .to_string_lossy()
+        .into_owned()
 }
 
 pub(super) fn sanitize_rel_path(root: &Path, path: &str) -> Result<String> {
     if path.is_empty() {
         anyhow::bail!("empty path");
     }
-    let expanded = expand_tilde(path);
+    let expanded = expand_file_tool_path(path, dirs::home_dir().as_deref());
     let raw = Path::new(&expanded);
     let rel_path = if raw.is_absolute() {
         raw.strip_prefix(root)
@@ -278,7 +271,7 @@ mod tests {
 
     #[test]
     fn tool_path_tilde_expansion() {
-        crate::util::tilde_cases::check(expand_tilde_with_home, false);
+        crate::util::tilde_cases::check(expand_file_tool_path, false);
     }
 
     #[test]

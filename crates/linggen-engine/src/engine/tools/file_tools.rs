@@ -1,4 +1,6 @@
-use super::tool_helpers::{build_globset, expand_tilde, sanitize_rel_path, to_rel_string};
+use super::tool_helpers::{
+    build_globset, expand_file_tool_path, sanitize_rel_path, to_rel_string,
+};
 use super::{ToolResult, Tools};
 use anyhow::Result;
 use ignore::WalkBuilder;
@@ -67,7 +69,7 @@ impl Tools {
             .globs
             .unwrap_or_default()
             .into_iter()
-            .map(|g| expand_tilde(&g))
+            .map(|g| expand_file_tool_path(&g, dirs::home_dir().as_deref()))
             .collect();
 
         let mut rel_globs: Vec<String> = Vec::new();
@@ -155,7 +157,7 @@ impl Tools {
 
     fn read_file_inner(&self, args: ReadFileArgs) -> Result<ToolResult> {
         // Expand ~/ to home directory before processing.
-        let expanded = expand_tilde(&args.path);
+        let expanded = expand_file_tool_path(&args.path, dirs::home_dir().as_deref());
         let abs_path = Path::new(&expanded);
 
         // Absolute paths are read directly (no workspace sandboxing).

@@ -62,14 +62,8 @@ pub(super) struct ProjectQuery {
 /// Expand `~` / `~/...` and resolve a project_root string into an absolute,
 /// canonicalized path. Shared by agent / skill / session handlers.
 pub(super) fn canonical_project_root(project_root: &str) -> PathBuf {
-    let expanded = if project_root == "~" {
-        dirs::home_dir().unwrap_or_else(|| PathBuf::from(project_root))
-    } else if project_root.starts_with("~/") {
-        dirs::home_dir()
-            .unwrap_or_default()
-            .join(&project_root[2..])
-    } else {
-        PathBuf::from(project_root)
-    };
+    // Without a home, `~/…` keeps its relative tail; bare `~` stays literal.
+    let home = dirs::home_dir().or_else(|| project_root.starts_with("~/").then(PathBuf::new));
+    let expanded = crate::util::expand_tilde(project_root.as_ref(), home.as_deref());
     crate::util::resolve_path(&expanded)
 }

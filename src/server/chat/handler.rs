@@ -186,13 +186,16 @@ fn auto_session_title(message: &str) -> String {
 /// UI stores) would never find the entry `/api/chat` wrote under the
 /// canonicalized path.
 pub(super) fn resolve_request_root(req_root: &str) -> PathBuf {
-    let expanded = if req_root.is_empty() || req_root == "~" {
-        dirs::home_dir().unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
-    } else if let Some(rest) = req_root.strip_prefix("~/") {
-        dirs::home_dir().unwrap_or_default().join(rest)
-    } else {
-        PathBuf::from(req_root)
-    };
+    // Empty and bare `~` default to cwd without a home; `~/…` keeps its tail.
+    let path = if req_root.is_empty() { "~" } else { req_root };
+    let home = dirs::home_dir().unwrap_or_else(|| {
+        if path == "~" {
+            std::env::current_dir().unwrap_or_default()
+        } else {
+            PathBuf::new()
+        }
+    });
+    let expanded = crate::util::expand_tilde(path.as_ref(), Some(&home));
     crate::util::resolve_path(&expanded)
 }
 

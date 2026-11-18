@@ -12,13 +12,15 @@ use serde::{Deserialize, Serialize};
 
 /// Expand `~` to the user's home directory.
 fn expand_project_root(raw: &str) -> PathBuf {
-    if raw == "~" {
-        dirs::home_dir().unwrap_or_else(|| PathBuf::from("."))
-    } else if let Some(rest) = raw.strip_prefix("~/") {
-        dirs::home_dir().unwrap_or_default().join(rest)
-    } else {
-        PathBuf::from(raw)
-    }
+    // Without a home, bare `~` means cwd and `~/…` keeps its relative tail.
+    let home = dirs::home_dir().unwrap_or_else(|| {
+        if raw == "~" {
+            PathBuf::from(".")
+        } else {
+            PathBuf::new()
+        }
+    });
+    crate::util::expand_tilde(Path::new(raw), Some(&home))
 }
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};

@@ -1,6 +1,8 @@
 //! Small helpers every layer may use. One copy of each: look here before
 //! writing another.
 
+use std::path::{Path, PathBuf};
+
 /// Mark a file we wrote as runnable (0755). Nothing to do off unix.
 #[cfg(unix)]
 pub fn set_executable(path: &std::path::Path) -> std::io::Result<()> {
@@ -154,27 +156,32 @@ pub fn wrap_with_cwd_sentinel(command: &str) -> String {
     format!("{command}\n__linggen_ec=$?; echo '{CWD_SENTINEL}'; pwd; exit $__linggen_ec")
 }
 
+/// Expand bare `~` and `~/…` against `home`, without canonicalizing.
+/// Named users and paths without a leading tilde are left alone, as is
+/// every path when `home` is unknown. The suffix uses the existing `Path::join`
+/// semantics; expansion does not otherwise rewrite the path.
+pub fn expand_tilde(path: &Path, home: Option<&Path>) -> PathBuf {
+    let Some(home) = home else {
+        return path.to_path_buf();
+    };
+    let text = path.to_string_lossy();
+    if text == "~" {
+        home.to_path_buf()
+    } else if let Some(rest) = text.strip_prefix("~/") {
+        home.join(rest)
+    } else {
+        path.to_path_buf()
+    }
+}
+
 /// Resolve a path. Expands a leading `~` to `$HOME` first, then follows
 /// symlinks via `canonicalize`. On macOS, `/tmp` → `/private/tmp`.
 ///
 /// Falls back to the expanded-but-not-canonicalized path when the target
 /// doesn't exist, so callers that want a best-effort absolute path (e.g.
 /// mission cwd before directories are created) still get a usable value.
-pub fn resolve_path(path: &std::path::Path) -> std::path::PathBuf {
-    let expanded: std::path::PathBuf = {
-        let s = path.to_string_lossy();
-        if let Some(rest) = s.strip_prefix("~/") {
-            if let Some(home) = dirs::home_dir() {
-                home.join(rest)
-            } else {
-                path.to_path_buf()
-            }
-        } else if s == "~" {
-            dirs::home_dir().unwrap_or_else(|| path.to_path_buf())
-        } else {
-            path.to_path_buf()
-        }
-    };
+pub fn resolve_path(path: &Path) -> PathBuf {
+    let expanded = expand_tilde(path, dirs::home_dir().as_deref());
     expanded.canonicalize().unwrap_or(expanded)
 }
 
@@ -187,10 +194,11 @@ pub(crate) mod tilde_cases {
         let sep = std::path::MAIN_SEPARATOR;
         let child = format!("fixture-home{sep}x");
         let trailing = format!("fixture-home{sep}");
-        // Only the permission helper expands bare `~`. Tools and logging
-        // keep it literal. All three expand `~/` and agree on the rest;
-        // with no home, every input stays literal. Inject the missing home
-        // because removing HOME can still leave an OS account directory.
+        // The legacy permission helper expanded bare `~`; tools and logging
+        // kept it literal. Preserve those results at each call site. All
+        // three expand `~/` and agree on the rest. With no home, every
+        // input stays literal. Inject that case because removing HOME can
+        // still leave an OS account directory.
         for (input, permission, tools_and_logging) in [
             ("~", "fixture-home", "~"),
             ("~/x", child.as_str(), child.as_str()),

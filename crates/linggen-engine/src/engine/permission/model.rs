@@ -8,6 +8,7 @@ use super::classify::{classify_bash, dequote};
 use super::pattern_text::text_words;
 use super::shell_text::strip_heredoc_bodies;
 use super::store::SessionPermissions;
+use crate::util::expand_tilde;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -315,29 +316,14 @@ fn split_command_segments(cmd: &str) -> Vec<String> {
 // Path utilities + effective-mode lookup
 // ---------------------------------------------------------------------------
 
-/// Pure tilde expansion (no canonicalization). Used by the store layer to
-/// compare grant paths during pruning.
-pub(super) fn expand_tilde(path: &str) -> String {
-    expand_tilde_with_home(path, dirs::home_dir().as_deref())
-}
-
-fn expand_tilde_with_home(path: &str, home: Option<&Path>) -> String {
-    if let Some(rest) = path.strip_prefix("~/") {
-        if let Some(home) = home {
-            return home.join(rest).to_string_lossy().to_string();
-        }
-    } else if path == "~" {
-        if let Some(home) = home {
-            return home.to_string_lossy().to_string();
-        }
-    }
-    path.to_string()
-}
-
 #[cfg(test)]
 #[test]
 fn permission_tilde_expansion() {
-    crate::util::tilde_cases::check(|path, home| expand_tilde_with_home(path, home), true);
+    // Targets and grants keep the legacy expansion before matching or pruning.
+    crate::util::tilde_cases::check(
+        |path, home| expand_tilde(Path::new(path), home).to_string_lossy().into_owned(),
+        true,
+    );
 }
 
 /// Tilde-expand and resolve symlinks. On macOS, `/tmp` and `/private/tmp` are
@@ -352,7 +338,8 @@ fn permission_tilde_expansion() {
 /// the missing tail so `/tmp/new-file.txt` still normalizes to
 /// `/private/tmp/new-file.txt`.
 pub(super) fn normalize_path(path: &str) -> String {
-    let expanded = expand_tilde(path);
+    let expanded = expand_tilde(Path::new(path), dirs::home_dir().as_deref());
+    let expanded = expanded.to_string_lossy().into_owned();
     let mut p = std::path::PathBuf::from(&expanded);
     if let Ok(c) = p.canonicalize() {
         return c.to_string_lossy().to_string();
@@ -766,16 +753,13 @@ fn check_grants(
     // Tools without an explicit file_path use cwd.
     let target_path = file_path
         .map(|fp| {
-            if fp == "~" {
-                dirs::home_dir().unwrap_or_else(|| PathBuf::from(fp))
-            } else if let Some(rest) = fp.strip_prefix("~/") {
-                dirs::home_dir()
-                    .map(|h| h.join(rest))
-                    .unwrap_or_else(|| PathBuf::from(fp))
+            if fp == "~" || fp.starts_with("~/") {
+                // An unresolved home-relative path is not rebased onto the session cwd.
+                expand_tilde(Path::new(fp), dirs::home_dir().as_deref())
             } else {
-                let p = PathBuf::from(fp);
+                let p = Path::new(fp);
                 if p.is_absolute() {
-                    p
+                    p.to_path_buf()
                 } else {
                     session_cwd.join(p)
                 }
@@ -1258,7 +1242,7 @@ fn cd_destination(word: &str, cwd: &Path) -> Option<PathBuf> {
         return None;
     }
     let joined = if t == "~" || t.starts_with("~/") || t.starts_with('/') {
-        expand_path_arg(t)
+        expand_tilde(Path::new(t), dirs::home_dir().as_deref())
     } else {
         cwd.join(t)
     };
@@ -1306,18 +1290,6 @@ fn shell_words(cmd: &str) -> Vec<String> {
     words
 }
 
-fn expand_path_arg(p: &str) -> PathBuf {
-    if p == "~" {
-        dirs::home_dir().unwrap_or_else(|| PathBuf::from(p))
-    } else if let Some(rest) = p.strip_prefix("~/") {
-        dirs::home_dir()
-            .map(|h| h.join(rest))
-            .unwrap_or_else(|| PathBuf::from(p))
-    } else {
-        PathBuf::from(p)
-    }
-}
-
 /// Resolve a path token from a bash command to an absolute path for gating.
 /// Absolute (`/x`) and tilde (`~`, `~/x`) tokens expand as-is; a relative token
 /// is joined onto the session cwd so its real target — including any `..`
@@ -1325,7 +1297,7 @@ fn expand_path_arg(p: &str) -> PathBuf {
 /// rather than the process-global cwd that `canonicalize` would otherwise use.
 fn resolve_bash_arg(path_arg: &str, session_cwd: &Path) -> PathBuf {
     if path_arg == "~" || path_arg.starts_with("~/") || path_arg.starts_with('/') {
-        expand_path_arg(path_arg)
+        expand_tilde(Path::new(path_arg), dirs::home_dir().as_deref())
     } else {
         session_cwd.join(path_arg)
     }

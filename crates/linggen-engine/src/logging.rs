@@ -129,7 +129,7 @@ pub fn set_log_level(level: &str) {
 
 fn resolve_log_dir(configured: Option<&str>) -> Result<PathBuf> {
     let dir = if let Some(path) = configured {
-        expand_tilde(path)
+        configured_log_path(path, dirs::home_dir().as_deref())
     } else {
         crate::paths::logs_dir()
     };
@@ -137,24 +137,16 @@ fn resolve_log_dir(configured: Option<&str>) -> Result<PathBuf> {
     Ok(dir)
 }
 
-fn expand_tilde(path: &str) -> PathBuf {
-    expand_tilde_with_home(path, dirs::home_dir().as_deref())
-}
-
-fn expand_tilde_with_home(path: &str, home: Option<&std::path::Path>) -> PathBuf {
-    if let Some(rest) = path.strip_prefix("~/") {
-        if let Some(home) = home {
-            return home.join(rest);
-        }
-    }
-    PathBuf::from(path)
+fn configured_log_path(path: &str, home: Option<&std::path::Path>) -> PathBuf {
+    // A configured directory named `~` has always been literal.
+    crate::util::expand_tilde(path.as_ref(), home.filter(|_| path != "~"))
 }
 
 #[cfg(test)]
 #[test]
 fn log_dir_tilde_expansion() {
     crate::util::tilde_cases::check(
-        |path, home| expand_tilde_with_home(path, home).to_string_lossy().into_owned(),
+        |path, home| configured_log_path(path, home).to_string_lossy().into_owned(),
         false,
     );
 }

@@ -8,7 +8,7 @@ use crate::engine::session_spec::PresetGrants;
 use crate::engine::skill::Skill;
 use crate::engine::AgentEngine;
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::Path;
 
 /// What kind of activation event is happening — controls whether to prompt
 /// the user, whether to apply declared grants, and whether the engine
@@ -218,15 +218,12 @@ fn seed_session_cwd_from_skill(engine: &AgentEngine, skill: &Skill) {
     if trimmed.is_empty() {
         return;
     }
-    let expanded: PathBuf = if trimmed == "~" {
-        let Some(home) = dirs::home_dir() else { return };
-        home
-    } else if let Some(rest) = trimmed.strip_prefix("~/") {
-        let Some(home) = dirs::home_dir() else { return };
-        home.join(rest)
-    } else {
-        PathBuf::from(trimmed)
-    };
+    let home = dirs::home_dir();
+    // A home-relative declaration must not seed a literal cwd if home is unknown.
+    if home.is_none() && (trimmed == "~" || trimmed.starts_with("~/")) {
+        return;
+    }
+    let expanded = crate::util::expand_tilde(Path::new(trimmed), home.as_deref());
     let prev_cwd = engine.tools.builtins.cwd();
     engine
         .tools

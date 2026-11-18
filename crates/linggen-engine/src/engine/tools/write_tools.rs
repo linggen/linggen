@@ -1,4 +1,4 @@
-use super::tool_helpers::{expand_tilde, sanitize_rel_path};
+use super::tool_helpers::{expand_file_tool_path, sanitize_rel_path};
 use super::{ToolResult, Tools};
 use anyhow::Result;
 use serde::Deserialize;
@@ -126,7 +126,7 @@ impl Tools {
     }
 
     pub(super) async fn write_file(&self, args: WriteFileArgs) -> Result<ToolResult> {
-        let expanded = expand_tilde(&args.path);
+        let expanded = expand_file_tool_path(&args.path, dirs::home_dir().as_deref());
         let abs_path = Path::new(&expanded);
 
         // Absolute paths are written directly (permission was already approved upstream).
@@ -174,7 +174,7 @@ impl Tools {
             anyhow::bail!("old_string must not be empty");
         }
 
-        let expanded = expand_tilde(&args.path);
+        let expanded = expand_file_tool_path(&args.path, dirs::home_dir().as_deref());
         let abs_path = Path::new(&expanded);
 
         // Absolute paths are used directly (permission was already approved upstream).

@@ -1,5 +1,5 @@
-use super::model::{expand_tilde, PathMode, PermissionMode};
-use crate::util::default_true;
+use super::model::{PathMode, PermissionMode};
+use crate::util::{default_true, expand_tilde};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
@@ -164,14 +164,16 @@ impl SessionPermissions {
             });
             return;
         }
-        let expanded = expand_tilde(path);
+        let expanded = expand_tilde(Path::new(path), dirs::home_dir().as_deref());
+        let expanded = expanded.to_string_lossy();
 
         self.path_modes.retain(|pm| {
             if pm.path == path {
                 return true;
             }
-            let pm_expanded = expand_tilde(&pm.path);
-            let is_child = pm_expanded.starts_with(&expanded)
+            let pm_expanded = expand_tilde(Path::new(&pm.path), dirs::home_dir().as_deref());
+            let pm_expanded = pm_expanded.to_string_lossy();
+            let is_child = pm_expanded.starts_with(&*expanded)
                 && (pm_expanded.len() == expanded.len()
                     || pm_expanded.as_bytes().get(expanded.len()) == Some(&b'/'));
             !is_child
