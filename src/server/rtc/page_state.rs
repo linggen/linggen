@@ -440,14 +440,7 @@ pub async fn build_page_state(
                     .as_deref()
                     .map_or(is_admin && pinned.is_none() && !refused, &scope_check)
             })
-            .map(|(qid, entry)| {
-                serde_json::json!({
-                    "question_id": qid,
-                    "agent_id": entry.agent_id,
-                    "questions": entry.questions,
-                    "session_id": entry.session_id,
-                })
-            })
+            .map(|(qid, entry)| crate::server::ui_events::pending_ask(qid, entry, &state.manager))
             .collect();
         ps.pending_ask_user = Some(items);
 

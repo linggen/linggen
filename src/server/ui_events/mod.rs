@@ -11,7 +11,7 @@ mod global;
 mod pet;
 mod place;
 
-pub(crate) use place::with_place;
+pub(crate) use place::{pending_ask, with_place};
 
 use crate::engine::events::{ServerEvent, UiEvent, GLOBAL};
 

@@ -39,7 +39,7 @@ import { sessionApi } from '../../lib/endpoints';
 import { startNewChat } from '../../lib/newChat';
 import { sessionFolderLabel } from '../../lib/sessionRoot.mts';
 import { runLabel } from '../../lib/runStatus.mts';
-import { pagePlace, stopLabel, withLivePlaces, workingIn } from '../../lib/dayFold.mts';
+import { askedElsewhere, askedFrom, pagePlace, placeName, stopLabel, withLivePlaces, workingIn } from '../../lib/dayFold.mts';
 import { useRunningElsewhere } from '../../hooks/useRunningElsewhere';
 
 /**
@@ -319,6 +319,9 @@ export const ChatPanel: React.FC<{
   // stops it — one turn at a time).
   const runningAtName = useRunningElsewhere(selectedMainRunningRunId);
   const here = useSessionStore((s) => pagePlace(s.isSkillSession ? s.activeSkillName : null));
+  // A question asked in another place still shows and is answered here; it names that place.
+  const askedPlace = pendingAskUser ? askedElsewhere(pendingAskUser, here) : null;
+  const askedAt = askedPlace ? placeName(askedPlace, skills) : null;
   const runPlaces = useServerStore((s) => s.runPlaces);
   // Another place's live rows fold with its stretch while its turn streams,
   // the streaming row too (lib/dayFold.mts `withLivePlaces`).
@@ -498,6 +501,7 @@ export const ChatPanel: React.FC<{
         )}
         {pendingAskUser && onRespondToAskUser && !askUserBelongsToSubagent && (
           <div key={JSON.stringify([sessionId, pendingAskUser.questionId])} className="px-3 py-2">
+            {askedAt && <div data-testid="ask-place" className="mb-1 text-[11px] text-slate-500 dark:text-slate-400">{askedFrom(askedAt)}</div>}
             {(pendingAskUser.questions[0]?.permission || pendingAskUser.questions[0]?.header === 'Permission')
               ? <ToolPermissionCard key={pendingAskUser.questionId} pending={pendingAskUser} onRespond={onRespondToAskUser} />
               : <AskUserCard key={pendingAskUser.questionId} pending={pendingAskUser} onRespond={onRespondToAskUser} />}

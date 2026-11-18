@@ -116,19 +116,84 @@ fn names_a_place(e: &Value) -> bool {
 }
 
 /// A private app is never a place in the day: its page naming the day
-/// stands in its own chat, and nothing sent names it.
+/// stands in its own chat, and nothing sent names it — its question
+/// neither, on the event that asks it or in the open questions listed.
 #[tokio::test]
 async fn a_private_app_is_never_a_told_place() {
-    let setup = Setup::default().script(Agent::Ling, vec![text("LEDGER-REPLY kept.")]);
+    let setup = Setup::default().script(
+        Agent::Ling,
+        vec![tool("AskUser", box_question()), text("LEDGER-REPLY kept.")],
+    );
     let (w, _) = day_world_at(12, setup).await;
-    install_ledger(&w).await;
+    install_asking_ledger(&w).await;
     let day = w.api.get("/api/sessions/day").await["id"].as_str().unwrap().to_string();
     let mark = w.mark();
     let sent = say(&w, &day, Some("ledger"), "LEDGER-ONLY words").await;
     let own = sent["session_id"].as_str().unwrap_or_default().to_string();
     assert_ne!(own, day, "{sent}");
+    let RunEnd::Asked(asked) = w.wait_run(&own, Agent::Ling, mark).await else {
+        panic!("no question");
+    };
+    assert!(asked.get("place").is_none(), "an open question named a place: {asked}");
+    let mark = w.mark();
+    w.api.answer(&asked, "Red").await;
     w.finish_run(&own, Agent::Ling, mark).await;
     let events = w.events_when(|evs| evs.iter().any(|e| e["kind"] == "message" && e["session_id"] == own.as_str())).await;
+    assert!(!of_kinds(&events, &own, &["ask_user"]).is_empty(), "no question asked: {events:#?}");
     let named: Vec<_> = events.iter().filter(|e| names_a_place(e)).collect();
     assert!(named.is_empty(), "named a place: {named:#?}");
+}
+
+fn box_question() -> Value {
+    json!({"questions": [{"question": "Which box?", "header": "Box",
+        "options": [{"label": "Red"}, {"label": "Blue"}]}]})
+}
+
+/// The private ledger (`install_ledger`), able to ask its person a question.
+async fn install_asking_ledger(w: &World) {
+    install_ledger(w).await;
+    let file = w.home.linggen_home().join("skills/ledger/SKILL.md");
+    let skill = std::fs::read_to_string(&file).expect("SKILL.md");
+    std::fs::write(&file, skill.replace("allowed-tools: []", "allowed-tools: [AskUser]")).expect("SKILL.md");
+    w.api.post("/api/skills/reload", json!({})).await;
+}
+
+/// A question from the dice page's turn names the place it was asked in —
+/// on the event that asks it and in the open questions a page restores —
+/// so a card at another page says whose it is.
+#[tokio::test]
+async fn in_the_day_a_question_names_its_place() {
+    let (w, _) = day_world_at(12, held_setup()).await;
+    let day = the_day(&w).await;
+    let mark = w.mark();
+    say(&w, &day, Some("dice"), "Pick a box").await;
+    let RunEnd::Asked(asked) = w.wait_run(&day, Agent::Ling, mark).await else {
+        panic!("no question");
+    };
+    assert_eq!(asked["place"], "dice", "{asked}");
+    let events = w.events_when(|evs| !of_kinds(evs, &day, &["ask_user"]).is_empty()).await;
+    let asks = of_kinds(&events, &day, &["ask_user"]);
+    assert!(!asks.is_empty(), "no question event: {events:#?}");
+    for e in asks {
+        assert_eq!(e["place"], "dice", "{e}");
+    }
+    let mark = w.mark();
+    w.api.answer(&asked, "Red").await;
+    w.finish_run(&day, Agent::Ling, mark).await;
+}
+
+/// With the setting off a question names no place, as before.
+#[tokio::test]
+async fn with_the_setting_off_a_question_names_no_place() {
+    let w = World::start(held_setup().setting_off()).await;
+    let sid = the_day(&w).await;
+    let mark = w.mark();
+    say(&w, &sid, Some("dice"), "Pick a box").await;
+    let RunEnd::Asked(asked) = w.wait_run(&sid, Agent::Ling, mark).await else {
+        panic!("no question");
+    };
+    assert!(asked.get("place").is_none(), "{asked}");
+    let mark = w.mark();
+    w.api.answer(&asked, "Red").await;
+    w.finish_run(&sid, Agent::Ling, mark).await;
 }

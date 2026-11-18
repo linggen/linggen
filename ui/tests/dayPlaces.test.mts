@@ -6,8 +6,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   foldLabel, foldOthers, placeName, queuedHere, runningElsewhere, stopLabel, streamsHere, toldPlaces, waitingFrom, withLivePlaces,
-  workingIn, HOME_PLACE,
+  workingIn, HOME_PLACE, askedElsewhere, askedFrom,
 } from '../src/lib/dayFold.mts';
+import { listedAsk } from '../src/lib/askQueue.mts';
+import { readFileSync } from 'node:fs';
 
 const skills = [{ name: 'health', app: { title: 'Health' } }, { name: 'dj' }];
 
@@ -53,6 +55,24 @@ test('a waiting message is Edit and Remove only at the page it came from', () =>
   assert.equal(queuedHere({ place: 'music' }, 'health'), false);
   assert.equal(queuedHere({}, 'health'), true, 'no place told (any other session): as before');
   assert.equal(waitingFrom(placeName('health', skills)), 'Waiting from Health');
+});
+
+test('a question asked in another place names it; it is still answered here', () => {
+  assert.equal(askedElsewhere({ place: 'health' }, 'music'), 'health');
+  assert.equal(askedElsewhere({ place: 'music' }, 'music'), null, "this page's own question");
+  assert.equal(askedElsewhere({}, 'music'), null, 'no place told (any other session): as before');
+  assert.equal(askedFrom(placeName('health', skills)), 'From Health');
+  // The page's translator reads strings-zh.ts (lib/i18n.ts); its English is the key.
+  const zh = readFileSync(new URL('../src/lib/strings-zh.ts', import.meta.url), 'utf8');
+  assert.ok(zh.includes("'From {app}': '来自 {app}',"), 'the page translates it');
+});
+
+test('an open question as the engine lists it keeps the place it was told', () => {
+  const told = listedAsk({ question_id: 'q1', agent_id: 'ling', questions: [], place: 'health' });
+  assert.deepEqual(told, { questionId: 'q1', agentId: 'ling', questions: [], place: 'health' });
+  const none = listedAsk({ question_id: 'q2' });
+  assert.deepEqual(none, { questionId: 'q2', agentId: '', questions: [] });
+  assert.equal('place' in none, false);
 });
 
 test("another place's live rows fold with its stretch, one line saying it works", () => {

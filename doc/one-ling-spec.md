@@ -207,6 +207,12 @@ session, prompt and row is as before. On (decided by the builder 2026-11-15/16):
   page's place, as the engine first told it; another place's turn stays in
   the chat, folded. With no place told (setting off, any other session)
   every run is relayed as before.
+- **A question names where it was asked**: a question card shows at every
+  page of the day and is answered from any of them (it is the person's to
+  answer), and when the asking turn stands in another place the card says
+  so ("From Health"). The engine tells the place on the `ask_user` event and
+  on each open question it lists (`pending_ask_user`, `GET
+  /api/pending-ask-user`); the page never works it out.
 - **One model a member for the day**: only the picker keeps one
   (`PATCH /api/sessions`); a model a page sends with a message is for that
   turn and is not kept.

@@ -85,7 +85,7 @@ export interface PageState {
   claude_default_model?: string;
   skills?: SkillInfo[];
   missions?: unknown[];
-  pending_ask_user?: Array<{ question_id: string; agent_id?: string; questions?: AskUserQuestion[]; session_id?: string | null }>;
+  pending_ask_user?: Array<{ question_id: string; agent_id?: string; questions?: AskUserQuestion[]; session_id?: string | null; place?: string | null }>;
   busy_sessions?: Record<string, string>;
   /** The web UI build the engine serves now; a page that loaded another
    *  reloads when idle (`lib/uiBuild.mts`). */

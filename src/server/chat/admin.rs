@@ -597,14 +597,7 @@ pub(crate) async fn pending_ask_user_handler(
     let items: Vec<serde_json::Value> = pending
         .iter()
         .filter(|(_, entry)| theirs(entry.session_id.as_deref()))
-        .map(|(qid, entry)| {
-            serde_json::json!({
-                "question_id": qid,
-                "agent_id": entry.agent_id,
-                "questions": entry.questions,
-                "session_id": entry.session_id,
-            })
-        })
+        .map(|(qid, entry)| crate::server::ui_events::pending_ask(qid, entry, &state.manager))
         .collect();
     Json(serde_json::json!(items))
 }

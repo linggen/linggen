@@ -2,6 +2,21 @@ import type { PendingAskUser } from '../types';
 
 export type AskQueues = Record<string, PendingAskUser[]>;
 
+/** An open question as the engine lists it (the page state, the pending
+ *  list) — its place only when the engine told one. */
+export type ListedAsk = { question_id: string; agent_id?: string; questions?: unknown[]; place?: string | null };
+
+/** A listed question as the page keeps it. */
+export function listedAsk(it: ListedAsk): PendingAskUser {
+  const ask: PendingAskUser = {
+    questionId: it.question_id,
+    agentId: String(it.agent_id || ''),
+    questions: (it.questions || []) as PendingAskUser['questions'],
+  };
+  if (it.place) ask.place = it.place;
+  return ask;
+}
+
 export function enqueueAsk(queues: AskQueues, sessionId: string, ask: PendingAskUser): AskQueues {
   const queue = queues[sessionId] ?? [];
   const index = queue.findIndex((item) => item.questionId === ask.questionId);

@@ -15,7 +15,7 @@ import { interruptedResend, INTERRUPTED_TEXT } from '../interruptedTurn.mts';
 import { stillOn } from '../sessionLoad.mts';
 import { sessionRootOf } from '../sessionRoot.mts';
 import { isPermissionSuppressed } from './_shared';
-import { settleAsks } from '../askQueue.mts';
+import { listedAsk, settleAsks } from '../askQueue.mts';
 import { noteUiBuild, type PageFacts } from '../uiBuild.mts';
 import { toldPlaces } from '../dayFold.mts';
 
@@ -91,9 +91,7 @@ function applyPendingAskUser(ps: PageState): void {
   const interaction = useInteractionStore.getState();
   const sessions = new Set([...Object.keys(interaction.askQueues), ...items.flatMap((it) => it.session_id ? [it.session_id] : [])]);
   for (const sid of sessions) {
-    const incoming = items.filter((it) => it.session_id === sid).map((it) => ({
-      questionId: it.question_id, agentId: it.agent_id || '', questions: it.questions || [],
-    }));
+    const incoming = items.filter((it) => it.session_id === sid).map(listedAsk);
     // Server iteration order is arbitrary: the order already shown is kept,
     // and an ask its live event just brought is not dropped by an older push.
     interaction.replaceAsks(sid, settleAsks(interaction.askQueues[sid] ?? [], incoming, Date.now()));

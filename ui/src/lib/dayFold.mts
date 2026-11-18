@@ -133,6 +133,18 @@ export function waitingFrom(name: string): string {
   return `Waiting from ${name}`;
 }
 
+/** The place a question was asked in when it is not this page's: only as
+ *  the engine told it (`place` on the ask). The card still shows and is
+ *  still answered here; it names where it comes from. */
+export function askedElsewhere(ask: { place?: string | null }, here: string): string | null {
+  return ask.place && ask.place !== here ? ask.place : null;
+}
+
+/** A question card's line when it was asked in another place. */
+export function askedFrom(name: string): string {
+  return `From ${name}`;
+}
+
 /** Whether Clear on a page cancels the run going on: never in the day's
  *  session, where that run may be another place's and Clear takes only this
  *  page's part (Stop is the button that stops it). */

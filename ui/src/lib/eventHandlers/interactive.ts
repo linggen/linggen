@@ -25,6 +25,8 @@ export function handleAskUser(item: UiEventOf<'ask_user'>): void {
     agentId: String(item.agent_id || ''),
     questions,
     receivedAtMs: Date.now(),
+    // In a day, the place of the turn that asked (the card names another's).
+    ...(item.place ? { place: item.place } : {}),
   });
 }
 

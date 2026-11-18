@@ -386,3 +386,42 @@ test.describe("an app's own scripts in the day", () => {
     expect((await heard(dice)).join('\n')).not.toContain(HOME_WORDS);
   });
 });
+
+// A question asked by a turn at an app's page shows at the main page too,
+// answerable there, and names the app it comes from; at its own page it
+// names nothing.
+test.describe('a question from another place', () => {
+  test.use({
+    scenario: {
+      scripts: {
+        ling: [
+          { tool: 'AskUser', args: { questions: [{ question: 'Which box?', header: 'Box', options: [{ label: 'Red' }, { label: 'Blue' }] }] } },
+          { text: 'Red it is.' },
+        ],
+      },
+    },
+  });
+
+  test('names its place and is answered at the main page', async ({ page, context, world, request, httpRequests }) => {
+    const day = await settingOn(request, world.url);
+    const dice = page;
+    await dice.goto(embed(world.url, 'dice', day));
+    await expectWebRtc(dice, httpRequests);
+    const main = await context.newPage();
+    await opened(main, `${world.url}/?session=${day}`);
+
+    await send(dice, 'Pick a box');
+    const question = (p: Page) => p.getByText('Which box?', { exact: true }).filter({ visible: true });
+    await expect(question(dice)).toHaveCount(1);
+    await expect(dice.getByTestId('ask-place')).toHaveCount(0);
+    await expect(question(main)).toHaveCount(1);
+    await expect(main.getByTestId('ask-place')).toHaveText('From dice');
+
+    // After a reload the card is restored from the engine's list, still named.
+    await main.reload();
+    await expect(composer(main)).toBeVisible();
+    await expect(main.getByTestId('ask-place')).toHaveText('From dice');
+    await main.getByRole('button', { name: 'Red' }).first().click();
+    await expect(seen(dice, 'Red it is.')).toHaveCount(1);
+  });
+});

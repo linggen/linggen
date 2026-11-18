@@ -501,4 +501,7 @@ export interface PendingAskUser {
   questions: AskUserQuestion[];
   /** When its live event came; a restored ask has none. */
   receivedAtMs?: number;
+  /** In a day's session, the place of the turn that asked it, as the
+   *  engine told it (`lib/dayFold.mts` `askedElsewhere`). Absent elsewhere. */
+  place?: string;
 }

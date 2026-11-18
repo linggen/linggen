@@ -346,6 +346,7 @@ export const ZH: Record<string, string> = {
   'Working in {app}': '正在 {app} 中工作',
   'Stop · {app}': '停止 · {app}',
   'Waiting from {app}': '来自 {app}，等待中',
+  'From {app}': '来自 {app}',
   'Auto-compact at (%)': '自动压缩阈值（%）',
   'Max iterations': '最大步数',
   'Write safety': '写入保护',

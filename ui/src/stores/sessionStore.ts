@@ -2,12 +2,13 @@
  * Session and workspace selection state.
  */
 import { create } from 'zustand';
-import type { AskUserQuestion, SessionInfo } from '../types';
+import type { SessionInfo } from '../types';
 import { sessions as sessionsApi } from '../lib/api';
 import { confirmDialog } from '../lib/confirmDialog';
 import { translate } from '../lib/i18n';
 import { addWork, NO_WORK, runningWorkMessage } from '../lib/runningWork.mts';
 import { useInteractionStore } from './interactionStore';
+import { listedAsk } from '../lib/askQueue.mts';
 import { sessionApi } from '../lib/endpoints';
 import { newChatRequest } from '../lib/sessionBinding.mts';
 import { afterNewChat } from '../lib/sessionRoot.mts';
@@ -227,11 +228,7 @@ async function refreshPendingAskFor(sessionId: string | null): Promise<void> {
   try {
     const items = await sessionApi.pendingAskUser();
     if (useSessionStore.getState().activeSessionId !== sessionId || useInteractionStore.getState().askRevision !== revision) return;
-    useInteractionStore.getState().replaceAsks(sessionId, items.filter((it) => it.session_id === sessionId).map((it) => ({
-      questionId: it.question_id,
-      agentId: String(it.agent_id || ''),
-      questions: (it.questions || []) as AskUserQuestion[],
-    })));
+    useInteractionStore.getState().replaceAsks(sessionId, items.filter((it) => it.session_id === sessionId).map(listedAsk));
   } catch {
     // Daemon unreachable — live events and page state can still restore asks.
   }
