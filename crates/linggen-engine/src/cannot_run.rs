@@ -63,6 +63,20 @@ impl CannotRun {
         provider(kind, retry_after_of(err), model, cloud)
     }
 
+    /// An agent that could not be made: no model configured, or a
+    /// provider's refusal in the error's chain. Anything else (a missing
+    /// agent file, a store error) is no reason a caller acts on — an
+    /// `io::Error` is never read as a provider's network failure.
+    pub fn of_creation_error(err: &anyhow::Error) -> Option<Self> {
+        if format!("{err:#}").contains(NO_MODELS_CONFIGURED) {
+            return Some(Self::NoModel);
+        }
+        let from_provider = err
+            .chain()
+            .any(|c| c.downcast_ref::<crate::provider::error::ProviderError>().is_some());
+        from_provider.then(|| Self::of_model_error(err, None, None)).flatten()
+    }
+
     /// A failure that survived only as text — a finished run's error, a
     /// dream run's `last_run_error`. Linggen Cloud is recognised by the
     /// sign-in line the engine itself writes for it.
@@ -160,11 +174,13 @@ impl CannotRun {
         v
     }
 
-    /// [`fact`](Self::fact) for a run that ended on it: its session keeps
-    /// the work so far, for `agent_run(session_id)` to continue.
-    pub fn run_fact(&self) -> Value {
+    /// [`fact`](Self::fact) for a run that ended on it, and whether its
+    /// session's engine holds the run's work for `agent_run(session_id)` to
+    /// continue from (it does until the engine is rebuilt: a restart, a
+    /// settings change).
+    pub fn run_fact(&self, work_kept: bool) -> Value {
         let mut v = self.fact();
-        v["work_kept"] = json!(true);
+        v["work_kept"] = json!(work_kept);
         v
     }
 
@@ -289,7 +305,7 @@ mod tests {
         assert_eq!(model.as_deref(), Some("gpt-x"));
         let left = why.fact()["resets_in_secs"].as_u64().unwrap();
         assert!((8960..=8973).contains(&left), "{left} until {resets_at}");
-        assert_eq!(why.run_fact()["work_kept"], true);
+        assert_eq!(why.run_fact(true)["work_kept"], true);
     }
 
     /// A memory call that timed out is the store's answer to one call,
@@ -303,6 +319,19 @@ mod tests {
             CannotRun::of_model_error(&stream, Some("m"), None),
             Some(CannotRun::Provider { model: Some("m".into()), kind: ProviderErrorKind::Network })
         );
+    }
+
+    /// An agent that could not be made is a reason only for no model or a
+    /// provider's refusal: a file that is not there is no network failure.
+    #[test]
+    fn a_creation_error_is_a_reason_only_when_it_is_one() {
+        let none = anyhow::anyhow!(NO_MODELS_CONFIGURED).context("failed to create agent 'ling'");
+        assert_eq!(CannotRun::of_creation_error(&none), Some(CannotRun::NoModel));
+        let missing = anyhow::Error::from(std::io::Error::new(std::io::ErrorKind::NotFound, "agents/ling.md"));
+        assert_eq!(CannotRun::of_model_error(&missing, None, None).map(|c| c.is_usage_limit()), Some(false), "read as a provider's");
+        assert_eq!(CannotRun::of_creation_error(&missing), None);
+        let refused = http(401, "{}").context("failed to create agent 'ling'");
+        assert!(matches!(CannotRun::of_creation_error(&refused), Some(CannotRun::Provider { .. })));
     }
 
     /// No model at all — from the engine's own error or a dream run's

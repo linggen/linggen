@@ -162,9 +162,34 @@ async fn a_run_continued_after_a_model_failure_keeps_what_it_read() {
     assert!(continued.contains(MARKER), "the continued turn lost what the run had read");
 }
 
+/// A Stop is no failure to continue from: nothing of a cancelled run is
+/// kept in the thread (`keep_unfinished_work` keeps only a run that cannot
+/// go on), so the run's status names no reason.
+#[tokio::test]
+async fn a_run_that_failed_for_no_reason_a_caller_acts_on_keeps_nothing() {
+    let setup = Setup::default().script(
+        Agent::Ling,
+        vec![tool("Read", json!({"path": "notes.txt"})), error(418, "not a provider refusal")],
+    );
+    let w = World::start(setup).await;
+    std::fs::write(std::path::Path::new(&w.work()).join("notes.txt"), "words\n").unwrap();
+    let ran = w
+        .api
+        .post("/mcp", agent_run(json!({"prompt": "Read notes.txt.", "write_dir": w.work()})))
+        .await;
+    assert!(ran["result"]["content"][0]["text"].as_str().unwrap_or_default().contains("agent run failed"), "{ran}");
+    let sid = delegate_session(&w);
+    let status = json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+        "params": {"name": "agent_status", "arguments": {"session_id": sid}}});
+    let status = w.api.post("/mcp", status).await;
+    let status: Value = serde_json::from_str(status["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(status["status"], "failed", "{status}");
+    assert_eq!(status["cannot_run"], Value::Null, "{status}");
+}
+
 /// A delegated run that ends because its model failed says why in a field
 /// of its own — the reason, the model, one line on what to do, and that the
-/// session keeps its work — beside the error's words, in `agent_status`.
+/// session holds no work to continue from (it did none) — beside the error's words, in `agent_status`.
 #[tokio::test]
 async fn a_run_that_ends_on_its_model_says_why_in_a_field() {
     let setup = Setup::default().script(Agent::Ling, vec![error(500, "upstream overloaded")]);
@@ -183,6 +208,53 @@ async fn a_run_that_ends_on_its_model_says_why_in_a_field() {
     assert_eq!(why["reason"], "provider", "{status}");
     assert_eq!(why["kind"], "server5xx", "{status}");
     assert_eq!(why["model"], status["model"], "{status}");
-    assert_eq!(why["work_kept"], true, "{status}");
+    assert_eq!(why["work_kept"], false, "the run failed before it did anything: {status}");
     assert!(why["line"].as_str().is_some_and(|l| !l.is_empty()), "{status}");
+}
+
+/// The same through a continued turn (`agent_run(session_id)` runs as a
+/// chat turn): a continued turn that read a file and then failed says why,
+/// with its work kept, and the turn after it starts from that reading.
+#[tokio::test]
+async fn a_continued_turn_that_fails_says_why_and_keeps_its_reading() {
+    const MARKER: &str = "the-tide-table-reads-0412";
+    let setup = Setup::default().script(
+        Agent::Ling,
+        vec![
+            text("Ready."),
+            tool("Read", json!({"path": "tides.txt"})),
+            error(500, "upstream overloaded"),
+            text("Back on it."),
+        ],
+    );
+    let w = World::start(setup).await;
+    std::fs::write(std::path::Path::new(&w.work()).join("tides.txt"), format!("{MARKER}\n")).unwrap();
+    let first = w
+        .api
+        .post("/mcp", agent_run(json!({"prompt": "Stand by.", "write_dir": w.work()})))
+        .await;
+    assert_eq!(first["result"]["content"][0]["text"], "Ready.", "{first}");
+    let sid = delegate_session(&w);
+
+    let failed = w
+        .api
+        .post("/mcp", agent_run(json!({"prompt": "Read tides.txt, then sum it up.", "session_id": sid})))
+        .await;
+    let said = failed["result"]["content"][0]["text"].as_str().unwrap_or_default().to_string();
+    assert!(said.contains("agent run failed"), "{failed}");
+    let status = json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+        "params": {"name": "agent_status", "arguments": {"session_id": sid}}});
+    let status = w.api.post("/mcp", status).await;
+    let status: Value = serde_json::from_str(status["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(status["cannot_run"]["reason"], "provider", "{status}");
+    assert_eq!(status["cannot_run"]["work_kept"], true, "{status}");
+
+    let again = w
+        .api
+        .post("/mcp", agent_run(json!({"prompt": "Go on.", "session_id": sid})))
+        .await;
+    assert_eq!(again["result"]["content"][0]["text"], "Back on it.", "{again}");
+    let calls = w.model.calls_of(Agent::Ling);
+    assert_eq!(calls.len(), 4, "ready, the read, the failed call, the turn after");
+    assert!(calls[3].body.to_string().contains(MARKER), "the turn after lost the reading");
 }

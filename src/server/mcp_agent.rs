@@ -540,7 +540,7 @@ async fn drive(
             // No run began: the session's outcome says why, as a failed
             // run's would (no model configured, above all).
             let error = format!("failed to create agent '{agent_id}': {e}");
-            let why = crate::cannot_run::CannotRun::of_model_error(&e, None, None);
+            let why = crate::cannot_run::CannotRun::of_creation_error(&e);
             state.manager.run_store.record_refusal(&session_id, error.clone(), why);
             return Err(error);
         }
@@ -1214,6 +1214,8 @@ struct LastRun {
     model: Option<String>,
     /// Why a failed run could not go on, typed where it failed.
     cannot_run: Option<crate::cannot_run::CannotRun>,
+    /// Its session's engine holds the failed run's work.
+    work_kept: bool,
 }
 
 impl LastRun {
@@ -1222,7 +1224,7 @@ impl LastRun {
     fn cannot_run_fact(&self) -> serde_json::Value {
         self.cannot_run
             .as_ref()
-            .map_or(serde_json::Value::Null, |why| why.run_fact())
+            .map_or(serde_json::Value::Null, |why| why.run_fact(self.work_kept))
     }
 }
 
@@ -1240,6 +1242,7 @@ fn last_run(manager: &crate::engine::agent::AgentManager, session: &str) -> Last
             error: None,
             model: run.model.clone(),
             cannot_run: None,
+            work_kept: false,
         };
     }
     match store.outcome(session) {
@@ -1253,12 +1256,14 @@ fn last_run(manager: &crate::engine::agent::AgentManager, session: &str) -> Last
             error: o.error.map(|e| naming_model(e, o.model.as_deref())),
             model: o.model,
             cannot_run: o.cannot_run,
+            work_kept: o.work_kept,
         },
         None => LastRun {
             status: "completed",
             error: None,
             model: None,
             cannot_run: None,
+            work_kept: false,
         },
     }
 }
@@ -1460,6 +1465,7 @@ mod wait_ready_tests {
                 error: None,
                 model: None,
                 cannot_run: None,
+                work_kept: false,
             },
             replies,
             vec![],
@@ -2112,6 +2118,7 @@ mod permit_tests {
                 error: None,
                 model: None,
                 cannot_run: None,
+                work_kept: false,
             },
             TurnReplies {
                 reply: Some("ok".into()),
@@ -2297,6 +2304,7 @@ mod permit_tests {
                     resets_at: "2999-01-01T00:00:00Z".into(),
                     resets_in_secs: 0,
                 }),
+                work_kept: true,
             },
             TurnReplies::default(),
             vec![],

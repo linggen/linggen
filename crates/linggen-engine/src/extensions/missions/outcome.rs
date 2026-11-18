@@ -33,7 +33,7 @@ impl RunEnd {
     /// is when it is one (no model configured).
     pub fn not_made(err: &anyhow::Error) -> Self {
         Self {
-            cannot_run: crate::cannot_run::CannotRun::of_model_error(err, None, None),
+            cannot_run: crate::cannot_run::CannotRun::of_creation_error(err),
             ..Self::failed(err.to_string())
         }
     }

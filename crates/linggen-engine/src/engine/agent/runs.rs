@@ -51,6 +51,16 @@ pub struct RunOutcome {
     /// acts on (no model, a sign-in, a usage limit and its reset, …) —
     /// typed where the failure happened (`AgentEngine::stream_with_fallback`).
     pub cannot_run: Option<CannotRun>,
+    /// The failed run's work is held in its session's engine
+    /// (`AgentEngine::keep_unfinished_work`).
+    pub work_kept: bool,
+}
+
+/// What a running run noted about how it ends.
+#[derive(Debug, Clone, Default)]
+struct Ending {
+    why: Option<CannotRun>,
+    work_kept: bool,
 }
 
 /// In-memory run store. No file persistence — runs are ephemeral process records
@@ -62,7 +72,7 @@ pub struct RunStore {
     /// Session id → how its latest top-level run ended.
     outcomes: Mutex<HashMap<String, RunOutcome>>,
     /// Run id → why the running run cannot go on, noted where it failed.
-    reasons: Mutex<HashMap<String, CannotRun>>,
+    reasons: Mutex<HashMap<String, Ending>>,
 }
 
 impl RunStore {
@@ -79,13 +89,21 @@ impl RunStore {
     /// with the failure's type at hand. Its outcome carries it.
     pub fn set_cannot_run(&self, run_id: &str, why: CannotRun) {
         if self.runs.lock_ok().contains_key(run_id) {
-            self.reasons.lock_ok().insert(run_id.to_string(), why);
+            self.reasons.lock_ok().entry(run_id.to_string()).or_default().why = Some(why);
         }
     }
 
     /// Why the running run `run_id` cannot go on, if that was noted.
     pub fn cannot_run(&self, run_id: &str) -> Option<CannotRun> {
-        self.reasons.lock_ok().get(run_id).cloned()
+        self.reasons.lock_ok().get(run_id).and_then(|e| e.why.clone())
+    }
+
+    /// The running run's work is held in its session's engine for the turn
+    /// that continues it.
+    pub fn note_work_kept(&self, run_id: &str) {
+        if self.runs.lock_ok().contains_key(run_id) {
+            self.reasons.lock_ok().entry(run_id.to_string()).or_default().work_kept = true;
+        }
     }
 
     /// A session's run that failed before it began (its agent could not be
@@ -99,6 +117,7 @@ impl RunStore {
                 error: Some(error),
                 model: None,
                 cannot_run: why,
+                work_kept: false,
             },
         );
     }
@@ -121,7 +140,7 @@ impl RunStore {
     /// Keep how a finished top-level run ended, as its session's latest.
     /// A subagent's run is part of its parent's and keeps nothing.
     pub fn record_outcome(&self, run: &AgentRunRecord) {
-        let why = self.reasons.lock_ok().remove(&run.run_id);
+        let ending = self.reasons.lock_ok().remove(&run.run_id).unwrap_or_default();
         if run.parent_run_id.is_some() {
             return;
         }
@@ -134,7 +153,8 @@ impl RunStore {
                 status: run.status,
                 error,
                 model: run.model.clone(),
-                cannot_run: why.filter(|_| failed),
+                cannot_run: ending.why.filter(|_| failed),
+                work_kept: failed && ending.work_kept,
             },
         );
     }
@@ -376,12 +396,14 @@ mod tests {
         assert_eq!(store.cannot_run("ghost"), None, "no such run");
         store.add_run(&make_run("r1", "s1", None, 1000));
         store.set_cannot_run("r1", CannotRun::NoModel);
+        store.note_work_kept("r1");
         assert_eq!(store.cannot_run("r1"), Some(CannotRun::NoModel));
         let mut done = store.get_run("r1").unwrap();
         done.status = AgentRunStatus::Failed;
         store.record_outcome(&done);
         store.remove_run("r1");
         assert_eq!(store.outcome("s1").unwrap().cannot_run, Some(CannotRun::NoModel));
+        assert!(store.outcome("s1").unwrap().work_kept);
         assert_eq!(store.cannot_run("r1"), None);
 
         store.add_run(&make_run("r2", "s1", None, 2000));
@@ -394,6 +416,7 @@ mod tests {
         store.record_refusal("s2", "failed to create agent".into(), Some(CannotRun::NoModel));
         let refused = store.outcome("s2").unwrap();
         assert_eq!((refused.status, refused.cannot_run), (AgentRunStatus::Failed, Some(CannotRun::NoModel)));
+        assert!(!refused.work_kept, "no run began, no work to keep");
     }
 
     #[test]
