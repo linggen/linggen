@@ -344,7 +344,9 @@ pub struct AgentConfig {
     pub daily_session: Option<bool>,
 }
 
-pub const DAILY_SESSION_DEFAULT: bool = false;
+/// Linggen's daily session is on unless a person saved a choice (decided
+/// by the builder 2026-11-18).
+pub const DAILY_SESSION_DEFAULT: bool = true;
 
 impl AgentConfig {
     pub fn daily_session_enabled(&self) -> bool {

@@ -2,9 +2,9 @@
 
 ## [Unreleased]
 
-- **One Ling and one Yinyue across apps, behind a setting.** Turn on
-  Settings → Session → Linggen's daily session and app chats, Yinyue's moments
-  and the phone's hand-offs share one conversation a day; it is off by default.
+- **One Ling and one Yinyue across apps.** App chats, Yinyue's moments and
+  the phone's hand-offs share one conversation a day — Linggen's daily
+  session. It is on; Settings → Session turns it off.
 - **A private app keeps its talk to itself.** An app that declares its talk
   private, such as Money, keeps its own chat and never joins the day.
 - **Each person has a day of their own.** A phone signed in to another account

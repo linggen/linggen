@@ -1,7 +1,7 @@
 ---
 type: spec
 reader: Coding agent and users
-status: designed 2026-10-08; the daily session built behind a setting 2026-11-16 (2.4 branch)
+status: designed 2026-10-08; the daily session built behind a setting 2026-11-16 (2.4 branch), on by default since 2026-11-18
 guide: |
   Product specification — what the system should do and why. Brief; guides
   design and implementation, not a code walk-through.
@@ -110,11 +110,12 @@ become typed tool calls with no second turn at all.
   nothing piles up. A 90-day retention rule and a Settings clear button come
   only if the phone ever keeps many sessions.
 
-## Linggen's daily session (2.4, behind a setting)
+## Linggen's daily session
 
-`agent.daily_session` (Settings → Session), off by default. An explicit
-On or Off is saved; no choice means the engine's default. Off, every
-session, prompt and row is as before. On (decided by the builder 2026-11-15/16):
+`agent.daily_session` (Settings → Session), on by default (decided by the
+builder 2026-11-18). An explicit On or Off is saved; no choice means the
+engine's default. Off, every session, prompt and row is as it was before
+the day existed. On (decided by the builder 2026-11-15/16):
 
 - **The day's session** — `sess-day-YYYY-MM-DD`, the day beginning at 04:00
   local; made on first use, found again by its id after a restart; Ling its
