@@ -136,9 +136,7 @@ pub struct EngineConfig {
     pub ws_root: PathBuf,
     pub max_iters: usize,
     pub write_safety_mode: crate::config::WriteSafetyMode,
-    /// Legacy field — kept for backward compat during migration. Use `permission_mode`.
-    pub tool_permission_mode: crate::config::ToolPermissionMode,
-    /// New permission mode (chat/read/edit/admin). See permission-spec.md.
+    /// Default permission mode (chat/read/edit/admin). See permission-spec.md.
     pub permission_mode: crate::engine::permission::PermissionMode,
     pub prompt_loop_breaker: Option<String>,
     pub interface_mode: InterfaceMode,
@@ -189,8 +187,7 @@ impl EngineConfig {
             ws_root,
             max_iters: config.agent.max_iters,
             write_safety_mode: config.agent.write_safety_mode,
-            tool_permission_mode: config.agent.tool_permission_mode,
-            permission_mode: config.agent.effective_permission_mode(),
+            permission_mode: config.agent.default_permission_mode.unwrap_or_default(),
             prompt_loop_breaker: config.agent.prompt_loop_breaker.clone(),
             interface_mode,
             bash_allow_prefixes: None,

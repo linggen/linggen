@@ -820,10 +820,7 @@ async fn dispatch_mission_prompt(
         mission.skill,
         engine.cfg.mission_allowed_tools.as_ref().map(|s| s.len())
     );
-    // Force Auto permission mode (legacy — kept for backward compat with old check flow).
-    engine.cfg.tool_permission_mode = crate::config::ToolPermissionMode::Auto;
-
-    // New permission model: apply session policy + path-mode grants.
+    // Apply session policy and path-mode grants.
     //
     // - Policy ("autonomy") decides what happens when the agent tries
     //   something outside its grants:

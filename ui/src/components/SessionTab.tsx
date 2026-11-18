@@ -55,10 +55,15 @@ export const SessionTab: React.FC<{
       <Section title="Session" desc="Defaults for new chats. A chat can change its own.">
         <Grid>
           <Field label="Permission mode" hint="What a new chat may do without asking." details="Change it per chat from the chat header.">
-            <select className={inputCls} value={a.tool_permission_mode} onChange={(e) => set({ tool_permission_mode: e.target.value })}>
-              <option value="ask">Read (default)</option>
-              <option value="accept_edits">Edit</option>
-              <option value="auto">Admin</option>
+            <select
+              className={inputCls}
+              value={a.default_permission_mode ?? 'read'}
+              onChange={(e) => set({ default_permission_mode: e.target.value as AgentCfg['default_permission_mode'] })}
+            >
+              <option value="chat">Chat</option>
+              <option value="read">Read (default)</option>
+              <option value="edit">Edit</option>
+              <option value="admin">Admin</option>
             </select>
           </Field>
           <Field label="Suggest follow-ups" hint="After a reply, buttons with what you might ask next.">

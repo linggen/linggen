@@ -111,7 +111,7 @@ A bare `cargo build` / `test` / `clippy` covers the binary and the engine
 
 Config search: `$LINGGEN_CONFIG` → `~/.linggen/config/linggen.runtime.toml` → `~/.linggen/config/linggen.toml` (`~/.linggen` is `$LINGGEN_HOME` when set).
 
-Key sections: `[[models]]` (LLM providers), `[server]` (port), `[agent]` (max_iters, safety mode, tool_permission_mode), `[logging]`, `[[agents]]` (agent spec references), `[routing]` (the default model chain and auto-fallback).
+Key sections: `[[models]]` (LLM providers), `[server]` (port), `[agent]` (max_iters, safety mode, default_permission_mode), `[logging]`, `[[agents]]` (agent spec references), `[routing]` (the default model chain and auto-fallback).
 
 ## Code Style
 

@@ -298,10 +298,7 @@ pub struct AgentConfig {
     pub max_iters: usize,
     #[serde(default)]
     pub write_safety_mode: WriteSafetyMode,
-    /// Legacy permission mode (ask/auto/accept_edits). Use `default_permission_mode` instead.
-    #[serde(default)]
-    pub tool_permission_mode: ToolPermissionMode,
-    /// New permission mode (chat/read/edit/admin). Takes precedence over `tool_permission_mode`.
+    /// Default permission for new sessions (chat/read/edit/admin). Defaults to read.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_permission_mode: Option<crate::engine::permission::PermissionMode>,
     #[serde(default)]
@@ -358,22 +355,6 @@ fn default_memory_recall_count() -> usize {
     3
 }
 
-impl AgentConfig {
-    /// Resolve effective permission mode — new field takes precedence, falls back to legacy.
-    pub fn effective_permission_mode(&self) -> crate::engine::permission::PermissionMode {
-        use crate::engine::permission::PermissionMode;
-        if let Some(ref mode) = self.default_permission_mode {
-            return *mode;
-        }
-        // Convert legacy mode
-        match self.tool_permission_mode {
-            ToolPermissionMode::Ask => PermissionMode::Read,
-            ToolPermissionMode::AcceptEdits => PermissionMode::Edit,
-            ToolPermissionMode::Auto => PermissionMode::Admin,
-        }
-    }
-}
-
 fn default_max_delegation_depth() -> usize {
     2
 }
@@ -387,18 +368,6 @@ pub enum WriteSafetyMode {
     #[default]
     Warn,
     Off,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-#[derive(Default)]
-#[cfg_attr(any(test, feature = "test-support"), derive(ts_rs::TS), ts(export))]
-pub enum ToolPermissionMode {
-    #[default]
-    Ask,
-    Auto,
-    /// Auto-approve Write/Edit but still prompt for Bash and web tools.
-    AcceptEdits,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
@@ -662,7 +631,6 @@ impl Default for Config {
             agent: AgentConfig {
                 max_iters: 200,
                 write_safety_mode: WriteSafetyMode::default(),
-                tool_permission_mode: ToolPermissionMode::default(),
                 default_permission_mode: None,
                 prompt_loop_breaker: None,
                 max_delegation_depth: default_max_delegation_depth(),
@@ -751,6 +719,27 @@ pub const KNOWN_PROVIDERS: &[&str] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retired_tool_permission_key_is_ignored() {
+        use crate::engine::{permission::PermissionMode, EngineConfig, InterfaceMode};
+
+        for (legacy, current, expected) in [
+            ("auto", "", PermissionMode::Read),
+            ("not_a_mode", "", PermissionMode::Read),
+            ("auto", "default_permission_mode = 'chat'", PermissionMode::Chat),
+        ] {
+            let mut file = toml::Value::try_from(Config::default()).unwrap();
+            file["agent"] = toml::from_str(&format!(
+                "max_iters = 10\ntool_permission_mode = '{legacy}'\n{current}"
+            ))
+            .unwrap();
+            let cfg: Config = toml::from_str(&toml::to_string(&file).unwrap()).unwrap();
+            let engine = EngineConfig::from_app_config(&cfg, Default::default(), InterfaceMode::Web);
+            assert_eq!(engine.permission_mode, expected);
+            assert!(!toml::to_string(&cfg).unwrap().contains("tool_permission_mode"));
+        }
+    }
 
     // Config::default() no longer carries a hardcoded model (built-ins cover
     // that at runtime — see inject_chatgpt_builtin/inject_linggen_cloud), so

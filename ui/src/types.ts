@@ -1,4 +1,5 @@
 import type { SessionMember } from './lib/sessionMembers.mts';
+import type { PermissionMode } from './types/generated/PermissionMode';
 // Wire types generated from the Rust structs (scripts/gen-types.sh).
 export type { UiEvent, UiEventOf, UiEventByKind, RunEvent, RunEventOf, ContentBlockEvent, PageState } from './types/uiEvents';
 export type { QueuedChatItem } from './types/generated/QueuedChatItem';
@@ -273,7 +274,7 @@ export interface AppConfig {
   language?: string | null;
   /** `url` is "host:port"; `host`/`port` are the legacy pair. Use lib/serverAddr. */
   server: { url?: string | null; port?: number; host?: string };
-  agent: { max_iters: number; write_safety_mode: string; tool_permission_mode: string; prompt_loop_breaker?: string | null; compact_threshold?: number | null; memory_inject_min_score?: number; memory_recall_count?: number; suggest_followups?: boolean; daily_session?: boolean };
+  agent: { max_iters: number; write_safety_mode: string; default_permission_mode?: PermissionMode | null; prompt_loop_breaker?: string | null; compact_threshold?: number | null; memory_inject_min_score?: number; memory_recall_count?: number; suggest_followups?: boolean; daily_session?: boolean };
   logging: { level?: string | null; directory?: string | null; retention_days?: number | null };
   agents: { id: string; spec_path: string; model?: string | null }[];
   routing?: { default_models?: string[]; claude_default_model?: string | null; auto_fallback?: boolean };

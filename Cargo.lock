@@ -5486,6 +5486,7 @@ dependencies = [
  "serde_norway",
  "sha2 0.10.9",
  "str0m",
+ "syn 2.0.119",
  "tempfile",
  "tokio",
  "toml",

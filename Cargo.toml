@@ -106,6 +106,8 @@ harness = false
 # The system tests (tests/system) draw pictures and rewrite configs with these.
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 regex = "1"
+# Parse Rust source for the permission ladder lock.
+syn = { version = "2", features = ["full", "visit"] }
 # The engine's empty registries and wire-type derives, for this package's tests.
 linggen-engine = { path = "crates/linggen-engine", default-features = false, features = ["test-support"] }
 # Memory's deterministic test embedder, for the door tests of /api/memory/<verb>.

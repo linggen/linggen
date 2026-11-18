@@ -650,9 +650,8 @@ pub(super) async fn resolve_effective_model(
 ///
 /// The mission scheduler never goes through `chat_handler` (it calls
 /// `dispatch_mission_prompt` directly), so any request landing here on a
-/// mission-creator session means a human picked it up. Reset the
-/// permission mode that the scheduler had forced to Auto, and invalidate
-/// the cached system prompt so the next loop rebuilds with the new tier.
+/// mission-creator session means a human picked it up. Invalidate the
+/// cached system prompt so the next loop rebuilds for the new creator.
 async fn promote_mission_session_to_user(
     engine: &mut crate::engine::AgentEngine,
     state: &Arc<ServerState>,
@@ -675,8 +674,6 @@ async fn promote_mission_session_to_user(
     }
     engine.respec(|spec| spec.creator = Some("user".to_string()));
 
-    let cfg = state.manager.get_config_snapshot().await;
-    engine.cfg.tool_permission_mode = cfg.agent.tool_permission_mode;
     engine.cached_system_prompt = None;
 }
 
