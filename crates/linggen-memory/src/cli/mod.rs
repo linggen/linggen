@@ -830,12 +830,10 @@ async fn run_data_at(
     data_dir: &std::path::Path,
     base: Option<String>,
 ) -> Result<()> {
-    // The scan reads session files and writes its own file; it never needs
-    // the store.
-    let cmd = match cmd {
-        Command::Scan(args) => return scan::run(args),
-        cmd => cmd,
-    };
+    // Scan is dispatched by the host, which supplies the local owner identity.
+    if matches!(&cmd, Command::Scan(_)) {
+        return Err(anyhow!("memory scan requires the host's owner identity"));
+    }
     // Export/import are direct-store maintenance ops — never routed through the
     // daemon (bulk local I/O; export must read every row, import bulk-inserts).
     // Handled here so they bypass both the daemon branch and the store match.

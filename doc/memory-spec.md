@@ -161,7 +161,11 @@ review queue"); the mission files carry only the pacing and the grants.
   `cli.md` § mem: the day's session logs of Claude Code, Codex, OpenClaw
   and Linggen, flattened and secret-filtered into
   `~/.linggen/memory/.scan-output.jsonl`; no model, no network); if that
-  fails the run ends failed, unstamped, with no model call. The agent then
+  fails the run ends failed, unstamped, with no model call. The CLI reads the
+  Mac's local account even with the engine stopped and supplies the owner
+  identity to the collector, which skips other people's Linggen sessions
+  (`skipped_other_person` in the summary); signed out, only local or untagged
+  Linggen sessions qualify. The agent then
   checks the file's header is that day's, lists the candidates, skips
   every session that already has rows for the day (by `source_session`),
   judges one candidate per turn and stages what is worth keeping as

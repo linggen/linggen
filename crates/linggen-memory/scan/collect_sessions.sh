@@ -37,11 +37,19 @@ set -uo pipefail
 
 TARGET_DATE=""
 WATERMARK_FILE=""
+OTHER_COUNT_FILE=""
+SKIPPED_OTHER=0
+
+if [[ -z "${LINGGEN_SCAN_OWNER_ID+x}" || -z "${LINGGEN_SCAN_LOCAL_ID:-}" ]]; then
+  echo 'ling mem scan: missing owner identity handoff' >&2
+  exit 1
+fi
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --watermark) WATERMARK_FILE="${2:-}"; shift 2 ;;
     --watermark=*) WATERMARK_FILE="${1#--watermark=}"; shift ;;
+    --other-count-file) OTHER_COUNT_FILE="$2"; shift 2 ;;
     *) if [ -z "$TARGET_DATE" ]; then TARGET_DATE="$1"; fi; shift ;;
   esac
 done
@@ -53,7 +61,8 @@ CC_DIR="${HOME_DIR}/.claude/projects"
 CODEX_DIR="${HOME_DIR}/.codex/sessions"
 CODEX_ARCHIVE="${HOME_DIR}/.codex/archived_sessions"
 OPENCLAW_DIR="${HOME_DIR}/.openclaw/agents"
-LING_DIR="${HOME_DIR}/.linggen/sessions"
+LING_HOME="${LINGGEN_HOME:-${HOME_DIR}/.linggen}"
+LING_DIR="$LING_HOME/sessions"
 
 if ! command -v jq &>/dev/null; then
   echo "Error: jq is required but not installed." >&2
@@ -154,7 +163,7 @@ yaml_field() {
 # SKILL.md's front matter. An app that is not installed is treated so too —
 # what cannot be asked is not handed on.
 keeps_its_talk() {
-  local skill_md="${HOME_DIR}/.linggen/skills/$1/SKILL.md"
+  local skill_md="$LING_HOME/skills/$1/SKILL.md"
   [ -f "$skill_md" ] || return 0
   sed -n '2,/^---[[:space:]]*$/p' "$skill_md" | grep -Eq '^private-talk:[[:space:]]*true[[:space:]]*$'
 }
@@ -264,6 +273,15 @@ if [ -d "$OPENCLAW_DIR" ]; then
 fi
 
 # ── Linggen (legacy host install) ────────────────────────────────────
+# Use only the identities the host supplied; an empty account means signed out.
+other_person() {
+  local id
+  id="$(yaml_field "$1" user_id || yaml_field "$1" consumer_user_id)"
+  id="${id#"${id%%[![:space:]]*}"}"
+  id="${id%"${id##*[![:space:]]}"}"
+  [[ -n "$id" && "$id" != "$LINGGEN_SCAN_LOCAL_ID" && "$id" != "$LINGGEN_SCAN_OWNER_ID" ]]
+}
+
 if [ -d "$LING_DIR" ]; then
   for session_dir in "$LING_DIR"/*/; do
     [ -d "$session_dir" ] || continue
@@ -281,14 +299,17 @@ if [ -d "$LING_DIR" ]; then
     # The rule: a session the person spoke in is read, whoever made it —
     # their own chats, Linggen's daily session, the companion's thread, an
     # app's own chat. Four kinds stay out:
-    #   - another person's day (a paired phone on another account);
+    #   - another person's day or ordinary chat;
     #   - a mission's session and a session a host made through agent_run:
     #     their `user` rows are the job's or the host's prompt, not a
     #     person's words (what the person told that host is read from the
     #     host's own logs);
     #   - a private app's chat (`private-talk: true`), or an app that cannot
     #     be found — its talk is kept to itself.
-    [[ "$session_name" =~ ^sess-day-[0-9]{4}-[0-9]{2}-[0-9]{2}-p- ]] && continue
+    if [[ "$session_name" =~ ^sess-day-[0-9]{4}-[0-9]{2}-[0-9]{2}-p- ]] || other_person "$meta"; then
+      SKIPPED_OTHER=$((SKIPPED_OTHER + 1))
+      continue
+    fi
     case "$(yaml_field "$meta" creator)" in mission|external) continue ;; esac
     skill="$(yaml_field "$meta" skill)"
     if [ -n "$skill" ] && keeps_its_talk "$skill"; then continue; fi
@@ -300,4 +321,8 @@ if [ -d "$LING_DIR" ]; then
     bytes=$(file_bytes "$jsonl_file")
     emit_manifest "$jsonl_file" "Linggen" "$label" "${bytes:-0}" "${user_turns:-0}"
   done
+fi
+
+if [[ -n "$OTHER_COUNT_FILE" ]]; then
+  printf '%s\n' "$SKIPPED_OTHER" >> "$OTHER_COUNT_FILE"
 fi

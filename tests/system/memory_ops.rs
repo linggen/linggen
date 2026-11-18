@@ -241,6 +241,48 @@ fn ling_mem_scan_sessions_lists_one_day_without_candidates() {
 }
 
 #[test]
+fn ling_mem_scan_resolves_the_owner_without_a_running_engine() {
+    if !scan_tools() {
+        eprintln!("skipped: jq or perl missing");
+        return;
+    }
+    let home = crate::support::home::Home::new();
+    write_sessions(&home.home());
+    let sessions = home.linggen_home().join("sessions");
+    for (id, stamp) in [("sess-owner", "u-owner"), ("sess-other", "u-owner-extra")] {
+        let dir = sessions.join(id);
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::write(dir.join("session.yaml"), format!("creator: user\nuser_id: {stamp}\n"))
+            .unwrap();
+        let file = dir.join("messages.jsonl");
+        std::fs::copy(sessions.join(LING_SESSION).join("messages.jsonl"), &file).unwrap();
+        date_file(&file);
+    }
+    let account = home.linggen_home().join("account.toml");
+    std::fs::write(&account, "api_token = 'unused'\nuser_id = 'u-owner'\n").unwrap();
+    let mut env = crate::support::process::hermetic_env(&home);
+    env.push(("LINGGEN_SCAN_OWNER_ID".into(), "u-owner-extra".into()));
+    let list = || {
+        let out = scan(&env, None, &["--sessions", DAY]);
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        String::from_utf8(out.stdout).unwrap()
+    };
+    let signed_in = list();
+    assert!(signed_in.contains("sess-owner/messages.jsonl"), "{signed_in}");
+    assert!(!signed_in.contains("sess-other/messages.jsonl"), "{signed_in}");
+    std::fs::write(&account, "not valid TOML\n").unwrap();
+    let unreadable = scan(&env, None, &["--sessions", DAY]);
+    assert!(!unreadable.status.success());
+    assert!(unreadable.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&unreadable.stderr).contains("cannot resolve owner identity"));
+    std::fs::remove_file(account).unwrap();
+    let signed_out = list();
+    assert!(!signed_out.contains("sess-owner/messages.jsonl"), "{signed_out}");
+    assert!(!signed_out.contains("sess-other/messages.jsonl"), "{signed_out}");
+    assert!(signed_out.contains(LING_SESSION), "{signed_out}");
+}
+
+#[test]
 fn ling_mem_scan_sessions_requires_a_day() {
     let home = crate::support::home::Home::new();
     let env = crate::support::process::hermetic_env(&home);

@@ -45,6 +45,13 @@ pub(crate) fn mac_account() -> Option<String> {
     crate::account::load_account().and_then(|a| a.user_id)
 }
 
+/// The current account and the local owner stamp accepted by a memory
+/// scan. Resolve them on this machine even when no server is running.
+pub(crate) fn scan_owner_ids() -> anyhow::Result<(Option<String>, &'static str)> {
+    let account = crate::account::read_local_account()?.and_then(|a| a.user_id);
+    Ok((account.filter(|id| !id.is_empty()), LOCAL))
+}
+
 impl Person {
     pub(super) fn owner() -> Self {
         Person(Kind::Owner)

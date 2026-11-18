@@ -48,13 +48,17 @@ fn exit_with(err: &anyhow::Error) -> ! {
 }
 
 async fn dispatch(mut cli: Cli) -> Result<()> {
+    if let Command::Scan(args) = cli.cmd {
+        let (account, local) = crate::server::person::scan_owner_ids().map_err(|err| ScanExit {
+            code: 1,
+            line: Some(format!("ling mem scan cannot resolve owner identity: {err}")),
+        })?;
+        return ling_mem::cli::scan::run(args, account.as_deref(), local, crate::paths::linggen_home());
+    }
     let data_dir = cli
         .data_dir
         .get_or_insert_with(|| crate::paths::linggen_home().clone())
         .clone();
-    if matches!(cli.cmd, Command::Scan(_)) {
-        return ling_mem::cli::run_data(cli, None).await;
-    }
     match StoreLock::acquire(&data_dir, None) {
         // No engine holds the store: open it here, under the lock.
         Ok(_lock) => ling_mem::cli::run_data(cli, None).await,

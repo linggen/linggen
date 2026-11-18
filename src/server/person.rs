@@ -202,7 +202,7 @@ pub(crate) fn takes_body(method: &str, path: &str) -> bool {
 use crate::engine::permission::PermissionMode;
 
 mod who;
-pub(crate) use who::{mac_account, pairing_wire, stamp_of, Person};
+pub(crate) use who::{mac_account, pairing_wire, scan_owner_ids, stamp_of, Person};
 
 /// Who a request from off this machine is for, and the level it stands at:
 /// the one answer every check point takes (a request, a frame, the media

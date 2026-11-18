@@ -94,12 +94,17 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 1
 fi
 
-OUT_DIR="$HOME/.linggen/memory"
+OUT_DIR="${LINGGEN_HOME:-$HOME/.linggen}/memory"
 mkdir -p "$OUT_DIR"
 OUT="$OUT_DIR/.scan-output.jsonl"
 TMP_MANIFEST="$(mktemp)"
 TMP_ERR="$(mktemp)"
-trap 'rm -f "$TMP_MANIFEST" "$TMP_ERR"' EXIT
+TMP_OTHER="$(mktemp)"
+trap 'rm -f "$TMP_MANIFEST" "$TMP_ERR" "$TMP_OTHER"' EXIT
+
+collect_day() {
+  bash "$COLLECT" "$1" --other-count-file "$TMP_OTHER" >> "$TMP_MANIFEST" || exit 1
+}
 
 STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 START_EPOCH="$(date +%s)"
@@ -117,7 +122,7 @@ record_date() {
 if [[ -n "$SCAN_DATE" ]]; then
   # Single specific day — scan only that date.
   record_date "$SCAN_DATE"
-  bash "$COLLECT" "$SCAN_DATE" >> "$TMP_MANIFEST" 2>> "$TMP_ERR" || true
+  collect_day "$SCAN_DATE"
 else
   # Walk DAYS_BACK calendar days back from today. The collect script
   # accepts a single date; de-duping happens in jq below — sessions
@@ -130,7 +135,7 @@ else
     fi
     [[ -z "$DATE_ISO" ]] && continue
     record_date "$DATE_ISO"
-    bash "$COLLECT" "$DATE_ISO" >> "$TMP_MANIFEST" 2>> "$TMP_ERR" || true
+    collect_day "$DATE_ISO"
   done
 fi
 
@@ -143,6 +148,7 @@ mv "$TMP_MANIFEST_DEDUP" "$TMP_MANIFEST"
 SESSIONS_FOUND="$(wc -l < "$TMP_MANIFEST" | tr -d ' ')"
 SESSIONS_SCANNED=0
 SKIPPED_EMPTY=0
+SKIPPED_OTHER="$(awk '{ total += $1 } END { print total + 0 }' "$TMP_OTHER")"
 # Total bytes of EXTRACTED transcripts (i.e. what the hippocampus
 # LLM will read), not raw session-file bytes. The raw bytes are
 # typically 50-200x larger because they include tool calls / system
@@ -152,7 +158,7 @@ TRANSCRIPT_BYTES=0
 # Build the body (lines 2..N) into a temp file, then write the header
 # + body atomically. Lets us compute counters before writing the header.
 TMP_BODY="$(mktemp)"
-trap 'rm -f "$TMP_MANIFEST" "$TMP_ERR" "$TMP_BODY"' EXIT
+trap 'rm -f "$TMP_MANIFEST" "$TMP_ERR" "$TMP_OTHER" "$TMP_BODY"' EXIT
 
 while IFS= read -r row; do
   [[ -z "$row" ]] && continue
@@ -220,4 +226,4 @@ cat "$TMP_BODY" >> "$OUT"
 # One-line summary on stdout — the skill's web app reads this directly
 # and pipes it to the agent so the hippocampus prompt can quote real
 # numbers without re-parsing the JSONL header.
-echo "scan: window=$WINDOW found=$SESSIONS_FOUND scanned=$SESSIONS_SCANNED skipped=$SKIPPED_EMPTY transcript_bytes=$TRANSCRIPT_BYTES ms=$DURATION_MS out=$OUT"
+echo "scan: window=$WINDOW found=$SESSIONS_FOUND scanned=$SESSIONS_SCANNED skipped=$SKIPPED_EMPTY skipped_other_person=$SKIPPED_OTHER transcript_bytes=$TRANSCRIPT_BYTES ms=$DURATION_MS out=$OUT"

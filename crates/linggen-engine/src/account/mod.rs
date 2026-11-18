@@ -111,8 +111,20 @@ pub struct AccountConfig {
 }
 
 pub fn load_account() -> Option<AccountConfig> {
-    let content = std::fs::read_to_string(account_path()).ok()?;
-    toml::from_str(&content).ok()
+    read_local_account().ok().flatten()
+}
+
+/// Read local identity for an offline operation that must distinguish a
+/// signed-out machine from an unreadable or damaged account file.
+pub fn read_local_account() -> Result<Option<AccountConfig>> {
+    let path = account_path();
+    match std::fs::read_to_string(&path) {
+        Ok(content) => toml::from_str(&content)
+            .map(Some)
+            .map_err(|_| anyhow!("invalid local account file")),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(err).context("cannot read local account file"),
+    }
 }
 
 pub fn save_account(config: &AccountConfig) -> Result<()> {

@@ -72,7 +72,12 @@ impl std::fmt::Display for ScanExit {
 
 impl std::error::Error for ScanExit {}
 
-pub fn run(args: ScanArgs) -> anyhow::Result<()> {
+pub fn run(
+    args: ScanArgs,
+    owner_account: Option<&str>,
+    local_owner: &str,
+    linggen_home: &std::path::Path,
+) -> anyhow::Result<()> {
     let (script, script_args) = select_script(args)?;
     if let Some(tool) = TOOLS.iter().find(|t| !on_path(t)) {
         return Err(ScanExit {
@@ -90,6 +95,9 @@ pub fn run(args: ScanArgs) -> anyhow::Result<()> {
     let status = Command::new("bash")
         .arg(dir.path().join(script))
         .args(script_args)
+        .env("LINGGEN_SCAN_OWNER_ID", owner_account.unwrap_or_default())
+        .env("LINGGEN_SCAN_LOCAL_ID", local_owner)
+        .env("LINGGEN_HOME", linggen_home)
         .status()?;
     match status.code() {
         Some(0) => Ok(()),

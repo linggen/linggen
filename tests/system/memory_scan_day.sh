@@ -3,14 +3,15 @@
 # the person spoke in, whoever made it — never another person's day, a
 # mission's or a host-made session, or a private app's chat.
 # Script-only fixture beside memory_ops.rs; no engine or real home needed.
-# Run with: bash tests/system/memory_scan_day.sh
+# Run with: scripts/scratch-test.sh system
 set -euo pipefail
 
 scan_dir="$(cd "$(dirname "$0")/../../crates/linggen-memory/scan" && pwd)"
-fixture="$(mktemp -d)"
+fixture="$(mktemp -d "$(dirname "$0")/.memory-scan.XXXXXX")"
 trap 'rm -rf "$fixture"' EXIT
 export HOME="$fixture/home" TMPDIR="$fixture/tmp" TZ=UTC
 mkdir -p "$HOME" "$TMPDIR"
+export LINGGEN_HOME="$HOME/.linggen" LINGGEN_SCAN_OWNER_ID='' LINGGEN_SCAN_LOCAL_ID=__local__
 
 scan_day=2026-11-10
 sessions="$HOME/.linggen/sessions"
@@ -105,6 +106,37 @@ jq -es --arg path "$sessions/$day/messages.jsonl" --arg transcript "$expected" \
   echo 'FAIL: the transcript handed on for the day' >&2
   jq -r --arg path "$sessions/$day/messages.jsonl" 'select(.filepath == $path) | .transcript' "$HOME/.linggen/memory/.scan-output.jsonl" >&2
   exit 1
+}
+
+# The caller must distinguish a missing handoff from a signed-out Mac.
+unset LINGGEN_SCAN_OWNER_ID
+if bash "$scan_dir/scan.sh" "$scan_day" > "$fixture/stdout" 2> "$fixture/stderr"; then
+  echo 'FAIL: scan succeeded without an owner identity handoff' >&2
+  exit 1
+fi
+grep -q 'owner identity' "$fixture/stderr"
+
+# Account IDs match literally, including when the scalar is quoted. A
+# similar ID, another day and a device stamp are all other people.
+chat | session sess-owner user
+printf 'user_id: "u-owner"\n' >> "$sessions/sess-owner/session.yaml"
+chat | session sess-other user
+printf 'user_id: u-owner-extra\n' >> "$sessions/sess-other/session.yaml"
+chat | session sess-device user
+printf 'consumer_user_id: device:phone\n' >> "$sessions/sess-device/session.yaml"
+chat | session sess-local user
+printf 'user_id: __local__\n' >> "$sessions/sess-local/session.yaml"
+export LINGGEN_SCAN_OWNER_ID=u-owner
+expect "$ordinary $day sess-local sess-owner sess-tunes sess-yinyue-$scan_day " 'signed in: both owner forms, no other person'
+summary="$(bash "$scan_dir/scan.sh" "$scan_day")"
+[[ "$summary" == *'found=6 scanned=6 skipped=0 skipped_other_person=4 '* ]] || {
+  echo "FAIL: the signed-in scan summary: $summary" >&2; exit 1;
+}
+export LINGGEN_SCAN_OWNER_ID=''
+expect "$ordinary $day sess-local sess-tunes sess-yinyue-$scan_day " 'signed out: only local ownership'
+summary="$(bash "$scan_dir/scan.sh" "$scan_day")"
+[[ "$summary" == *'found=5 scanned=5 skipped=0 skipped_other_person=5 '* ]] || {
+  echo "FAIL: the signed-out scan summary: $summary" >&2; exit 1;
 }
 
 echo 'PASS: a session the person spoke in is read; other people, jobs, hosts and private apps are not'
