@@ -152,7 +152,8 @@ the day existed. On (decided by the builder 2026-11-15/16):
   another person's day (`…-p-…`) and ordinary chats (a `user_id` other
   than the Mac's account or local owner stamp), a mission's session and one a host made
   through `agent_run` (their `user` rows are a job's or a host's prompt),
-  and a private app's chat.
+  and a private app's chat. Yinyue's prompted answers appear as assistant
+  replies; her unprompted moments and hidden kickoff rows stay out.
 - **Her moments** run in the day's session too, standing in the app they
   came from; her line is a row there and lands nowhere else. A private
   app's moment runs at the app chat it names, never in a day; with none

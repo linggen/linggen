@@ -21,9 +21,11 @@ ordinary=sess-1794312000-a1e7a1e7
 
 message() {
   jq -cn --arg from "$1" --arg text "$2" --arg place "${3:-:home}" \
-    --argjson ts "${4:-1794312000}" --argjson observation "${5:-false}" \
-    '{from_id:$from, content:$text, place:$place, timestamp:$ts, is_observation:$observation}'
+    --argjson ts "${4:-1794312000}" --argjson observation "${5:-false}" --arg to "${6:-}" \
+    '{from_id:$from, to_id:$to, content:$text, place:$place, timestamp:$ts, is_observation:$observation}'
 }
+spoken_contract='If you need to think first, do it above a blank line: only your final paragraph is spoken aloud, the rest is discarded.'
+silence_clause='If nothing is worth saying, make that final paragraph exactly SILENT.'
 
 # session <id> <creator> [<skill>]: its messages come on stdin.
 session() {
@@ -76,15 +78,29 @@ expect "$ordinary " 'a session the person did not speak in, or one kept out, was
 
 # The person's words, whoever made the session: all of these are read.
 chat | session sess-tunes skill tunes                  # an app's own chat
-chat | session sess-yinyue-$scan_day agent             # the companion's thread
+{
+  message user 'Do you remember my tea?' :home 1794312000 false yinyue
+  message yinyue 'You take it without sugar.' :home 1794312000 false user
+  message user 'And my cup?' :home 1794312000 false yinyue
+  message yinyue 'The blue one.' :home 1794312000 false user
+  message yinyue 'An unsolicited follow-up.' :home 1794312000 false user
+} | session sess-yinyue-$scan_day agent               # the companion's thread
 {
   message user '[HIDDEN] app kickoff'
   message user 'I quote [HIDDEN] literally.'
   message ling 'Understood.'
   message user 'In this app I prefer a short list.' tunes
   message ling 'Here is a short list.' tunes
-  message yinyue 'An unprompted moment.' tunes
-  message yinyue 'A reply from the companion.'
+  message yinyue 'Not a reply to the prompt for Ling.' tunes 1794312000 false user
+  message user 'What do you think?' tunes 1794312000 false yinyue
+  message yinyue 'A tool observation from the companion.' tunes 1794312000 true user
+  message yinyue 'A reply from the companion.' tunes 1794312000 false user
+  message user "[HIDDEN] An app moment. $spoken_contract $silence_clause" tunes 1794312000 false yinyue
+  message yinyue 'An unprompted moment.' tunes 1794312000 false user
+  message user "[HIDDEN] The person asked about the sky. $spoken_contract" tunes 1794312000 false yinyue
+  message yinyue 'Clouds overhead.' tunes 1794312000 false user
+  message user "A legacy unprompted kickoff. $spoken_contract $silence_clause" tunes 1794312000 false yinyue
+  message yinyue 'An older unprompted moment.' tunes 1794312000 false user
   message compaction 'Summary of trimmed dialogue.'
   message ling 'A tool observation.' :home 1794312000 true
   message ling 'After this calendar day.' :home 1794398400
@@ -92,14 +108,17 @@ chat | session sess-yinyue-$scan_day agent             # the companion's thread
 expect "$ordinary $day sess-tunes sess-yinyue-$scan_day " 'the person spoke in these four'
 
 turns="$(bash "$scan_dir/collect_sessions.sh" "$scan_day" | jq -r --arg p "$sessions/$day/messages.jsonl" 'select(.filepath == $p) | .user_turns')"
-[[ "$turns" == 2 ]] || { echo "FAIL: the day's real user turns: $turns" >&2; exit 1; }
+[[ "$turns" == 3 ]] || { echo "FAIL: the day's real user turns: $turns" >&2; exit 1; }
 
 # What is handed on for the day: the person's words and the answers to them.
 bash "$scan_dir/scan.sh" "$scan_day" > /dev/null
 expected='[user]: I quote [HIDDEN] literally.
 [assistant]: Understood.
 [user]: In this app I prefer a short list.
-[assistant]: Here is a short list.'
+[assistant]: Here is a short list.
+[user]: What do you think?
+[assistant]: A reply from the companion.
+[assistant]: Clouds overhead.'
 jq -es --arg path "$sessions/$day/messages.jsonl" --arg transcript "$expected" \
   'any(.[]; .filepath == $path and .transcript == $transcript)' \
   "$HOME/.linggen/memory/.scan-output.jsonl" > /dev/null || {
@@ -137,6 +156,17 @@ expect "$ordinary $day sess-local sess-tunes sess-yinyue-$scan_day " 'signed out
 summary="$(bash "$scan_dir/scan.sh" "$scan_day")"
 [[ "$summary" == *'found=5 scanned=5 skipped=0 skipped_other_person=5 '* ]] || {
   echo "FAIL: the signed-out scan summary: $summary" >&2; exit 1;
+}
+
+expected='[user]: Do you remember my tea?
+[assistant]: You take it without sugar.
+[user]: And my cup?
+[assistant]: The blue one.'
+jq -es --arg path "$sessions/sess-yinyue-$scan_day/messages.jsonl" --arg transcript "$expected" \
+  'any(.[]; .filepath == $path and .transcript == $transcript)' \
+  "$HOME/.linggen/memory/.scan-output.jsonl" > /dev/null || {
+  echo 'FAIL: the transcript handed on for the companion thread' >&2
+  exit 1
 }
 
 echo 'PASS: a session the person spoke in is read; other people, jobs, hosts and private apps are not'

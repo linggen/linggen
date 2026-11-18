@@ -179,8 +179,10 @@ count_user_turns_linggen() {
   # Anchored with startswith, NOT contains: the marker also appears mid-string
   # in real content ("Starting autonomous loop for task: [HIDDEN] …"), so a
   # substring test would eat a genuine message that merely quotes the token.
-  jq -s '[.[] | select(.from_id == "user")
-                | select(((.content // "") | startswith("[HIDDEN]")) | not)]
+  jq -s '[.[] | select(.from_id == "user" and .is_observation != true)
+                | select(((.content // "") | startswith("[HIDDEN]")) | not)
+                | select((.to_id == "yinyue" and ((.content // "") |
+                    contains("only your final paragraph is spoken aloud, the rest is discarded."))) | not)]
          | length' "$1" 2>/dev/null || echo 0
 }
 

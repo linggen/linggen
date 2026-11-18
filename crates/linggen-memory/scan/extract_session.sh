@@ -286,23 +286,43 @@ case "$SOURCE" in
     ;;
   Linggen)
     emit_cwd_header_cc   # Linggen messages also expose .cwd; same heuristic
-    jq -r --argjson start "$DAY_START" --argjson end "$DAY_END" '
-      select(
-        (.from_id == "user" or .from_id == "ling")
-        and (.is_observation == false or .is_observation == null)
-        and (.timestamp >= $start and .timestamp < $end)
-        # [HIDDEN] marks the app shell prompting the agent through the same
-        # send path the user types into (skill greeting/context triggers) —
-        # our text, not theirs, the same class as the developer boilerplate
-        # strip_noise already drops. Anchored with startswith, not contains:
-        # the marker also occurs mid-string inside real content.
-        and (((.content // "") | startswith("[HIDDEN]")) | not)
+    jq -nr --argjson start "$DAY_START" --argjson end "$DAY_END" '
+      def hidden: (.content // "") | startswith("[HIDDEN]");
+      # Resident kickoffs are stored as user -> yinyue, even when written by
+      # the engine. Before [HIDDEN], they already carried the spoken contract.
+      def contract: (.content // "") |
+        contains("only your final paragraph is spoken aloud, the rest is discarded.");
+      def asked: contract and ((.content // "") |
+        endswith("only your final paragraph is spoken aloud, the rest is discarded."));
+      def on_day: .timestamp >= $start and .timestamp < $end;
+      def place: .place // ":home";
+
+      # Replies have no link to the kickoff in older logs. Take at most one
+      # user-facing line after a direct address or the explicit asked kickoff,
+      # in the same place and day. An unasked kickoff replaces that evidence;
+      # observations do not count as dialogue or close the exchange.
+      foreach inputs as $row (
+        {pending: null, emit: false};
+        .emit = false
+        | if ($row | .is_observation == true) then .
+          elif $row.from_id == "user" then
+            .emit = ($row | on_day and (hidden | not)
+                     and ((.to_id == "yinyue" and contract) | not))
+            | .pending = (if ($row | on_day and .to_id == "yinyue")
+                             and (.emit or ($row | asked))
+                         then ($row | place) else null end)
+          elif $row.from_id == "yinyue" then
+            .emit = (.pending == ($row | place)
+                     and ($row | on_day and .to_id == "user" and (hidden | not)))
+            | .pending = null
+          else
+            .emit = ($row | .from_id == "ling" and on_day and (hidden | not))
+            | .pending = null
+          end;
+        select(.emit) | $row
+        | (if .from_id == "user" then "user" else "assistant" end) as $role
+        | .content // "" | select(. != "") | "[\($role)]: \(.[0:2000])"
       )
-      | (.from_id | if . == "ling" then "assistant" else . end) as $role
-      | .content // ""
-      | if . == "" then empty
-        else "[\($role)]: \(.[0:2000])"
-        end
     ' "$FILEPATH" 2>/dev/null | strip_noise | secret_filter | apply_max
     ;;
   *)

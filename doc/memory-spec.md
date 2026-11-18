@@ -165,7 +165,10 @@ review queue"); the mission files carry only the pacing and the grants.
   Mac's local account even with the engine stopped and supplies the owner
   identity to the collector, which skips other people's Linggen sessions
   (`skipped_other_person` in the summary); signed out, only local or untagged
-  Linggen sessions qualify. The agent then
+  Linggen sessions qualify. The transcript includes Yinyue's replies to
+  a direct address or an explicitly requested moment as assistant text,
+  not unsolicited lines, hidden prompts, tool observations or compaction
+  summaries. The agent then
   checks the file's header is that day's, lists the candidates, skips
   every session that already has rows for the day (by `source_session`),
   judges one candidate per turn and stages what is worth keeping as
