@@ -22,6 +22,7 @@ import { chatAgentOf } from '../lib/sessionMembers.mts';
 import { COMPANION_ID, isAgentPresent } from '../lib/agentsMet.mts';
 import { newClientId } from '../lib/sentMessage.mts';
 import { stillOn } from '../lib/sessionLoad.mts';
+import { clearCancelsRun } from '../lib/dayFold.mts';
 
 /** An answer that came back after an await writes only while its session is
  *  still the one on screen — never into a chat the person moved to. */
@@ -63,11 +64,12 @@ export function useChatActions(
 
   const clearChat = useCallback(async () => {
     const root = effectiveProjectRoot(projectRootRef.current);
-    const { activeSessionId: sid } = useSessionStore.getState();
+    const { activeSessionId: sid, allSessions, appSessions } = useSessionStore.getState();
+    const session = [...allSessions, ...appSessions].find((s) => s.id === sid);
 
     const selectedAgent = chatAgentOf(useServerStore.getState().selectedAgent, useUiStore.getState().sessionMembers);
     const runId = runningMainRunIds[selectedAgent];
-    if (runId) {
+    if (runId && clearCancelsRun(session)) {
       useServerStore.getState().cancelAgentRun(runId);
     }
 

@@ -187,7 +187,8 @@ session, prompt and row is as before. On (decided by the builder 2026-11-15/16):
   dropped. A day is made once and never written over.
 - **Clear** takes the rows of the place it is pressed in: an app's page its
   app's, the main page home's. The compaction summary is the day's, no
-  place's: no Clear takes it and no page folds it.
+  place's: no Clear takes it and no page folds it. Clear in the day cancels
+  no run (the one running may be another place's); Stop stops whatever runs.
 - **One model a member for the day**: only the picker keeps one
   (`PATCH /api/sessions`); a model a page sends with a message is for that
   turn and is not kept.

@@ -33,6 +33,9 @@ interface SessionState {
   allSessions: SessionInfo[];
   /** The engine has pushed `allSessions` once — until then the list is loading, not empty. */
   allSessionsLoaded: boolean;
+  /** An app's page: its own sessions (`/api/skill-sessions`, the day's row
+   *  marked `day`) — page_state gives an embed no `allSessions`. */
+  appSessions: SessionInfo[];
   activeSessionId: string | null;
   isMissionSession: boolean;
   activeMissionId: string | null;
@@ -68,6 +71,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   sessions: [],
   allSessions: [],
   allSessionsLoaded: false,
+  appSessions: [],
   // Deep link: `/?session=<id>` opens that session directly — skill pages
   // link into mission runs this way (the memory calendar's "dreaming in
   // mission" chip). Compact/embed mode has always relied on this param;

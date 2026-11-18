@@ -42,3 +42,10 @@ export function foldOthers(messages: ReadonlyArray<{ place?: string }>, here: st
   });
   return out;
 }
+
+/** Whether Clear on a page cancels the run going on: never in the day's
+ *  session, where that run may be another place's and Clear takes only this
+ *  page's part (Stop is the button that stops it). */
+export function clearCancelsRun(session: { day?: boolean } | undefined): boolean {
+  return !session?.day;
+}

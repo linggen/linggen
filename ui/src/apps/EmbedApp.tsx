@@ -98,6 +98,7 @@ export const EmbedApp: React.FC = () => {
       const r = await fetch(`/api/skill-sessions?skill=${encodeURIComponent(pinnedSkill)}`);
       const list: SessionInfo[] = (await r.json())?.sessions ?? [];
       setSkillSessions(list);
+      useSessionStore.setState({ appSessions: list });
       return list;
     } catch {
       return [];

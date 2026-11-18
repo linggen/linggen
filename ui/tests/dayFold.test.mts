@@ -2,7 +2,7 @@
 // The day's session on a page: other places' stretches fold to a line each.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { foldOthers, pagePlace, placeName, HOME_PLACE } from '../src/lib/dayFold.mts';
+import { clearCancelsRun, foldOthers, pagePlace, placeName, HOME_PLACE } from '../src/lib/dayFold.mts';
 
 test("another app's stretch is one fold; this page's messages stand", () => {
   const rows = [{ place: 'dice' }, { place: 'dice' }, { place: 'dj' }, { place: 'dj' }, { place: 'dj' }, { place: 'dice' }];
@@ -32,4 +32,10 @@ test("the main page stands at home: every app's stretch folds", () => {
   assert.equal(pagePlace('dj'), 'dj');
   const items = foldOthers([{ place: 'dj' }, { place: HOME_PLACE }], pagePlace(null));
   assert.deepEqual(items.map((i) => i.kind), ['fold', 'message']);
+});
+
+test("Clear in the day cancels no run: it may be another place's", () => {
+  assert.equal(clearCancelsRun({ day: true }), false);
+  assert.equal(clearCancelsRun({}), true, 'any other session: Clear cancels its run, as before');
+  assert.equal(clearCancelsRun(undefined), true, 'a session not listed yet: as before');
 });

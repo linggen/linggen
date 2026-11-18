@@ -328,6 +328,7 @@ export interface SessionInfo {
   model_fallback?: boolean; // false: a failed model call is not answered by another model (absent = true)
   work?: import('./types/generated/Work').Work | null;
   takes_work?: boolean;     // server-derived: this kind of session may carry a work tag
+  day?: boolean;            // server-derived: the day's session (doc/one-ling-spec.md § Linggen's daily session)
 }
 
 
