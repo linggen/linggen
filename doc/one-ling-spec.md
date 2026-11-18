@@ -152,6 +152,12 @@ session, prompt and row is as before. On (decided by the builder 2026-11-15/16):
 - **The list** marks the day's session (`day: true` on its row), one row a day; a page folds each
   stretch from another place to a line (the app, how many messages), which
   opens on a tap. The chats from before stay listed and readable either way.
+- **An app's own page** (`GET /api/skill-sessions?skill=`) lists the day's
+  first, marked the same way, then the app's other sessions — its chats
+  from before the day and its one-off ones — each with its own members and
+  model. The page picks up the day's, spoken in yet or not
+  (`shared/api.js` `pickResumable`): a new message lands there, and an
+  earlier chat is still there to open.
 - **The phone** (engine side): a hand-off takes the first of
   `GET /api/skill-sessions?skill=` (the day's, for an app that joins it) or
   `GET /api/sessions/day` for the Mac's own chat, and names its app as
