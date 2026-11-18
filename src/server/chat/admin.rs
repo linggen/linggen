@@ -421,6 +421,9 @@ pub(crate) async fn compact_config_api(
         .session_id
         .clone()
         .unwrap_or_else(|| "default".to_string());
+    if crate::server::day_session::is_day(&session_id) {
+        return days_compaction();
+    }
 
     // Never create an engine here: engine creation belongs to the chat path,
     // which knows the session's real project root. Creating one from this
@@ -468,6 +471,13 @@ pub(crate) async fn compact_config_api(
         "focus": focus,
     }))
     .into_response()
+}
+
+/// The day's session is every place's: a page's compaction settings set
+/// nothing there — the day compacts at the global threshold with no focus.
+/// It answers success, so a page needs no change.
+fn days_compaction() -> axum::response::Response {
+    Json(serde_json::json!({ "ok": true, "threshold": null, "focus": null })).into_response()
 }
 
 /// Extract file paths referenced in message content (e.g. from Read/Edit/Write tool calls).

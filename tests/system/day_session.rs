@@ -1316,3 +1316,29 @@ async fn in_the_day_a_pages_model_is_for_its_turn_only() {
     let kept = meta(&w, &day);
     assert!(kept.contains("fake-sol") && !kept.contains("fake-eye"), "{kept}");
 }
+
+/// In the day a page's compaction settings set nothing: the call answers
+/// success, the day keeps no focus, and a summary is not written for it.
+#[tokio::test]
+async fn in_the_day_a_pages_compact_config_sets_nothing() {
+    use crate::shared_table::filler;
+    let setup = Setup::default()
+        .script(Agent::Ling, vec![text("OK."), text("Fine.")])
+        .extra("context compaction assistant", "SUMMARY: the day so far.");
+    let (w, _) = day_world_at(12, setup).await;
+    let day = w.api.create_session(json!({"title": "Dice", "skill": "dice"})).await;
+    turn_at(&w, &day, Some("dice"), &format!("Ignore this filler.\n{}", filler()), Agent::Ling).await;
+    turn_at(&w, &day, Some("dice"), "Short one.", Agent::Ling).await;
+
+    let set = json!({"session_id": day, "threshold": 0.3, "focus": "Keep every dice roll."});
+    let resp = w.api.post("/api/chat/compact_config", set).await;
+    assert_eq!(resp["ok"], true, "{resp}");
+    let kept = meta(&w, &day);
+    assert!(!kept.contains("Keep every dice roll") && !kept.contains("compact_threshold"), "{kept}");
+
+    let resp = w.api.post("/api/chat/compact", json!({"session_id": day, "project_root": w.work()})).await;
+    assert_eq!(resp["compacted"], true, "not compacted: {resp}");
+    let summarizer = w.model.calls().into_iter().find(|c| c.text().contains("context compaction assistant"));
+    let summarizer = summarizer.expect("the summarizer's call");
+    assert!(!summarizer.text().contains("Keep every dice roll"), "the day's summary followed the page's focus");
+}

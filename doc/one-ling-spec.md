@@ -192,6 +192,9 @@ session, prompt and row is as before. On (decided by the builder 2026-11-15/16):
 - **One model a member for the day**: only the picker keeps one
   (`PATCH /api/sessions`); a model a page sends with a message is for that
   turn and is not kept.
+- **Compaction settings**: a page's `POST /api/chat/compact_config` sets
+  nothing in the day (it answers success); the day compacts at the global
+  threshold with no focus.
 - **A `!` command** stands where a turn from the same page stands (its page
   names its app as a chat turn does): at an app's page it starts in the
   app's folder, and its `cd` is kept for that place alone; home's starts in
