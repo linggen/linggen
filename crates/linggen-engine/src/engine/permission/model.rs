@@ -90,10 +90,45 @@ pub enum PromptKind {
         /// Grant choices, broadest first: the repo root down to the file's directory.
         directories: Vec<String>,
         tool_summary: String,
+        /// The gate's explanation for a coding-session Bash request.
+        reason: Option<String>,
         /// The command's effect leaves this machine (`outward`): one answer
         /// covers this one command — allow once or deny, no grant offered.
         outward: bool,
     },
+}
+
+/// Facts supplied by the branch that made the Bash decision.
+#[derive(Clone)]
+pub(super) enum BashReason {
+    Expansion,
+    UnclearSyntax,
+    ProcessSubstitution,
+    BeyondFolder(String),
+    GivenText(String),
+    Target,
+    Level,
+    Outward,
+    Floor,
+}
+
+impl BashReason {
+    fn sentence(&self, mode: PermissionMode, path: &str) -> String {
+        match self {
+            Self::Expansion => "Its words are decided at run time (`$` or backticks): write the values out or use a script in your folder.".into(),
+            Self::UnclearSyntax => "Its shell syntax is unclear to the gate: use a simpler command or a script in your folder.".into(),
+            Self::ProcessSubstitution => "It uses process substitution: pass a file in your folder instead.".into(),
+            Self::BeyondFolder(program) => format!("{program} acts beyond your folder: this form needs {mode}."),
+            Self::GivenText(program) => format!("{program} runs commands supplied as text: this form needs {mode}."),
+            Self::Target => {
+                let verb = if mode == PermissionMode::Read { "reads" } else { "acts on" };
+                format!("It {verb} {path}, outside your folder: use an equivalent path already granted at {mode}.")
+            }
+            Self::Level => format!("This command needs {mode} at {path}; the session grant does not cover it."),
+            Self::Outward => "It leaves this machine: this is always asked.".into(),
+            Self::Floor => "This command is never run here: the safety floor blocks it.".into(),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -728,7 +763,7 @@ pub fn check_permission_for(
         coding,
     );
     let result = match bash_command.filter(|cmd| tool == "Bash" && super::outward::is_outward(cmd)) {
-        Some(cmd) => ask_outward(result, cmd, session_cwd),
+        Some(cmd) => ask_outward(result, cmd, session_cwd, coding),
         None => result,
     };
     match (&result, ceiling) {
@@ -764,9 +799,12 @@ fn check_grants(
     if tool == "Bash" {
         if let Some(cmd) = bash_command {
             if is_hardcoded_deny(cmd) {
-                return PermissionCheckResult::Blocked(
-                    "Command blocked by safety floor (sudo, rm -rf /, mkfs, etc.)".to_string(),
-                );
+                let reason = if coding {
+                    BashReason::Floor.sentence(PermissionMode::Admin, "")
+                } else {
+                    "Command blocked by safety floor (sudo, rm -rf /, mkfs, etc.)".into()
+                };
+                return PermissionCheckResult::Blocked(reason);
             }
         }
     }
@@ -814,6 +852,7 @@ fn check_grants(
     // In a coding session what the tables would ask admin for is a write
     // (`lowered`).
     let mut lowered = false;
+    let mut bash_reason = None;
     let action_tier = if let Some(override_tier) = action_tier_override {
         override_tier
     } else if tool == "Bash" {
@@ -821,6 +860,7 @@ fn check_grants(
             Some(cmd) => {
                 let class = classify_bash(cmd, coding);
                 lowered = class.1;
+                bash_reason = class.2;
                 match class.0 {
                     BashClass::Read => PermissionMode::Read,
                     BashClass::Write => PermissionMode::Edit,
@@ -883,6 +923,7 @@ fn check_grants(
                             session_cwd,
                             tier,
                             format!("{} {}", tool, cmd),
+                            coding.then(|| bash_grant_reason(arg_path, session_cwd, bash_reason.as_ref())),
                         );
                     }
                 }
@@ -943,7 +984,18 @@ fn check_grants(
         session_cwd,
         action_tier,
         format!("{} {}", tool, summary),
+        (coding && tool == "Bash").then(|| bash_grant_reason(&target_path, session_cwd, bash_reason.as_ref())),
     )
+}
+
+fn bash_grant_reason(target: &Path, cwd: &Path, class: Option<&BashReason>) -> BashReason {
+    let target = normalize_path(&target.to_string_lossy());
+    let cwd = normalize_path(&cwd.to_string_lossy());
+    if !Path::new(&target).starts_with(Path::new(&cwd)) {
+        BashReason::Target
+    } else {
+        class.cloned().unwrap_or(BashReason::Level)
+    }
 }
 
 fn needs_prompt(
@@ -951,17 +1003,21 @@ fn needs_prompt(
     session_cwd: &Path,
     mode: PermissionMode,
     summary: String,
+    reason: Option<BashReason>,
 ) -> PermissionCheckResult {
     let target = PathBuf::from(normalize_path(&target.to_string_lossy()));
+    let path = display_path(&target);
+    let reason = reason.map(|why| why.sentence(mode, &path));
     let directories = grant_directories(&target, session_cwd)
         .iter()
         .map(|dir| display_path(dir))
         .collect();
     PermissionCheckResult::NeedsPrompt(PromptKind::ExceedsCeiling {
         target_mode: mode,
-        path: display_path(&target),
+        path,
         directories,
         tool_summary: summary,
+        reason,
         outward: false,
     })
 }
@@ -974,6 +1030,7 @@ fn ask_outward(
     result: PermissionCheckResult,
     cmd: &str,
     session_cwd: &Path,
+    coding: bool,
 ) -> PermissionCheckResult {
     let ask = match result {
         PermissionCheckResult::Blocked(_) => return result,
@@ -982,6 +1039,7 @@ fn ask_outward(
             session_cwd,
             PermissionMode::Admin,
             format!("Bash {cmd}"),
+            None,
         ) {
             PermissionCheckResult::NeedsPrompt(kind) => kind,
             other => return other,
@@ -992,13 +1050,22 @@ fn ask_outward(
         target_mode,
         path,
         tool_summary,
+        reason,
         ..
     } = ask;
+    let reason = coding.then(|| {
+        let outward = BashReason::Outward.sentence(target_mode, &path);
+        match reason {
+            Some(need) => format!("{outward} {need}"),
+            None => outward,
+        }
+    });
     PermissionCheckResult::NeedsPrompt(PromptKind::ExceedsCeiling {
         target_mode,
         path,
         directories: Vec::new(),
         tool_summary,
+        reason,
         outward: true,
     })
 }

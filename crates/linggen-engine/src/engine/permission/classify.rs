@@ -11,6 +11,8 @@ use super::scripts::{awk_class, sed_class};
 use super::shell_text::strip_heredoc_bodies;
 use BashClass::{Admin, Read, Write};
 
+use super::model::BashReason;
+
 /// The tier a command needs outside a coding session (the tables' answer;
 /// the tests read it).
 #[cfg(test)]
@@ -21,12 +23,16 @@ pub fn classify_bash_command(cmd: &str) -> BashClass {
 /// The tier a command needs, in a coding session or not: in one, a segment
 /// is judged by [`coding_class`] first. Also whether that lowered any
 /// segment (such a run is still judged where it runs).
-pub(super) fn classify_bash(cmd: &str, coding: bool) -> (BashClass, bool) {
+pub(super) fn classify_bash(cmd: &str, coding: bool) -> (BashClass, bool, Option<BashReason>) {
     let cmd = &strip_heredoc_bodies(cmd);
-    if cmd.trim().is_empty() || has_dynamic_syntax(cmd) {
-        return (Admin, false);
+    if cmd.trim().is_empty() {
+        return (Admin, false, None);
+    }
+    if let Some(reason) = dynamic_syntax(cmd) {
+        return (Admin, false, Some(reason));
     }
     let mut highest = Read;
+    let mut reason = None;
     let mut lowered = false;
     let mut words = Vec::new();
     for token in command_tokens(cmd)
@@ -36,7 +42,10 @@ pub(super) fn classify_bash(cmd: &str, coding: bool) -> (BashClass, bool) {
         match token {
             Token::Word(w) => words.push(w),
             Token::Op(_) if !words.is_empty() => {
-                let (class, by_code) = classify_segment(&words, coding);
+                let (class, by_code, why) = classify_segment(&words, coding);
+                if class > highest || (class == highest && reason.is_none()) {
+                    reason = why;
+                }
                 highest = highest.max(class);
                 lowered |= by_code;
                 words.clear();
@@ -44,7 +53,7 @@ pub(super) fn classify_bash(cmd: &str, coding: bool) -> (BashClass, bool) {
             Token::Op(_) => {}
         }
     }
-    (highest, lowered)
+    (highest, lowered, reason)
 }
 
 /// Backticks and `$` outside single quotes change the command or its
@@ -54,7 +63,7 @@ pub(super) fn classify_bash(cmd: &str, coding: bool) -> (BashClass, bool) {
 /// a body into words; an apostrophe in it is no quote), a comment holding
 /// a quote character or a backslash (neither means anything to the shell
 /// there), and whitespace the shell does not split words on.
-fn has_dynamic_syntax(cmd: &str) -> bool {
+fn dynamic_syntax(cmd: &str) -> Option<BashReason> {
     let mut quote = None;
     let mut escaped = false;
     let mut word_start = true;
@@ -70,17 +79,17 @@ fn has_dynamic_syntax(cmd: &str) -> bool {
             continue;
         }
         if (c == '`' || c == '$') && quote != Some('\'') {
-            return true;
+            return Some(BashReason::Expansion);
         }
         if quote.is_none() {
             if is_odd_space(c) {
-                return true;
+                return Some(BashReason::UnclearSyntax);
             }
             if c == '#' && word_start && comment_is_unclear(&mut chars) {
-                return true;
+                return Some(BashReason::UnclearSyntax);
             }
             if c == '<' && chars.next_if_eq(&'<').is_some() && chars.next_if_eq(&'<').is_none() {
-                return true;
+                return Some(BashReason::UnclearSyntax);
             }
         }
         if c == '\'' || c == '"' {
@@ -92,7 +101,7 @@ fn has_dynamic_syntax(cmd: &str) -> bool {
         }
         word_start = quote.is_none() && (c.is_whitespace() || ";|&()<>".contains(c));
     }
-    quote.is_some() || escaped
+    (quote.is_some() || escaped).then_some(BashReason::UnclearSyntax)
 }
 
 /// Reads a comment to the end of its line; whether it holds a quote
@@ -158,21 +167,22 @@ fn has_process_substitution(words: &[String]) -> bool {
     })
 }
 
-fn classify_segment(raw: &[String], coding: bool) -> (BashClass, bool) {
+fn classify_segment(raw: &[String], coding: bool) -> (BashClass, bool, Option<BashReason>) {
     if has_process_substitution(raw) {
-        return (Admin, false);
+        return (Admin, false, Some(BashReason::ProcessSubstitution));
     }
     let (words, redirect) = split_redirects(raw);
-    let coded = coding.then(|| coding_class(&words)).flatten();
-    let (class, by_code) = match coded {
-        Some(class) => (class, true),
-        None => (classify_words(&words), false),
-    };
-    if redirect {
-        (class.max(Write), by_code)
+    let base = classify_words(&words);
+    let (class, by_code, reason) = if coding && base == Admin {
+        match coding_class(&words) {
+            Ok(Some(class)) => (class, true, None),
+            Ok(None) => (base, false, None),
+            Err(reason) => (base, false, Some(reason)),
+        }
     } else {
-        (class, by_code)
-    }
+        (base, false, None)
+    };
+    (if redirect { class.max(Write) } else { class }, by_code, reason)
 }
 
 /// How a coding session judges a segment: what the tables would ask admin
@@ -187,30 +197,30 @@ fn classify_segment(raw: &[String], coding: bool) -> (BashClass, bool) {
 /// the segment to the tables: they already allow it, the program acts
 /// beyond the folder ([`BEYOND_THE_FOLDER`]), it is handed code as text
 /// ([`runs_given_text`]), or a flag of its own asks for admin.
-fn coding_class(words: &[String]) -> Option<BashClass> {
-    if classify_words(words) != Admin {
-        return None;
-    }
+fn coding_class(words: &[String]) -> Result<Option<BashClass>, BashReason> {
     let all: Vec<&str> = words.iter().map(String::as_str).collect();
     let run = command_run(&all);
     let Some(first) = run.first() else {
         // Only the shell's own words (`fi`, `done`, a loop's list): no
         // program runs. Anything else with none stays with the tables.
-        return super::model::only_shell_words(&all).then_some(Read);
+        return Ok(super::model::only_shell_words(&all).then_some(Read));
     };
     let program = file_name(first);
     let program = program.as_str();
     let args: Vec<String> = run[1..].iter().map(|w| w.to_string()).collect();
-    if BEYOND_THE_FOLDER.contains(&program) || runs_given_text(program, &args) {
-        return None;
+    if BEYOND_THE_FOLDER.contains(&program) {
+        return Err(BashReason::BeyondFolder(program.to_string()));
+    }
+    if runs_given_text(program, &args) {
+        return Err(BashReason::GivenText(program.to_string()));
     }
     // The command past its wrappers, judged by the tables under its plain
     // name: `time cargo test` is `cargo test`.
     let mut plain = vec![program.to_string()];
     plain.extend(args.iter().cloned());
     match classify_words(&plain) {
-        Admin => Some(Write.max(arg_lift(program, &args))),
-        class => Some(class),
+        Admin => Ok(Some(Write.max(arg_lift(program, &args)))),
+        class => Ok(Some(class)),
     }
 }
 

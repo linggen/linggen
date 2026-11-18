@@ -94,6 +94,8 @@ When an interactive agent action needs a higher level, the chat asks the current
 - **Admin everywhere**, added only when the needed level is below admin.
 - **Deny**.
 
+For Bash in a coding session, the gate gives its reason in the permission request and the model's refusal result, with a simpler form when one can avoid the ask without changing the task.
+
 An outward command offers only **Allow once** and **Deny** (§ Outward commands). An admin action omits the extra admin choice. A path with no repository root stops before the home directory. `/` and system directories such as `/dev` are not offered.
 
 Deny blocks this action and closes its project (the nearest git root, else its folder; never the home folder) to every tool for the rest of the run: a later call there is refused without asking, the chat shows one line saying so, and the agent is told to mark what needed it unverified and continue. Nothing is stored: the next run asks again. Either allow choice is written to that session's permission file. Reopening the same session keeps it. Other sessions do not inherit it. A grant for all directories replaces existing directory grants; a later, more specific directory grant can override it. Admin everywhere is the broad setting: later actions in that session are not asked again. The hardcoded deny floor still blocks dangerous commands. Unattended runs cannot ask and must pause or fail when permission is insufficient.

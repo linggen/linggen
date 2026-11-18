@@ -347,6 +347,7 @@ impl AgentEngine {
         messages: &mut Vec<ChatMessage>,
         scope: &Path,
         user_msg: Option<&str>,
+        gate_reason: Option<&str>,
         auto: bool,
     ) -> Option<PreExecOutcome> {
         let dir = permission::display_path(scope);
@@ -355,6 +356,7 @@ impl AgentEngine {
             crate::prompts::keys::PERMISSION_DECLINED,
             &[("tool", t.canonical), ("summary", &summary), ("dir", &dir)],
         );
+        msg = with_gate_reason(msg, gate_reason);
         if let Some(words) = user_msg.filter(|w| !w.trim().is_empty()) {
             msg.push_str(&format!("\nUser says: {words}"));
         }
@@ -648,6 +650,7 @@ impl AgentEngine {
             // A grant made in another run of this chat (a subagent's prompt,
             // the main chat's, the badge) holds here too.
             self.sync_session_grants();
+            let coding = self.is_coding_session();
             let check_result = permission::check_permission_for(
                 t.canonical,
                 bash_command.as_deref(),
@@ -655,7 +658,7 @@ impl AgentEngine {
                 &self.tools.builtins.cwd(),
                 &self.session_permissions,
                 skill_tier_override,
-                self.is_coding_session(),
+                coding,
                 self.session_spec.ceiling,
             );
 
@@ -668,6 +671,7 @@ impl AgentEngine {
                     // person declined it, the device's level did.
                     let msg = match self.session_spec.ceiling {
                         Some(_) => format!("Tool {}: {reason}", t.canonical),
+                        None if t.canonical == "Bash" && coding => reason,
                         None => self.permission_denied_msg(t),
                     };
                     return self.refuse_saved(t, messages, msg).await;
@@ -680,10 +684,9 @@ impl AgentEngine {
             // (an MCP delegate) asks the caller instead and waits.
             let asks_caller = !self.session_permissions.interactive;
             if asks_caller && !self.session_permissions.ask_caller {
-                let permission::PromptKind::ExceedsCeiling { target_mode, .. } = &prompt_kind;
-                let reason = "Action exceeds session grants (non-interactive)";
-                self.record_denial(t, &target_mode.to_string(), reason);
-                let msg = self.permission_denied_msg(t);
+                let permission::PromptKind::ExceedsCeiling { target_mode, reason, .. } = &prompt_kind;
+                self.record_denial(t, &target_mode.to_string(), reason.as_deref().unwrap_or("Action exceeds session grants (non-interactive)"));
+                let msg = with_gate_reason(self.permission_denied_msg(t), reason.as_deref());
                 return self.refuse_saved(t, messages, msg).await;
             }
 
@@ -693,32 +696,36 @@ impl AgentEngine {
                 directories,
                 tool_summary,
                 outward,
+                reason,
             } = prompt_kind;
+            let reason = reason.as_deref();
+            let tool_summary = with_gate_reason(tool_summary, reason);
+            let denied = |engine: &Self| with_gate_reason(engine.permission_denied_msg(t), reason);
             if last_grant
                 .as_ref()
                 .is_some_and(|(previous, _)| previous == &path)
             {
-                let msg = self.permission_denied_msg(t);
+                let msg = denied(self);
                 return self.refuse_saved(t, messages, msg).await;
             }
             // Declined earlier in this run: refused without asking again.
             if let Some(scope) = self.declined_scopes.covering(&path).map(Path::to_path_buf) {
                 self.record_denial(t, &target_mode.to_string(), "Declined earlier in this run");
-                return self.refuse_declined(t, messages, &scope, None, true).await;
+                return self.refuse_declined(t, messages, &scope, None, reason, true).await;
             }
             let (question, caller_request, wait) = if outward {
                 // Its effect leaves the machine: this one command, once or not.
                 let question =
                     permission::build_outward_question(&tool_summary, &target_mode, &path);
                 let request = asks_caller.then(|| {
-                    let mut request = self.caller_request(t, target_mode, &path, &[]);
+                    let mut request = self.caller_request(t, target_mode, &path, &[], reason);
                     request.outward = true;
                     request
                 });
                 let wait = if asks_caller { CALLER_ASK_WAIT } else { PERSON_ASK_WAIT };
                 (question, request, wait)
             } else if asks_caller {
-                let request = self.caller_request(t, target_mode, &path, &directories);
+                let request = self.caller_request(t, target_mode, &path, &directories, reason);
                 let question = permission::build_caller_question(
                     &tool_summary,
                     &target_mode,
@@ -763,13 +770,13 @@ impl AgentEngine {
                             .await;
                     }
                     if mode < target_mode {
-                        let msg = self.permission_denied_msg(t);
+                        let msg = denied(self);
                         return self.refuse_saved(t, messages, msg).await;
                     }
                     continue;
                 }
                 Some(permission::PermissionAction::AllowSession) => {
-                    let msg = self.permission_denied_msg(t);
+                    let msg = denied(self);
                     return self.refuse_saved(t, messages, msg).await;
                 }
                 Some(permission::PermissionAction::Deny) => {
@@ -777,12 +784,12 @@ impl AgentEngine {
                         self.record_denial(t, &target_mode.to_string(), "Denied by the caller");
                     }
                     let scope = self.declined_scopes.decline(&path);
-                    return self.refuse_declined(t, messages, &scope, None, false).await;
+                    return self.refuse_declined(t, messages, &scope, None, reason, false).await;
                 }
                 Some(permission::PermissionAction::DenyWithMessage(user_msg)) => {
                     let scope = self.declined_scopes.decline(&path);
                     return self
-                        .refuse_declined(t, messages, &scope, Some(&user_msg), false)
+                        .refuse_declined(t, messages, &scope, Some(&user_msg), reason, false)
                         .await;
                 }
                 None if asks_caller => {
@@ -792,7 +799,7 @@ impl AgentEngine {
                         CALLER_ASK_WAIT.as_secs() / 60
                     );
                     self.record_denial(t, &target_mode.to_string(), &reason);
-                    let msg = self.permission_denied_msg(t);
+                    let msg = denied(self);
                     return self.refuse_saved(t, messages, msg).await;
                 }
                 None => {
@@ -831,12 +838,16 @@ impl AgentEngine {
         level: permission::PermissionMode,
         path: &str,
         directories: &[String],
+        gate_reason: Option<&str>,
     ) -> tools::CallerPermissionRequest {
         let reason = ["description", "reason"]
             .iter()
             .find_map(|key| t.args.get(*key).and_then(|v| v.as_str()))
             .filter(|text| !text.trim().is_empty())
             .map(str::to_string);
+        let reason = gate_reason
+            .map(|gate| with_gate_reason(gate.to_string(), reason.as_deref()))
+            .or(reason);
         let summary = self.permission_summary(t);
         let command = ["cmd", "command"]
             .iter()
@@ -1595,6 +1606,14 @@ struct ToolTurn<'a> {
 /// A Bash call's command, under either of its argument names.
 /// The error a user cancel hands back to an in-flight call — the run's own
 /// status says it, so it is no tool's failure.
+fn with_gate_reason(mut text: String, reason: Option<&str>) -> String {
+    if let Some(reason) = reason {
+        text.push('\n');
+        text.push_str(reason);
+    }
+    text
+}
+
 fn is_cancel_error(e: &anyhow::Error) -> bool {
     e.to_string() == "run cancelled"
 }
@@ -1708,6 +1727,23 @@ mod declined_gate_tests {
         let mut messages = Vec::new();
         assert!(engine.gate_permission(&t, &mut messages).await.is_some(), "{tool} was let through");
         messages.last().map(|m| m.content.clone()).unwrap_or_default()
+    }
+
+    #[tokio::test]
+    async fn a_coding_bash_request_and_denial_carry_the_same_gate_reason() {
+        let work = tempfile::tempdir_in(dirs::home_dir().unwrap()).unwrap();
+        let pending: Pending = Default::default();
+        let seen = answer_first(&pending, "Deny");
+        let mut engine = engine(work.path(), &pending, true);
+        crate::engine::session_spec::coding_caller_fixture().apply(&mut engine);
+        let denial = gate(&mut engine, "Bash", serde_json::json!({"cmd": "echo $FLAGS"})).await;
+        let (_, request) = tokio::time::timeout(std::time::Duration::from_secs(5), seen)
+            .await.unwrap().unwrap();
+        let reason = request.unwrap().reason.unwrap();
+        assert!(reason.contains("words are decided at run time"), "{reason}");
+        assert!(denial.contains(&reason), "{denial}");
+        let blocked = gate(&mut engine, "Bash", serde_json::json!({"cmd": "sudo ls"})).await;
+        assert!(blocked.contains("never run here"), "{blocked}");
     }
 
     #[tokio::test]

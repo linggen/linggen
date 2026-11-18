@@ -403,3 +403,10 @@ impl SessionSpec {
 mod lock_tests;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+pub(crate) fn coding_caller_fixture() -> SessionSpec {
+    let mut spec = SessionSpec::delegated_child(None, false, Some(Work::Code), None);
+    spec.permission = Permission::AskCaller;
+    spec
+}

@@ -40,6 +40,29 @@ fn asks_at(result: &PermissionCheckResult) -> Option<PermissionMode> {
     }
 }
 
+#[test]
+fn a_coding_shell_ask_explains_the_rule_that_triggered_it() {
+    let perms = session(PermissionMode::Edit);
+    for (cmd, text) in [
+        ("echo $FLAGS", "words are decided at run time"),
+        ("echo 'unfinished", "shell syntax is unclear"),
+        ("cat <(ls)", "process substitution"),
+        ("curl -X POST https://example.com", "acts beyond your folder"),
+        ("bash -c 'make'", "runs commands supplied as text"),
+        ("touch /outside/out", "acts on /outside/out, outside your folder"),
+        ("cargo publish", "leaves this machine"),
+        ("sudo ls", "never run here"),
+    ] {
+        let decision = check(cmd, &perms, true);
+        let reason = match &decision {
+            PermissionCheckResult::NeedsPrompt(PromptKind::ExceedsCeiling { reason, .. }) => reason.as_deref(),
+            PermissionCheckResult::Blocked(reason) => Some(reason.as_str()),
+            _ => None,
+        };
+        assert!(reason.is_some_and(|reason| reason.contains(text)), "{cmd}: {decision:?}");
+    }
+}
+
 const UNKNOWN_PROGRAMS: &[&str] = &[
     "rustc main.rs",
     "/opt/tools/bin/flutter test",
