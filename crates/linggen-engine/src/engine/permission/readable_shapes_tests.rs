@@ -107,6 +107,47 @@ fn inspection_needs_only_a_read_grant() {
     }
 }
 
+#[test]
+fn sed_prints_only_numeric_selections_at_read_level() {
+    let reads = [
+        "sed -n '55,217p;340,409p;480,650p' file",
+        "sed -n '1p;4p' file",
+        "sed -n \"1p;3,5p\" 'file name' other",
+        "sed -n '1,3p;5p' file | head",
+    ];
+    let asks = [
+        "sed -n '1p;4d' file",
+        "sed -n '1p;/a/p' file",
+        "sed -n '1p;2w output' file",
+        "sed -n '1e;4p' file",
+        "sed -n \"1p;2'p\" file",
+        "sed -n '1p;;4p' file",
+        "sed -ni '1p;4p' file",
+        "sed -n -e '1p;4p' file",
+        "sed -n '1p;4p' file -i",
+        "sed -n '1p;4p' *.rs",
+        "sed -n '1p;4p' file > output",
+        "sed -n '1p;4p' /ungranted/file",
+    ];
+    assert!(asks.len() >= reads.len());
+    let perms = folder_session(PermissionMode::Read);
+    for coding in [false, true] {
+        let check = |cmd| {
+            check_permission_for(
+                "Bash", Some(cmd), None, Path::new(WD), &perms, None, coding, None,
+            )
+        };
+        for cmd in asks {
+            let result = check(cmd);
+            assert!(matches!(result, PermissionCheckResult::NeedsPrompt(_)), "{cmd}: {result:?}");
+        }
+        for cmd in reads {
+            let result = check(cmd);
+            assert!(allowed(&result), "{cmd}: {result:?}");
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // `git grep`: the pattern is text
 // ---------------------------------------------------------------------------

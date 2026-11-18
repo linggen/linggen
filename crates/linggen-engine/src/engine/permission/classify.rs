@@ -192,7 +192,7 @@ fn classify_segment(raw: &[String], coding: bool) -> (BashClass, bool, Option<Ba
     (if redirect { class.max(Write) } else { class }, by_code, reason)
 }
 
-/// A literal `sed -n` with a numeric address or range and plain file operands.
+/// A literal `sed -n` with numeric print selections and plain file operands.
 pub(super) fn reads_sed_lines(raw: &[String]) -> bool {
     let [program, flag, script, files @ ..] = raw else {
         return false;
@@ -200,18 +200,26 @@ pub(super) fn reads_sed_lines(raw: &[String]) -> bool {
     if program != "sed" || flag != "-n" {
         return false;
     }
-    let script = dequote(script);
-    let Some(address) = script.strip_suffix('p') else {
+    let script = script
+        .strip_prefix('\'')
+        .and_then(|s| s.strip_suffix('\''))
+        .or_else(|| script.strip_prefix('"').and_then(|s| s.strip_suffix('"')))
+        .unwrap_or(script);
+    script.split(';').all(numeric_print_selection)
+        && files.iter().all(|word| {
+            !dequote(word).starts_with('-')
+                && !word.contains(['<', '>', '*', '?', '[', '{', '}', '(', ')'])
+        })
+}
+
+fn numeric_print_selection(selection: &str) -> bool {
+    let Some(address) = selection.strip_suffix('p') else {
         return false;
     };
     let number = |s: &str| !s.is_empty() && s.bytes().all(|c| c.is_ascii_digit());
-    let selection = address
+    address
         .split_once(',')
-        .map_or_else(|| number(address), |(a, b)| number(a) && number(b));
-    selection && files.iter().all(|word| {
-        !dequote(word).starts_with('-')
-            && !word.contains(['<', '>', '*', '?', '[', '{', '}', '(', ')'])
-    })
+        .map_or_else(|| number(address), |(a, b)| number(a) && number(b))
 }
 
 /// How a coding session judges a segment: what the tables would ask admin
