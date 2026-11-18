@@ -121,11 +121,11 @@ const ChatDebugActions: React.FC<{ projectRoot?: string | null; sessionId?: stri
         <Copy size={12} />
         <span>{labelFor(copyStatus, 'Chat')}</span>
       </button>
-      {!claude && <button onClick={handleCopySystemPrompt} className={btnClass(spStatus)} title="Copy system prompt + tool schemas to clipboard">
+      {!claude && <button data-testid="copy-system-prompt" onClick={handleCopySystemPrompt} className={btnClass(spStatus)} title="Copy system prompt + tool schemas to clipboard">
         <FileText size={12} />
         <span>{labelFor(spStatus, 'System Prompt')}</span>
       </button>}
-      <button onClick={clearChat}
+      <button data-testid="clear-chat" onClick={clearChat}
         className="px-1.5 py-1 rounded text-slate-500 dark:text-slate-400 hover:bg-red-500/10 hover:text-red-500 transition-colors shrink-0 flex items-center gap-1 text-[11px] font-medium"
         title="Clear chat messages">
         <Eraser size={12} />
@@ -328,7 +328,7 @@ export const ChatPanel: React.FC<{
       <div className="px-1.5 py-1 border-b border-slate-200 dark:border-white/5 bg-slate-50/70 dark:bg-white/[0.02] flex items-start gap-1">
       <div className="flex-1 min-w-0 space-y-1">
         {sessionId && (
-          <details className="rounded-md border border-slate-200 dark:border-white/10 bg-white/80 dark:bg-black/20 px-2 py-1 text-[11px] text-slate-600 dark:text-slate-300">
+          <details data-testid="session-bar" className="rounded-md border border-slate-200 dark:border-white/10 bg-white/80 dark:bg-black/20 px-2 py-1 text-[11px] text-slate-600 dark:text-slate-300">
             <summary className="cursor-pointer flex flex-wrap items-center gap-2">
               {sessionId && (() => {
                 const sessionMeta = useSessionStore.getState().allSessions.find(s => s.id === sessionId);

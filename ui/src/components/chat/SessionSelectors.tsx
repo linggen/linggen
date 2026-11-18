@@ -93,6 +93,7 @@ export const SessionModelSelector: React.FC = () => {
 
   return (
     <select
+      data-testid="session-model"
       value={sessionModel ?? ''}
       onChange={handleChange}
       onClick={(e) => e.stopPropagation()}
