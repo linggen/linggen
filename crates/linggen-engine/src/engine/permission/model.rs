@@ -127,7 +127,25 @@ pub fn is_hardcoded_deny(cmd: &str) -> bool {
             return true;
         }
     }
-    false
+    // And each command as the shell splits them: by line and by `&` too,
+    // with a quoted span kept whole and a heredoc's body left out.
+    command_segments(&super::shell_text::strip_heredoc_bodies(trimmed))
+        .iter()
+        .any(|words| words_are_hardcoded_deny(words))
+}
+
+/// The words of each command in `cmd`, as [`command_tokens`] splits them
+/// and as the program receives them (quotes removed).
+fn command_segments(cmd: &str) -> Vec<Vec<String>> {
+    let mut segments = vec![Vec::new()];
+    for token in command_tokens(cmd) {
+        match token {
+            Token::Word(w) => segments.last_mut().expect("one segment").push(dequote(&w)),
+            Token::Op(_) => segments.push(Vec::new()),
+        }
+    }
+    segments.retain(|words| !words.is_empty());
+    segments
 }
 
 /// Programs that only run the command that follows them.
@@ -146,22 +164,41 @@ pub(super) fn is_assignment(word: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
+/// Shell words that open, join or close a compound command: what follows
+/// one is a command like any other (`if sudo ls`, `then sudo ls`,
+/// `{ sudo ls`, `! sudo ls`).
+const SHELL_KEYWORDS: &[&str] = &[
+    "if", "then", "else", "elif", "fi", "while", "until", "do", "done", "esac", "!", "{", "}",
+    "coproc",
+];
+
+/// Heads of a compound command whose own words name no program: a loop's
+/// list, a `case` word. Their bodies are other segments.
+const LISTS_ONLY: &[&str] = &["for", "select"];
+
 /// The command a segment really runs, for the floor: past leading
-/// `NAME=value` words and past the programs that only run what follows them
-/// (with their options), its program named by its file name whatever path
-/// it was given by. `/usr/bin/sudo ls`, `FOO=1 sudo ls`, `env -i sudo ls`
-/// and `nice -n 19 sudo ls` are all `sudo ls`.
+/// `NAME=value` words, past the shell's own words around a compound command
+/// (`if`, `then`, `{`, a subshell's `(`, a `case` arm's label, a function's
+/// name) and past the programs that only run what follows them (with their
+/// options), its program named by its file name whatever path or letter
+/// case it was given by. `/usr/bin/sudo ls`, `FOO=1 sudo ls`,
+/// `env -i sudo ls`, `nice -n 19 sudo ls`, `then sudo ls` and `(sudo ls`
+/// are all `sudo ls`. Empty when the segment names no program.
 pub(super) fn command_run<'a>(tokens: &'a [&'a str]) -> &'a [&'a str] {
     let mut rest = tokens;
     loop {
         while rest.first().is_some_and(|w| is_assignment(w)) {
             rest = &rest[1..];
         }
+        if let Some(past) = past_shell_words(rest) {
+            rest = past;
+            continue;
+        }
         let Some(first) = rest.first() else {
             return rest;
         };
         let wrapper = file_name(first);
-        if !RUNS_WHAT_FOLLOWS.contains(&wrapper) {
+        if !RUNS_WHAT_FOLLOWS.contains(&wrapper.as_str()) {
             return rest;
         }
         rest = &rest[1..];
@@ -184,13 +221,73 @@ pub(super) fn command_run<'a>(tokens: &'a [&'a str]) -> &'a [&'a str] {
     }
 }
 
-/// A program's own name, whatever path it was run by.
-pub(super) fn file_name(word: &str) -> &str {
-    word.rsplit('/').next().unwrap_or(word)
+/// `rest` past the shell's own words it starts with, when it starts with
+/// any: a keyword, a bare `(` or `)`, a function's name (`f()`, `f ()`,
+/// `function f`), a `case` head up to its first arm, an arm's label
+/// (`x)` before a command). A list head (`for x in …`) leaves nothing.
+fn past_shell_words<'a>(rest: &'a [&'a str]) -> Option<&'a [&'a str]> {
+    let first = *rest.first()?;
+    let name = file_name(first);
+    if LISTS_ONLY.contains(&name.as_str()) {
+        return Some(&[]);
+    }
+    match name.as_str() {
+        "function" => return Some(rest.get(2..).unwrap_or(&[])),
+        "case" => return Some(past_first_label(&rest[1..])),
+        // `coproc NAME { cmd`: the name is not the program.
+        "coproc" if rest.get(2).is_some_and(|w| w.starts_with(['{', '('])) => {
+            return Some(&rest[2..]);
+        }
+        _ => {}
+    }
+    if name.is_empty() || SHELL_KEYWORDS.contains(&name.as_str()) || first.ends_with("()") {
+        return Some(&rest[1..]);
+    }
+    let next = rest.get(1).copied();
+    if next == Some("()") {
+        return Some(&rest[2..]);
+    }
+    // `x) cmd`: an arm's label. `(cmd) >out` is a subshell and its redirect.
+    let redirect = |w: &str| w.trim_start_matches(|c: char| c.is_ascii_digit() || c == '&').starts_with(['>', '<']);
+    let label = first.ends_with(')') && next.is_some_and(|w| !redirect(w));
+    label.then(|| &rest[1..])
+}
+
+/// Whether a segment that names no program is made of the shell's own
+/// words (past its `NAME=value` words): `fi`, `done`, `for x in a b`.
+pub(super) fn only_shell_words(tokens: &[&str]) -> bool {
+    let at = tokens.iter().position(|w| !is_assignment(w));
+    at.is_some_and(|at| past_shell_words(&tokens[at..]).is_some()) && command_run(tokens).is_empty()
+}
+
+/// The words after a `case` head's first arm label; none when it has no arm
+/// on this segment.
+fn past_first_label<'a>(words: &'a [&'a str]) -> &'a [&'a str] {
+    match words.iter().position(|w| w.contains(')')) {
+        // `x)cmd`: the label is glued to its command, which `file_name` reads.
+        Some(at) if !words[at].ends_with(')') => &words[at..],
+        Some(at) => &words[at + 1..],
+        None => &[],
+    }
+}
+
+/// A program's own name, whatever path, letter case or subshell
+/// parentheses it was written with (`/usr/bin/SUDO`, `(sudo`, `sudo)` and
+/// a `case` arm's `x)sudo` are all `sudo`): a Mac's disk does not tell
+/// `SUDO` from `sudo`.
+pub(super) fn file_name(word: &str) -> String {
+    let word = word.trim_end_matches(')');
+    let word = word.rsplit(')').next().unwrap_or(word);
+    let word = word.rsplit('/').next().unwrap_or(word);
+    word.trim_start_matches('(').to_ascii_lowercase()
 }
 
 fn segment_is_hardcoded_deny(seg: &str) -> bool {
     let words: Vec<String> = seg.split_whitespace().map(dequote).collect();
+    words_are_hardcoded_deny(&words)
+}
+
+fn words_are_hardcoded_deny(words: &[String]) -> bool {
     let all: Vec<&str> = words.iter().map(String::as_str).collect();
     let tokens = command_run(&all);
     if tokens.is_empty() {
@@ -862,10 +959,10 @@ fn ask_outward(
 /// (a `ling-mem search "... /usr/local/bin ..."` query, a jq program) stays
 /// one word and is not mistaken for a path the command touches.
 fn path_token(word: &str) -> Option<String> {
-    let t = word.trim();
-    let quoted = t.len() >= 2
-        && ((t.starts_with('"') && t.ends_with('"')) || (t.starts_with('\'') && t.ends_with('\'')));
-    let t = if quoted { &t[1..t.len() - 1] } else { t };
+    // The word as the program receives it: `"/etc"/passwd` and
+    // `\/etc/passwd` are `/etc/passwd`, whatever part of it is quoted.
+    let plain = dequote(word.trim());
+    let t = plain.as_str();
     if !(t.starts_with('/') || t.starts_with("~/") || t == "~" || is_upward_relative(t)) {
         return None;
     }
@@ -1041,13 +1138,13 @@ fn command_target_levels(cmd: &str, session_cwd: &Path) -> Vec<(PathBuf, TargetK
                 }
             }
         } else if let Some(token) = path_token(w).or_else(|| {
-            let t = w.trim_matches(|c| c == '"' || c == '\'');
+            let t = dequote(w);
             (t.starts_with("./")
                 || t == "."
                 || (file_operands
                     && !t.starts_with('-')
                     && !t.contains(['$', '`', '*', '?', '[', '>', '<'])))
-            .then(|| t.to_string())
+            .then_some(t)
         }) {
             let kind = if at_command
                 && path_token(w).is_some()
@@ -1231,8 +1328,8 @@ fn has_subshell_syntax(cmd: &str) -> bool {
 /// goes where the kernel sends it. `None` for what cannot be known before
 /// the command runs (a variable, a glob, `-`, a missing directory).
 fn cd_destination(word: &str, cwd: &Path) -> Option<PathBuf> {
-    let t = word.trim().trim_end_matches([';', '&', '|']);
-    let t = t.trim_matches(|c| c == '"' || c == '\'');
+    let plain = dequote(word.trim().trim_end_matches([';', '&', '|']));
+    let t = plain.as_str();
     if t.is_empty()
         || t == "-"
         || t.contains(['$', '`', '*', '?', '['])

@@ -93,19 +93,9 @@ pub(super) fn is_outward(cmd: &str) -> bool {
     false
 }
 
-/// Words that open a compound command; the program runs after them.
-const OPENERS: &[&str] = &[
-    "(", "{", "!", "if", "then", "else", "elif", "do", "while", "until",
-];
-
 fn segment_is_outward(words: &[String]) -> bool {
-    let mut all: Vec<&str> = words.iter().map(String::as_str).collect();
-    while all.first().is_some_and(|w| OPENERS.contains(w)) {
-        all.remove(0);
-    }
-    if let Some(first) = all.first_mut() {
-        *first = first.trim_start_matches('(');
-    }
+    let all: Vec<&str> = words.iter().map(String::as_str).collect();
+    // The program really run: past the shell's own words (`then`, `(`) too.
     let run = command_run(&all);
     let Some(program) = run.first().map(|w| file_name(w)) else {
         return false;
@@ -113,7 +103,7 @@ fn segment_is_outward(words: &[String]) -> bool {
     let args = &run[1..];
     OUTWARD
         .iter()
-        .find(|(names, _)| names.contains(&program))
+        .find(|(names, _)| names.contains(&program.as_str()))
         .is_some_and(|(_, rule)| rule_holds(rule, args))
 }
 

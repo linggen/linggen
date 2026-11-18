@@ -193,7 +193,13 @@ fn coding_class(words: &[String]) -> Option<BashClass> {
     }
     let all: Vec<&str> = words.iter().map(String::as_str).collect();
     let run = command_run(&all);
-    let program = file_name(run.first()?);
+    let Some(first) = run.first() else {
+        // Only the shell's own words (`fi`, `done`, a loop's list): no
+        // program runs. Anything else with none stays with the tables.
+        return super::model::only_shell_words(&all).then_some(Read);
+    };
+    let program = file_name(first);
+    let program = program.as_str();
     let args: Vec<String> = run[1..].iter().map(|w| w.to_string()).collect();
     if BEYOND_THE_FOLDER.contains(&program) || runs_given_text(program, &args) {
         return None;
