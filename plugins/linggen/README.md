@@ -62,12 +62,10 @@ run Linggen on this machine too and use `/linggen:config --primary 192.168.1.5`.
   upkeep tools over the one store (shared by Claude Code, Codex,
   Linggen). Auto-recall on every prompt via a `UserPromptSubmit` hook; core
   identity injected at session start.
-  Claude Code also recalls memory when delegating to Agent, Task, or `agent_run`.
-  Set `LINGGEN_DELEGATE=0` to disable, or `LINGGEN_DELEGATE_REWRITE=0` for context only.
-  Delegations are not auto-approved unless `LINGGEN_DELEGATE_DECISION=allow`.
-  Codex (0.167+) does the same for `agent_run`, and stamps memory calls with the directory, but its
-  rewrite needs `allow`, so that delegation is auto-approved. Its built-in `spawn_agent` is not covered
-  (the brief is encrypted). After an update, review the plugin's hooks again with `/hooks`.
+  Linggen recalls for `agent_run` in the delegated session itself. For Claude Code's
+  Agent and Task tools, the plugin offers recall to the caller only (`LINGGEN_DELEGATE=0`
+  disables it). The delegation hook never changes the call or approves it. Codex's
+  built-in `spawn_agent` is not covered (the brief is encrypted).
   Delete is by-id only; rewrites of user-stated facts require the
   user's explicit direction — memory enforces it.
 - **Browser control** — `browser_navigate / read_page / click / type /

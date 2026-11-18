@@ -480,10 +480,12 @@ fn row_score(row: &serde_json::Value) -> f32 {
 }
 
 /// Push the user message onto the engine's chat history with auto-recall
-/// applied. Used by every turn-start site (skill dispatch, trigger
-/// dispatch, plan mode, structured loop).
-pub(super) async fn push_user_turn_with_recall(
-    ctx: &ChatRunCtx,
+/// applied. Shared by chat and delegated turn starts.
+pub(crate) async fn recall_into_thread(
+    state: &Arc<ServerState>,
+    agent_id: &str,
+    prompt: &str,
+    session_id: Option<&str>,
     engine: &mut crate::engine::AgentEngine,
 ) {
     // Same gate as the core block + memory protocol injection: skill /
@@ -494,9 +496,9 @@ pub(super) async fn push_user_turn_with_recall(
     let recalled = if engine.prompt_profile.include_memory {
         // Full recall — the user's biography, project-scoped (core/user sessions).
         auto_recall_memory(
-            &ctx.state,
-            &ctx.clean_msg,
-            ctx.session_id.as_deref(),
+            state,
+            prompt,
+            session_id,
             engine.cfg.memory_inject_min_score,
             engine.cfg.memory_recall_count,
             None,
@@ -508,9 +510,9 @@ pub(super) async fn push_user_turn_with_recall(
         // No core block, no capture nudge (include_memory is off) → lean,
         // isolated, no cross-app pollution.
         auto_recall_memory(
-            &ctx.state,
-            &ctx.clean_msg,
-            ctx.session_id.as_deref(),
+            state,
+            prompt,
+            session_id,
             engine
                 .prompt_profile
                 .memory_recall_min_score
@@ -533,7 +535,10 @@ pub(super) async fn push_user_turn_with_recall(
             crate::message::ChatMessage::new("system", model_text.clone()),
         );
 
-        persist_recall(ctx, &model_text).await;
+        save_recall(
+            &state.manager.global_sessions, &state.events_tx, agent_id, &model_text, session_id,
+        )
+        .await;
     }
 
     // Always-on per-turn capture nudge — model-only, fires every owner turn
@@ -551,7 +556,13 @@ pub(super) async fn push_user_turn_with_recall(
             ),
         );
     }
+}
 
+pub(super) async fn push_user_turn_with_recall(
+    ctx: &ChatRunCtx,
+    engine: &mut crate::engine::AgentEngine,
+) {
+    recall_into_thread(&ctx.state, &ctx.agent_id, &ctx.clean_msg, ctx.session_id.as_deref(), engine).await;
     super::thread::add(
         engine,
         crate::message::ChatMessage::new("user", ctx.labeled_msg()),
@@ -596,17 +607,6 @@ fn keep_world(ctx: &ChatRunCtx, engine: &mut crate::engine::AgentEngine) {
 /// is the same text the model received — no separate channel — so what the
 /// user sees is exactly what the model saw — and, a row of the session,
 /// what every member reads as a note (`chat::thread`).
-async fn persist_recall(ctx: &ChatRunCtx, model_text: &str) {
-    save_recall(
-        &ctx.manager.global_sessions,
-        &ctx.events_tx,
-        &ctx.agent_id,
-        model_text,
-        ctx.session_id.as_deref(),
-    )
-    .await;
-}
-
 async fn save_recall(
     store: &crate::state_fs::SessionStore,
     events_tx: &crate::engine::event_bus::EventBus,

@@ -12,7 +12,7 @@
         "hooks": [{ "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/stamp-cwd.sh" }]
       },
       {
-        "matcher": "Agent|Task|mcp__plugin_linggen_linggen__agent_run",
+        "matcher": "^(Agent|Task)$",
         "hooks": [{ "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/recall-on-delegate.sh", "timeout": 15 }]
       }
     ]

@@ -35,7 +35,7 @@ pub(crate) mod presence;
 mod restored_tools;
 pub(crate) mod run_calls;
 mod runtime;
-pub(crate) use runtime::owner_turn_memory;
+pub(crate) use runtime::{owner_turn_memory, recall_into_thread};
 mod skill_dispatch;
 pub(crate) use skill_dispatch::slash_command;
 mod structured;

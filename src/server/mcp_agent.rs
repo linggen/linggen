@@ -608,6 +608,14 @@ async fn drive(
                 .send(crate::server::ServerEvent::StateUpdated);
         },
         async {
+            engine.withhold_session_tools(&state.manager.global_sessions, Some(&session_id));
+            let search = crate::mcp_client::qualify(crate::mcp_client::BUILTIN_MEMORY, "memory_search");
+            if !engine.is_withheld(&search) {
+                crate::server::chat::recall_into_thread(
+                    &state, &agent_id, &prompt, Some(&session_id), &mut engine,
+                )
+                .await;
+            }
             let result = engine.run_agent_loop(Some(&session_id)).await;
             let (status, error) = match &result {
                 Ok(_) => (crate::engine::agent::AgentRunStatus::Completed, None),

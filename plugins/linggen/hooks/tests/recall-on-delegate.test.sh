@@ -9,40 +9,37 @@ cat > "$tmp/search" <<'FAKE'
 case "${FAKE_MODE:-hits}" in
   fail) exit 1 ;;
   empty) echo '[]' ;;
+  invalid) echo 'not json' ;;
   *) printf '%s\n' '[{"type":"fact","created_at":"2026-11-10T12:00:00Z","id":"abc123","content":"A useful memory."}]' ;;
 esac
 FAKE
 chmod +x "$tmp/search"
 export LINGGEN_SEARCH_CMD="$tmp/search"
-unset LINGGEN_DELEGATE LINGGEN_DELEGATE_REWRITE LINGGEN_DELEGATE_DECISION LINGGEN_CLIENT 2>/dev/null || true
+unset LINGGEN_DELEGATE
 prompt='Please investigate this substantial task and report back with a detailed result.'
-input="$(jq -nc --arg p "$prompt" '{tool_name:"Agent",tool_input:{prompt:$p,description:"Investigate",subagent_type:"general",model:"test"},cwd:"/tmp",session_id:"s"}')"
-run() { printf '%s' "$1" | bash "$hook"; }
-pass() { printf 'ok %s\n' "$1"; }
+payload() { jq -nc --arg t "$1" --arg p "${2:-$prompt}" '{tool_name:$t,tool_input:{prompt:$p,description:"Investigate",subagent_type:"general",model:"test"},cwd:"/tmp",session_id:"s"}'; }
+run() { printf '%s' "$1" | bash "$hook" 2>&1; }
 fail() { printf 'FAIL %s\n' "$1" >&2; exit 1; }
-out="$(run "$input")" || fail 1
-printf '%s' "$out" | jq -e --arg p "$prompt" '.hookSpecificOutput | .hookEventName == "PreToolUse" and .updatedInput.description == "Investigate" and .updatedInput.subagent_type == "general" and .updatedInput.model == "test" and (.updatedInput.prompt == ($p + "\n\n" + (.additionalContext | ltrimstr("Recalled for the task you just delegated: ")))) and (has("permissionDecision") | not)' >/dev/null || fail 1
-pass 1
-out="$(FAKE_MODE=empty run "$input")"; [ -z "$out" ] || fail 2; pass 2
-short="$(jq -nc '{tool_input:{prompt:"short"}}')"; out="$(run "$short")"; [ -z "$out" ] || fail 3; pass 3
-resent="$(printf '%s' "$out" >/dev/null; printf '%s' "$input" | jq '.tool_input.prompt += " From Linggen'"'"'s memory — recalled for this task; newer rows win over what the brief says:"')"; out="$(run "$resent")"; [ -z "$out" ] || fail 4; pass 4
-out="$(LINGGEN_DELEGATE_REWRITE=0 run "$input")"; printf '%s' "$out" | jq -e '.hookSpecificOutput | (has("updatedInput") | not) and (.additionalContext | length > 0)' >/dev/null || fail 5; pass 5
-out="$(LINGGEN_DELEGATE_DECISION=allow run "$input")"; printf '%s' "$out" | jq -e '.hookSpecificOutput.permissionDecision == "allow"' >/dev/null || fail 6; pass 6
-agent="$(jq -nc --arg p "$prompt" '{tool_name:"mcp__plugin_linggen_linggen__agent_run",tool_input:{prompt:$p,write_dir:"/tmp/out",permission_mode:"default"}}')"; out="$(run "$agent")"; printf '%s' "$out" | jq -e '.hookSpecificOutput.updatedInput | .write_dir == "/tmp/out" and .permission_mode == "default"' >/dev/null || fail 7; pass 7
-out="$(FAKE_MODE=fail run "$input")" || fail 8; [ -z "$out" ] || fail 8; pass 8
-# Codex: payload shape captured from codex-cli 0.167.0 (PreToolUse for an MCP tool).
-cx="$(jq -nc --arg p "$prompt" '{session_id:"sid",turn_id:"tid",transcript_path:"/tmp/r.jsonl",cwd:"/tmp",hook_event_name:"PreToolUse",model:"m",permission_mode:"default",tool_name:"mcp__linggen__agent_run",tool_input:{prompt:$p},tool_use_id:"call_1"}')"
-out="$(LINGGEN_CLIENT=codex run "$cx")"; printf '%s' "$out" | jq -e --arg p "$prompt" '.hookSpecificOutput | .hookEventName == "PreToolUse" and .permissionDecision == "allow" and (.additionalContext | startswith("Recalled for the task")) and (.updatedInput.prompt | startswith($p + "\n\n")) and (.updatedInput.prompt | contains("id=abc123"))' >/dev/null || fail 9; pass 9
-out="$(LINGGEN_CLIENT=codex LINGGEN_DELEGATE_REWRITE=0 run "$cx")"; printf '%s' "$out" | jq -e '.hookSpecificOutput | (has("updatedInput") | not) and (has("permissionDecision") | not) and (.additionalContext | length > 0)' >/dev/null || fail 10; pass 10
-# Codex spawn_agent: the brief is ciphertext (no `prompt`, no whitespace) -- stay silent, never rewrite.
-sp="$(jq -nc '{cwd:"/tmp",tool_name:"collaborationspawn_agent",tool_input:{task_name:"pong",message:"gAAAAABq8zh_RT44MIu9JVv4kCsMLcqbS-t0tx_zrGCkedby820Nv79d9lW0vmB_ac1DprIHBEXxzDelUNOk0hZFqLcw=="}}')"
-out="$(LINGGEN_CLIENT=codex run "$sp")"; [ -z "$out" ] || fail 11; pass 11
-ct="$(jq -nc '{cwd:"/tmp",tool_name:"mcp__linggen__agent_run",tool_input:{prompt:"gAAAAABq8zh_RT44MIu9JVv4kCsMLcqbS-t0tx_zrGCkedby820Nv79d9lW0vmB_ac1DprIHBEXxzDelUNOk0hZFqLcw=="}}')"
-out="$(LINGGEN_CLIENT=codex run "$ct")"; [ -z "$out" ] || fail 12; pass 12
-# Claude Code stays the default: no host env, no permissionDecision.
-out="$(LINGGEN_CLIENT=claude-code run "$input")"; printf '%s' "$out" | jq -e '.hookSpecificOutput | has("permissionDecision") | not' >/dev/null || fail 13; pass 13
-# stamp-cwd follows LINGGEN_CLIENT (default claude-code).
+silent() { local out; out="$(run "$1")" && [ -z "$out" ]; }
+for tool in Agent Task; do
+  input="$(payload "$tool")"
+  out="$(LINGGEN_DELEGATE_REWRITE=1 LINGGEN_DELEGATE_DECISION=allow run "$input")" || fail "$tool exit"
+  printf '%s' "$out" | jq -e '.hookSpecificOutput | .hookEventName == "PreToolUse" and (.additionalContext | contains("id=abc123")) and (keys == ["additionalContext", "hookEventName"])' >/dev/null || fail "$tool context only"
+done
+for tool in mcp__plugin_linggen_linggen__agent_run mcp__linggen__agent_run collaborationspawn_agent; do
+  silent "$(payload "$tool")" || fail "$tool must be silent"
+done
+for mode in empty fail invalid; do
+  FAKE_MODE="$mode" silent "$input" || fail "$mode must be silent"
+done
+silent "$(payload Agent short)" || fail 'short prompt'
+silent 'not JSON' || fail 'malformed input'
+silent "$(payload Agent "$prompt (id=abc123)")" || fail 'duplicate row'
+LINGGEN_DELEGATE=0 silent "$input" || fail 'disabled hook'
+
+# The separate memory attribution hook still supplies host metadata.
 stamp="$here/../stamp-cwd.sh"
-add="$(jq -nc '{tool_name:"mcp__memory__memory_add",tool_input:{content:"x"},cwd:"/tmp",session_id:"s1"}')"
-printf '%s' "$add" | LINGGEN_CLIENT=codex bash "$stamp" | jq -e '.hookSpecificOutput | .permissionDecision == "allow" and .updatedInput.host == "codex" and .updatedInput.source_session == "s1"' >/dev/null || fail 14; pass 14
-printf '%s' "$add" | bash "$stamp" | jq -e '.hookSpecificOutput.updatedInput.host == "claude-code"' >/dev/null || fail 15; pass 15
+add='{"tool_name":"mcp__memory__memory_add","tool_input":{"content":"x"},"cwd":"/tmp","session_id":"s1"}'
+printf '%s' "$add" | LINGGEN_CLIENT=codex bash "$stamp" | jq -e '.hookSpecificOutput.updatedInput | .host == "codex" and .source_session == "s1"' >/dev/null || fail 'Codex stamp'
+printf '%s' "$add" | bash "$stamp" | jq -e '.hookSpecificOutput.updatedInput.host == "claude-code"' >/dev/null || fail 'Claude Code stamp'
+printf 'ok: delegation hooks leave tool input and permission untouched\n'
