@@ -38,6 +38,9 @@ interface ServerState {
   claudeDefaultModel: string;
   skills: SkillInfo[];
   agentRuns: AgentRunInfo[];
+  /** Run id → the place the engine told its turn stands in (a day's
+   *  session only; lib/dayFold.mts `toldPlaces`). */
+  runPlaces: Record<string, string>;
   selectedAgent: string;
   sessionTokens: { prompt: number; completion: number };
   cancellingRunIds: Record<string, boolean>;
@@ -127,6 +130,7 @@ export const useServerStore = create<ServerState>((set, get) => ({
   skills: [],
   skillsLoaded: false,
   agentRuns: [],
+  runPlaces: {},
   runtimeModels: [],
   refreshRuntimeModels: async () => {
     try {

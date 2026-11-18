@@ -20,6 +20,7 @@ import { agentTracker } from './agentTracker';
 import { postToParent } from './parentFrame';
 import { pageAgent } from './pageAgent';
 import { ownsStream, streamEndPayload, streamTokenPayload } from './agentTurns.mts';
+import { rememberRunPlaces } from './eventHandlers/pageState';
 
 export { suppressPermissionSync } from './eventHandlers/_shared';
 export { handleAskUser } from './eventHandlers';
@@ -27,6 +28,8 @@ export { handleAskUser } from './eventHandlers';
 export function dispatchEvent(item: UiEvent, sessionIdOverride?: string): void {
   if (!passesSessionFilter(item, sessionIdOverride)) return;
   relayToSkillIframe(item);
+  // In a day the engine names the place the running turn stands in.
+  if (item.place && item.run_id) rememberRunPlaces([item]);
 
   const kind = asEventKind(item.kind);
   if (!kind) {

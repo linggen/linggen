@@ -31,6 +31,7 @@ import { useUiStore } from '../../stores/uiStore';
 import { replyAddressee } from '../../lib/replyTo.mts';
 import { isRestartCommand, restartSuggestion } from '../../lib/restartCommand.mts';
 import { chatAgentOf } from '../../lib/sessionMembers.mts';
+import { stopLabel } from '../../lib/dayFold.mts';
 import {
   agentMatches,
   agentMentionLabel,
@@ -62,6 +63,9 @@ export interface ChatInputProps {
   onSendMessage: (message: string, targetAgent?: string, images?: string[]) => void;
   onCancelAgentRun?: (runId: string) => void | Promise<void>;
   selectedMainRunningRunId?: string;
+  /** The running turn stands in another place (a day's session): its
+   *  name, shown on Stop — which still stops it. */
+  stopPlace?: string | null;
   activePlan?: Plan | null;
   visibleQueued: QueuedChatItem[];
   /** The thread, read for who holds the table (the `@Yinyue` pre-fill). */
@@ -95,6 +99,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   onSendMessage,
   onCancelAgentRun,
   selectedMainRunningRunId,
+  stopPlace,
   activePlan,
   visibleQueued,
   chatMessages,
@@ -955,12 +960,14 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             <button
               onClick={() => onCancelAgentRun(selectedMainRunningRunId)}
               className={cn(
-                "rounded-lg bg-red-500 text-white flex items-center justify-center hover:bg-red-600 transition-colors",
-                mobile ? "w-10 h-10" : "w-8 h-8",
+                "rounded-lg bg-red-500 text-white flex items-center justify-center gap-1 hover:bg-red-600 transition-colors",
+                mobile ? "h-10" : "h-8",
+                stopPlace ? "px-2 max-w-[45%] text-[12px] font-medium" : mobile ? "w-10" : "w-8",
               )}
-              title="Stop agent"
+              title={stopPlace ? stopLabel(stopPlace) : "Stop agent"}
             >
-              <Square size={mobile ? 14 : 12} fill="currentColor" />
+              <Square size={mobile ? 14 : 12} fill="currentColor" className="shrink-0" />
+              {stopPlace && <span className="truncate">{stopLabel(stopPlace)}</span>}
             </button>
           )}
           <button

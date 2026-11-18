@@ -189,6 +189,12 @@ session, prompt and row is as before. On (decided by the builder 2026-11-15/16):
   app's, the main page home's. The compaction summary is the day's, no
   place's: no Clear takes it and no page folds it. Clear in the day cancels
   no run (the one running may be another place's); Stop stops whatever runs.
+- **Whose work a page shows**: the engine names the place on what it sends
+  (`turn_place::told_place`, a day's session only — nothing names one
+  anywhere else, and a private app is never one). While the running turn
+  stands in another place, the status line and Stop name it ("Working in
+  Health", "Stop · Health"); Stop still stops it. The running top-level
+  run on the page state and its status events carry `place`.
 - **One model a member for the day**: only the picker keeps one
   (`PATCH /api/sessions`); a model a page sends with a message is for that
   turn and is not kept.

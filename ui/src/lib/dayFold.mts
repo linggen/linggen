@@ -21,9 +21,47 @@ export function pagePlace(skill: string | null | undefined): string {
   return skill || HOME_PLACE;
 }
 
-/** What a folded stretch is called: its app, or Linggen for home. */
-export function placeName(place: string): string {
-  return place === HOME_PLACE ? 'Linggen' : place;
+/** A skill as the page lists it: its name, and its app's title if it has one. */
+type NamedSkill = { name: string; app?: { title?: string | null } | null };
+
+/** What a place is called: its app's display name (its title, else its
+ *  name), or Linggen for home. */
+export function placeName(place: string, skills: ReadonlyArray<NamedSkill> = []): string {
+  if (place === HOME_PLACE) return 'Linggen';
+  return skills.find((s) => s.name === place)?.app?.title || place;
+}
+
+/** The place the engine told for each run (on its events, its page-state
+ *  row), the first word kept: a late event of an ended run may arrive while
+ *  the next one runs. The same object when nothing new was told. */
+export function toldPlaces(
+  known: Record<string, string>,
+  told: ReadonlyArray<{ run_id?: string | null; place?: string | null }>,
+): Record<string, string> {
+  let out = known;
+  for (const { run_id, place } of told) {
+    if (!run_id || !place || out[run_id]) continue;
+    if (out === known) out = { ...known };
+    out[run_id] = place;
+  }
+  return out;
+}
+
+/** The place the running turn stands in when it is not this page's: only
+ *  as the engine told it; a run with no place told is this page's, as before. */
+export function runningElsewhere(runId: string | null | undefined, places: Record<string, string>, here: string): string | null {
+  const place = runId ? places[runId] : undefined;
+  return place && place !== here ? place : null;
+}
+
+/** The status line while another place's turn runs. */
+export function workingIn(name: string): string {
+  return `Working in ${name}`;
+}
+
+/** The Stop control while another place's turn runs: it still stops it. */
+export function stopLabel(name: string): string {
+  return `Stop · ${name}`;
 }
 
 /** `messages` (with their places) as drawn on a page standing in `here`:

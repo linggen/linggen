@@ -17,6 +17,7 @@ import { sessionRootOf } from '../sessionRoot.mts';
 import { isPermissionSuppressed } from './_shared';
 import { settleAsks } from '../askQueue.mts';
 import { noteUiBuild, type PageFacts } from '../uiBuild.mts';
+import { toldPlaces } from '../dayFold.mts';
 
 
 export function handlePageState(item: UiEventOf<'page_state'>): void {
@@ -137,6 +138,7 @@ function applyScopedState(ps: PageState): void {
     // Skip update if runs haven't changed (prevents re-render loops)
     const prev = useServerStore.getState().agentRuns;
     const data = Array.isArray(ps.agent_runs) ? ps.agent_runs : [];
+    rememberRunPlaces(data);
     if (
       data.length !== prev.length ||
       !data.every((r, i) => r.run_id === prev[i]?.run_id && r.status === prev[i]?.status)
@@ -276,4 +278,11 @@ async function markInterruptedIfUnanswered(sessionId: string): Promise<void> {
     resend,
     timestamp: ts.toLocaleTimeString(), timestampMs: ts.getTime(), isGenerating: false,
   });
+}
+
+/** Keep the places the engine told for runs (`lib/dayFold.mts` `toldPlaces`). */
+export function rememberRunPlaces(told: ReadonlyArray<{ run_id?: string | null; place?: string | null }>): void {
+  const known = useServerStore.getState().runPlaces;
+  const next = toldPlaces(known, told);
+  if (next !== known) useServerStore.setState({ runPlaces: next });
 }

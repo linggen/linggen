@@ -12,6 +12,7 @@ pub(super) fn spawn(state: &Arc<ServerState>) {
         return;
     };
     let mut rx = state.events_tx.listen();
+    let manager = state.manager.clone();
     tokio::spawn(async move {
         let mut seq = 0u64;
         loop {
@@ -24,6 +25,7 @@ pub(super) fn spawn(state: &Arc<ServerState>) {
             let Some(ui) = super::map_server_event_to_ui_message(event, seq) else {
                 continue;
             };
+            let ui = super::ui_events::with_place(ui, &manager);
             append(&path, &ui);
         }
     });

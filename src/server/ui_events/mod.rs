@@ -9,6 +9,9 @@ mod chat;
 mod data;
 mod global;
 mod pet;
+mod place;
+
+pub(crate) use place::with_place;
 
 use crate::engine::events::{ServerEvent, UiEvent, GLOBAL};
 
@@ -58,6 +61,7 @@ impl Ui {
             project_root: None,
             run_id: None,
             data: None,
+            place: None,
         }
     }
 }

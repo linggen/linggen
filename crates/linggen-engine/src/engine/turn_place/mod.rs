@@ -174,6 +174,35 @@ fn kept_out(skill: &crate::engine::skill::Skill, session_id: Option<&str>, day_o
     day_on.unwrap_or(true)
 }
 
+/// The place a page is told a turn of session `session_id` stands in — a
+/// running turn, a waiting message (`doc/one-ling-spec.md` § Linggen's daily
+/// session): the place's key, as its rows keep it, in a day's session with
+/// the daily session on (`day_on`); `None` anywhere else, so no payload of
+/// another session names one. A private app is never a place in a day (it
+/// keeps a session of its own), so none is ever told. Every payload that
+/// tells a page a place asks here.
+pub fn told_place(place: &TurnPlace, session_id: &str, day_on: bool) -> Option<String> {
+    told_in(session_id, day_on).then(|| place.key().to_string())
+}
+
+/// [`told_place`] for the turn running in `session_id` now, when its place is
+/// kept. Outside a day nothing is looked up.
+pub fn told_running(
+    places: &crate::state_fs::running_places::RunningPlaces,
+    session_id: &str,
+    day_on: bool,
+) -> Option<String> {
+    if !told_in(session_id, day_on) {
+        return None;
+    }
+    told_place(&places.of(session_id)?, session_id, day_on)
+}
+
+/// Whether a page viewing `session_id` is told places: a day's, setting on.
+fn told_in(session_id: &str, day_on: bool) -> bool {
+    day_on && crate::state_fs::day_session::is_day_session(session_id)
+}
+
 /// The private app a question waiting in session `session_id` is kept to
 /// (`TurnPlace::private_app`): the place of the turn running there, else the
 /// session's own. Its words never reach a turn outside that app's own

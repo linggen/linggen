@@ -96,7 +96,7 @@ pub(super) fn forward_event_to_channels(
         .event_seq
         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let ui_msg = match crate::server::map_server_event_to_ui_message(event.clone(), seq) {
-        Some(msg) => msg,
+        Some(msg) => crate::server::ui_events::with_place(msg, &state.manager),
         None => return,
     };
 

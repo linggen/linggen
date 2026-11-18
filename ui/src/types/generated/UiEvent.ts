@@ -8,4 +8,10 @@ export type UiEvent = { id: string, seq: number, rev: number, ts_ms: number, kin
  * end), so a surface binds each to that run's bubble (chat-spec.md §
  * Runs). Absent on events no run sends.
  */
-run_id?: string | null, data?: JsonValue | null, };
+run_id?: string | null, data?: JsonValue | null, 
+/**
+ * In a day's session, the place the turn running there stands in
+ * (`turn_place::told_running`), on the events that turn sends; absent
+ * anywhere else.
+ */
+place?: string | null, };

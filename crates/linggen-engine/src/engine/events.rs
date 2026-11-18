@@ -819,6 +819,11 @@ pub struct UiEvent {
     pub run_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub data: Option<serde_json::Value>,
+    /// In a day's session, the place the turn running there stands in
+    /// (`turn_place::told_running`), on the events that turn sends; absent
+    /// anywhere else.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub place: Option<String>,
 }
 
 /// The session id that reaches every surface over its control channel.

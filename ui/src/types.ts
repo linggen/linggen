@@ -10,7 +10,10 @@ export type { PlanStatus } from './types/generated/PlanStatus';
 export type { AskUserOption } from './types/generated/AskUserOption';
 export type { AskUserQuestion } from './types/generated/AskUserQuestion';
 export type { AskUserAnswer } from './types/generated/AskUserAnswer';
-export type { AgentRunRecord as AgentRunInfo } from './types/generated/AgentRunRecord';
+import type { AgentRunRecord } from './types/generated/AgentRunRecord';
+/** A run as page state lists it. In a day's session the running top-level
+ *  run names the place its turn stands in (lib/dayFold.mts). */
+export type AgentRunInfo = AgentRunRecord & { place?: string };
 import type { AskUserQuestion } from './types/generated/AskUserQuestion';
 
 

@@ -125,3 +125,24 @@ async fn a_place_keeps_its_talk_to_a_private_or_unknown_app() {
     assert_eq!(TurnPlace::home().private_app(&skills, true).await, None);
     assert_eq!(place("zz-diary").private_app(&skills, false).await, None);
 }
+
+/// A page is told a place only in a day's session with the setting on:
+/// the place's key, as its rows keep it; never in any other session.
+#[test]
+fn a_place_is_told_only_in_a_day_with_the_setting_on() {
+    use super::{told_place, told_running};
+    let dice = TurnPlace::of_request(Some("dice"), None);
+    let day = "sess-day-2026-11-18";
+    assert_eq!(told_place(&dice, day, true).as_deref(), Some("dice"));
+    assert_eq!(told_place(&TurnPlace::home(), day, true).as_deref(), Some(HOME_KEY));
+    assert_eq!(told_place(&dice, day, false), None, "setting off");
+    assert_eq!(told_place(&dice, "sess-1-place", true), None, "not a day");
+
+    let places = crate::state_fs::running_places::RunningPlaces::default();
+    assert_eq!(told_running(&places, day, true), None, "nothing runs");
+    let _mark = places.mark(day, &dice).unwrap();
+    let _other = places.mark("sess-1-place", &dice).unwrap();
+    assert_eq!(told_running(&places, day, true).as_deref(), Some("dice"));
+    assert_eq!(told_running(&places, day, false), None);
+    assert_eq!(told_running(&places, "sess-1-place", true), None);
+}

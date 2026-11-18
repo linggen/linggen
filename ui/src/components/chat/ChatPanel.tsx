@@ -39,6 +39,7 @@ import { sessionApi } from '../../lib/endpoints';
 import { startNewChat } from '../../lib/newChat';
 import { sessionFolderLabel } from '../../lib/sessionRoot.mts';
 import { runLabel } from '../../lib/runStatus.mts';
+import { pagePlace, placeName, runningElsewhere, stopLabel, workingIn } from '../../lib/dayFold.mts';
 
 /**
  * Debug action buttons shown inside the expanded session header.
@@ -312,6 +313,13 @@ export const ChatPanel: React.FC<{
   const selectedMainRunningRunId =
     runningMainRunIds?.[normalizeAgentKey(selectedAgent)] ||
     (sessionId ? runningRunIdBySession?.[sessionId] : undefined);
+  // In the day the engine names the place the running turn stands in: at
+  // another place's page the status line and Stop say where (Stop still
+  // stops it — one turn at a time).
+  const here = useSessionStore((s) => pagePlace(s.isSkillSession ? s.activeSkillName : null));
+  const runPlaces = useServerStore((s) => s.runPlaces);
+  const runningAt = runningElsewhere(selectedMainRunningRunId, runPlaces, here);
+  const runningAtName = runningAt ? placeName(runningAt, skills) : null;
 
   const streamingPlanProps = useMemo(
     () => ({ pendingPlanAgentId, agentContext, onApprovePlan, onRejectPlan, onEditPlan, inputRef }),
@@ -384,7 +392,7 @@ export const ChatPanel: React.FC<{
                     )}
                     title={selectedMainRunningRunId}
                   >
-                    {cancellingRunIds?.[selectedMainRunningRunId] ? 'Cancelling...' : 'Cancel Run'}
+                    {cancellingRunIds?.[selectedMainRunningRunId] ? 'Cancelling...' : runningAtName ? stopLabel(runningAtName) : 'Cancel Run'}
                   </button>
                 )}
               </div>
@@ -521,7 +529,7 @@ export const ChatPanel: React.FC<{
       <RunStatusLine
         active={isAgentActive}
         reconnecting={reconnecting}
-        label={runLabel(activePlan, agentStatusText?.[sessionId || ''], spinnerVerb)}
+        label={runningAtName ? workingIn(runningAtName) : runLabel(activePlan, agentStatusText?.[sessionId || ''], spinnerVerb)}
         elapsed={thinkingElapsed}
         tokensPerSec={tokensPerSec}
         context={agentContext?.[sessionId || '']}
@@ -538,6 +546,7 @@ export const ChatPanel: React.FC<{
         onSendMessage={onSendMessage}
         onCancelAgentRun={onCancelAgentRun}
         selectedMainRunningRunId={selectedMainRunningRunId}
+        stopPlace={runningAtName}
         activePlan={activePlan}
         visibleQueued={visibleQueued}
         chatMessages={chatMessages}

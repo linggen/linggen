@@ -158,6 +158,19 @@ pub struct PageState {
 /// segment rather than splitting on '|' — a project root is a path and may
 /// contain one. Agents with an empty queue are omitted: absent means nothing
 /// queued, which is what lets the snapshot express a drained queue.
+/// One run as the page reads it. In a day the session's running top-level
+/// run names the place its turn stands in (`told`, from
+/// `turn_place::told_running`), so a page at another app can say so beside
+/// its Stop; its subagents and every other run name none.
+fn run_row(run: crate::engine::agent::AgentRunRecord, told: Option<&str>) -> Option<serde_json::Value> {
+    let top = run.parent_run_id.is_none() && run.status == crate::engine::agent::AgentRunStatus::Running;
+    let mut row = serde_json::to_value(run).ok()?;
+    if let Some(place) = told.filter(|_| top) {
+        row["place"] = serde_json::Value::from(place);
+    }
+    Some(row)
+}
+
 fn queued_entries(
     all: &std::collections::HashMap<String, Vec<crate::engine::events::QueuedChatItem>>,
     session_id: &str,
@@ -499,11 +512,9 @@ pub async fn build_page_state(
                 .list_agent_runs(&root_buf, Some(session_id.as_str()))
                 .await
             {
-                ps.agent_runs = Some(
-                    runs.into_iter()
-                        .filter_map(|r| serde_json::to_value(r).ok())
-                        .collect(),
-                );
+                let places = &state.manager.global_sessions.running_places;
+                let told = crate::engine::turn_place::told_running(places, session_id, state.manager.daily_session());
+                ps.agent_runs = Some(runs.into_iter().filter_map(|r| run_row(r, told.as_deref())).collect());
             }
 
             let queued = {
@@ -567,6 +578,34 @@ mod tests {
             text: "hello".into(),
             images: Vec::new(),
         }
+    }
+
+    /// In a day the running top-level run names its turn's place; a
+    /// subagent's, a finished one and any run with no place told name none.
+    #[test]
+    fn a_days_running_run_names_its_turns_place() {
+        use crate::engine::agent::{AgentRunRecord, AgentRunStatus};
+        let run = |id: &str, parent: Option<&str>, status| AgentRunRecord {
+            run_id: id.into(),
+            repo_path: String::new(),
+            session_id: "sess-day-2026-11-18".into(),
+            agent_id: "ling".into(),
+            agent_kind: None,
+            parent_run_id: parent.map(String::from),
+            status,
+            detail: None,
+            started_at: 0,
+            ended_at: None,
+            model: None,
+        };
+        let top = run_row(run("r1", None, AgentRunStatus::Running), Some("dice")).unwrap();
+        assert_eq!(top["place"], "dice");
+        let child = run_row(run("r2", Some("r1"), AgentRunStatus::Running), Some("dice")).unwrap();
+        assert!(child.get("place").is_none(), "{child}");
+        let ended = run_row(run("r3", None, AgentRunStatus::Completed), Some("dice")).unwrap();
+        assert!(ended.get("place").is_none(), "{ended}");
+        let elsewhere = run_row(run("r4", None, AgentRunStatus::Running), None).unwrap();
+        assert!(elsewhere.get("place").is_none(), "{elsewhere}");
     }
 
     /// A page that says it views a day is shown it only when it is its
