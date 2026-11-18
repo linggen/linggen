@@ -49,6 +49,8 @@ ling
 
 Opens the web UI at `http://localhost:9527`.
 
+**Releases** — the Mac app (signed and notarized): [linggen-releases](https://github.com/linggen/linggen-releases/releases/latest) · the engine: [linggen/linggen](https://github.com/linggen/linggen/releases/latest) · what changed: [CHANGELOG.md](CHANGELOG.md)
+
 ---
 
 ## The apps
