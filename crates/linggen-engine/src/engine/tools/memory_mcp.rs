@@ -28,13 +28,20 @@
 //! (`doc/mcp-client-spec.md`).
 //!
 //! **Which fields get filled is read from the server's own advertised
-//! schema**, never from a list of tool names kept here. `memory_add` declares
-//! `host` and `source_session`; `memory_update` declares neither, because an
-//! edit does not re-author a row. Both facts live in ling-mem, where they
-//! belong, and this file follows them.
+//! schema, for the operation the call will run**, never from a list of tool
+//! names kept here. A folded tool's schema is the union of its operations'
+//! fields, so the call's branch is read off memory's catalogue the way the
+//! server resolves it (`Catalog::branch_of`, the implicit `op` included):
+//! `memory_search` op=semantic takes `scope_root` and op=get does not;
+//! `memory_upkeep` op=session_start takes `cwd` and `root`, no other op
+//! does. `memory_add` declares `host` and `source_session`; `memory_update`
+//! declares neither, because an edit does not re-author a row. These facts
+//! live in memory's catalogue, where they belong, and this file follows
+//! them.
 
 use super::Tools;
-use crate::mcp_client::{qualify, registry, AdvertisedTool, BUILTIN_MEMORY};
+use crate::mcp_client::{qualify, registry, AdvertisedTool, McpRegistry, BUILTIN_MEMORY};
+use ling_mem::catalog::{memory::catalog, Branch, View};
 use anyhow::Result;
 use serde_json::Value;
 use std::time::Duration;
@@ -80,18 +87,19 @@ pub(crate) async fn augment(tools: &Tools, qualified: &str, mut args: Value) -> 
     let Some(tool) = memory_tool(qualified) else {
         return Ok(args);
     };
+    let takes = Takes::of(&tool, &args);
 
     // The writing session, so a later scan knows this content is already
     // stored. Only when the model didn't supply one — the dream's promote path
     // carries the ORIGINAL row's session forward, and that must win.
-    if declares(&tool.input_schema, "source_session") && !has(&args, "source_session") {
+    if takes.field("source_session") && !has(&args, "source_session") {
         if let Some(sid) = tools.session_id.clone() {
             set(&mut args, "source_session", Value::String(sid));
         }
     }
 
     // The caller naming itself.
-    if declares(&tool.input_schema, "host") && !has(&args, "host") {
+    if takes.field("host") && !has(&args, "host") {
         set(&mut args, "host", Value::String(HOST.to_string()));
     }
 
@@ -128,25 +136,61 @@ pub(crate) async fn augment(tools: &Tools, qualified: &str, mut args: Value) -> 
                 ("cwd_scope", &place.root),
             ];
             for (field, value) in stamps {
-                if declares(&tool.input_schema, field) && wants_project(&args, field) {
+                if takes.field(field) && wants_project(&args, field) {
                     set(&mut args, field, Value::String(value.clone()));
                 }
             }
         }
     }
 
-    attribute_row(tools, &tool.input_schema, &mut args);
+    attribute_row(tools, &takes, &mut args);
     guard_user_voice(tools, &tool.server, &mut args).await?;
     Ok(args)
 }
 
+/// The fields the call that will run takes, as its server advertised them.
+enum Takes<'a> {
+    /// A folded memory tool: its schema, and the branch the call names.
+    Branch(&'a Value, &'static Branch<&'static str>),
+    /// A folded memory tool whose call names no branch: the server refuses
+    /// it with the form that works, so nothing is filled in.
+    Nothing,
+    /// A tool memory's catalogue does not fold (an older server's): its own
+    /// advertised schema.
+    Schema(&'a Value),
+}
+
+impl<'a> Takes<'a> {
+    fn of(tool: &'a AdvertisedTool, args: &Value) -> Self {
+        let cat = catalog();
+        if let Some(branch) = cat.branch_of(View::Local, &tool.original, args) {
+            return Self::Branch(&tool.input_schema, branch);
+        }
+        if cat.tools().iter().any(|t| t.name == tool.original) {
+            return Self::Nothing;
+        }
+        Self::Schema(&tool.input_schema)
+    }
+
+    /// Whether `field` is one the server shows for this call — never a
+    /// field only another operation of the same tool takes, and never a
+    /// hidden filter (`from` on a search).
+    fn field(&self, field: &str) -> bool {
+        match self {
+            Self::Branch(schema, branch) => declares(schema, field) && branch.advertises(field),
+            Self::Nothing => false,
+            Self::Schema(schema) => declares(schema, field),
+        }
+    }
+}
+
 /// A delegated brief is not the person's words. File such a claim as a
 /// derived row, and leave authorization of changes to user rows to the guard.
-fn attribute_row(tools: &Tools, schema: &Value, args: &mut Value) {
+fn attribute_row(tools: &Tools, takes: &Takes, args: &mut Value) {
     if !tools.delegated_session || tools.person_spoke {
         return;
     }
-    if declares(schema, "from")
+    if takes.field("from")
         && args.get("from").and_then(Value::as_str).is_some_and(|s| s.eq_ignore_ascii_case("user"))
     {
         set(args, "from", Value::String("derived".into()));
@@ -284,6 +328,16 @@ async fn bound_skill_dir(tools: &Tools) -> Option<std::path::PathBuf> {
 /// `id` rewrites one. A metadata-only edit (tier, scope, summary, indexed) changes
 /// nothing the row says and stays unguarded.
 async fn guard_user_voice(tools: &Tools, server: &str, args: &mut Value) -> Result<()> {
+    guard_user_voice_in(registry(), tools, server, args).await
+}
+
+/// [`guard_user_voice`], each target's voice read through `reg`.
+async fn guard_user_voice_in(
+    reg: &McpRegistry,
+    tools: &Tools,
+    server: &str,
+    args: &mut Value,
+) -> Result<()> {
     let Some(obj) = args.as_object_mut() else {
         return Ok(());
     };
@@ -318,12 +372,15 @@ async fn guard_user_voice(tools: &Tools, server: &str, args: &mut Value) -> Resu
         return Ok(());
     }
 
-    // Resolve each target's voice. A fetch miss is not the guard's problem —
-    // the daemon reports a missing id on the real call.
-    let get = qualify(server, "memory_get");
+    // Resolve each target's voice: `memory_search` op=get, one row by id.
+    // A fetch miss is not the guard's problem — the daemon reports a missing
+    // id on the real call, and its own floor still refuses a user-voice
+    // write the engine did not authorize.
+    let search = qualify(server, "memory_search");
     let mut offending: Vec<String> = Vec::new();
     for id in &targets {
-        let Ok(text) = registry().call(&get, serde_json::json!({"id": id})).await else {
+        let get = serde_json::json!({"op": "get", "id": id});
+        let Ok(text) = reg.call(&search, get).await else {
             continue;
         };
         let Ok(row) = serde_json::from_str::<Value>(&text) else {
@@ -360,20 +417,71 @@ mod tests {
     fn a_delegates_brief_is_not_user_voice() {
         let mut tools = Tools::new(std::path::PathBuf::from("/workspace")).unwrap();
         let schema = json!({"properties": {"from": {}}});
+        let takes = Takes::Schema(&schema);
         let mut args = json!({"content": "A caller's finding", "from": "user", "user_directed": true});
         let original = args.clone();
-        attribute_row(&tools, &schema, &mut args);
+        attribute_row(&tools, &takes, &mut args);
         assert_eq!(args, original);
 
         tools.delegated_session = true;
-        attribute_row(&tools, &schema, &mut args);
+        attribute_row(&tools, &takes, &mut args);
         assert_eq!(args["from"], "derived");
         assert!(!has(&args, "user_directed"));
 
         tools.person_spoke = true;
         let mut typed = original.clone();
-        attribute_row(&tools, &schema, &mut typed);
+        attribute_row(&tools, &takes, &mut typed);
         assert_eq!(typed, original);
+    }
+
+    /// The folded tools as memory's server publishes them to this engine.
+    fn folded(name: &str) -> AdvertisedTool {
+        let def = catalog()
+            .tools_list(View::Local)
+            .into_iter()
+            .find(|t| t["name"] == name)
+            .unwrap_or_else(|| panic!("{name} is not folded"));
+        AdvertisedTool {
+            qualified: qualify(BUILTIN_MEMORY, name),
+            original: name.to_string(),
+            server: BUILTIN_MEMORY.to_string(),
+            description: String::new(),
+            input_schema: def["inputSchema"].clone(),
+        }
+    }
+
+    fn stamped(tool: &str, args: Value) -> Vec<&'static str> {
+        let tool = folded(tool);
+        let takes = Takes::of(&tool, &args);
+        ["host", "source_session", "cwd", "root", "scope_root", "cwd_scope"]
+            .into_iter()
+            .filter(|f| takes.field(f))
+            .collect()
+    }
+
+    /// A folded tool's schema is the union of its operations' fields; what
+    /// is filled in is the fields of the operation the call runs.
+    #[test]
+    fn only_the_running_operations_fields_are_filled() {
+        assert_eq!(stamped("memory_search", json!({"query": "q"})), ["scope_root"], "an op-less query is a search");
+        assert_eq!(stamped("memory_search", json!({"op": "semantic", "query": "q"})), ["scope_root"]);
+        assert_eq!(stamped("memory_search", json!({"op": "list"})), ["scope_root"]);
+        assert!(stamped("memory_search", json!({"op": "get", "id": "a"})).is_empty(), "get takes no place");
+        assert!(stamped("memory_search", json!({"id": "a"})).is_empty(), "no branch, nothing filled");
+        assert_eq!(
+            stamped("memory_add", json!({"content": "x"})),
+            ["host", "source_session", "cwd", "root"]
+        );
+        assert!(stamped("memory_update", json!({"id": "a"})).is_empty(), "an edit re-authors nothing");
+        assert_eq!(stamped("memory_upkeep", json!({"op": "session_start"})), ["cwd", "root"]);
+        for op in ["days", "harvest_day", "sweep", "chains", "issues", "role"] {
+            assert!(stamped("memory_upkeep", json!({"op": op})).is_empty(), "{op}");
+        }
+        // A delegate's search filter `from` is hidden on a search: never
+        // rewritten as though it were a row's voice.
+        let search = folded("memory_search");
+        assert!(!Takes::of(&search, &json!({"query": "q", "from": "user"})).field("from"));
+        assert!(Takes::of(&folded("memory_add"), &json!({"content": "x"})).field("from"));
     }
 
     /// The rule that keeps this file from carrying a list of tool names: a
@@ -484,6 +592,115 @@ mod tests {
         let cfo = crate::paths::global_skills_dir().join("cfo");
         let place = place_of(&cfo.join("data")).unwrap();
         assert_eq!(place.root, cfo.to_string_lossy());
+    }
+
+    /// The guard reads each target's voice from a real store, the way the
+    /// engine's agents reach it (`memory_search` op=get): a rewrite of the
+    /// user's own row is refused by the guard itself, before the store's
+    /// floor is ever asked; the agent's own rows pass.
+    #[tokio::test]
+    async fn the_guard_reads_the_rows_voice_through_the_folded_search() {
+        let dir = tempfile::tempdir().unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let state = ling_mem::hosted::open_quiet_fake(dir.path(), base.clone())
+            .await
+            .unwrap();
+        let app = ling_mem::hosted::router(state)
+            .into_make_service_with_connect_info::<std::net::SocketAddr>();
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        let reg = McpRegistry::empty();
+        let mut cfgs = std::collections::BTreeMap::new();
+        cfgs.insert(
+            BUILTIN_MEMORY.to_string(),
+            crate::mcp_client::McpServerConfig {
+                url: Some(format!("{base}/mcp")),
+                gated: false,
+                ..Default::default()
+            },
+        );
+        reg.connect_all(&cfgs).await;
+        let add = |content: &str, from: &str| {
+            let args = json!({"content": content, "from": from, "tier": "semantic"});
+            let reg = &reg;
+            async move {
+                let text = reg.call(&qualify(BUILTIN_MEMORY, "memory_add"), args).await.unwrap();
+                let added: Value = serde_json::from_str(&text).unwrap_or_else(|_| panic!("{text}"));
+                added["fact"]["id"].as_str().unwrap().to_string()
+            }
+        };
+        let theirs = add("Alex takes green tea", "user").await;
+        let mine = add("Alex's kettle is in the left cupboard", "derived").await;
+        let tools = Tools::new(std::env::temp_dir()).unwrap();
+
+        let mut replace = json!({"content": "Alex takes black tea", "replace_ids": [theirs]});
+        let why = guard_user_voice_in(&reg, &tools, BUILTIN_MEMORY, &mut replace)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(why.starts_with("BLOCKED by the user-voice merge guard"), "{why}");
+        assert!(why.contains("Alex takes green tea"), "{why}");
+        let mut rewrite = json!({"id": theirs, "content": "Alex takes black tea"});
+        let why = guard_user_voice_in(&reg, &tools, BUILTIN_MEMORY, &mut rewrite)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(why.starts_with("BLOCKED by the user-voice merge guard"), "{why}");
+
+        let mut own = json!({"content": "The kettle moved", "replace_ids": [mine]});
+        guard_user_voice_in(&reg, &tools, BUILTIN_MEMORY, &mut own)
+            .await
+            .unwrap();
+        assert!(own.get("user_directed").is_none(), "{own}");
+    }
+
+    /// The engine's own agents, missions and prompts call memory by its
+    /// folded tools: no retired tool name (a legacy name that is no folded
+    /// tool) is left in them for a model to call into nothing.
+    #[test]
+    fn the_engines_own_prompts_name_only_the_folded_tools() {
+        let cat = catalog();
+        let folded: Vec<&str> = cat.tools().iter().map(|t| t.name).collect();
+        let retired: Vec<&str> = cat
+            .legacy()
+            .filter_map(|b| b.legacy)
+            .filter(|name| !folded.contains(name))
+            .chain(["memory_dream_status", "memory_dream_run"])
+            .collect();
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let mut files = Vec::new();
+        for dir in ["agents", "missions", "prompts"] {
+            collect_text(&root.join(dir), &mut files);
+        }
+        assert!(files.len() > 5, "found {files:?}");
+        let mut stale = Vec::new();
+        for path in &files {
+            let text = std::fs::read_to_string(path).unwrap_or_default();
+            for name in &retired {
+                let named = text.match_indices(name).any(|(at, _)| {
+                    let next = text[at + name.len()..].chars().next();
+                    !next.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
+                });
+                if named {
+                    stale.push(format!("{}: {name}", path.display()));
+                }
+            }
+        }
+        assert!(stale.is_empty(), "retired memory tools named: {stale:#?}");
+    }
+
+    fn collect_text(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                collect_text(&path, out);
+            } else if matches!(path.extension().and_then(|e| e.to_str()), Some("md" | "toml")) {
+                out.push(path);
+            }
+        }
     }
 
     /// The model's own assertion never reaches the daemon unexamined.

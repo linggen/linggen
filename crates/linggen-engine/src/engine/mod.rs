@@ -1268,9 +1268,9 @@ mod tests {
         let messages = vec![
             msg("system", "doctrine"),
             msg("user", "remember the oldest day"),
-            msg("assistant", "calling memory_list"),
+            msg("assistant", "calling memory_search op=list"),
             msg("tool", "[fifty kilobytes of rows]"),
-            msg("assistant", "calling memory_remember_day"),
+            msg("assistant", "calling memory_upkeep op=remember_day"),
             msg("tool", "{\"date\":\"2026-09-14\"}"),
             msg("assistant", "DAY 2026-09-14 done judged=31 promoted=3"),
         ];

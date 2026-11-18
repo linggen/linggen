@@ -3,7 +3,9 @@
 //! When a mission run completes, the scheduler appends one summary
 //! message to the run's session, composed mechanically from the
 //! transcript's memory tool results (the `days` worklist,
-//! `remember_day` and `harvest_day` stamps, `sweep` evictions). The model's own status
+//! `remember_day` and `harvest_day` stamps, `sweep` evictions — all
+//! `memory_upkeep` ops). A result row names its tool, not its `op`, so each
+//! is told by the answer's own shape, never by a tool name. The model's own status
 //! lines stay best-effort narration; this report is the trustworthy
 //! record of what actually happened — a model was observed inventing
 //! failure reasons and a wrong final token instead of reporting
@@ -221,7 +223,7 @@ mod tests {
         // Shapes copied verbatim from the 2026-07-06 live run transcript.
         let messages = vec![
             sys(
-                r#"Tool mcp__memory__memory_days: success: {"days":[{"date":"2026-07-03","dreamed":false,"forgotten":0,"harvested_at":null,"judged":0,"past_ttl":0,"promoted":0,"remembered_at":null,"rows":14,"scanned":false,"unjudged":14}],"today":"2026-07-06","ttl_days":7}"#,
+                r#"Tool mcp__memory__memory_upkeep: success: {"days":[{"date":"2026-07-03","dreamed":false,"forgotten":0,"harvested_at":null,"judged":0,"past_ttl":0,"promoted":0,"remembered_at":null,"rows":14,"scanned":false,"unjudged":14}],"today":"2026-07-06","ttl_days":7}"#,
             ),
             sys(
                 r#"Tool mcp__memory__memory_search: success: [{"content":"unrelated search result"}]"#,
@@ -230,10 +232,10 @@ mod tests {
                 r#"Tool mcp__memory__memory_add: success: {"action":"added","fact":{"content":"a promoted row","id":"abc"}}"#,
             ),
             sys(
-                r#"Tool mcp__memory__memory_remember_day: success: {"date":"2026-07-03","record":{"forgotten":0,"judged":14,"promoted":7,"remembered_at":"2026-07-06T17:06:50Z"}}"#,
+                r#"Tool mcp__memory__memory_upkeep: success: {"date":"2026-07-03","record":{"forgotten":0,"judged":14,"promoted":7,"remembered_at":"2026-07-06T17:06:50Z"}}"#,
             ),
             sys(
-                r#"Tool mcp__memory__memory_sweep: success: {"days":{"2026-06-29":4},"dry_run":false,"removed":4}"#,
+                r#"Tool mcp__memory__memory_upkeep: success: {"days":{"2026-06-29":4},"dry_run":false,"removed":4}"#,
             ),
         ];
         let report = compose_memory_report(&messages).unwrap();
@@ -250,7 +252,7 @@ mod tests {
     fn condense_merges_are_counted() {
         let messages = vec![
             sys(
-                r#"Tool mcp__memory__memory_sweep: success: {"days":{},"dry_run":false,"removed":0}"#,
+                r#"Tool mcp__memory__memory_upkeep: success: {"days":{},"dry_run":false,"removed":0}"#,
             ),
             sys(
                 r#"Tool mcp__memory__memory_add: success: {"action":"added","fact":{"id":"s1"},"replaced":["a","b"]}"#,
@@ -275,10 +277,10 @@ mod tests {
     fn no_op_run_reports_quiet_sweep() {
         let messages = vec![
             sys(
-                r#"Tool mcp__memory__memory_days: success: {"days":[],"today":"2026-07-06","ttl_days":7}"#,
+                r#"Tool mcp__memory__memory_upkeep: success: {"days":[],"today":"2026-07-06","ttl_days":7}"#,
             ),
             sys(
-                r#"Tool mcp__memory__memory_sweep: success: {"days":{},"dry_run":false,"removed":0}"#,
+                r#"Tool mcp__memory__memory_upkeep: success: {"days":{},"dry_run":false,"removed":0}"#,
             ),
         ];
         let report = compose_memory_report(&messages).unwrap();
@@ -291,7 +293,7 @@ mod tests {
     #[test]
     fn a_scan_stamp_reads_as_scanned_not_remembered() {
         let messages = vec![sys(
-            r#"Tool mcp__memory__memory_harvest_day: success: {"date":"2026-11-10","record":{"forgotten":0,"harvested_at":"2026-11-16T15:00:00Z","judged":3,"promoted":1,"remembered_at":"2026-11-11T03:00:00Z"}}"#,
+            r#"Tool mcp__memory__memory_upkeep: success: {"date":"2026-11-10","record":{"forgotten":0,"harvested_at":"2026-11-16T15:00:00Z","judged":3,"promoted":1,"remembered_at":"2026-11-11T03:00:00Z"}}"#,
         )];
         let report = compose_memory_report(&messages).unwrap();
         assert_eq!(
@@ -312,7 +314,7 @@ mod tests {
     #[test]
     fn dry_run_sweep_is_ignored() {
         let messages = vec![sys(
-            r#"Tool mcp__memory__memory_sweep: success: {"days":{"2026-06-29":4},"dry_run":true,"removed":4}"#,
+            r#"Tool mcp__memory__memory_upkeep: success: {"days":{"2026-06-29":4},"dry_run":true,"removed":4}"#,
         )];
         assert!(compose_memory_report(&messages).is_none());
     }

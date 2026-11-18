@@ -137,8 +137,14 @@ impl<D: Copy + 'static> Branch<D> {
     }
 
     /// Every field the folded branch takes: advertised and hidden.
-    pub(crate) fn accepts(&self, key: &str) -> bool {
-        self.properties().contains_key(key) || self.hidden.contains(&key)
+    pub fn accepts(&self, key: &str) -> bool {
+        self.advertises(key) || self.hidden.contains(&key)
+    }
+
+    /// Whether the branch's schema shows `key` — what a host may fill in
+    /// for a model (`host`, `cwd`, `scope_root`): never a hidden filter.
+    pub fn advertises(&self, key: &str) -> bool {
+        self.properties().contains_key(key)
     }
 
     /// The legacy tool definition, exactly as `tools/list` published it.
@@ -261,6 +267,15 @@ impl<D: Copy + 'static> Catalog<D> {
     /// answered as though it did not exist.
     pub fn resolve(&self, view: View, name: &str, args: Value) -> Resolved<'_, D> {
         check::resolve(self, view, name, args)
+    }
+
+    /// The branch a folded call names, read the way [`resolve`](Self::resolve)
+    /// picks it (an `op`, or the implicit one when the fields fit), without
+    /// checking its fields. `None` when the call names no branch the view
+    /// has. For a client that fills fields in before the call goes out: it
+    /// fills only the fields of the branch that will run.
+    pub fn branch_of(&self, view: View, name: &str, args: &Value) -> Option<&Branch<D>> {
+        check::branch_of(self, view, name, args)
     }
 }
 

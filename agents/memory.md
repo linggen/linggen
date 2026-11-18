@@ -87,15 +87,15 @@ direct request. The procedure for each is below.
 Given a date `YYYY-MM-DD` (from the undreamed-days worklist or the
 request):
 
-0. **Lock the day.** `memory_dream_lease {"day":"<date>","holder":"linggen-engine","action":"acquire"}`
+0. **Lock the day.** `memory_upkeep {"op":"dream_lease","day":"<date>","holder":"linggen-engine","action":"acquire"}`
    before reading anything — one executor per day. Refused (another
    holder is dreaming it, or this machine is a replica) → say
    `LOCKED <date> <reason>` and stop this day; do not judge it.
-1. **Context.** `memory_days` if you don't already
+1. **Context.** `memory_upkeep` op=days if you don't already
    have it this run — note the day's `remembered_at`. If set, this is
    a re-pend: only rows created after that stamp need judging, and the
    worklist leaves the judged ones out.
-2. **Worklist.** `memory_list {"tier":"episodic","day":"<date>","unjudged":true,"limit":25,"sort":"oldest"}`
+2. **Worklist.** `memory_search {"op":"list","tier":"episodic","day":"<date>","unjudged":true,"limit":25,"sort":"oldest"}`
    — page with `offset` until you've seen every row. Those keys only;
    never pass `type`/`from`/`outcome` (they narrow the list to zero).
 3. **Cluster.** Group near-duplicate rows on the same subject — per-turn
@@ -144,15 +144,15 @@ request):
    alongside it*; that reconciliation happens at recall time with the
    user present. Your own derived notes are the exception (the Merge
    case above).
-6. **Stamp.** `memory_remember_day {"date":"<date>","judged":<rows seen>,"promoted":<adds made>,"holder":"linggen-engine"}`.
+6. **Stamp.** `memory_upkeep {"op":"remember_day","date":"<date>","judged":<rows seen>,"promoted":<adds made>,"holder":"linggen-engine"}`.
    This is what marks the day dreamed — never skip it, even
    when you promoted nothing. Then free the day:
-   `memory_dream_lease {"day":"<date>","holder":"linggen-engine","action":"release"}`.
+   `memory_upkeep {"op":"dream_lease","day":"<date>","holder":"linggen-engine","action":"release"}`.
 
 ## Forget stage
 
 When the run protocol says to sweep (typically once, after the last
-day): `memory_sweep`. It is mechanical and
+day): `memory_upkeep` op=sweep. It is mechanical and
 self-guarding — it only evicts rows that are past TTL, on a remembered
 day, and were created before that day's stamp. Safe to call anytime.
 
@@ -161,7 +161,7 @@ day, and were created before that day's stamp. Safe to call anytime.
 Long-term memory is append-mostly, so project truths accumulate
 **chains**: same-subject rows where the newest completes or obsoletes
 the rest ("design locked, impl not started" → "shipped"). Clusters
-come from `memory_chains {...}` (always with
+come from `memory_upkeep {"op":"chains", ...}` (always with
 `"derived_only":true` — the scan pre-filters to your own notes).
 
 **Confidence gates what each kind may DO.** Unattended runs (the
@@ -234,7 +234,7 @@ below.
 
 After the sweep and the cited condense (a clean-worklist finish-up
 only — each stage is its own turn), run ONE capped pass:
-`memory_chains {"kind":"marker","limit":5}` — no
+`memory_upkeep {"op":"chains","kind":"marker","limit":5}` — no
 `derived_only` filter here: user-voice candidates still need judging.
 The daemon already excludes rows a review issue names, open or closed
 (`queued_skipped` reports how many), so every candidate you see is
@@ -254,7 +254,7 @@ fresh. Take each through the lanes IN ORDER:
 - **Skip young rows.** Provisional language on a row younger than ~14
   days is probably still true — leave it; write-side supersede gets
   first chance. Compare the row's `occurred_at`/`created_at` to today.
-- **Settle from evidence.** `memory_get` each row in full, then
+- **Settle from evidence.** `memory_search` op=get each row in full, then
   `memory_search` the subject for a row that completes, overtakes or
   contradicts it — any tier and any age (a recent episodic row is
   evidence too). When the claim names a project (a row's `scope` is
@@ -285,9 +285,9 @@ fresh. Take each through the lanes IN ORDER:
     now — otherwise the evidence is out of reach: queue it. (A kept
     ruling takes the rows out of every later scan.)
 
-  Either way, record it: `memory_issue_add` (the kind you would have
+  Either way, record it: `memory_upkeep` op=issue_add (the kind you would have
   queued, the row ids, note = what you did and why in one plain line),
-  then at once `memory_issue_resolve` with the issue id — `resolved`
+  then at once `memory_upkeep` op=issue_resolve with the issue id — `resolved`
   for a change, `dismissed` for keep-as-is — and the same note. The
   closed item is the record the user can read later, and it stops
   the scan re-serving these rows. One `SETTLE` line.
@@ -298,7 +298,7 @@ fresh. Take each through the lanes IN ORDER:
   - the evidence is out of reach on this run (a call refused, a
     project not on this machine, an answer only another host has).
 
-  `memory_issue_add {"kind":"<chain|stale-status|contradiction>","row_ids":[...],"note":"..."}`.
+  `memory_upkeep {"op":"issue_add","kind":"<chain|stale-status|contradiction>","row_ids":[...],"note":"..."}`.
   The note is ONE plain-word question with your recommendation
   (e.g. `"Is the sync rewrite still in progress, or did it ship? I
   think it shipped — a 10-30 note says done; needs git to confirm."`).
@@ -308,10 +308,10 @@ In a dream you never pass `user_directed:true` — a dream never changes
 a user-voice row.
 
 Then the **digest stage** — ONE
-`memory_chains {"kind":"subject","limit":5,"derived_only":true}`
+`memory_upkeep {"op":"chains","kind":"subject","limit":5,"derived_only":true}`
 fetch. The daemon pre-filters: only quiet clusters (newest member
 >30 days), only your own notes, never rows a prior subject ruling
-covers. Read each member in full (`memory_get`), then exactly one of:
+covers. Read each member in full (`memory_search` op=get), then exactly one of:
 
 - **DIGEST** — the members (or a coherent 3+ subset) genuinely share
   ONE subject: collapse per the condense drafting rules into a single
@@ -319,12 +319,12 @@ covers. Read each member in full (`memory_get`), then exactly one of:
   subset's ids only; outliers stay untouched. One `MERGE` line. The
   members are archived, not deleted — a wrong digest is recoverable.
 - **SETTLE kept** — the members clearly tell different stories:
-  `memory_issue_add {"kind":"subject","row_ids":[<ALL member ids>],"note":"<subject>: separate — <why>"}`,
-  then at once `memory_issue_resolve` `dismissed` with the same note.
+  `memory_upkeep {"op":"issue_add","kind":"subject","row_ids":[<ALL member ids>],"note":"<subject>: separate — <why>"}`,
+  then at once `memory_upkeep` op=issue_resolve `dismissed` with the same note.
   The dismissal IS the ruling: listing every member id stops the
   cluster re-forming around a neighboring seed. One `SETTLE` line.
 - **QUEUE** — only when you genuinely cannot tell from the full
-  members: `memory_issue_add {"kind":"subject","row_ids":[<ALL member ids>],"note":"<one plain question: one subject or several?> + your guess"}`.
+  members: `memory_upkeep {"op":"issue_add","kind":"subject","row_ids":[<ALL member ids>],"note":"<one plain question: one subject or several?> + your guess"}`.
   One `QUEUE` line.
 
 Then the **scope and index lane** — fixes you apply yourself, never
@@ -365,7 +365,7 @@ a dream never runs.
 
 The kickoff says the run is attended → after the sweep and the cited
 condense, fetch
-`memory_chains {"kind":"marker","limit":4,"derived_only":true}`.
+`memory_upkeep {"op":"chains","kind":"marker","limit":4,"derived_only":true}`.
 Empty → skip silently. Settle each candidate from evidence first
 (the audit's "Settle from evidence" lane — `SETTLE` lines). Ask only
 about what the evidence leaves open; nothing left → no `AskUser`.
@@ -422,8 +422,8 @@ It works on every machine, primary or replica.
    `.jsonl`; Codex — the id at the end of the `rollout-…-<id>.jsonl`
    name; Linggen — the name of the session folder that holds
    `messages.jsonl`.
-3. **Skip covered sessions.** `memory_list {"tier":"episodic","day":"<date>","limit":100}`
-   (page with `offset`) and `memory_list {"tier":"semantic","day":"<date>","limit":100}`
+3. **Skip covered sessions.** `memory_search {"op":"list","tier":"episodic","day":"<date>","limit":100}`
+   (page with `offset`) and `memory_search {"op":"list","tier":"semantic","day":"<date>","limit":100}`
    (a promoted twin lives there), and collect their `source_session`
    values. A candidate whose session id is in that set is skipped
    (`SKIP <session-id> covered`): live capture or an earlier scan
@@ -461,7 +461,7 @@ It works on every machine, primary or replica.
    `from=user` is what the user said; `agent` what the session did or
    saw; `derived` your inference. One `STAGE` line per session.
 6. **Stamp** once every candidate is handled — also when nothing new
-   was staged (`CLEAN`): `memory_harvest_day {"date":"<date>"}`. It
+   was staged (`CLEAN`): `memory_upkeep {"op":"harvest_day","date":"<date>"}`. It
    marks the day scanned only; the rows wait for the dream. A day that
    is not over yet (today) cannot be stamped — the store refuses it:
    stage what is there, skip the stamp, and say
@@ -476,15 +476,15 @@ user-voice row that would change, rows the user must pick between
 evidence the dream could not read. You are the solver, and the user
 started this run.
 
-0. **Replica?** `memory_role` first: `role: replica` → reply exactly
+0. **Replica?** `memory_upkeep` op=role first: `role: replica` → reply exactly
    `Memory is dreamed on the primary (<upstream>)`, then `DONE`. Review
    items are solved on the primary.
-1. **List.** `memory_issues`. Empty → `CLEAN`, then `DONE`. Work the
+1. **List.** `memory_upkeep` op=issues. Empty → `CLEAN`, then `DONE`. Work the
    whole queue in this run: every item ends solved, dismissed, or left
    open with its reason. Go item by item without pausing. You are the
    only writer: no Task, no subagents.
 2. **Per item, gather evidence — solve it yourself first.**
-   `memory_get {"id":"<row id>"}` for each row the item names, then
+   `memory_search {"op":"get","id":"<row id>"}` for each row the item names, then
    read whatever settles it: a newer row on the subject
    (`memory_search`), the project's files, docs and git history since
    the row's date — **look only**, as in the audit (`Read`; Bash
@@ -513,7 +513,7 @@ started this run.
    and the cluster is never served again. Ask only when you genuinely
    cannot tell.
 5. **Close as you go.**
-   `memory_issue_resolve {"id":"<issue id>","outcome":"resolved","note":"<what you did>"}`
+   `memory_upkeep {"op":"issue_resolve","id":"<issue id>","outcome":"resolved","note":"<what you did>"}`
    (or `"dismissed"` when it is not worth fixing).
 6. **Report** once, at the end: one line per item — `SOLVED <id> "<what>"`,
    `DISMISSED <id> "<why>"`, `SKIPPED <id> needs <dir>`,

@@ -25,34 +25,69 @@ pub(super) fn resolve<'a, D: Copy + 'static>(
     name: &str,
     args: Value,
 ) -> Resolved<'a, D> {
-    let Some(doc) = cat.tools().iter().find(|d| d.name == name) else {
+    let Some((implicit, visible)) = tool_of(cat, view, name) else {
         return Resolved::Unknown;
     };
-    let visible = cat.visible(view, name);
-    if visible.is_empty() {
-        return Resolved::Unknown;
-    }
     let mut obj = match args {
         Value::Object(obj) => obj,
         Value::Null => Map::new(),
         _ => return Resolved::Refused(format!("{name}: arguments must be an object")),
     };
     obj.retain(|_, v| !v.is_null());
-    let multi = cat.branches_of(name).count() > 1;
-    let branch = if multi {
-        match pick(name, doc.implicit_op, &visible, &mut obj) {
-            Ok(b) => b,
-            Err(why) => return Resolved::Refused(why),
-        }
-    } else if obj.contains_key("op") {
-        return Resolved::Refused(format!("{name} takes no op"));
-    } else {
-        visible[0]
+    let branch = match choose(cat, name, implicit, &visible, &mut obj) {
+        Ok(b) => b,
+        Err(why) => return Resolved::Refused(why),
     };
     match check(name, branch, &visible, obj) {
         Ok(args) => Resolved::Call { branch, args },
         Err(why) => Resolved::Refused(why),
     }
+}
+
+/// The branch a call names, chosen as [`resolve`] chooses it, its fields
+/// not checked.
+pub(super) fn branch_of<'a, D: Copy + 'static>(
+    cat: &'a Catalog<D>,
+    view: View,
+    name: &str,
+    args: &Value,
+) -> Option<&'a Branch<D>> {
+    let (implicit, visible) = tool_of(cat, view, name)?;
+    let mut obj = match args {
+        Value::Object(obj) => obj.clone(),
+        Value::Null => Map::new(),
+        _ => return None,
+    };
+    obj.retain(|_, v| !v.is_null());
+    choose(cat, name, implicit, &visible, &mut obj).ok()
+}
+
+/// A folded tool's implicit `op` and the branches `view` has of it.
+fn tool_of<'a, D: Copy + 'static>(
+    cat: &'a Catalog<D>,
+    view: View,
+    name: &str,
+) -> Option<(Option<&'static str>, Vec<&'a Branch<D>>)> {
+    let doc = cat.tools().iter().find(|d| d.name == name)?;
+    let visible = cat.visible(view, name);
+    (!visible.is_empty()).then_some((doc.implicit_op, visible))
+}
+
+/// The branch of a call's `obj` (its `op` taken out of it).
+fn choose<'a, D: Copy + 'static>(
+    cat: &Catalog<D>,
+    name: &str,
+    implicit: Option<&str>,
+    visible: &[&'a Branch<D>],
+    obj: &mut Map<String, Value>,
+) -> Result<&'a Branch<D>, String> {
+    if cat.branches_of(name).count() > 1 {
+        return pick(name, implicit, visible, obj);
+    }
+    if obj.contains_key("op") {
+        return Err(format!("{name} takes no op"));
+    }
+    Ok(visible[0])
 }
 
 /// The branch a multi-branch call names.
@@ -340,6 +375,29 @@ mod tests {
         assert!(why.contains("op=\"list\""), "{why}");
         let why = refused("memory_search", json!({}));
         assert!(why.contains("needs op") && why.contains("semantic: query"), "{why}");
+    }
+
+    /// The branch a client fills fields in for is the one that will run:
+    /// picked as a call is resolved, implicit op included; a call that
+    /// names no branch has none.
+    #[test]
+    fn the_branch_of_a_call_is_the_one_that_runs() {
+        let op = |tool: &str, args: Value| catalog().branch_of(View::Local, tool, &args).map(|b| b.op);
+        assert_eq!(op("memory_search", json!({"query": "tea"})), Some("semantic"));
+        assert_eq!(op("memory_search", json!({"op": "get", "id": "a"})), Some("get"));
+        assert_eq!(op("memory_search", json!({"op": "list", "day": "2026-11-01"})), Some("list"));
+        assert_eq!(op("memory_search", json!({"id": "a"})), None, "no op, not a search");
+        assert_eq!(op("memory_add", json!({"content": "x"})), Some("add"));
+        assert_eq!(op("memory_add", json!({"content": "x", "op": "add"})), None);
+        assert_eq!(op("memory_upkeep", json!({"op": "days"})), Some("days"));
+        assert_eq!(op("memory_upkeep", json!({"op": "dream_run"})), None, "not memory's");
+        assert_eq!(op("memory_get", json!({"id": "a"})), None, "a legacy name is no folded tool");
+        let get = catalog().branch_of(View::Local, "memory_search", &json!({"op": "get"})).unwrap();
+        assert!(!get.advertises("scope_root") && get.advertises("id"));
+        let semantic = catalog().branch_of(View::Local, "memory_search", &json!({})).map(|b| b.op);
+        assert_eq!(semantic, None, "nothing given fits no branch");
+        let search = catalog().branch_of(View::Local, "memory_search", &json!({"query": "q"})).unwrap();
+        assert!(search.accepts("from") && !search.advertises("from"), "a hidden filter is accepted, never shown");
     }
 
     /// Unknown ops, fields of another branch, missing and bad values are

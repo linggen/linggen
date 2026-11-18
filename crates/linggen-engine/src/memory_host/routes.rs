@@ -43,7 +43,9 @@ async fn raw(ConnectInfo(peer): ConnectInfo<SocketAddr>, req: Request) -> Respon
 }
 
 async fn mcp(ConnectInfo(peer): ConnectInfo<SocketAddr>, req: Request) -> Response {
-    forward(peer, req, "/mcp", Door::Mcp).await
+    // A host's plugin: the legacy surface, as it has always called it. The
+    // engine's own agents reach memory's folded tools at `/mem/mcp`.
+    forward(peer, req, ling_mem::http::LEGACY_PATH, Door::Mcp).await
 }
 
 /// The paths under [`PREFIX`] the engine's LAN gate leaves open: a machine

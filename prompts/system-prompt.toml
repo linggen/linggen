@@ -105,7 +105,7 @@ text = '''
   on-demand facts live in the rest of the store (`memory_search` /
   `memory_add` without `tier: "core"`).
 - An index line is a pointer, not the rule: when a summary bears on the
-  task, read that row in full with `memory_get` before acting on it.
+  task, read that row in full with `memory_search` op=get before acting on it.
 --- END ALWAYS-ON MEMORY ---'''
 
 [delegation_header]

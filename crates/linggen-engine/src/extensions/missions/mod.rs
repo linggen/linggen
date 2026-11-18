@@ -619,7 +619,7 @@ mod tests {
         assert!(dream
             .kickoff
             .iter()
-            .all(|item| !item.contains("memory_chains")));
+            .all(|item| !item.contains("chains")));
         let md = mission_to_md(&dream);
         assert!(md.contains("kickoff-fresh: true"), "{md}");
         let again = parse_mission_md("dream", &md).unwrap();

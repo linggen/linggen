@@ -52,7 +52,8 @@ pub const PREFIX: &str = ling_mem::replica::state::PRIMARY_PREFIX;
 
 /// Memory's MCP server for hosts on this machine (Claude Code, Codex, …) and
 /// for an approved machine with only a plugin, beside the engine's own
-/// `/mcp`. The same server is at `/mem/mcp` (this machine only).
+/// `/mcp`: the legacy surface (`ling_mem::http::LEGACY_PATH`). The engine's
+/// own agents reach memory's folded tools at `/mem/mcp` (this machine only).
 pub(crate) const MCP_PATH: &str = "/mcp/memory";
 
 /// Worker threads of memory's runtime. Its blocking pool (embedding, file

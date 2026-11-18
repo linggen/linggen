@@ -19,4 +19,4 @@ mod transport;
 pub(crate) mod test_memory;
 
 pub use config::{with_builtin, McpServerConfig, BUILTIN_MEMORY};
-pub use registry::{is_mcp_tool, qualify, registry, AdvertisedTool};
+pub use registry::{is_mcp_tool, qualify, registry, AdvertisedTool, McpRegistry};

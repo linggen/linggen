@@ -194,7 +194,7 @@ Each drained item follows the final reply it answers, so the model sees its own 
 
 `kickoff-then:` maps a sentinel to its own items. A final reply ending on one (same matching as `kickoff-stop`) replaces whatever is left of the queue with that sentinel's items; the branch fires once per run. The dream replies `CLEAR` when its worklist is empty, which swaps the leftover day nudges for its finish-up — sweep + condense, markers, subjects — one stage per turn, so with `kickoff-fresh` each stage's scan folds away before the next.
 
-There is no pre-agent shell stage. Deterministic data fetches happen inside the agent loop via the mission's `allowed-tools` (typically a memory tool like `memory_list`, or `Bash` when the mission declares it). For missions that previously relied on a shell pre-fetch to dodge LLM-judgment risk on empty results, the protection now lives at ling-mem's own MCP dispatch boundary — see the `past_ttl=true` strip rule.
+There is no pre-agent shell stage. Deterministic data fetches happen inside the agent loop via the mission's `allowed-tools` (typically a memory tool like `memory_search` op=list, or `Bash` when the mission declares it). For missions that previously relied on a shell pre-fetch to dodge LLM-judgment risk on empty results, the protection now lives at ling-mem's own MCP dispatch boundary — see the `past_ttl=true` strip rule.
 
 ### prepare
 

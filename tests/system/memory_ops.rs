@@ -411,12 +411,12 @@ fn plan_turn() -> Vec<crate::support::model::Reply> {
         read_line(2, true),
         read_line(3, true),
         tool(
-            "mcp__memory__memory_list",
-            json!({"tier": "episodic", "day": DAY, "limit": 100}),
+            "mcp__memory__memory_search",
+            json!({"op": "list", "tier": "episodic", "day": DAY, "limit": 100}),
         ),
         tool(
-            "mcp__memory__memory_list",
-            json!({"tier": "semantic", "day": DAY, "limit": 100}),
+            "mcp__memory__memory_search",
+            json!({"op": "list", "tier": "semantic", "day": DAY, "limit": 100}),
         ),
     ]
 }
@@ -453,8 +453,8 @@ async fn a_scan_run_stages_the_days_sessions_and_stamps_the_day() {
     let mut script = vec![
         read_line(1, true),
         tool(
-            "mcp__memory__memory_list",
-            json!({"tier": "episodic", "day": DAY, "limit": 100}),
+            "mcp__memory__memory_search",
+            json!({"op": "list", "tier": "episodic", "day": DAY, "limit": 100}),
         ),
     ];
     script.extend([
@@ -479,13 +479,13 @@ async fn a_scan_run_stages_the_days_sessions_and_stamps_the_day() {
             ),
         ),
         text(&format!("STAGE 3 {LING_SESSION} rows=1")),
-        tool("mcp__memory__memory_harvest_day", json!({"date": DAY})),
+        tool("mcp__memory__memory_upkeep", json!({"op": "harvest_day", "date": DAY})),
         text("DONE"),
     ]);
     // The same day scanned again: both sessions already have rows.
     script.extend(plan_turn());
     script.extend([
-        tool("mcp__memory__memory_harvest_day", json!({"date": DAY})),
+        tool("mcp__memory__memory_upkeep", json!({"op": "harvest_day", "date": DAY})),
         text(&format!(
             "SKIP {CC_SESSION} covered\nSKIP {LING_SESSION} covered\nCLEAN"
         )),
@@ -642,8 +642,8 @@ async fn a_failing_prepare_step_ends_the_run_failed_and_unstamped() {
 #[tokio::test]
 async fn a_solve_run_asks_once_refuses_a_second_start_and_closes_the_item() {
     let script = vec![
-        tool("mcp__memory__memory_role", json!({})),
-        tool("mcp__memory__memory_issues", json!({})),
+        tool("mcp__memory__memory_upkeep", json!({"op": "role"})),
+        tool("mcp__memory__memory_upkeep", json!({"op": "issues"})),
         tool(
             "AskUser",
             json!({"questions": [{
@@ -653,8 +653,8 @@ async fn a_solve_run_asks_once_refuses_a_second_start_and_closes_the_item() {
             }]}),
         ),
         tool(
-            "mcp__memory__memory_issue_resolve",
-            json!({"id": "iss-harbor-db", "outcome": "resolved", "note": "Alex said SQLite"}),
+            "mcp__memory__memory_upkeep",
+            json!({"op": "issue_resolve", "id": "iss-harbor-db", "outcome": "resolved", "note": "Alex said SQLite"}),
         ),
         text("SOLVED iss-harbor-db \"SQLite\"\nSolved 1, dismissed 0, left open 0.\nDONE"),
     ];
@@ -724,4 +724,58 @@ fn the_scan_reads_a_session_the_person_spoke_in() {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
+}
+
+/// The two memory doors on the engine's port: a host's plugin still reaches
+/// the seventeen legacy tools at `/mcp/memory`; the engine's own agents
+/// reach memory's five folded tools at `/mem/mcp`, where a retired name is
+/// unknown and nothing of the engine's dream, agents or browser is listed.
+#[tokio::test]
+async fn the_plugins_door_keeps_its_tools_and_the_engines_own_is_folded() {
+    let w = World::start(Setup::default()).await;
+    let names = |list: &Value| -> Vec<String> {
+        list["result"]["tools"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{list}"))
+            .iter()
+            .map(|t| t["name"].as_str().unwrap().to_string())
+            .collect()
+    };
+    let rpc = |method: &str, params: Value| json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params});
+    let plugin = w.api.post("/mcp/memory", rpc("tools/list", json!({}))).await;
+    let plugin = names(&plugin);
+    assert_eq!(plugin.len(), 17, "{plugin:?}");
+    assert!(plugin.contains(&"memory_get".to_string()) && plugin.contains(&"memory_days".to_string()));
+
+    let own = w.api.post("/mem/mcp", rpc("tools/list", json!({}))).await;
+    assert_eq!(
+        names(&own),
+        ["memory_search", "memory_add", "memory_update", "memory_delete", "memory_upkeep"]
+    );
+    let ops = &own["result"]["tools"][4]["inputSchema"]["properties"]["op"]["enum"];
+    assert_eq!(ops.as_array().map(Vec::len), Some(11), "{ops}");
+    for engine_only in ["dream_run", "dream_status"] {
+        assert!(!ops.as_array().unwrap().contains(&json!(engine_only)), "{ops}");
+    }
+    let dream = w
+        .api
+        .post("/mem/mcp", rpc("tools/call", json!({"name": "memory_upkeep", "arguments": {"op": "dream_run"}})))
+        .await;
+    assert_eq!(dream["result"]["isError"], true, "{dream}");
+    for engine_only in ["agent_run", "browser_open"] {
+        let call = rpc("tools/call", json!({"name": engine_only, "arguments": {}}));
+        let refused = w.api.post("/mem/mcp", call).await;
+        assert_eq!(refused["error"]["message"], format!("unknown tool: {engine_only}"), "{refused}");
+    }
+    let retired = w
+        .api
+        .post("/mem/mcp", rpc("tools/call", json!({"name": "memory_get", "arguments": {"id": "x"}})))
+        .await;
+    assert_eq!(retired["error"]["message"], "unknown tool: memory_get", "{retired}");
+    let days = w
+        .api
+        .post("/mem/mcp", rpc("tools/call", json!({"name": "memory_upkeep", "arguments": {"op": "days"}})))
+        .await;
+    let text = days["result"]["content"][0]["text"].as_str().unwrap_or_else(|| panic!("{days}"));
+    assert!(serde_json::from_str::<Value>(text).unwrap().get("days").is_some(), "{text}");
 }

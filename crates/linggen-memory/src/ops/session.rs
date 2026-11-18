@@ -7,7 +7,7 @@
 //!   (see `memory::scope`), as one line the model reads once.
 //! - **index** — given a `cwd`, the summaries of `indexed` rows filed at that
 //!   directory or a parent, nearest first, within [`INDEX_BUDGET_CHARS`].
-//!   One line each; the agent reads a row in full with `memory_get`.
+//!   One line each; the agent reads a row in full by its id (`memory_search` op=get).
 //!
 //! Everything else surfaces by subject through per-turn recall. A host that
 //! sends no `cwd` gets core alone; `budget_chars` (sent by 1.9.0-era hosts)
@@ -300,7 +300,7 @@ fn render_index(mut rows: Vec<Row>, place: &Place) -> (Vec<Row>, String, usize) 
     (shown, out, skipped)
 }
 
-const INDEX_FOOTER: &str = "\nThese are standing rows filed for this directory: read one in full with memory_get(id) when its summary bears on the task.";
+const INDEX_FOOTER: &str = "\nThese are standing rows filed for this directory: read one in full by its id (memory_search op=get; memory_get where that is the tool) when its summary bears on the task.";
 
 fn skipped_note(skipped: usize) -> String {
     format!(

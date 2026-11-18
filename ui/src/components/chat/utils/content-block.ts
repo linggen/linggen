@@ -22,11 +22,13 @@ export const truncateDetail = (detail: string, maxLen: number): string => {
 };
 
 /**
- * Memory tools arrive server-qualified from ling-mem (`mcp__memory__memory_add`).
- * What the retired built-ins carried as a `verb` argument is part of the tool
- * name now, so the chip reads the operation off the name and renders the
- * arguments after it — one renderer for the whole family, since it is one
- * server. Fields show when present; nothing is invented.
+ * Memory tools arrive server-qualified from the memory server
+ * (`mcp__memory__memory_add`). A folded tool names its operation in `op`
+ * (`memory_upkeep` op=days, `memory_search` op=get), so the chip reads the
+ * operation off the name and the `op` — the op alone for upkeep, where the
+ * tool name says nothing — and renders the arguments after it: one renderer
+ * for the whole family, since it is one server. Fields show when present;
+ * nothing is invented.
  *
  * What the chip shows is what the MODEL emitted. ling-mem's MCP layer may strip
  * hallucinated `type`/`from`/`outcome` before the store sees them, and the
@@ -36,7 +38,9 @@ export const truncateDetail = (detail: string, maxLen: number): string => {
 const MEMORY_PREFIX = 'mcp__memory__memory_';
 
 const memorySummary = (tool: string, args: Record<string, unknown>): string => {
-  const parts: string[] = [tool.slice(MEMORY_PREFIX.length)];
+  const name = tool.slice(MEMORY_PREFIX.length);
+  const op = typeof args.op === 'string' && args.op ? args.op : '';
+  const parts: string[] = [!op ? name : name === 'upkeep' ? op : `${name} ${op}`];
   if (typeof args.query === 'string' && args.query) parts.push(`"${args.query}"`);
   if (typeof args.id === 'string' && args.id) parts.push(args.id);
   if (typeof args.content === 'string' && args.content) {

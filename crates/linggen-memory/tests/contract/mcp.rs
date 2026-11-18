@@ -1,6 +1,8 @@
-//! Memory's MCP endpoint on the router (`/mcp`): what Claude Code, Codex
-//! and the engine's own agents see. Its `tools/call` answers a verb as the
-//! store's own `/api/memory/<verb>` route answers it, in-process.
+//! Memory's MCP endpoints on the router: the legacy surface
+//! (`/mcp/legacy`, what Claude Code and Codex reach through the engine's
+//! `/mcp/memory`) and the folded one (`/mcp`, the engine's own agents).
+//! Their `tools/call` answers a verb as the store's own
+//! `/api/memory/<verb>` route answers it, in-process.
 
 use crate::support::*;
 use serde_json::{json, Value};
@@ -203,4 +205,67 @@ async fn refusals_are_json_rpc_errors() {
         )
         .await;
     assert_eq!(note, (204, json!("")));
+}
+
+/// A folded `tools/call`: its parsed text, or the refusal it answered with
+/// (`isError`), or its JSON-RPC error message.
+async fn folded(m: &Mem, tool: &str, args: Value) -> Result<Value, String> {
+    let env = m
+        .mcp_folded("tools/call", json!({"name": tool, "arguments": args}))
+        .await;
+    if let Some(message) = env["error"]["message"].as_str() {
+        return Err(message.to_string());
+    }
+    let text = env["result"]["content"][0]["text"].as_str().unwrap_or_else(|| panic!("{env}"));
+    if env["result"]["isError"] == json!(true) {
+        return Err(format!("refused: {text}"));
+    }
+    Ok(serde_json::from_str(text).unwrap())
+}
+
+/// `/mcp`: the five folded tools, the same server text, and the store's
+/// work through them; a retired name is unknown (no alias), and nothing of
+/// the engine — its dream branches, its agents — is reachable.
+#[tokio::test]
+async fn the_folded_surface_is_five_tools_and_memory_alone() {
+    let m = Mem::start().await;
+    let init = m.mcp_folded("initialize", json!({})).await["result"].clone();
+    let legacy_init = m.mcp("initialize", json!({})).await["result"].clone();
+    assert_eq!(init, legacy_init, "one server, one text");
+    let tools = m.mcp_folded("tools/list", json!({})).await["result"]["tools"].clone();
+    let names: Vec<&str> = tools.as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
+    assert_eq!(
+        names,
+        ["memory_search", "memory_add", "memory_update", "memory_delete", "memory_upkeep"]
+    );
+
+    let added = folded(&m, "memory_add", json!({"content": "Alex keeps bees", "tier": "semantic"}))
+        .await
+        .unwrap();
+    let id = added["fact"]["id"].clone();
+    let hits = folded(&m, "memory_search", json!({"query": "Alex keeps bees"})).await.unwrap();
+    assert_eq!(hits[0]["id"], id);
+    let got = folded(&m, "memory_search", json!({"op": "get", "id": id})).await.unwrap();
+    assert_eq!(got["content"], "Alex keeps bees");
+    let listed = folded(&m, "memory_search", json!({"op": "list", "tier": "semantic"})).await.unwrap();
+    assert_eq!(listed.as_array().unwrap().len(), 1);
+    let days = folded(&m, "memory_upkeep", json!({"op": "days"})).await.unwrap();
+    assert!(days.get("days").is_some(), "{days}");
+
+    for retired in ["memory_get", "memory_list", "memory_days", "memory_sweep", "memory_dream_status"] {
+        let why = folded(&m, retired, json!({"id": "x"})).await.unwrap_err();
+        assert_eq!(why, format!("unknown tool: {retired}"));
+    }
+    for engine_only in ["agent_run", "browser_open", "memory_dream_run"] {
+        let why = folded(&m, engine_only, json!({})).await.unwrap_err();
+        assert_eq!(why, format!("unknown tool: {engine_only}"));
+    }
+    for op in ["dream_run", "dream_status"] {
+        let why = folded(&m, "memory_upkeep", json!({"op": op})).await.unwrap_err();
+        assert!(why.starts_with("refused:") && why.contains("is not one of"), "{why}");
+    }
+    let why = folded(&m, "memory_search", json!({"id": id})).await.unwrap_err();
+    assert!(why.contains("op=\"get\""), "{why}");
+    let why = folded(&m, "memory_add", json!({"content": " "})).await.unwrap_err();
+    assert_eq!(why, "content must not be empty", "the store's own refusal");
 }

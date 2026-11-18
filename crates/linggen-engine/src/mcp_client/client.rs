@@ -232,9 +232,9 @@ mod tests {
             );
         }
 
-        // `memory_list`, not a search: a search loads the embedding model.
+        // A list, not a semantic search: a search loads the embedding model.
         let out = client
-            .call_tool("memory_list", json!({ "limit": 1 }))
+            .call_tool("memory_search", json!({ "op": "list", "limit": 1 }))
             .await
             .expect("tools/call");
         assert!(!out.starts_with("error:"), "{out}");

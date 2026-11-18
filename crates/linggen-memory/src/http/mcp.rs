@@ -4,7 +4,12 @@
 //! Codex, Cursor, and any MCP client can register `ling-mem` as a
 //! provider via `.mcp.json` without spawning a stdio subprocess.
 //!
-//! Single endpoint at `POST /mcp` accepting JSON-RPC 2.0. Methods:
+//! Two endpoints accepting JSON-RPC 2.0, one handler: `POST /mcp` publishes
+//! memory's five folded tools (`memory_search`, `memory_add`,
+//! `memory_update`, `memory_delete`, `memory_upkeep`) — the engine's own
+//! agents' memory — and `POST /mcp/legacy` ([`LEGACY_PATH`]) the seventeen
+//! legacy tools a host's plugin reaches through the engine's
+//! `/mcp/memory`. Both come from the one catalogue. Methods:
 //! - `initialize` — protocol handshake, returns server capabilities.
 //! - `tools/list` — enumerate tools with their input schemas.
 //! - `tools/call` — execute a tool. The verb is answered as its route
@@ -21,6 +26,7 @@
 
 use super::state::SharedState;
 use crate::catalog::memory::{self, catalog};
+use crate::catalog::{Resolved, View};
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -65,15 +71,42 @@ Search when the question may touch past preferences, decisions or gotchas. Show 
 
 Full rules and examples: the memory skill."#;
 
+/// Where the legacy surface is served — the seventeen tools as hosts have
+/// called them since 1.x, reached through the engine's `/mcp/memory` until
+/// that door is retired.
+pub const LEGACY_PATH: &str = "/mcp/legacy";
+
+/// Which tools a path publishes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Surface {
+    /// `/mcp`: memory's five folded tools, as the catalogue publishes them
+    /// to this machine — the engine's own agents' memory.
+    Folded,
+    /// [`LEGACY_PATH`]: the seventeen legacy tools.
+    Legacy,
+}
+
 pub fn router() -> Router<SharedState> {
-    Router::new().route("/mcp", post(handler))
+    Router::new()
+        .route(
+            "/mcp",
+            post(|state, req| handler(Surface::Folded, state, req)),
+        )
+        .route(
+            LEGACY_PATH,
+            post(|state, req| handler(Surface::Legacy, state, req)),
+        )
 }
 
 // ── JSON-RPC dispatch ───────────────────────────────────────────────────────
 
 /// Single entrypoint. Parses the JSON-RPC envelope, routes by `method`,
 /// and returns either a JSON-RPC response (200) or 204 for notifications.
-async fn handler(State(state): State<SharedState>, Json(req): Json<Value>) -> Response {
+async fn handler(
+    surface: Surface,
+    State(state): State<SharedState>,
+    Json(req): Json<Value>,
+) -> Response {
     let id = req.get("id").cloned();
     let method = req.get("method").and_then(|v| v.as_str()).unwrap_or("");
     let params = req.get("params").cloned().unwrap_or(Value::Null);
@@ -86,8 +119,11 @@ async fn handler(State(state): State<SharedState>, Json(req): Json<Value>) -> Re
 
     let result = match method {
         "initialize" => Ok(handle_initialize()),
-        "tools/list" => Ok(handle_tools_list()),
-        "tools/call" => handle_tools_call(&state, params).await,
+        "tools/list" => Ok(handle_tools_list(surface)),
+        "tools/call" => match surface {
+            Surface::Folded => handle_folded_call(&state, params).await,
+            Surface::Legacy => handle_tools_call(&state, params).await,
+        },
         other => Err(rpc_error(-32601, format!("method not found: {other}"))),
     };
 
@@ -126,8 +162,18 @@ pub fn tool_names() -> Vec<String> {
         .collect()
 }
 
-fn handle_tools_list() -> Value {
-    json!({ "tools": tool_defs() })
+fn handle_tools_list(surface: Surface) -> Value {
+    match surface {
+        Surface::Folded => json!({ "tools": folded_defs() }),
+        Surface::Legacy => json!({ "tools": tool_defs() }),
+    }
+}
+
+/// The folded tools `/mcp` publishes: memory's own branches only — the
+/// store's work. The engine's dream branches, its agents and its browser
+/// are in the engine's catalogue, never in this one.
+fn folded_defs() -> Vec<Value> {
+    catalog().tools_list(View::Local)
 }
 
 /// The tools this server publishes: memory's branches, each as the tool it
@@ -162,6 +208,29 @@ async fn handle_tools_call(state: &SharedState, params: Value) -> Result<Value, 
     match memory::run(state, branch, args).await {
         Ok(data) => Ok(memory::text_content(&data)),
         Err(err) => Err(rpc_error(-32603, err.message)),
+    }
+}
+
+/// A folded call: resolved and checked by the catalogue — a refusal is the
+/// tool's answer (`isError`), with the form that works — then run as the
+/// branch runs. A name the catalogue does not have, a retired legacy name
+/// included, is unknown: no alias.
+async fn handle_folded_call(state: &SharedState, params: Value) -> Result<Value, Value> {
+    let name = params
+        .get("name")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| rpc_error(-32602, "tools/call requires `name`"))?;
+    let args = params.get("arguments").cloned().unwrap_or(json!({}));
+    match catalog().resolve(View::Local, name, args) {
+        Resolved::Unknown => Err(rpc_error(-32602, format!("unknown tool: {name}"))),
+        Resolved::Refused(why) => Ok(json!({
+            "content": [{ "type": "text", "text": why }],
+            "isError": true,
+        })),
+        Resolved::Call { branch, args } => match memory::run(state, branch, args).await {
+            Ok(data) => Ok(memory::text_content(&data)),
+            Err(err) => Err(rpc_error(-32603, err.message)),
+        },
     }
 }
 
@@ -531,6 +600,27 @@ mod tests {
         assert_eq!(actual, want, "actual:\n{}", shown.join("\n"));
         let text = fingerprint(&Value::String(INSTRUCTIONS.to_string()));
         assert_eq!(text, "7fb7025cd50abf5f", "instructions changed: {text}");
+    }
+
+    /// `/mcp` publishes memory's five folded tools and nothing of the
+    /// engine: no dream branch (a dream run from inside a run would
+    /// delegate itself), no agent and no browser tool.
+    #[test]
+    fn the_folded_surface_is_memory_alone() {
+        let defs = folded_defs();
+        let names: Vec<&str> = defs.iter().map(|t| t["name"].as_str().unwrap()).collect();
+        assert_eq!(
+            names,
+            ["memory_search", "memory_add", "memory_update", "memory_delete", "memory_upkeep"]
+        );
+        let upkeep = &defs[4]["inputSchema"]["properties"]["op"]["enum"];
+        let ops: Vec<&str> = upkeep.as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect();
+        assert_eq!(ops.len(), 11, "{ops:?}");
+        assert!(!ops.iter().any(|op| op.starts_with("dream_") && *op != "dream_lease"), "{ops:?}");
+        let all = serde_json::to_string(&defs).unwrap();
+        for engine_only in ["\"dream_run\"", "\"dream_status\"", "agent_run", "browser_"] {
+            assert!(!all.contains(engine_only), "the folded surface names {engine_only}");
+        }
     }
 
     /// The catalogue's entry is the only place a tool's name decides

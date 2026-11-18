@@ -6,7 +6,7 @@
 //!   (see `memory::scope`), as one line the model reads once.
 //! - **index** — given a `cwd`, the summaries of `indexed` rows filed at that
 //!   directory or a parent, nearest first, within [`INDEX_BUDGET_CHARS`].
-//!   One line each; the agent reads a row in full with `memory_get`.
+//!   One line each; the agent reads a row in full by its id (`memory_search` op=get).
 //!
 //! Everything else surfaces by subject through per-turn recall. A host that
 //! sends no `cwd` gets core alone; `budget_chars` (sent by 1.9.0-era hosts)

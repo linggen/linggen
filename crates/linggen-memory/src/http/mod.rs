@@ -24,7 +24,7 @@ pub(crate) mod issues;
 pub(crate) mod lease;
 pub(crate) mod local;
 mod mcp;
-pub use mcp::tool_names;
+pub use mcp::{tool_names, LEGACY_PATH};
 mod memory;
 pub(crate) mod migration;
 pub mod presence;

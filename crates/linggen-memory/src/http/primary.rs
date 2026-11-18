@@ -27,7 +27,7 @@ use crate::ops::primary::SetPrimary;
 pub fn router() -> Router<SharedState> {
     Router::new()
         .route("/api/sync/role", get(role))
-        // The same facts at the memory-verb path, for `/mcp`'s `memory_role`.
+        // The same facts at the memory-verb path, for MCP's `memory_upkeep` op=role.
         .route("/api/memory/role", axum::routing::post(role))
         .route("/api/sync/primary", put(set_primary))
 }

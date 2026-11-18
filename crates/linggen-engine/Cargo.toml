@@ -66,3 +66,5 @@ ts-rs = { version = "12", features = ["serde-json-impl", "no-serde-warnings"], o
 
 [dev-dependencies]
 ts-rs = { version = "12", features = ["serde-json-impl", "no-serde-warnings"] }
+# The deterministic embedder, for tests that need a real store and no model.
+linggen-memory = { path = "../linggen-memory", default-features = false, features = ["test-support"] }

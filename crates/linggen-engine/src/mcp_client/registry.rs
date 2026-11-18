@@ -82,6 +82,17 @@ pub fn registry() -> &'static McpRegistry {
     &REGISTRY
 }
 
+impl McpRegistry {
+    /// A registry of its own, connected to nothing — for a test that must
+    /// not touch the process's one.
+    #[cfg(test)]
+    pub(crate) fn empty() -> Self {
+        Self {
+            state: RwLock::new(State::default()),
+        }
+    }
+}
+
 pub fn qualify(server: &str, tool: &str) -> String {
     format!("{PREFIX}{server}__{tool}")
 }
@@ -407,8 +418,8 @@ mod tests {
         // And it dispatches by that qualified name.
         let out = registry()
             .call(
-                &qualify("ling-mem", "memory_list"),
-                serde_json::json!({"limit": 1}),
+                &qualify("ling-mem", "memory_search"),
+                serde_json::json!({"op": "list", "limit": 1}),
             )
             .await
             .expect("dispatch");

@@ -265,8 +265,18 @@ calling host's name, the authoring session id, where the session stands
 memory-using skill stands in its own dir), and
 the AskUser unlock on the user-voice guard. All four are filled in
 client-side by `engine/tools/memory_mcp.rs`, each field only where the
-server's own advertised schema declares it. That is argument shaping, not the
-proxy above — nothing republishes ling-mem's tools.
+server's own advertised schema declares it **for the operation the call
+runs**: `/mem/mcp` publishes memory's five folded tools (`memory_search`
+semantic/get/list, `memory_add`, `memory_update`, `memory_delete`,
+`memory_upkeep` with the store's eleven upkeep ops — never `dream_status`,
+`dream_run`, an agent or a browser tool), and a folded schema is the union
+of its operations' fields, so the client reads the call's branch off
+memory's catalogue (`Catalog::branch_of`) — `scope_root` goes on a search
+or a list, never a get; `cwd` and `root` on an add or `session_start`,
+never another upkeep op. The user-voice guard reads each target row with
+`memory_search` op=get. Retired tool names (`memory_get`, `memory_days`, …)
+are unknown there: no alias. That is argument shaping, not the proxy above
+— nothing republishes ling-mem's tools.
 
 ## Remote memory — a second machine on the LAN
 
