@@ -5,6 +5,7 @@ import { confirmDialog } from '../../lib/confirmDialog';
 import { useUserStore } from '../../stores/userStore';
 import { roomApi, type Member, type NewRoom, type RoomConfig, type RoomData, type TokenUsage } from './roomApi';
 import { TOOL_PRESETS } from './roomPerms';
+import { undoUpdate } from '../../lib/undoUpdate.mts';
 
 const isUnauthorized = (e: unknown) => e instanceof ApiError && e.status === 401;
 
@@ -66,11 +67,20 @@ export function useMyRoom(setError: (e: string | null) => void, onVisibilityChan
     }).catch(() => {});
   }, []);
 
-  /** Apply a config change locally, then persist it. */
+  /** Apply a config change locally, then persist it; a failed save takes
+   *  the change back and says so (lib/undoUpdate.mts). */
   const saveConfig = (updates: RoomConfig) => {
+    const before = config;
     setConfig(c => ({ ...c, ...updates }) as typeof c);
     if (updates.room_enabled !== undefined) useUserStore.getState().setRoomEnabled(updates.room_enabled);
-    roomApi.saveConfig(updates).then(flashSaved).catch(() => {});
+    roomApi.saveConfig(updates).then(flashSaved).catch((e) => {
+      setConfig((c) => {
+        const back = undoUpdate(c, before, updates as Partial<typeof c>);
+        useUserStore.getState().setRoomEnabled(back.room_enabled);
+        return back;
+      });
+      setError(apiErrorMessage(e, 'Save failed'));
+    });
   };
 
   const saveBudget = (val: number | null) => {
