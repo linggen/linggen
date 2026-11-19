@@ -11,17 +11,47 @@ pub(super) const AMBIENT_JITTER_SECS: u64 = 1200; // up to ~20 min
 /// Settle after boot before the first glance.
 pub(super) const AMBIENT_STARTUP_SECS: u64 = 240;
 
+/// A condition came due while no Linggen page was in front: it waits, and
+/// the first page to come to the front makes one glance of its own.
+static WAITING_FOR_A_PAGE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// How often the loop looks for a page coming back while a condition waits:
+/// a read of the presence board, no model.
+const PAGE_TICK_SECS: u64 = 5;
+
+/// A test's knob: the glance cadence and its settle, in seconds, no jitter.
+fn cadence_override() -> Option<u64> {
+    std::env::var("LINGGEN_AMBIENT_SECS").ok()?.parse().ok()
+}
+
 /// Yinyue's ambient loop — a sibling to the event-reactive watch. On a jittered
 /// ~30–50 min cadence she glances at the day; most glances she stays silent, now
 /// and then she says one small thing in her own voice. Not a mission (no run-
 /// history clutter); the Pet master switch disables it.
 pub async fn yinyue_ambient_loop(state: Arc<ServerState>) {
     tracing::info!("[yinyue-ambient] started");
-    tokio::time::sleep(Duration::from_secs(AMBIENT_STARTUP_SECS)).await;
+    let fixed = cadence_override();
+    tokio::time::sleep(Duration::from_secs(fixed.unwrap_or(AMBIENT_STARTUP_SECS))).await;
     loop {
         let jitter = crate::util::now_ts_secs() % (AMBIENT_JITTER_SECS + 1);
-        tokio::time::sleep(Duration::from_secs(AMBIENT_BASE_SECS + jitter)).await;
+        let wait = fixed.unwrap_or(AMBIENT_BASE_SECS + jitter);
+        until_next_glance(&state, wait).await;
         ambient_glance(&state).await;
+    }
+}
+
+/// The cadence runs out — or a condition is waiting and a page comes to the
+/// front, which ends the wait early, once.
+async fn until_next_glance(state: &Arc<ServerState>, secs: u64) {
+    use std::sync::atomic::Ordering;
+    let mut left = secs;
+    while left > 0 {
+        let step = left.min(PAGE_TICK_SECS);
+        tokio::time::sleep(Duration::from_secs(step)).await;
+        left -= step;
+        if WAITING_FOR_A_PAGE.load(Ordering::Relaxed) && super::triggers::user_sees(state, super::triggers::Sight::Line(None)) {
+            return;
+        }
     }
 }
 
@@ -42,23 +72,32 @@ pub(super) async fn ambient_glance(state: &Arc<ServerState>) {
     if super::guard::held_now(&pet, super::guard::Source::Glance).is_some() {
         return;
     }
+    // This glance is the attempt a waiting condition was owed.
+    WAITING_FOR_A_PAGE.store(false, std::sync::atomic::Ordering::Relaxed);
     if let Some(notice) = crate::perception::conditions::sweep() {
         tracing::info!("[yinyue-ambient] condition crossed: {}", notice.topic);
+        // A condition is for a person who can see it: with no Linggen page in
+        // front there is no model call, nothing told, and it stays due.
+        if !super::triggers::user_sees(state, super::triggers::Sight::Line(None)) {
+            WAITING_FOR_A_PAGE.store(true, std::sync::atomic::Ordering::Relaxed);
+            tracing::info!("[yinyue-ambient] no page in front — {} waits", notice.topic);
+            return;
+        }
         let kickoff = format!(
             "Something crossed a line worth one sentence: {}. {}. \
-             You noticed it — say so in your own voice, one short line, spoken aloud, \
-             plain prose. Nothing runs from this turn: an offer runs only when the person taps it. \
-             If this truly isn't the moment, reply with exactly SILENT.",
+             You noticed it — say so in your own voice, one short line, plain prose. \
+             Nothing runs from this turn: an offer runs only when the person taps it.",
             notice.situation, notice.remedy.facts()
         );
-        // It is told only if she actually said it. A SILENT reply is her
-        // judging the moment, not the user being told — the problem stays due
-        // and comes back at the next glance.
+        // It is told when its line is published with a page in front, and
+        // there (`wake_and_offer`): a silent reply, a failed turn or a
+        // departed page leaves it due for the next glance.
         let raised = super::triggers::Raised {
             problem: &notice.topic,
             offers: notice.remedy.offers(),
+            notice: &notice,
         };
-        let said = super::triggers::wake_and_offer(
+        let _ = super::triggers::wake_and_offer(
             state.clone(),
             (kickoff, None),
             ("neutral", "timer"),
@@ -67,8 +106,8 @@ pub(super) async fn ambient_glance(state: &Arc<ServerState>) {
             Some(raised),
         )
         .await;
-        if said.is_some() {
-            crate::perception::conditions::spoken(&notice);
+        if !super::triggers::user_sees(state, super::triggers::Sight::Line(None)) {
+            WAITING_FOR_A_PAGE.store(true, std::sync::atomic::Ordering::Relaxed);
         }
         return;
     }

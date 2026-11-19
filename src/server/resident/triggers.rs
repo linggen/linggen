@@ -569,6 +569,10 @@ pub(super) async fn wake_and_speak(
 pub(super) struct Raised<'a> {
     pub problem: &'a str,
     pub offers: &'a [crate::perception::offer::Offer],
+    /// The condition behind the line. It is published only with a Linggen
+    /// page in front to show it, and marked told at that publication — here,
+    /// nowhere else: audio alone never spends a notice.
+    pub notice: &'a crate::perception::conditions::Notice,
 }
 
 /// [`wake_and_speak`] for a line that raises a problem: the kickoff asks her
@@ -620,6 +624,12 @@ pub(super) async fn wake_and_offer(
         }
         return None;
     };
+    // A condition is published only where a page will show it: checked again
+    // here, after the turn, for the person may have left meanwhile.
+    if raised.is_some() && !user_sees(&state, Sight::Line(None)) {
+        tracing::info!("[yinyue-watch] a condition's line has no page to show on — held, not told");
+        return None;
+    }
     if let Some(source) = unprompted_source(reach, trigger_source) {
         if !passes_last_word(&state, source).await {
             return None;
@@ -633,8 +643,13 @@ pub(super) async fn wake_and_offer(
         said.line.text().len()
     );
     let stage = Stage::of(&state, said_in.as_ref()).await;
-    let problem = raised.map(|r| (r.problem.to_string(), shown));
-    Some(spoken::publish(&state, said, &stage, Some(emotion.to_string()), problem).await)
+    let notice = raised.as_ref().map(|r| r.notice);
+    let problem = raised.as_ref().map(|r| (r.problem.to_string(), shown));
+    let line = spoken::publish(&state, said, &stage, Some(emotion.to_string()), problem).await;
+    if let Some(notice) = notice {
+        crate::perception::conditions::spoken(notice);
+    }
+    Some(line)
 }
 
 /// What woke an unprompted turn of hers — `None` for a reply: her ordinary
