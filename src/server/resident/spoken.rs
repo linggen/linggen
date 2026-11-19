@@ -827,8 +827,40 @@ mod one_decision {
         }
     }
 
-    /// Each file's count of `needle` (test modules excluded by the split on
-    /// `#[cfg(test)]`), against the files it may be in.
+    /// The file's code without its test items: every `#[cfg(test)]` item is
+    /// cut out whole (to its closing brace, or its `;`), and the code after
+    /// it is still read.
+    fn without_tests(text: &str) -> String {
+        let mut out = String::new();
+        let mut rest = text;
+        while let Some(at) = rest.find("#[cfg(test)]") {
+            out.push_str(&rest[..at]);
+            let after = &rest[at..];
+            let mut depth = 0usize;
+            let mut end = after.len();
+            for (i, c) in after.char_indices() {
+                match c {
+                    '{' => depth += 1,
+                    '}' if depth == 1 => {
+                        end = i + 1;
+                        break;
+                    }
+                    '}' => depth -= 1,
+                    ';' if depth == 0 => {
+                        end = i + 1;
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            rest = &after[end..];
+        }
+        out.push_str(rest);
+        out
+    }
+
+    /// Each file's count of `needle` in its whole code (test items cut out),
+    /// against the files it may be in.
     fn check(needle: &str, listed: &[(&str, usize)]) {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let mut files = Vec::new();
@@ -837,8 +869,7 @@ mod one_decision {
         }
         for file in files {
             let rel = file.strip_prefix(root).unwrap().to_string_lossy().to_string();
-            let text = std::fs::read_to_string(&file).unwrap();
-            let code = text.split("#[cfg(test)]").next().unwrap_or("");
+            let code = without_tests(&std::fs::read_to_string(&file).unwrap());
             let found = code.matches(needle).count();
             let want = listed.iter().find(|(f, _)| *f == rel).map_or(0, |e| e.1);
             assert_eq!(found, want, "{rel}: `{needle}` — what she says is decided in one place; look at it, then list it");
@@ -878,5 +909,40 @@ mod one_decision {
             &publish,
             &[("src/server/resident/triggers.rs", 4)],
         );
+        // Qualified or not (`use spoken::*`): every call hands over a `said`
+        // and a `stage`.
+        let call = format!("{}{}", "said, &", "stage,");
+        check(
+            &call,
+            &[("src/server/resident/spoken.rs", 1), ("src/server/resident/triggers.rs", 4)],
+        );
+    }
+
+    /// Her rows and live messages are written by `keep_row` alone: nothing
+    /// under her own code writes a row or a message event but that function.
+    #[test]
+    fn no_other_write_of_a_row_or_message_is_made_in_her_code() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut files = Vec::new();
+        rust_files(&root.join("src/server/resident"), &mut files);
+        for needle in [
+            format!("{}{}", "add_chat_", "message("),
+            format!("{}{}", "ServerEvent::", "Message"),
+            format!("{}{}", "persist_and_", "emit"),
+        ] {
+            for file in &files {
+                let rel = file.strip_prefix(root).unwrap().to_string_lossy().to_string();
+                let code = without_tests(&std::fs::read_to_string(file).unwrap());
+                let found = code.matches(&needle).count();
+                let (want, why) = match rel.as_str() {
+                    "src/server/resident/spoken.rs" => (if needle.starts_with("persist") { 0 } else { 1 }, "keep_row"),
+                    // The agent-chat hand-off keeps a peer's message to her:
+                    // a row of the peer's, not of hers.
+                    "src/server/resident/triggers.rs" if needle.starts_with("persist") => (1, "a peer's message"),
+                    _ => (0, "nothing"),
+                };
+                assert_eq!(found, want, "{rel}: `{needle}` — a row or message as her is written by {why} only");
+            }
+        }
     }
 }
