@@ -99,6 +99,16 @@ pub(crate) fn kill_process_group(child: &std::process::Child) {
     }
 }
 
+/// Raises its flag when it goes, at the end of a call or when the call is
+/// dropped; a command still waited on is then killed.
+struct CancelWhenDropped(Arc<AtomicBool>);
+
+impl Drop for CancelWhenDropped {
+    fn drop(&mut self) {
+        self.0.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 impl Tools {
     pub(super) async fn search_rg(&self, args: SearchArgs) -> Result<ToolResult> {
         self.run_blocking("search_rg", move |tools| tools.search_rg_inner(args))
@@ -106,8 +116,14 @@ impl Tools {
     }
 
     /// Watch a foreground Bash as a background task if Steer or the
-    /// foreground limit moved it (`foreground_shell.rs`).
-    pub(super) async fn run_command(&self, args: RunCommandArgs) -> Result<ToolResult> {
+    /// foreground limit moved it (`foreground_shell.rs`). Every command a
+    /// tool runs in the foreground comes here — Bash, a `bash` app — so it
+    /// runs off the runtime's workers, under the foreground limit, and is
+    /// killed when its call is dropped (Stop drops it): the guard raises the
+    /// flag the shell's wait reads.
+    pub(super) async fn run_command(&self, mut args: RunCommandArgs) -> Result<ToolResult> {
+        let cancel = args.cancel_flag.get_or_insert_with(Default::default).clone();
+        let _cancel_when_dropped = CancelWhenDropped(cancel);
         let ran = self
             .run_blocking("run_command", move |tools| tools.run_foreground_shell(args))
             .await?;
