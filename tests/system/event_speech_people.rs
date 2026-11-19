@@ -31,7 +31,9 @@ async fn a_question_typed_during_a_held_turn_gets_a_shown_answer() {
         vec![
             tool("note_write", json!({"text": "the parcel arrives tomorrow", "look_again": "+40m"})),
             text("Noted."),
-            slow(say("The parcel comes tomorrow.")),
+            // A slow step, so a message typed now is folded in at the next one.
+            slow(tool("note_write", json!({"text": "second thought"}))),
+            say("The parcel comes tomorrow."),
             text("ANSWER-TO-THE-QUESTION it is Tuesday."),
         ],
     );
