@@ -92,6 +92,13 @@ pub struct Beat {
     pub app: Option<String>,
 }
 
+/// Which Linggen pages read present: Linggen's own, an app's.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct PagesPresent {
+    pub main: bool,
+    pub app: bool,
+}
+
 /// Every surface's latest reading, keyed by surface.
 #[derive(Debug, Default)]
 pub struct PresenceBoard {
@@ -181,6 +188,25 @@ impl PresenceBoard {
             .iter()
             .filter(|(key, _)| **key != turn)
             .any(|(_, p)| p.app.as_deref() == app && p.state(now) != "away")
+    }
+
+    /// Which kind of Linggen page reads present at `now`: one of the pages' own
+    /// surfaces (a typed turn names no page, so it never counts), with the
+    /// freshness [`Presence::state`] uses. `main`: Linggen's own page; `app`:
+    /// an app's page.
+    pub fn pages_present(&self, now: u64) -> PagesPresent {
+        let turn = format!("s:{USER_TURN_SURFACE}");
+        let mut here = PagesPresent::default();
+        for (_, p) in self.surfaces.iter().filter(|(key, _)| **key != turn) {
+            if p.state(now) == "away" {
+                continue;
+            }
+            match p.app {
+                Some(_) => here.app = true,
+                None => here.main = true,
+            }
+        }
+        here
     }
 
     #[cfg(test)]

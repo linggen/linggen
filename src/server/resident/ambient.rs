@@ -63,6 +63,11 @@ async fn until_next_glance(state: &Arc<ServerState>, secs: u64) {
 /// its own: a notice is only worth raising at a moment she could speak anyway,
 /// and a condition firing into a silent house is work nobody can hear.
 pub(super) async fn ambient_glance(state: &Arc<ServerState>) {
+    // This glance is the attempt a waiting condition was owed. Cleared first,
+    // before any early return: a glance that is blocked (pet off, quiet hours,
+    // the hour's ceiling) goes back to the normal cadence, not to a re-glance
+    // every few seconds while a page stays in front.
+    WAITING_FOR_A_PAGE.store(false, std::sync::atomic::Ordering::Relaxed);
     let pet = state.manager.get_config_snapshot().await.pet;
     if !pet.enabled || !here(state).await {
         return; // pet off, or she isn't met yet → no ambient life
@@ -72,8 +77,6 @@ pub(super) async fn ambient_glance(state: &Arc<ServerState>) {
     if super::guard::held_now(&pet, super::guard::Source::Glance).is_some() {
         return;
     }
-    // This glance is the attempt a waiting condition was owed.
-    WAITING_FOR_A_PAGE.store(false, std::sync::atomic::Ordering::Relaxed);
     if let Some(notice) = crate::perception::conditions::sweep() {
         tracing::info!("[yinyue-ambient] condition crossed: {}", notice.topic);
         // A condition is for a person who can see it: with no Linggen page in

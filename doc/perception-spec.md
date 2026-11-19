@@ -191,10 +191,13 @@ terminal, the CLI or any other program sends no beat and is not counted.
 What presence cannot tell apart today: the person **away from the Mac** and
 the person **working in another app** both send no beat, so they read the same
 (no Linggen page in front). A condition — a notice with something to do —
-therefore waits for a page in front (`user_sees(Sight::Line)`) and is told
-only when its line is published there; a routine herald does not wait, and is
-written and spoken under the voice rule. Telling the two apart needs a
-Mac-local awake and recent-input signal, which does not exist yet.
+therefore waits for a page in front — any focused Linggen page that shows her
+line, the main page or an app's (`a_page_is_in_front`), with the presence
+beat's own freshness — and is told only when its line is published there; a
+routine herald does not wait, and is written and spoken under the voice rule.
+Still not told apart: the phone alone, and long quiet reading (over two
+minutes without input) — a condition waits through both. Telling them apart
+needs a Mac-local awake and recent-input signal, which does not exist yet.
 
 The doorbell shows changes, not durations: a record that carries
 `detail.seconds` is written to disk and read through `recent_activity`, but

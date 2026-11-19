@@ -464,11 +464,16 @@ pub(crate) fn user_sees(state: &ServerState, sight: Sight<'_>) -> bool {
     }
 }
 
-/// Whether a Linggen page is in front to show a line of hers — the one
-/// evidence a condition is published on (`wake_and_offer`) and waits for
-/// (`ambient`). Audio alone never counts.
+/// Whether a Linggen page that will show a line of hers is in front: any
+/// focused, live page — Linggen's own or an app's — since her bubble is drawn
+/// by whichever surface holds her (the main page, the pet window, a stage on
+/// an app page) and her row by the chat. The one evidence a condition is
+/// published on (`wake_and_offer`) and waits for (`ambient`); the freshness
+/// is the presence board's own. Audio alone never counts; the phone and a
+/// long quiet read are not told apart (`doc/perception-spec.md`).
 pub(crate) fn a_page_is_in_front(state: &ServerState) -> bool {
-    user_sees(state, Sight::Line(None))
+    let here = state.manager.pages_present();
+    here.main || here.app
 }
 
 /// Whether an AskUser question (or permission prompt) is still awaiting the
@@ -607,7 +612,28 @@ pub(super) async fn wake_and_offer(
             super::turn::run_home(&state, kickoff, origin, reach, language).await
         }
     };
-    let said = origin.finalize(reply.as_deref());
+    // Unsaid or unpublished for any reason — silence, a page that left, the
+    // quiet hours, a row not kept — the fact the turn carried is held for the
+    // next one: it is never lost.
+    let line = deliver(&state, reply.as_deref(), said_in.as_ref(), (emotion, origin, reach), raised).await;
+    if line.is_none() {
+        if let Some(f) = rode {
+            super::run_fault::hold(f);
+        }
+    }
+    line
+}
+
+/// What a turn's reply comes to: finalized, checked, published. `None`: nothing
+/// was published.
+async fn deliver(
+    state: &Arc<ServerState>,
+    reply: Option<&str>,
+    said_in: Option<&Table>,
+    (emotion, origin, reach): (&str, Origin, Reach),
+    raised: Option<Raised<'_>>,
+) -> Option<Line> {
+    let said = origin.finalize(reply);
     let (shown, unlabelled) = super::offer_labels::shown(
         raised.as_ref().map(|r| r.offers),
         said.as_ref().map(|e| e.labels.as_slice()),
@@ -615,35 +641,32 @@ pub(super) async fn wake_and_offer(
     if unlabelled {
         tracing::warn!("[yinyue-watch] a problem's offers were left unlabelled — said without buttons");
     }
-    let Some(said) = said else {
-        // Unsaid: the fact it carried waits for the next turn.
-        if let Some(f) = rode {
-            super::run_fault::hold(f);
-        }
-        return None;
-    };
-    // A condition is published only where a page will show it: checked again
-    // here, after the turn, for the person may have left meanwhile.
-    if raised.is_some() && !a_page_is_in_front(&state) {
-        tracing::info!("[yinyue-watch] a condition's line has no page to show on — held, not told");
-        return None;
-    }
-    if let Some(source) = unprompted_source(reach, origin) {
-        if !passes_last_word(&state, source).await {
+    let said = said?;
+    let source = unprompted_source(reach, origin);
+    if let Some(source) = source {
+        if !passes_last_word(state, source).await {
             return None;
-        }
-        if source.counts() {
-            super::guard::spoke_unprompted();
         }
     }
     tracing::info!(
         "[yinyue-watch] Yinyue heralds ({} chars, {emotion})",
         said.line.text().len()
     );
-    let stage = Stage::of(&state, said_in.as_ref()).await;
+    let stage = Stage::of(state, said_in).await;
+    // A condition is published only where a page will show it. The last thing
+    // before publication, for the person may have left meanwhile; what is left
+    // of the window (the row's own awaits) is accepted: the worst is a line a
+    // moment late.
+    if raised.is_some() && !a_page_is_in_front(state) {
+        tracing::info!("[yinyue-watch] a condition's line has no page to show on — held, not told");
+        return None;
+    }
+    if source.is_some_and(|s| s.counts()) {
+        super::guard::spoke_unprompted();
+    }
     let notice = raised.as_ref().map(|r| r.notice);
     let problem = raised.as_ref().map(|r| (r.problem.to_string(), shown));
-    let line = spoken::publish(&state, said, &stage, Some(emotion.to_string()), problem).await;
+    let line = spoken::publish(state, said, &stage, Some(emotion.to_string()), problem).await;
     // Told only when the line was published — its row kept.
     if let (Some(notice), Some(_)) = (notice, &line) {
         crate::perception::conditions::spoken(notice);
