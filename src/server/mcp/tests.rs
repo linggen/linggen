@@ -482,7 +482,7 @@ const ANSWER_SOURCES: &[(&str, &str)] = &[
 /// match arm, an `if` test, an alternation), which would be a second list
 /// that can drift from the catalogue.
 #[test]
-fn nothing_outside_the_catalogue_matches_on_a_tool_name() {
+fn no_door_file_but_the_catalogue_matches_on_a_tool_name() {
     let names: Vec<String> = catalog()
         .tools()
         .iter()
