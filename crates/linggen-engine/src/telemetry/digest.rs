@@ -27,6 +27,8 @@ struct DigestFile {
 pub(crate) struct Digest {
     path: PathBuf,
     days: Mutex<BTreeMap<String, DayCounts>>,
+    /// Days taken for sending and not yet answered. Locked after `days`.
+    in_flight: Mutex<std::collections::BTreeSet<String>>,
 }
 
 impl Digest {
@@ -42,6 +44,7 @@ impl Digest {
         Self {
             path,
             days: Mutex::new(days),
+            in_flight: Mutex::default(),
         }
     }
 
@@ -60,38 +63,67 @@ impl Digest {
         save(&self.path, &days);
     }
 
-    /// Remove and return every completed (strictly before today) day, newest
-    /// `MAX_BACKLOG_DAYS` only. Removal before the POST is the double-send
-    /// guard: a day in flight is no longer in the file.
+    /// Return every completed (strictly before today) day not already being
+    /// sent, newest `MAX_BACKLOG_DAYS` only, and mark them in flight — the
+    /// double-send guard. A day stays in the file until [`sent`](Self::sent):
+    /// a crash before then ships it on the next start instead of losing it.
     pub fn take_completed(&self) -> Vec<(String, DayCounts)> {
         let today = today_utc_date();
         let mut days = match self.days.lock() {
             Ok(g) => g,
             Err(_) => return Vec::new(),
         };
-        let completed: Vec<String> = days.keys().filter(|d| **d < today).cloned().collect();
+        let mut in_flight = self.in_flight.lock().unwrap_or_else(|e| e.into_inner());
+        let completed: Vec<String> = days
+            .keys()
+            .filter(|d| **d < today && !in_flight.contains(*d))
+            .cloned()
+            .collect();
         if completed.is_empty() {
             return Vec::new();
         }
         let keep_from = completed.len().saturating_sub(MAX_BACKLOG_DAYS);
         let mut taken = Vec::new();
+        let mut dropped = false;
         for (i, day) in completed.iter().enumerate() {
-            let counts = days.remove(day).unwrap_or_default();
+            let counts = days.get(day).cloned().unwrap_or_default();
             if i >= keep_from && !counts.is_empty() {
+                in_flight.insert(day.clone());
                 taken.push((day.clone(), counts));
+            } else {
+                days.remove(day);
+                dropped = true;
             }
         }
-        save(&self.path, &days);
+        if dropped {
+            save(&self.path, &days);
+        }
         taken
     }
 
-    /// Merge a failed shipment back so the next trigger retries it. Addition
-    /// is safe against bumps that landed meanwhile — counts are additive.
+    /// A day was received: now it leaves the file.
+    pub fn sent(&self, day: &str) {
+        let mut days = match self.days.lock() {
+            Ok(g) => g,
+            Err(_) => return,
+        };
+        self.in_flight.lock().unwrap_or_else(|e| e.into_inner()).remove(day);
+        if days.remove(day).is_some() {
+            save(&self.path, &days);
+        }
+    }
+
+    /// A failed shipment: the day, still in the file, is retried on the next
+    /// trigger. A day not in flight is merged in — addition is safe against
+    /// bumps that landed meanwhile, counts are additive.
     pub fn restore(&self, day: &str, counts: DayCounts) {
         let mut days = match self.days.lock() {
             Ok(g) => g,
             Err(_) => return,
         };
+        if self.in_flight.lock().unwrap_or_else(|e| e.into_inner()).remove(day) {
+            return;
+        }
         let slot = days.entry(day.to_string()).or_default();
         for (key, n) in counts {
             *slot.entry(key).or_insert(0) += n;
@@ -164,5 +196,24 @@ mod tests {
         // Taken means gone until restored.
         assert!(digest.take_completed().is_empty());
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A day taken for sending is still on disk until it was sent: a crash
+    /// in between ships it on the next start instead of losing it.
+    #[test]
+    fn a_day_leaves_the_disk_only_once_sent() {
+        let dir = tempfile::tempdir().unwrap();
+        let digest = Digest::load(dir.path(), "testprod");
+        digest.restore("2020-01-01", BTreeMap::from([("chat.turn_ok".to_string(), 5)]));
+        assert_eq!(digest.take_completed().len(), 1);
+        let after_crash = Digest::load(dir.path(), "testprod");
+        let again = after_crash.take_completed();
+        assert_eq!(again.len(), 1, "still on disk while in flight");
+        assert_eq!(again[0].1.get("chat.turn_ok"), Some(&5));
+        // A failed send keeps it, once — never counted twice.
+        after_crash.restore("2020-01-01", again[0].1.clone());
+        assert_eq!(after_crash.take_completed()[0].1.get("chat.turn_ok"), Some(&5));
+        after_crash.sent("2020-01-01");
+        assert!(Digest::load(dir.path(), "testprod").take_completed().is_empty());
     }
 }

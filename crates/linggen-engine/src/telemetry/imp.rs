@@ -129,9 +129,9 @@ impl Telemetry {
         self.bump(&format!("error.{stage}.{code}"));
     }
 
-    /// Ship every completed day as one `digest` event. Days are removed from
-    /// the local file before the POST (the double-send guard) and merged back
-    /// on failure so the next trigger retries them.
+    /// Ship every completed day as one `digest` event. A day is held in
+    /// flight during the POST (the double-send guard), leaves the local file
+    /// once it was received, and stays there for the next trigger otherwise.
     fn ship_digests(&self) {
         // A CLI invocation (e.g. `ling update`) may have no async runtime;
         // counts stay in the local file and the daemon ships them later.
@@ -155,7 +155,9 @@ impl Telemetry {
                     client.post(TRACK_URL).json(&body).send().await,
                     Ok(resp) if resp.status().is_success()
                 );
-                if !ok {
+                if ok {
+                    this.inner.digest.sent(&day);
+                } else {
                     this.inner.digest.restore(&day, counts);
                 }
             });
