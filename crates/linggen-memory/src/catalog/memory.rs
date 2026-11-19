@@ -707,7 +707,8 @@ pub(crate) async fn read_answer(verb: &str, response: Response) -> Result<Value,
             body.trim()
         ))
     })?;
-    read_envelope(value).map_err(|msg| ApiError::internal(anyhow::anyhow!(msg)))
+    let code = crate::ErrorCode::from_wire(value["code"].as_str(), status.as_u16());
+    read_envelope(value).map_err(|message| ApiError { code, message })
 }
 
 /// Memory's `{ok, data}` envelope: the data, or the error it carries.

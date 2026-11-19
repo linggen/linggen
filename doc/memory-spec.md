@@ -226,6 +226,16 @@ at start-up and serves it (`src/memory_host/`, code in `crates/linggen-memory`).
 - **CLI.** `ling mem <verb>`: to the engine when it is up, else on the store
   directly under the lock.
 
+The engine loads the embedding model and runs one throw-away inference in the
+background. Startup and health do not wait. Until that inference finishes,
+semantic search, adds, and updates report how long memory has been warming on
+both MCP doors. `memory_search op=list`, `op=get`, and upkeep that does not
+embed still work. Refused writes were neither applied nor queued; retry once
+memory is warm. The host door (`/mcp`) reports a tool error, and the internal
+door (`/mem/mcp`) uses JSON-RPC error `-32001`. Automatic recall skips quietly.
+Warm-up refuses an individual tool call, not the agent run, so it does not
+set a run's `cannot_run`. The MCP call limit remains 25 seconds after warm-up.
+
 ### Who reaches memory, and whose rows they see
 
 One rule, in one place (`memory_host::caller`), for every memory route on

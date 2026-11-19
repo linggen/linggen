@@ -193,6 +193,8 @@ async fn memory(verb: &'static str, mut args: Value, timeout_ms: u64) -> Value {
             None => return tool_content(e.to_string(), true),
         },
     };
+    // Like other hosted tool refusals, this is isError, not an RPC failure.
+    // Preserve the elapsed-time fact without treating a warming store as down.
     match read_envelope(envelope) {
         Ok(mut data) => {
             finish(verb, &mut data);

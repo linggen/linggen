@@ -43,6 +43,13 @@ impl Memory {
     pub(crate) async fn run(self: &Arc<Self>, verb: &str, args: Value) -> Result<Reply, MemError> {
         self.mark_request();
         let verb = find(verb)?;
+        // Check before forwarding or applying a write, including updates
+        // that only patch metadata. This does not load a quiet CLI store.
+        if matches!(verb.name, "search" | "add" | "add_batch" | "update") {
+            if let Some(error) = self.warming() {
+                return Err(error);
+            }
+        }
         match route::route(self, verb) {
             Route::Here => (verb.run)(Arc::clone(self), args).await.map(Reply::Done),
             Route::Refuse => Err(forward::primary_only(self)),

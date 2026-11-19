@@ -14,6 +14,7 @@ pub enum ErrorCode {
     Conflict,
     /// A replica asked for what only its primary does.
     Replica,
+    WarmingUp,
     Internal,
 }
 
@@ -28,6 +29,7 @@ impl ErrorCode {
             ErrorCode::TooMany => 429,
             ErrorCode::Conflict => 409,
             ErrorCode::Replica => 409,
+            ErrorCode::WarmingUp => 503,
             ErrorCode::Internal => 500,
         }
     }
@@ -42,11 +44,20 @@ impl ErrorCode {
             ErrorCode::TooMany => "TOO_MANY_REQUESTS",
             ErrorCode::Conflict => "CONFLICT",
             ErrorCode::Replica => "REPLICA",
+            ErrorCode::WarmingUp => "WARMING_UP",
             ErrorCode::Internal => "INTERNAL",
         }
     }
 
-    const ALL: [ErrorCode; 8] = [
+    /// A temporary refusal is distinct from a failed MCP request.
+    pub fn mcp_status(self) -> i32 {
+        match self {
+            ErrorCode::WarmingUp => -32001,
+            _ => -32603,
+        }
+    }
+
+    const ALL: [ErrorCode; 9] = [
         ErrorCode::BadRequest,
         ErrorCode::NotFound,
         ErrorCode::Unauthorized,
@@ -54,6 +65,7 @@ impl ErrorCode {
         ErrorCode::TooMany,
         ErrorCode::Conflict,
         ErrorCode::Replica,
+        ErrorCode::WarmingUp,
         ErrorCode::Internal,
     ];
 
@@ -61,7 +73,11 @@ impl ErrorCode {
     /// HTTP status, else a refusal (4xx) or an internal failure.
     pub fn from_wire(code: Option<&str>, status: u16) -> Self {
         let by_code = Self::ALL.into_iter().find(|c| Some(c.code()) == code);
-        let by_status = || Self::ALL.into_iter().find(|c| c.http_status() == status);
+        let by_status = || {
+            Self::ALL
+                .into_iter()
+                .find(|c| !matches!(c, Self::WarmingUp) && c.http_status() == status)
+        };
         by_code.or_else(by_status).unwrap_or(match status {
             400..=499 => ErrorCode::BadRequest,
             _ => ErrorCode::Internal,

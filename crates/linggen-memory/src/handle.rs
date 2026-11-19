@@ -6,8 +6,8 @@
 //! Named `handle` beside `memory/` because `memory/` is the store itself
 //! (rows, tables, recall); this is the one open instance of it.
 
-use crate::embed::{Embedder, LoadOnce};
-use crate::error::MemError;
+use crate::embed::{Embedder, LoadOnce, WarmingUp};
+use crate::error::{ErrorCode, MemError};
 use crate::memory::{MemoryStore, Recall};
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -25,9 +25,8 @@ pub struct Memory {
     /// Dual-table read path (`semantic` + `episodic`) for recall/search.
     /// Shares both handles above.
     pub recall: Arc<Recall>,
-    /// Loaded in the background at startup ([`LoadOnce`]); a handler that
-    /// embeds awaits it through [`Memory::embedder`], one that only reads
-    /// rows never waits on it.
+    /// Warmed in the background by the engine. Only verbs that embed
+    /// access it through [`Memory::embedder`].
     pub embedder: Arc<LoadOnce<Embedder>>,
     /// Data directory root (typically `~/.linggen/`). User-tunable knobs
     /// (`.config.json` — episodic TTL etc.) live under
@@ -53,6 +52,13 @@ pub struct Memory {
     /// store look idle for hours.
     started: Instant,
     last_request_ms: AtomicU64,
+}
+
+fn warmup_error(warming: &WarmingUp) -> MemError {
+    MemError {
+        code: ErrorCode::WarmingUp,
+        message: warming.to_string(),
+    }
 }
 
 impl Memory {
@@ -83,12 +89,19 @@ impl Memory {
         }
     }
 
-    /// The embedder, waiting for its load if it is still under way.
+    /// The hosted warm-up refusal, without triggering a lazy load.
+    pub(crate) fn warming(&self) -> Option<MemError> {
+        self.embedder.warming().as_ref().map(warmup_error)
+    }
+
+    /// The embedder, or an immediate refusal while the engine warms it.
     pub async fn embedder(&self) -> Result<Arc<Embedder>, MemError> {
-        self.embedder
-            .get()
-            .await
-            .map_err(|e| MemError::internal(e.context("loading the embedding model")))
+        self.embedder.get().await.map_err(|e| {
+            if let Some(warming) = e.downcast_ref::<WarmingUp>() {
+                return warmup_error(warming);
+            }
+            MemError::internal(e)
+        })
     }
 
     /// Record that a request just arrived. Called by `Memory::call` and by

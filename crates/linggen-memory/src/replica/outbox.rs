@@ -91,7 +91,19 @@ impl std::fmt::Display for Offline {
 
 impl std::error::Error for Offline {}
 
-/// Replay the queue in order. Stops at the first unanswered call.
+/// The primary answered but cannot replay this write yet.
+#[derive(Debug)]
+pub(super) struct WarmupRefusal(pub crate::call::Reply);
+
+impl std::fmt::Display for WarmupRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("primary memory is warming up")
+    }
+}
+
+impl std::error::Error for WarmupRefusal {}
+
+/// Replay the queue in order. Stops at the first unanswered or warming call.
 pub async fn replay(state: &SharedState) -> Result<()> {
     let Some((base, token)) = state.replica.upstream() else {
         return Ok(());
@@ -130,7 +142,15 @@ async fn replay_one(state: &SharedState, base: &str, token: &str, e: &Queued) ->
         drop_local(state, &e.local_ids).await;
         return Ok(());
     }
-    let why = body["error"].as_str().unwrap_or("refused").to_string();
+    let why = body["error"].as_str().unwrap_or("refused");
+    if body["code"].as_str() == Some(crate::ErrorCode::WarmingUp.code()) {
+        // Temporary refusal: keep the queued write and its local row.
+        return Err(WarmupRefusal(crate::call::Reply::Primary {
+            status: status.as_u16(),
+            body,
+        })
+        .into());
+    }
     let note = format!("the primary refused a write queued offline: {why}");
     settle_refused(state, base, token, e, &targets, &note).await
 }

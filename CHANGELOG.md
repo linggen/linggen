@@ -6,6 +6,8 @@ Ships as 2.4, on the Mac and the iPhone together. The MCP entries ship as 2.5.
 
 - **2.5: Built-in missions refresh on startup** without resetting schedules, on/off settings, or model choices.
 
+- **Memory warms up in the background.** Until then, searches report warm-up and new embedding writes are refused, not queued.
+
 - **One Ling and one Yinyue across apps.** App chats, Yinyue's moments and
   the phone's hand-offs share one conversation a day — Linggen's daily
   session. It is on; Settings → Session turns it off.

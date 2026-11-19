@@ -147,7 +147,7 @@ async fn handle_tools_call(state: &SharedState, params: Value) -> Result<Value, 
         })),
         Resolved::Call { branch, args } => match memory::run(state, branch, args).await {
             Ok(data) => Ok(memory::text_content(&data)),
-            Err(err) => Err(rpc_error(-32603, err.message)),
+            Err(err) => Err(rpc_error(err.code.mcp_status(), err.message)),
         },
     }
 }
@@ -157,6 +157,65 @@ mod tests {
     use super::*;
     use crate::catalog::memory::read_answer;
     use crate::http::envelope::ApiError;
+
+    #[tokio::test]
+    async fn a_warmup_refusal_keeps_its_code_and_elapsed_time() {
+        let message = "Memory is warming up (2.4s elapsed).";
+        let response = ApiError {
+            code: crate::ErrorCode::WarmingUp,
+            message: message.into(),
+        }
+        .into_response();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let branch = catalog()
+            .branch_of(View::Local, "memory_add", &json!({"content": "retry"}))
+            .unwrap();
+        let error = read_answer(branch.dispatch, response).await.unwrap_err();
+        assert_eq!(error.code.mcp_status(), -32001);
+        assert_eq!(error.message, message);
+    }
+
+    #[tokio::test]
+    async fn the_internal_door_reports_warmup_without_blocking_reads() {
+        use crate::hosted::{hold_embedding_warmup, open_quiet_fake};
+        use tower::ServiceExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let state = open_quiet_fake(dir.path(), String::new()).await.unwrap();
+        let (release, warmup) = hold_embedding_warmup(&state).await;
+        let app = router().with_state(state);
+        for (name, args, warms) in [
+            ("memory_search", json!({"query": "retry"}), true),
+            ("memory_search", json!({"op": "semantic", "query": "retry"}), true),
+            ("memory_add", json!({"content": "retry"}), true),
+            ("memory_update", json!({"id": "missing", "summary": "retry"}), true),
+            ("memory_search", json!({"op": "list"}), false),
+            ("memory_upkeep", json!({"op": "role"}), false),
+        ] {
+            let body = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "params": {"name": name, "arguments": args}});
+            let request = axum::http::Request::post("/mcp")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body.to_string()))
+                .unwrap();
+            let response = tokio::time::timeout(std::time::Duration::from_secs(1), app.clone().oneshot(request))
+                .await.unwrap().unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            let answer: Value = serde_json::from_slice(&bytes).unwrap();
+            if warms {
+                assert_eq!(answer["error"]["code"], -32001, "{body}: {answer}");
+                let message = answer["error"]["message"].as_str().unwrap();
+                assert!(message.starts_with("Memory is warming up ("), "{message}");
+                assert!(message.ends_with("s elapsed)."), "{message}");
+            } else {
+                assert!(answer["result"]["content"].is_array(), "{body}: {answer}");
+                assert_ne!(answer["result"]["isError"], true, "{body}: {answer}");
+            }
+        }
+        release.send(()).unwrap();
+        warmup.await.unwrap();
+    }
 
     fn timed_out(verb: &str) -> ApiError {
         let wait = std::time::Duration::from_millis(memory::CALL_TIMEOUT_MS);

@@ -1,23 +1,36 @@
-//! A value built once, off the request path, by whoever needs it first.
-//!
-//! The daemon's embedder is the case it exists for: loading Qwen3 weights
-//! (~1.2 GB) takes one to several seconds on a cold disk, and while
-//! `serve` loaded it before serving, every request that arrived in that
-//! window waited for it — including `session_start`, which reads rows and
-//! never embeds. Hosts cap that call (the engine at 2 s), so the first
-//! session after the daemon started went without core memory.
-//!
-//! Now `serve` starts the load in the background and serves at once; a
-//! request that needs the value awaits the same load, one that doesn't
-//! never touches it. A failed load is not kept: the next caller tries again.
+//! Load once on the blocking pool. The engine starts a background load and
+//! warm-up; short-lived local CLI calls keep the lazy load.
 
 use anyhow::{Context, Result};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
+use std::time::Instant;
 use tokio::sync::OnceCell;
+
+struct Warmup<T> {
+    started: Instant,
+    result: OnceLock<Result<Arc<T>, String>>,
+}
+
+/// The model has not yet completed its first inference.
+#[derive(Debug)]
+pub(crate) struct WarmingUp(pub std::time::Duration);
+
+impl std::fmt::Display for WarmingUp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Memory is warming up ({:.1}s elapsed).",
+            self.0.as_secs_f64()
+        )
+    }
+}
+
+impl std::error::Error for WarmingUp {}
 
 pub struct LoadOnce<T> {
     cell: OnceCell<Arc<T>>,
     load: fn() -> Result<T>,
+    warmup: OnceLock<Warmup<T>>,
 }
 
 impl<T: Send + Sync + 'static> LoadOnce<T> {
@@ -26,27 +39,91 @@ impl<T: Send + Sync + 'static> LoadOnce<T> {
         Self {
             cell: OnceCell::new(),
             load,
+            warmup: OnceLock::new(),
         }
     }
 
-    /// The value, loading it on the blocking pool if no one has yet.
+    /// Start one background load and inference before publishing the hosted
+    /// store. Do not expose the model until the inference succeeds.
+    pub(crate) fn start_warmup(
+        self: &Arc<Self>,
+        probe: impl FnOnce(&T) -> Result<()> + Send + 'static,
+    ) -> Option<tokio::task::JoinHandle<()>> {
+        self.warmup
+            .set(Warmup {
+                started: Instant::now(),
+                result: OnceLock::new(),
+            })
+            .ok()?;
+        let this = Arc::clone(self);
+        Some(tokio::spawn(async move {
+            let warmup = this.warmup.get().expect("warm-up started");
+            let load = this.load;
+            let result = tokio::task::spawn_blocking(move || {
+                let model = load().context("loading the embedding model")?;
+                let first = Instant::now();
+                probe(&model).context("running the first embedding")?;
+                Ok::<_, anyhow::Error>((model, first.elapsed()))
+            })
+            .await
+            .context("embedding warm-up worker failed")
+            .and_then(|result| result);
+            let elapsed_ms = warmup.started.elapsed().as_millis() as u64;
+            let ready = match result {
+                Ok((model, first)) => {
+                    tracing::info!(
+                        target: "linggen::memory",
+                        elapsed_ms,
+                        first_inference_ms = first.as_millis() as u64,
+                        "memory: embedder warm"
+                    );
+                    Ok(Arc::new(model))
+                }
+                Err(error) => {
+                    tracing::warn!(elapsed_ms, "memory: embedding warm-up failed: {error:#}");
+                    Err(format!("Memory embedding warm-up failed: {error:#}"))
+                }
+            };
+            let _ = warmup.result.set(ready);
+        }))
+    }
+
+    /// The value, loading it lazily only for callers that did not start a
+    /// background warm-up.
     /// Concurrent callers share one load.
     pub async fn get(&self) -> Result<Arc<T>> {
+        if let Some(warmup) = self.warmup.get() {
+            return match warmup.result.get() {
+                Some(Ok(model)) => Ok(Arc::clone(model)),
+                Some(Err(error)) => Err(anyhow::anyhow!(error.clone())),
+                None => Err(WarmingUp(warmup.started.elapsed()).into()),
+            };
+        }
         let load = self.load;
         self.cell
             .get_or_try_init(|| async move {
                 tokio::task::spawn_blocking(load)
                     .await
                     .context("loader thread failed")?
+                    .context("loading the embedding model")
                     .map(Arc::new)
             })
             .await
             .cloned()
     }
 
+    /// Refuse while the background inference is in progress, without loading.
+    pub(crate) fn warming(&self) -> Option<WarmingUp> {
+        let warmup = self.warmup.get()?;
+        warmup.result.get().is_none().then(|| WarmingUp(warmup.started.elapsed()))
+    }
+
     /// Loaded already — without waiting or starting a load.
     pub fn is_ready(&self) -> bool {
-        self.cell.initialized()
+        match self.warmup.get() {
+            Some(warmup) => matches!(warmup.result.get(), Some(Ok(_))),
+            None => self.cell.initialized(),
+        }
     }
 }
 

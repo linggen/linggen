@@ -235,6 +235,20 @@ impl Transport for StdioTransport {
 
 // ---------------------------------------------------------------------------
 
+#[derive(Debug)]
+pub struct RpcError {
+    pub code: i64,
+    message: String,
+}
+
+impl std::fmt::Display for RpcError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "MCP error {}: {}", self.code, self.message)
+    }
+}
+
+impl std::error::Error for RpcError {}
+
 /// Pull `result` out of a JSON-RPC envelope, turning `error` into ours.
 fn unwrap_result(msg: Value) -> Result<Value> {
     if let Some(err) = msg.get("error") {
@@ -243,7 +257,11 @@ fn unwrap_result(msg: Value) -> Result<Value> {
             .get("message")
             .and_then(Value::as_str)
             .unwrap_or("unknown error");
-        bail!("MCP error {code}: {message}");
+        return Err(RpcError {
+            code,
+            message: message.to_string(),
+        }
+        .into());
     }
     Ok(msg.get("result").cloned().unwrap_or(Value::Null))
 }

@@ -122,11 +122,21 @@ pub fn spawn(state: crate::http::state::SharedState) {
 
 /// Replay what queued while offline, then pull.
 pub async fn sync_once(state: &crate::http::state::SharedState) {
+    let _ = sync_and_report_warmup(state).await;
+}
+
+async fn sync_and_report_warmup(
+    state: &crate::http::state::SharedState,
+) -> Option<crate::call::Reply> {
     let _guard = state.replica.sync_lock.lock().await;
     if let Err(e) = outbox::replay(state).await {
+        if let Some(warming) = e.downcast_ref::<outbox::WarmupRefusal>() {
+            return Some(warming.0.clone());
+        }
         tracing::info!("replica: outbox not replayed yet: {e:#}");
     }
     pull::pull_all(state).await;
+    None
 }
 
 /// For tests and handlers that only need the shared handle.

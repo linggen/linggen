@@ -117,9 +117,9 @@ _ling_auth=()
 # the tool's payload — MCP double-encodes it, as a JSON string inside a text
 # content block, so this unwraps one layer and the caller parses the rest.
 #
-# Empty output on ANY failure: unreachable engine, gate refusal, a refused
-# call (`isError`), malformed reply. Every caller is a hook that must never block a session, so a failure
-# here is silence, not an error.
+# Empty output on any failure: unreachable engine, gate refusal, malformed
+# reply, a JSON-RPC error, or a tool refusal (`isError`, including warm-up).
+# Hooks skip these calls silently.
 #
 # `${_ling_auth[@]+…}` because bash 3.2 (stock macOS) treats an empty array
 # as unbound under `set -u`.

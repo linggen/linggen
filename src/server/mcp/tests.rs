@@ -29,6 +29,54 @@ async fn call(view: View, name: &str, args: Value) -> Value {
     .await
 }
 
+#[tokio::test]
+async fn the_host_door_reports_warmup_without_applying_writes() {
+    use crate::memory_host::{TestHost, TEST_HOST};
+    use ling_mem::hosted::{hold_embedding_warmup, open_quiet_fake};
+    use std::time::Duration;
+
+    let dir = tempfile::tempdir().unwrap();
+    let store = open_quiet_fake(dir.path(), String::new()).await.unwrap();
+    TEST_HOST.scope(TestHost::Store(store.clone()), async {
+        let added = call(View::Local, "memory_add", json!({"content": "original"})).await;
+        assert_eq!(added["result"]["isError"], false, "{added}");
+        let row: Value = serde_json::from_str(text(&added)).unwrap();
+        let id = &row["fact"]["id"];
+        let (release, warmup) = hold_embedding_warmup(&store).await;
+        for view in [View::Local, View::Remote] {
+            for (name, args) in [
+                ("memory_search", json!({"query": "original"})),
+                ("memory_search", json!({"op": "semantic", "query": "original"})),
+                ("memory_add", json!({"content": "retry"})),
+                ("memory_update", json!({"id": id, "summary": "retry"})),
+            ] {
+                let answer = tokio::time::timeout(Duration::from_secs(1), call(view, name, args))
+                    .await.expect("the probe is still blocked");
+                assert_eq!(answer["result"]["isError"], true, "{answer}");
+                let message = text(&answer);
+                assert!(message.starts_with("Memory is warming up ("), "{message}");
+                assert!(message.ends_with("s elapsed)."), "{message}");
+            }
+            for (name, args) in [
+                ("memory_search", json!({"op": "list"})),
+                ("memory_search", json!({"op": "get", "id": id})),
+                ("memory_upkeep", json!({"op": "role"})),
+            ] {
+                let answer = tokio::time::timeout(Duration::from_secs(1), call(view, name, args))
+                    .await.expect("non-embedding calls must answer during warm-up");
+                assert_eq!(answer["result"]["isError"], false, "{answer}");
+            }
+        }
+        release.send(()).unwrap();
+        warmup.await.unwrap();
+        let listed = call(View::Local, "memory_search", json!({"op": "list"})).await;
+        let rows: Value = serde_json::from_str(text(&listed)).unwrap();
+        assert_eq!(rows.as_array().unwrap().len(), 1, "{rows}");
+        assert_eq!(rows[0]["id"], *id);
+        assert!(rows[0]["summary"].is_null(), "{rows}");
+    }).await;
+}
+
 fn text(res: &Value) -> &str {
     res["result"]["content"][0]["text"].as_str().unwrap()
 }

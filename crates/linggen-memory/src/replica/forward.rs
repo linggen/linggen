@@ -42,7 +42,11 @@ pub(crate) async fn forward_in_order(
     args: &Value,
 ) -> Option<Reply> {
     if outbox::len(&state.data_dir) > 0 {
-        super::sync_once(state).await;
+        if let Some(refusal) = super::sync_and_report_warmup(state).await {
+            if matches!(path, "/api/memory/add" | "/api/memory/add_batch" | "/api/memory/update") {
+                return Some(refusal);
+            }
+        }
         if outbox::len(&state.data_dir) > 0 {
             return None;
         }
