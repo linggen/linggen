@@ -18,13 +18,22 @@ pub(super) const TIMEOUT_MS: u64 = 10_000;
 /// A reason is one short line.
 const REASON_MAX_CHARS: usize = 120;
 
-/// What fired a dispatch. Only `Scheduled` is gated by `run-if`.
+/// What fired a dispatch. Only the scheduled ones are gated by `run-if`.
 pub(super) enum Trigger {
-    /// Cron fire or catch-up.
+    /// A cron fire.
     Scheduled,
+    /// The catch-up sweep filling a missed slot — what its daily cap counts.
+    CatchUp,
     /// A person's "Run now" (`POST /api/missions/{id}/trigger`), optionally
     /// scoped to a day, optionally attended.
     Manual { day: Option<String>, attended: bool },
+}
+
+impl Trigger {
+    /// Fired by the schedule (a cron fire or its catch-up), not a person.
+    pub(super) fn is_scheduled(&self) -> bool {
+        matches!(self, Trigger::Scheduled | Trigger::CatchUp)
+    }
 }
 
 /// The check's answer.
@@ -44,9 +53,9 @@ pub(super) async fn admit(
     trigger: &Trigger,
     timeout_ms: u64,
 ) -> bool {
-    let Trigger::Scheduled = trigger else {
+    if !trigger.is_scheduled() {
         return true;
-    };
+    }
     let Some(cmd) = mission.run_if.clone() else {
         return true;
     };

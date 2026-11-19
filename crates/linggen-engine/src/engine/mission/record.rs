@@ -190,6 +190,10 @@ pub struct MissionRunEntry {
     /// A person was watching: a manual run started as attended.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub attended: bool,
+    /// Started by the catch-up sweep for a missed slot — what its daily
+    /// retry cap counts. Rows written before this field have none.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub catchup: bool,
 }
 
 fn is_zero(n: &u32) -> bool {

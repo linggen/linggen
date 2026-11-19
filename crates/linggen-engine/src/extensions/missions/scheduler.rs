@@ -513,16 +513,7 @@ pub(crate) fn maybe_fire_catchup_missions(state: Arc<SchedulerHost>) {
             // (an interrupted run leaves its slot missed) gets at most
             // CATCHUP_MAX_ATTEMPTS_PER_DAY attempts per local day before we
             // stop trying until tomorrow.
-            let day_start_secs = now
-                .date_naive()
-                .and_hms_opt(0, 0, 0)
-                .and_then(|n| n.and_local_timezone(Local).earliest())
-                .map(|dt| dt.timestamp().max(0) as u64)
-                .unwrap_or(0);
-            let attempts_today = runs
-                .iter()
-                .filter(|r| !r.skipped && r.triggered_at >= day_start_secs)
-                .count();
+            let attempts_today = catchup_attempts_today(&runs, now);
             if attempts_today >= CATCHUP_MAX_ATTEMPTS_PER_DAY {
                 info!(
                     "catchup: mission '{}' already attempted {}x today — capped until tomorrow",
@@ -544,11 +535,25 @@ pub(crate) fn maybe_fire_catchup_missions(state: Arc<SchedulerHost>) {
                 &project_path,
                 &mission,
                 None,
-                Trigger::Scheduled,
+                Trigger::CatchUp,
             )
             .await;
         }
     });
+}
+
+/// The catch-up runs started since local midnight — what the retry cap
+/// counts. Cron fires and manual runs are not catch-ups.
+fn catchup_attempts_today(runs: &[MissionRunEntry], now: chrono::DateTime<Local>) -> usize {
+    let day_start_secs = now
+        .date_naive()
+        .and_hms_opt(0, 0, 0)
+        .and_then(|n| n.and_local_timezone(Local).earliest())
+        .map(|dt| dt.timestamp().max(0) as u64)
+        .unwrap_or(0);
+    runs.iter()
+        .filter(|r| r.catchup && !r.skipped && r.triggered_at >= day_start_secs)
+        .count()
 }
 
 /// The slot a catch-up fills: the latest scheduled time of `schedule` inside
@@ -617,8 +622,9 @@ async fn dispatch_mission_prompt(
     if !passes_run_if(&state, mission, &root, &trigger).await {
         return;
     }
+    let catchup = matches!(trigger, Trigger::CatchUp);
     let (day, attended) = match trigger {
-        Trigger::Scheduled => (None, false),
+        Trigger::Scheduled | Trigger::CatchUp => (None, false),
         Trigger::Manual { day, attended } => (day, attended),
     };
 
@@ -639,7 +645,7 @@ async fn dispatch_mission_prompt(
         mission,
         &mission_run_id,
         session_id.as_deref(),
-        attended,
+        (attended, catchup),
     );
 
     // The mission's own step, run by the engine before any model call (the
@@ -1173,7 +1179,7 @@ async fn passes_run_if(
     trigger: &Trigger,
 ) -> bool {
     use crate::engine::skill::SkillRegistry;
-    let needs_skill = matches!(trigger, Trigger::Scheduled) && mission.run_if.is_some();
+    let needs_skill = trigger.is_scheduled() && mission.run_if.is_some();
     let skill = match mission.skill.as_deref() {
         Some(name) if needs_skill => state.skills.get_skill(name).await,
         _ => None,
@@ -1194,7 +1200,7 @@ fn record_running(
     mission: &Mission,
     run_id: &str,
     session_id: Option<&str>,
-    attended: bool,
+    (attended, catchup): (bool, bool),
 ) {
     let entry = MissionRunEntry {
         run_id: run_id.to_string(),
@@ -1202,6 +1208,7 @@ fn record_running(
         triggered_at: crate::util::now_ts_secs(),
         status: "running".into(),
         attended,
+        catchup,
         ..Default::default()
     };
     let _ = state.missions.append_mission_run(&mission.id, &entry);
@@ -1248,6 +1255,24 @@ mod tests {
 
     /// A mission run's session works in the mission's `cwd:`; one that
     /// declares none works where a plain chat does — never nowhere.
+    /// The cap counts catch-up runs only: a day's manual runs and cron fires
+    /// leave a missed slot its catch-up.
+    #[test]
+    fn the_catchup_cap_counts_catchups_only() {
+        let now = at(17, 20, 0);
+        let mut runs: Vec<MissionRunEntry> = (0..3)
+            .map(|h| run(at(17, 8 + h, 0), "completed", false))
+            .collect();
+        assert_eq!(catchup_attempts_today(&runs, now), 0, "manual and cron runs are not catch-ups");
+        let mut catchup = run(at(17, 12, 0), "interrupted", false);
+        catchup.catchup = true;
+        runs.push(catchup);
+        let mut yesterday = run(at(16, 12, 0), "interrupted", false);
+        yesterday.catchup = true;
+        runs.push(yesterday);
+        assert_eq!(catchup_attempts_today(&runs, now), 1);
+    }
+
     #[test]
     fn a_mission_session_always_has_a_folder() {
         let with = mission_session_meta(&parsed("cwd: /tmp/proj\n"), "sess-1-m");
