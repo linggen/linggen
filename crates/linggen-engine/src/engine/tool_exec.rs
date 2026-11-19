@@ -260,7 +260,7 @@ impl AgentEngine {
             return stop;
         }
 
-        let safe_args = self.record_tool_call(&t, read_paths);
+        let safe_args = self.record_tool_call(&t);
 
         // Compute tool call signature early for denied-check and later redundancy tracking.
         let sig = tool_call_signature(&canonical_tool, &args);
@@ -468,13 +468,9 @@ impl AgentEngine {
         self.refuse_saved(t, messages, msg).await
     }
 
-    /// Record the call in context and the log; remember a Read's path for
-    /// the write-safety gate. Returns the args as shown to people.
-    fn record_tool_call(
-        &mut self,
-        t: &ToolTurn<'_>,
-        read_paths: &mut HashSet<String>,
-    ) -> JsonValue {
+    /// Record the call in context and the log. Returns the args as shown
+    /// to people.
+    fn record_tool_call(&mut self, t: &ToolTurn<'_>) -> JsonValue {
         let safe_args = sanitize_tool_args_for_display(t.canonical, t.args);
         self.upsert_context_record_by_type_name(
             ContextType::ToolCall,
@@ -486,11 +482,6 @@ impl AgentEngine {
         );
         let log_run = self.run_id.clone().unwrap_or_else(|| "root".to_string());
         info!("[{}] Tool: {} {}", log_run, t.canonical, safe_args);
-        if t.canonical == "Read" {
-            if let Some(path) = normalize_tool_path_arg(&self.tools.builtins.cwd(), t.args) {
-                read_paths.insert(path);
-            }
-        }
         safe_args
     }
 
@@ -1059,6 +1050,7 @@ impl AgentEngine {
         result: anyhow::Result<tools::ToolResult>,
         messages: &mut Vec<ChatMessage>,
         tool_cache: &mut HashMap<String, CachedToolObs>,
+        read_paths: &mut HashSet<String>,
         empty_search_streak: &mut usize,
         session_id: Option<&str>,
     ) -> LoopControl {
@@ -1075,6 +1067,14 @@ impl AgentEngine {
         self.note_run_fault(&canonical_tool, &result);
         match result {
             Ok(mut result) => {
+                // A Read that succeeded, and only that, counts for the
+                // write-safety gate's "read before you write".
+                if canonical_tool == "Read" {
+                    let cwd = self.tools.builtins.cwd();
+                    if let Some(path) = normalize_tool_path_arg(&cwd, &original_args) {
+                        read_paths.insert(path);
+                    }
+                }
                 self.note_closing_ask(&canonical_tool, &result);
                 self.number_answer_refs(&mut result, session_id);
                 self.settle_pictures(&mut result).await;
@@ -1517,6 +1517,7 @@ impl AgentEngine {
                         result,
                         messages,
                         tool_cache,
+                        read_paths,
                         empty_search_streak,
                         session_id,
                     )
@@ -1857,6 +1858,47 @@ mod declined_gate_tests {
         let (labels, request) = tokio::time::timeout(wait, seen).await.expect("asked").unwrap();
         assert_eq!(labels, [crate::engine::permission::ALLOW_ONCE, "Deny"]);
         assert!(request.is_none(), "the person, not a caller");
+    }
+
+    /// Strict write safety: only a Read that succeeded lets a Write change
+    /// an existing file.
+    #[tokio::test]
+    async fn a_read_that_failed_is_not_a_read_before_a_write() {
+        use std::os::unix::fs::PermissionsExt;
+        let work = tempfile::tempdir_in(dirs::home_dir().unwrap()).unwrap();
+        let file = work.path().join("f.txt");
+        std::fs::write(&file, "kept").unwrap();
+        let pending: Pending = Default::default();
+        let mut engine = admin_engine(work.path(), &pending, false, false);
+        engine.cfg.write_safety_mode = crate::config::WriteSafetyMode::Strict;
+        let mut read_paths = HashSet::new();
+        async fn read(engine: &mut AgentEngine, read_paths: &mut HashSet<String>, path: &str) -> String {
+            let (mut messages, mut cache) = (Vec::new(), HashMap::new());
+            let (mut sig, mut streak, mut empty) = (String::new(), 0, 0);
+            let (_tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+            let args = serde_json::json!({ "path": path });
+            engine
+                .handle_tool_action(
+                    "Read".into(), args, &None, &mut messages, &mut cache, read_paths,
+                    &mut sig, &mut streak, &mut empty, &mut rx, None, Some("r1".into()),
+                )
+                .await;
+            messages.last().map(|m| m.content.clone()).unwrap_or_default()
+        }
+        let path = file.to_string_lossy().to_string();
+        let write = serde_json::json!({ "path": file.to_string_lossy(), "content": "new" });
+        let id = Some("w1".to_string());
+        let t = ToolTurn { tool: "Write", canonical: "Write", args: &write, session_id: None, tool_call_id: &id };
+
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let failed = read(&mut engine, &mut read_paths, &path).await;
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(!failed.contains("kept"), "the Read failed: {failed}");
+        assert!(engine.gate_write_safety(&t, &read_paths, &mut Vec::new()).await.is_some(), "a failed Read let the Write through");
+
+        let read_ok = read(&mut engine, &mut read_paths, &path).await;
+        assert!(read_ok.contains("kept"), "{read_ok}");
+        assert!(engine.gate_write_safety(&t, &read_paths, &mut Vec::new()).await.is_none());
     }
 
     #[test]

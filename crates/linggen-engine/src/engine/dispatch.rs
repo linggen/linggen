@@ -426,6 +426,7 @@ impl AgentEngine {
                     result,
                     &mut state.messages,
                     &mut state.tool_cache,
+                    &mut state.read_paths,
                     &mut state.empty_search_streak,
                     session_id,
                 )
