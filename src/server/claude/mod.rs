@@ -279,8 +279,10 @@ pub(crate) async fn start_turn(
     )
     .await
     .map(|(item, _)| item);
-    if !busy {
-        persist_user(&state, &meta, &req).await;
+    // Not saved: refused to its sender, and no turn runs on it.
+    if !busy && !persist_user(&state, &meta, &req).await {
+        let error = "the message could not be saved to the session's history";
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": error }))).into_response();
     }
     drop(gate);
     let sid = meta.id.clone();
@@ -632,8 +634,10 @@ pub(crate) async fn end_runner(state: &ServerState, session: &str, gently: bool)
     }
 }
 
-async fn persist_user(state: &ServerState, meta: &SessionMeta, req: &chat::types::ChatRequest) {
-    chat::helpers::persist_and_emit_with_images(
+/// Keep the person's message in the session (and name the session after it);
+/// false when it could not be saved.
+async fn persist_user(state: &ServerState, meta: &SessionMeta, req: &chat::types::ChatRequest) -> bool {
+    let kept = chat::helpers::persist_and_emit_with_images(
         &state.manager.global_sessions,
         &state.events_tx,
         AGENT_ID,
@@ -649,6 +653,9 @@ async fn persist_user(state: &ServerState, meta: &SessionMeta, req: &chat::types
         &req.images,
     )
     .await;
+    if !kept {
+        return false;
+    }
     if !meta.title_locked {
         let title: String = req
             .message
@@ -664,6 +671,7 @@ async fn persist_user(state: &ServerState, meta: &SessionMeta, req: &chat::types
             .global_sessions
             .rename_session(&meta.id, &title);
     }
+    true
 }
 
 async fn execute_turn(state: Arc<ServerState>, req: chat::types::ChatRequest, meta: SessionMeta) {
