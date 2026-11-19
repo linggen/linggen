@@ -30,22 +30,60 @@ pub struct NoteBook {
     notes: Vec<Note>,
     #[serde(skip)]
     path: PathBuf,
+    /// Why this book may not be saved: its unreadable file could not be set
+    /// aside, and saving would write over it.
+    #[serde(skip)]
+    blocked: Option<String>,
+}
+
+/// Move an unreadable notes file out of the way, keeping it, and start an
+/// empty book in its place.
+fn set_aside(path: &Path, why: &str) -> NoteBook {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let aside = path.with_extension(format!("json.unreadable-{stamp}"));
+    match std::fs::rename(path, &aside) {
+        Ok(()) => {
+            tracing::warn!(
+                "notes: {} could not be read ({why}); kept as {}",
+                path.display(),
+                aside.display()
+            );
+            NoteBook::default()
+        }
+        Err(e) => {
+            tracing::warn!("notes: {} could not be read ({why}) nor set aside ({e})", path.display());
+            NoteBook {
+                blocked: Some(format!("{} cannot be read and was left as it is", path.display())),
+                ..NoteBook::default()
+            }
+        }
+    }
 }
 
 impl NoteBook {
-    /// `agent`'s book in `dir`; empty when there is none yet (or it cannot be
-    /// read — a note is never worth failing a turn over).
+    /// `agent`'s book in `dir`; empty when there is none yet. A file that
+    /// cannot be read or parsed is set aside under a new name and said — a
+    /// note is never worth failing a turn over, and never worth losing the
+    /// old notes to the next one.
     pub fn open(dir: &Path, agent: &str) -> Self {
         let path = dir.join(format!("{}.json", file_stem(agent)));
-        let mut book: NoteBook = std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|t| serde_json::from_str(&t).ok())
-            .unwrap_or_default();
+        let read = std::fs::read_to_string(&path);
+        let mut book: NoteBook = match read {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => NoteBook::default(),
+            Err(e) => set_aside(&path, &e.to_string()),
+            Ok(text) => serde_json::from_str(&text).unwrap_or_else(|e| set_aside(&path, &e.to_string())),
+        };
         book.path = path;
         book
     }
 
     pub fn save(&self) -> std::io::Result<()> {
+        if let Some(why) = &self.blocked {
+            return Err(std::io::Error::other(why.clone()));
+        }
         let body = serde_json::to_vec_pretty(self).map_err(std::io::Error::other)?;
         crate::state_fs::devices::write_atomic(&self.path, &body)
     }
