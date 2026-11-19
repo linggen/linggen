@@ -295,7 +295,7 @@ The scheduler tracks the last fire minute per mission. A cron match only fires o
 
 Cron is missed when the machine is off or asleep. To recover, a mission can declare `catchup_hours: <n>` in its frontmatter. The scheduler's own tick sweeps all enabled missions for a missed slot — the latest scheduled time inside the last `catchup_hours` that no run started at or after (busy-skipped and `interrupted` runs don't count, a `run-if` skip does; a run from before the slot, like an afternoon's manual trigger, doesn't either) — and triggers them once the machine has been quiet for the background quiet window — no user turn needed. Same dispatch path as a normal cron fire; overlaps are prevented by the same busy-skip. Missions that omit `catchup_hours` (or set it to `0`) are cron-only.
 
-The built-in `dream` mission uses `catchup_hours: 24`: a missed 3am fire re-runs soon after the machine wakes. Catch-up attempts are capped per local day (a repeatedly-failing mission must not burn the day's token budget), and one run per mission is enforced across all trigger paths — cron, catch-up, and manual triggers share a single in-flight guard; an overlapping trigger records a `skipped` run.
+The built-in `dream` mission uses `catchup_hours: 24`: a missed 3am fire re-runs soon after the machine wakes. Catch-up attempts are capped per local day (a repeatedly-failing mission must not burn the day's token budget) — runs marked `catchup` count, manual runs and cron fires do not, and one run per mission is enforced across all trigger paths — cron, catch-up, and manual triggers share a single in-flight guard; an overlapping trigger records a `skipped` run.
 
 ## Run history
 
@@ -341,10 +341,11 @@ Skipped triggers (busy, or a `run-if` that said no) are logged with `skipped: tr
 - `hit_limit` — the run stopped at its step limit (`max_iters`) rather than on a final reply.
 - `error` — a `failed` run's engine error, capped the same way.
 - `attended` — a person was watching (a manual run started as attended).
+- `catchup` — the catch-up sweep started it for a missed slot; the daily catch-up cap counts these rows only.
 
 What counts as a failure (`engine/run_faults.rs`): a skill-declared command tool that exited non-zero or was killed; a tool call that errored (bad arguments, a timeout, an execution error — not the error a cancel hands back); a call the engine refused (permission, tool scope, a withheld tool). What does not: a built-in tool's ordinary answer — a search with no matches, a `Bash` command's non-zero exit (the model's own probe; `grep` exits 1 on every miss) — a cached replay, and calls inside a delegated agent's run. No judgement of whether a failure matters is made.
 
-All five are omitted when empty, and lines written before them read as before. Every reader keys on `status`, which is unchanged: catch-up, the toast, the phone's `after` lines, `memory_dream_status` (which now also reports `failure_count`, `failures` and `hit_limit`, and quotes `error` as `last_run_error`). `GET /api/missions` gives each mission its newest run that ran as `last_run`, and the missions page marks one that failed, had failed calls or hit its limit. A run with something wrong writes one `fault` line to the activity log, and an unattended one hands Yinyue its facts — at once when someone is at a screen, else once they are back (`doc/yinyue-companion-spec.md` § A mission run that went wrong).
+All six are omitted when empty, and lines written before them read as before. Every reader keys on `status`, which is unchanged: catch-up, the toast, the phone's `after` lines, `memory_dream_status` (which now also reports `failure_count`, `failures` and `hit_limit`, and quotes `error` as `last_run_error`). `GET /api/missions` gives each mission its newest run that ran as `last_run`, and the missions page marks one that failed, had failed calls or hit its limit. A run with something wrong writes one `fault` line to the activity log, and an unattended one hands Yinyue its facts — at once when someone is at a screen, else once they are back (`doc/yinyue-companion-spec.md` § A mission run that went wrong).
 
 ## Safety
 
