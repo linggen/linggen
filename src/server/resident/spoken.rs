@@ -33,18 +33,142 @@ pub(super) const SILENT_CLAUSE: &str = concat!(
 /// as anyone's words (`doc/chat-spec.md`, hidden rows).
 const HIDDEN: &str = "[HIDDEN]";
 
-/// The kickoff as she reads it. A person's own words ("user") carry nothing;
-/// an answer they asked for ("asked") carries the spoken contract alone;
-/// every other engine-authored kickoff may also end in SILENT. Every
-/// engine-authored kickoff is a hidden row: the engine wrote it, not the user.
-pub(super) fn with_contract(task: String, trigger_source: &str) -> String {
-    if trigger_source == "user" {
-        return task;
+/// Where a turn of hers comes from, carried from where the turn starts. The
+/// one fact that decides whether her reply is held for the finalizer, which
+/// speaking contract the model reads, and which finalizer reads the reply —
+/// nothing else decides any of the three.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Origin {
+    /// A person wrote to her — or the turn is not hers at all (another
+    /// agent's): the answer path, shown as it always was.
+    Person,
+    /// An answer a person asked for (an app's asked moment, a tapped offer's
+    /// result): the answer path, with the spoken-line contract.
+    Asked,
+    /// Another agent finished a reply, or a question waits (a herald).
+    Herald,
+    /// A peer agent's message addressed to her.
+    AgentChat,
+    /// A mission run's or another agent's failure.
+    Fault,
+    /// An app moment, from an app the person is not using.
+    Moment,
+    /// An app moment from the app the person is using.
+    InUse,
+    /// An ambient glance, or a condition crossing.
+    Glance,
+    /// A look-again note that came due.
+    Note,
+    /// A background task's end told to her, or a restart's notice.
+    TaskEnd,
+}
+
+impl Origin {
+    /// Whether her reply is the finalizer's to decide: nothing of it is
+    /// streamed, shown or kept by the turn itself, and nothing joins the turn.
+    pub(crate) fn held(self) -> bool {
+        !matches!(self, Self::Person | Self::Asked)
     }
-    let task = task.trim_start_matches(HIDDEN).trim_start();
-    match trigger_source {
-        "asked" => format!("{HIDDEN} {task} {SPOKEN_CONTRACT}"),
-        _ => format!("{HIDDEN} {task} {SAY_CONTRACT}"),
+
+    /// The origin's name, for the log.
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::Person => "user",
+            Self::Asked => "asked",
+            Self::Herald => "event",
+            Self::AgentChat => "agent_chat",
+            Self::Fault => "fault",
+            Self::Moment => "moment",
+            Self::InUse => "event-in-use",
+            Self::Glance => "timer",
+            Self::Note => "note",
+            Self::TaskEnd => "task end",
+        }
+    }
+
+    /// The speaking contract a turn of this origin reads after its kickoff;
+    /// a person's own words carry none.
+    pub(crate) fn contract(self) -> Option<&'static str> {
+        match self {
+            Self::Person => None,
+            Self::Asked => Some(SPOKEN_CONTRACT),
+            _ => Some(SAY_CONTRACT),
+        }
+    }
+
+    /// The kickoff as the thread keeps it: an engine-authored one is a hidden
+    /// row (the engine wrote it, not the user); a person's words stay theirs.
+    pub(crate) fn kickoff(self, task: String) -> String {
+        match self {
+            Self::Person => task,
+            _ => {
+                let task = task.trim_start_matches(HIDDEN).trim_start();
+                format!("{HIDDEN} {task}")
+            }
+        }
+    }
+
+    /// The finalizer for a reply of this origin: an answer for a person, the
+    /// envelope for everything the engine started. The one place that picks.
+    pub(super) fn finalize(self, reply: Option<&str>) -> Option<Event> {
+        match self.held() {
+            true => finalize_event(reply, self.name()),
+            false => finalize_answer(reply),
+        }
+    }
+}
+
+impl Origin {
+    /// The origin of a turn told to `agent`: only her turns have one but
+    /// `Person` — any other agent's turn is answered as ever. `told`: what
+    /// the telling is (a task's end, or the turn a restart continues).
+    pub(crate) fn for_agent(agent: &str, told: Origin) -> Origin {
+        match agent == crate::engine::agent::COMPANION_AGENT_ID {
+            true => told,
+            false => Self::Person,
+        }
+    }
+}
+
+/// The origin of the turn running in each session now, kept while it runs:
+/// a restart's plan records it, so the turn it continues keeps it (a person's
+/// turn stays on the answer path).
+static RUNNING: std::sync::Mutex<Vec<(String, Origin)>> = std::sync::Mutex::new(Vec::new());
+
+/// Held while a turn of `origin` runs in `session`.
+pub(crate) struct RunningOrigin(String);
+
+impl RunningOrigin {
+    pub(crate) fn keep(session: &str, origin: Origin) -> Self {
+        let mut all = RUNNING.lock().unwrap_or_else(|p| p.into_inner());
+        all.retain(|(s, _)| s != session);
+        all.push((session.to_string(), origin));
+        Self(session.to_string())
+    }
+}
+
+impl Drop for RunningOrigin {
+    fn drop(&mut self) {
+        let mut all = RUNNING.lock().unwrap_or_else(|p| p.into_inner());
+        all.retain(|(s, _)| *s != self.0);
+    }
+}
+
+/// The origin of the turn running in `session`, when one is.
+pub(crate) fn running_origin(session: &str) -> Option<Origin> {
+    let all = RUNNING.lock().unwrap_or_else(|p| p.into_inner());
+    all.iter().find(|(s, _)| s == session).map(|(_, o)| *o)
+}
+
+/// The kickoff marked hidden and with the speaking contract its origin names,
+/// in one text — for the light turn, which has no thread message to carry the
+/// contract. A full turn has it attached by `ChatRunCtx::labeled_msg`.
+pub(crate) fn with_contract(task: String, origin: Origin) -> String {
+    let task = origin.kickoff(task);
+    match origin.contract() {
+        Some(contract) => format!("{task} {contract}"),
+        None => task,
     }
 }
 
@@ -273,15 +397,6 @@ pub(super) fn finalize_answer(reply: Option<&str>) -> Option<Event> {
     })
 }
 
-/// The finalizer for a turn by its trigger source: an answer for a person,
-/// the envelope for everything the engine started.
-pub(super) fn finalize(reply: Option<&str>, trigger_source: &str) -> Option<Event> {
-    match is_event_turn(trigger_source) {
-        true => finalize_event(reply, trigger_source),
-        false => finalize_answer(reply),
-    }
-}
-
 /// The one decision for every turn the engine started: did she choose to
 /// speak? `source` names the wake, for the log. Nothing else she wrote in the
 /// turn is shown, kept or spoken.
@@ -315,14 +430,6 @@ pub(crate) fn language_of_sample(sample: &str) -> Option<String> {
         .filter(|w| w.len() >= 2)
         .count();
     (han > 0 && han >= latin).then(|| "zh-Hans".to_string())
-}
-
-/// Whether a turn of hers was started by the engine (a herald, a condition, a
-/// quiet moment, a peer's message, a fault, a told task end) rather than by a
-/// person — "user" — or for an answer a person asked for — "asked". Only an
-/// engine-started turn is held and read through [`finalize_event`].
-pub(crate) fn is_event_turn(trigger_source: &str) -> bool {
-    !matches!(trigger_source, "user" | "asked")
 }
 
 /// Where a published line stands: the session whose thread keeps it as her
@@ -392,10 +499,10 @@ pub(crate) async fn land_row(state: &std::sync::Arc<crate::server::ServerState>,
 pub(crate) async fn say_event(
     state: &std::sync::Arc<crate::server::ServerState>,
     reply: Option<&str>,
-    source: &str,
+    origin: Origin,
     (session, place): (&str, &crate::engine::turn_place::TurnPlace),
 ) {
-    let Some(said) = finalize_event(reply, source) else {
+    let Some(said) = origin.finalize(reply) else {
         return;
     };
     let stage = Stage::of_turn(session, place);
@@ -456,31 +563,31 @@ pub(super) fn spoken_line(reply: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{answer_line, is_engine_prompt, spoken_line, with_contract};
+    use super::{answer_line, is_engine_prompt, spoken_line, with_contract, Origin};
 
     #[test]
     fn an_asked_turn_is_not_offered_silence() {
-        let event = with_contract("k".into(), "event");
+        let event = with_contract("k".into(), Origin::Herald);
         assert!(event.contains("<say>") && !event.contains("SILENT"));
-        let asked = with_contract("k".into(), "asked");
+        let asked = with_contract("k".into(), Origin::Asked);
         assert!(asked.contains("final paragraph is spoken"));
         assert!(!asked.contains("SILENT"));
-        assert_eq!(with_contract("hi".into(), "user"), "hi");
+        assert_eq!(with_contract("hi".into(), Origin::Person), "hi");
     }
 
     #[test]
     fn an_engine_kickoff_is_hidden_a_persons_words_are_not() {
-        assert!(with_contract("k".into(), "event").starts_with("[HIDDEN] k "));
-        assert!(with_contract("k".into(), "asked").starts_with("[HIDDEN] k "));
+        assert!(with_contract("k".into(), Origin::Herald).starts_with("[HIDDEN] k "));
+        assert!(with_contract("k".into(), Origin::Asked).starts_with("[HIDDEN] k "));
         // Already marked: one marker, not two.
-        let once = with_contract("[HIDDEN] k".into(), "event");
+        let once = with_contract("[HIDDEN] k".into(), Origin::Herald);
         assert_eq!(once.matches("[HIDDEN]").count(), 1);
-        assert!(!with_contract("hi".into(), "user").contains("[HIDDEN]"));
+        assert!(!with_contract("hi".into(), Origin::Person).contains("[HIDDEN]"));
     }
 
     #[test]
     fn an_old_kickoff_row_is_known_by_its_contract() {
-        let kickoff = with_contract("A quiet moment".into(), "event");
+        let kickoff = with_contract("A quiet moment".into(), Origin::Moment);
         assert!(is_engine_prompt("user", &kickoff));
         // A row saved before the marker: the contract alone names it.
         let old = kickoff.trim_start_matches("[HIDDEN] ");
@@ -488,7 +595,7 @@ mod tests {
         assert!(!is_engine_prompt("user", "hello"));
         assert!(!is_engine_prompt(
             "user",
-            &with_contract("hello".into(), "user")
+            &with_contract("hello".into(), Origin::Person)
         ));
     }
 
@@ -557,7 +664,7 @@ mod tests {
 
     #[test]
     fn the_contract_is_one_short_sentence_said_once() {
-        let wrapped = with_contract("k".into(), "event");
+        let wrapped = with_contract("k".into(), Origin::Herald);
         assert_eq!(wrapped.matches("<say>").count(), 1, "{wrapped}");
         assert!(!wrapped.contains("SILENT") && !wrapped.contains("blank line"), "{wrapped}");
     }
@@ -660,9 +767,7 @@ mod one_decision {
         check(
             &fin,
             &[
-                ("src/server/resident/spoken.rs", 3),
-                ("src/server/resident/triggers.rs", 3),
-                ("src/server/resident/turn.rs", 1),
+                ("src/server/resident/spoken.rs", 2),
             ],
         );
     }
@@ -676,7 +781,7 @@ mod one_decision {
         let publish = format!("{}{}", "spoken::", "publish(");
         check(
             &publish,
-            &[("src/server/resident/triggers.rs", 4), ("src/server/resident/turn.rs", 1)],
+            &[("src/server/resident/triggers.rs", 4)],
         );
     }
 }

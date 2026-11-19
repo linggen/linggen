@@ -100,7 +100,7 @@ pub(super) async fn ambient_glance(state: &Arc<ServerState>) {
         let _ = super::triggers::wake_and_offer(
             state.clone(),
             (kickoff, None),
-            ("neutral", "timer"),
+            ("neutral", Origin::Glance),
             Reach::SpeakOnly,
             None,
             Some(raised),
@@ -120,5 +120,5 @@ pub(super) async fn ambient_glance(state: &Arc<ServerState>) {
         not news. This turn can speak, never act: nothing you say here is done, sent, or handed to anyone — \
         not to Ling, not to the phone. When in doubt, say nothing."
         .to_string();
-    wake_and_speak(state.clone(), (kickoff, None), "neutral", "timer", Reach::SpeakOnly, None).await;
+    wake_and_speak(state.clone(), (kickoff, None), "neutral", Origin::Glance, Reach::SpeakOnly, None).await;
 }

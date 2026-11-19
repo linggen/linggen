@@ -331,7 +331,7 @@ pub(crate) async fn chat_handler(
     // user's reply and the open prompt land in the same turn (no cross-turn recall).
     let task = frame_with_pending_prompt(&state, &text).await;
     tokio::spawn(async move {
-        if let Some(reply) = crate::server::resident::run_yinyue_turn(&state, task, "user").await {
+        if let Some(reply) = crate::server::resident::run_yinyue_turn(&state, task, crate::server::resident::Origin::Person).await {
             if !reply.eq_ignore_ascii_case("silent") {
                 emit_speak(&state, Line::answer(reply), None, SaidAt::default());
             }

@@ -135,7 +135,7 @@ fn the_kickoff_marks_the_note_as_the_reason_and_leaves_the_judging_to_her() {
     assert!(k.contains("cannot act"), "{k}");
     assert!(k.contains("say nothing"), "{k}");
     // Under the speaking contract a woken note speaks only in <say>.
-    let task = super::super::with_contract(k, LOOK_AGAIN_SOURCE);
+    let task = super::super::with_contract(k, Origin::Note);
     assert!(
         task.starts_with("[HIDDEN]") && task.ends_with("Otherwise leave it out."),
         "{task}"
@@ -145,31 +145,31 @@ fn the_kickoff_marks_the_note_as_the_reason_and_leaves_the_judging_to_her() {
 #[test]
 fn a_woken_note_glances_and_moments_are_unprompted_and_replies_are_not() {
     use super::super::guard::Source;
-    use super::super::triggers::{moment_source, unprompted_source, FAULT_SOURCE};
+    use super::super::triggers::{moment_origin, unprompted_source};
     assert_eq!(
-        unprompted_source(Reach::SpeakOnly, LOOK_AGAIN_SOURCE),
+        unprompted_source(Reach::SpeakOnly, Origin::Note),
         Some(Source::Note)
     );
     assert_eq!(
-        unprompted_source(Reach::SpeakOnly, "timer"),
+        unprompted_source(Reach::SpeakOnly, Origin::Glance),
         Some(Source::Glance)
     );
     assert_eq!(
-        unprompted_source(Reach::Sealed, moment_source(false, false)),
+        unprompted_source(Reach::Sealed, moment_origin(false, false)),
         Some(Source::Moment)
     );
     assert_eq!(
-        unprompted_source(Reach::Sealed, moment_source(false, true)),
+        unprompted_source(Reach::Sealed, moment_origin(false, true)),
         Some(Source::InUse)
     );
     assert_eq!(
-        unprompted_source(Reach::Sealed, moment_source(true, true)),
+        unprompted_source(Reach::Sealed, moment_origin(true, true)),
         None
     );
-    assert_eq!(unprompted_source(Reach::Open, "event"), None, "a herald");
-    assert_eq!(unprompted_source(Reach::Open, "user"), None);
+    assert_eq!(unprompted_source(Reach::Open, Origin::Herald), None, "a herald");
+    assert_eq!(unprompted_source(Reach::Open, Origin::Person), None);
     assert_eq!(
-        unprompted_source(Reach::Open, FAULT_SOURCE),
+        unprompted_source(Reach::Open, Origin::Fault),
         Some(Source::Fault),
         "a mission fault is a source of its own, not a reply"
     );

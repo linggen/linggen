@@ -114,16 +114,13 @@ async fn wake(state: &Arc<ServerState>, note: Note, at: u64, now: u64) -> Option
         state.clone(),
         (kickoff(&note, now), None),
         "neutral",
-        LOOK_AGAIN_SOURCE,
+        Origin::Note,
         Reach::SpeakOnly,
         None,
     )
     .await;
     Some(now)
 }
-
-/// The trigger source of a woken note's turn.
-pub(super) const LOOK_AGAIN_SOURCE: &str = "note";
 
 fn withheld(note: &Note, at: u64) -> Withheld<'static> {
     Withheld {

@@ -104,7 +104,7 @@ fn herald_ask(
         let Some(reply) = herald_line(&state, kickoff).await else {
             return;
         };
-        let Some(said) = finalize_event(Some(&reply), "ask") else {
+        let Some(said) = Origin::Herald.finalize(Some(&reply)) else {
             return;
         };
         if !ask_still_pending(&state, &question_id).await {
@@ -147,7 +147,7 @@ fn herald_kept_ask(state: &Arc<ServerState>, app: String, question_id: String, s
         let Some(reply) = herald_line(&state, kept_ask_kickoff(&app)).await else {
             return;
         };
-        let Some(said) = finalize_event(Some(&reply), "kept ask") else {
+        let Some(said) = Origin::Herald.finalize(Some(&reply)) else {
             return;
         };
         if !ask_still_pending(&state, &question_id).await || user_sees(&state, Sight::Screen) {
@@ -178,9 +178,9 @@ async fn herald_line(state: &Arc<ServerState>, kickoff: String) -> Option<String
     let sid = super::session_roll::resolve_current_session(state).await;
     let free = state.manager.session_turn(&sid).try_lock().is_ok();
     if free {
-        return run_yinyue_turn(state, kickoff, "event").await;
+        return run_yinyue_turn(state, kickoff, Origin::Herald).await;
     }
-    let ask = super::spoken::with_contract(kickoff, "event");
+    let ask = super::spoken::with_contract(kickoff, Origin::Herald);
     crate::server::chat::reply_now(state.clone(), &sid, YINYUE_AGENT, &ask).await
 }
 
@@ -250,8 +250,8 @@ fn on_agent_chat(
                  • if nothing fits, say nothing.\n\
                  You're reached via agent_chat, so you can't pass it to a third agent."
             );
-            if let Some(reply) = run_yinyue_turn(&state, kickoff, "agent_chat").await {
-                if let Some(said) = finalize_event(Some(&reply), "agent_chat") {
+            if let Some(reply) = run_yinyue_turn(&state, kickoff, Origin::AgentChat).await {
+                if let Some(said) = Origin::AgentChat.finalize(Some(&reply)) {
                     tracing::info!(
                         "[yinyue-watch] relays agent_chat ({} chars)",
                         said.line.text().len()
@@ -491,22 +491,16 @@ pub(crate) async fn wake_herald(
     kickoff: String,
     emotion: &str,
 ) -> Option<Line> {
-    wake_and_speak(state, (kickoff, None), emotion, "event", Reach::Open, None).await
+    wake_and_speak(state, (kickoff, None), emotion, Origin::Herald, Reach::Open, None).await
 }
 
-/// What woke a fault's turn: a mission run that went wrong.
-pub(super) const FAULT_SOURCE: &str = "fault";
-
-/// What woke a moment's turn from the app the person is using.
-const IN_USE_SOURCE: &str = "event-in-use";
-
-/// The trigger source of an app moment's turn: asked for, from the app the
-/// person is using, or neither.
-pub(crate) fn moment_source(asked: bool, in_use: bool) -> &'static str {
+/// The origin of an app moment's turn: asked for, from the app the person is
+/// using, or neither.
+pub(crate) fn moment_origin(asked: bool, in_use: bool) -> Origin {
     match (asked, in_use) {
-        (true, _) => "asked",
-        (false, true) => IN_USE_SOURCE,
-        (false, false) => "event",
+        (true, _) => Origin::Asked,
+        (false, true) => Origin::InUse,
+        (false, false) => Origin::Moment,
     }
 }
 
@@ -534,14 +528,14 @@ pub(super) async fn wake_fault(state: Arc<ServerState>, fact: String) -> Option<
         state,
         (fact, None),
         "neutral",
-        FAULT_SOURCE,
+        Origin::Fault,
         Reach::Open,
         None,
     )
     .await
 }
 
-/// Wake her for an app moment; `source` is [`moment_source`]. `asked`: the
+/// Wake her for an app moment; `origin` is [`moment_origin`]. `Asked`: the
 /// user asked her for this — the same spoken final paragraph, under the
 /// contract that offers no SILENT. Sealed either way: her line is the whole
 /// of her answer (`Reach::Sealed`). `table`: the app chat the moment names —
@@ -550,10 +544,10 @@ pub(crate) async fn wake_for_moment(
     state: Arc<ServerState>,
     moment: (String, Option<Table>),
     emotion: &str,
-    source: &str,
+    origin: Origin,
     language: Option<String>,
 ) -> Option<Line> {
-    wake_and_speak(state, moment, emotion, source, Reach::Sealed, language).await
+    wake_and_speak(state, moment, emotion, origin, Reach::Sealed, language).await
 }
 
 /// Wake her, and speak her line. Returns the line she said aloud — `None`
@@ -562,11 +556,11 @@ pub(super) async fn wake_and_speak(
     state: Arc<ServerState>,
     moment: (String, Option<Table>),
     emotion: &str,
-    trigger_source: &str,
+    origin: Origin,
     reach: Reach,
     language: Option<String>,
 ) -> Option<Line> {
-    wake_and_offer(state, moment, (emotion, trigger_source), reach, language, None).await
+    wake_and_offer(state, moment, (emotion, origin), reach, language, None).await
 }
 
 /// A problem her line raises, with what can be offered for it.
@@ -586,7 +580,7 @@ pub(super) struct Raised<'a> {
 pub(super) async fn wake_and_offer(
     state: Arc<ServerState>,
     (kickoff, table): (String, Option<Table>),
-    (emotion, trigger_source): (&str, &str),
+    (emotion, origin): (&str, Origin),
     reach: Reach,
     language: Option<String>,
     raised: Option<Raised<'_>>,
@@ -600,20 +594,20 @@ pub(super) async fn wake_and_offer(
     // A failure of hers held for a turn that can carry it rides this one —
     // her own thread's unprompted turns only: never an app's table, an asked
     // reading or a tap's outcome, whose answer is about something else.
-    let carries = table.is_none() && trigger_source != "asked" && reach != Reach::Sealed;
+    let carries = table.is_none() && origin != Origin::Asked && reach != Reach::Sealed;
     let (kickoff, rode) = match carries {
         true => super::run_fault::ride(kickoff),
         false => (kickoff, None),
     };
     // `None`: the run failed or she produced nothing.
     let reply = match reach {
-        Reach::Open => run_yinyue_turn(&state, kickoff, trigger_source).await,
-        Reach::Sealed => run_moment_turn(&state, (kickoff, table), trigger_source, language).await,
+        Reach::Open => run_yinyue_turn(&state, kickoff, origin).await,
+        Reach::Sealed => run_moment_turn(&state, (kickoff, table), origin, language).await,
         Reach::SpeakOnly => {
-            super::turn::run_home(&state, kickoff, trigger_source, reach, language).await
+            super::turn::run_home(&state, kickoff, origin, reach, language).await
         }
     };
-    let said = finalize(reply.as_deref(), trigger_source);
+    let said = origin.finalize(reply.as_deref());
     let (shown, unlabelled) = super::offer_labels::shown(
         raised.as_ref().map(|r| r.offers),
         said.as_ref().map(|e| e.labels.as_slice()),
@@ -634,7 +628,7 @@ pub(super) async fn wake_and_offer(
         tracing::info!("[yinyue-watch] a condition's line has no page to show on — held, not told");
         return None;
     }
-    if let Some(source) = unprompted_source(reach, trigger_source) {
+    if let Some(source) = unprompted_source(reach, origin) {
         if !passes_last_word(&state, source).await {
             return None;
         }
@@ -659,18 +653,15 @@ pub(super) async fn wake_and_offer(
 /// What woke an unprompted turn of hers — `None` for a reply: her ordinary
 /// turns (a person's words, a herald of a run they started) and anything
 /// asked. Only these are under the guardrails.
-pub(super) fn unprompted_source(reach: Reach, trigger_source: &str) -> Option<Source> {
-    if trigger_source == "asked" {
-        return None;
-    }
-    match reach {
-        Reach::Open => (trigger_source == FAULT_SOURCE).then_some(Source::Fault),
-        Reach::Sealed if trigger_source == IN_USE_SOURCE => Some(Source::InUse),
-        Reach::Sealed => Some(Source::Moment),
-        Reach::SpeakOnly if trigger_source == super::look_again::LOOK_AGAIN_SOURCE => {
-            Some(Source::Note)
-        }
-        Reach::SpeakOnly => Some(Source::Glance),
+pub(super) fn unprompted_source(reach: Reach, origin: Origin) -> Option<Source> {
+    match (reach, origin) {
+        (_, Origin::Person | Origin::Asked) => None,
+        (Reach::Open, Origin::Fault) => Some(Source::Fault),
+        (Reach::Open, _) => None,
+        (Reach::Sealed, Origin::InUse) => Some(Source::InUse),
+        (Reach::Sealed, _) => Some(Source::Moment),
+        (Reach::SpeakOnly, Origin::Note) => Some(Source::Note),
+        (Reach::SpeakOnly, _) => Some(Source::Glance),
     }
 }
 
@@ -850,7 +841,7 @@ pub(super) async fn deliver_to_chat_agent(
             images: Vec::new(),
             policy: crate::engine::session_policy::SessionPolicy::owner(),
             sender: Some(from.clone()),
-            reply_held: false,
+            origin: Origin::Person,
             place: delivered_place(&state, &session_id, app.as_deref()),
             turn: Default::default(),
         };

@@ -8,10 +8,7 @@
 
 use std::sync::Arc;
 
-use super::{Reach, ServerState};
-
-/// What woke the result turn: the person asked, by tapping.
-const RESULT_SOURCE: &str = "asked";
+use super::{Origin, Reach, ServerState};
 
 /// The most of a tool's result she is shown.
 const RESULT_MAX: usize = 600;
@@ -32,7 +29,7 @@ pub(crate) fn say(state: &Arc<ServerState>, label: String, answer: String, resul
     let state = state.clone();
     tokio::spawn(async move {
         let kickoff = kickoff(&label, &answer, &result);
-        super::triggers::wake_and_speak(state, (kickoff, None), "neutral", RESULT_SOURCE, Reach::SpeakOnly, None)
+        super::triggers::wake_and_speak(state, (kickoff, None), "neutral", Origin::Asked, Reach::SpeakOnly, None)
             .await;
     });
 }
@@ -43,7 +40,7 @@ mod tests {
 
     #[test]
     fn the_result_turn_is_an_answer_outside_the_budget_and_cannot_act() {
-        assert_eq!(super::super::triggers::unprompted_source(Reach::SpeakOnly, RESULT_SOURCE), None);
+        assert_eq!(super::super::triggers::unprompted_source(Reach::SpeakOnly, Origin::Asked), None);
         let k = kickoff("Look what's big", "done", "{\"exit_code\":0,\"stdout\":\"DISK 12 GB free\"}");
         assert!(k.contains("Look what's big") && k.contains("DISK 12 GB free"));
         assert!(k.contains("cannot act"));

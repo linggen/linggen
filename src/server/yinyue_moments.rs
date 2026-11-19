@@ -600,7 +600,7 @@ async fn wake_her(state: Arc<ServerState>, taken: Vec<Moment>, (asked, in_use): 
         state.clone(),
         (words, table.clone()),
         &emotion,
-        super::resident::moment_source(asked, in_use),
+        super::resident::moment_origin(asked, in_use),
         language_of(&taken),
     )
     .await;

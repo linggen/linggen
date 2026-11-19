@@ -306,6 +306,9 @@ async fn perform_restart(
             let tasks: Vec<_> = state.tasks.list(sid).into_iter().filter(|t| t.is_running()).collect();
             let waiting = queued.remove(sid).unwrap_or_default();
             let mut entry = json!({"session_id": sid, "agent_id": agent, "caller": Some(sid) == caller.as_ref(), "turn_interrupted": running.contains(sid), "tasks": tasks, "queued": waiting});
+            if let Some(origin) = super::resident::running_origin(sid) {
+                entry["origin"] = json!(origin);
+            }
             if let Some(place) = running_place(&state, sid) {
                 entry["place"] = json!(place);
             }
@@ -710,6 +713,8 @@ struct Delivery {
     place: Option<String>,
     /// The session's entry as this agent is told it, for the record.
     scoped: Value,
+    /// What kind of turn this continues (`resident::Origin`).
+    origin: super::resident::Origin,
 }
 
 /// Give every continue turn, trying a native one again when it could not
@@ -772,7 +777,7 @@ async fn attempt_delivery(state: Arc<ServerState>, d: Delivery) -> bool {
         return true;
     }
     let sid = d.meta.id.clone();
-    let turn = continue_session(state, d.meta, (d.agent.clone(), d.place), d.message, d.mark);
+    let turn = continue_session(state, d.meta, (d.agent.clone(), d.place), (d.message, d.origin), d.mark);
     match tokio::time::timeout(DELIVERY_WAIT, turn).await {
         Ok(kept) => kept,
         Err(_) => {
@@ -849,14 +854,30 @@ fn deliveries_for(
         let message = continue_message(plan, &scoped, outcome);
         deliveries.push(Delivery {
             meta: meta.clone(),
-            agent: owner,
+            agent: owner.clone(),
             message,
             mark,
             place: place.clone(),
+            origin: continued_origin(session, &owner, &agent),
             scoped,
         });
     }
     deliveries
+}
+
+/// What the continue turn for `owner` is. The session's own agent continues
+/// the turn it was running, so it keeps that turn's origin — a person's turn
+/// stays on the answer path; one with no record was a person's. Any other
+/// owner is told its task ended.
+fn continued_origin(session: &Value, owner: &str, agent: &str) -> super::resident::Origin {
+    use super::resident::Origin;
+    if owner != agent {
+        return Origin::TaskEnd;
+    }
+    match session["turn_interrupted"] == true {
+        true => serde_json::from_value(session["origin"].clone()).unwrap_or(Origin::Person),
+        false => Origin::TaskEnd,
+    }
 }
 
 /// A session's entry as `owner` is told it: its own tasks only, and — when
@@ -1009,7 +1030,7 @@ fn continue_session(
     state: Arc<ServerState>,
     meta: SessionMeta,
     (agent, stands_in): (String, Option<String>),
-    message: String,
+    (message, origin): (String, super::resident::Origin),
     mark: String,
 ) -> impl std::future::Future<Output = bool> + Send + 'static {
     let place = meta.runtime.is_linggen().then(|| {
@@ -1020,6 +1041,7 @@ fn continue_session(
             agent.clone(),
             message.clone(),
             (mark.clone(), kept),
+            origin,
         ));
         was_kept
     });

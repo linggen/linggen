@@ -46,7 +46,7 @@ pub(crate) async fn reply_in_session(
         policy: crate::engine::session_policy::SessionPolicy::owner(),
         sender: None,
         via: None,
-        reply_held: true,
+        origin: crate::server::resident::Origin::Herald,
         place,
         turn: Default::default(),
     };
@@ -90,7 +90,7 @@ pub(crate) async fn reply_now(state: Arc<ServerState>, session_id: &str, agent: 
         policy: crate::engine::session_policy::SessionPolicy::owner(),
         sender: None,
         via: None,
-        reply_held: true,
+        origin: crate::server::resident::Origin::Herald,
         place: crate::engine::turn_place::TurnPlace::of_session(Some(&meta)),
         turn: Default::default(),
     };

@@ -357,6 +357,11 @@ async fn route_target(
     )
 }
 
+/// Whether the turn running in `session` holds its reply for the finalizer.
+fn held_turn_running(session: &str) -> bool {
+    crate::server::resident::running_origin(session).is_some_and(|o| o.held())
+}
+
 /// How a message sent while the agent is busy meets the running turn.
 #[derive(Debug, PartialEq, Eq)]
 enum BusyMessage {
@@ -825,6 +830,12 @@ pub(crate) async fn run_session_turn(
         Some(sid) => super::turn_place::mark_turn(manager, sid, &ctx.place),
         None => None,
     };
+    // Where the turn comes from is kept while it runs: a restart's plan
+    // records it, so the turn it continues is the same kind of turn.
+    let _origin = ctx
+        .session_id
+        .as_deref()
+        .map(|sid| crate::server::resident::RunningOrigin::keep(sid, ctx.origin));
     // The turn's own settings; what closes it names this turn's run, never
     // the last one's.
     engine.begin_turn(ctx.turn.clone());
@@ -1281,6 +1292,14 @@ pub(crate) async fn start_turn(
         .then(|| running_places.of(&effective_session_id))
         .flatten();
     let queue = crate::engine::turn_place::running::meets_running(running.as_ref(), &turn_place, rule);
+    // A turn of hers the engine started holds its reply for the finalizer: a
+    // person's message never joins it (it would be answered on the event path
+    // and the answer dropped). It waits for that turn to end and then runs as
+    // its own turn, answered and shown as any person's.
+    let queue = match was_busy && held_turn_running(&effective_session_id) {
+        true => Meets::AfterRun,
+        false => queue,
+    };
     // Not queued: this turn holds the lock now, and its place is kept
     // before its message is.
     let mark = match was_busy {
@@ -1505,7 +1524,7 @@ pub(crate) async fn start_turn(
             policy,
             sender,
             via: via.clone(),
-            reply_held: false,
+            origin: crate::server::resident::Origin::Person,
             place: turn_place,
             turn,
         };
