@@ -445,8 +445,14 @@ pub(crate) async fn compact_config_api(
             return (status, Json(serde_json::json!({ "error": e.to_string() }))).into_response();
         }
     };
+    // Each live engine takes the pair as the file holds it now, read under
+    // the engine's lock: two changes at once leave it as they left the file.
+    let store = &state.manager.global_sessions;
     for arc in state.manager.session_engines_of(&session_id).await {
-        arc.lock().await.set_compaction(threshold, focus.clone());
+        let mut engine = arc.lock().await;
+        if let Ok(Some(meta)) = store.get_session_meta(&session_id) {
+            engine.set_compaction(meta.compact_threshold, meta.compact_focus);
+        }
     }
 
     Json(serde_json::json!({
