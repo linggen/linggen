@@ -375,3 +375,93 @@ fn the_plugins_hook_calls_are_calls_the_door_takes() {
         }
     }
 }
+
+/// What the plugin's stamp hook (stamp-cwd.sh) sends a memory call out
+/// with, run for real: a Claude Code session standing in a project.
+fn stamp_hook(tool: &str, args: &serde_json::Value) -> serde_json::Value {
+    use std::io::Write;
+    let hook = root().join("plugins/linggen/hooks/stamp-cwd.sh");
+    let input = serde_json::json!({
+        "tool_name": format!("mcp__plugin_linggen_linggen__{tool}"),
+        "tool_input": args,
+        "cwd": "/work/project",
+        "session_id": "s1",
+    });
+    let mut child = std::process::Command::new("bash")
+        .arg(&hook)
+        .env_clear()
+        .env("PATH", std::env::var("PATH").unwrap_or_default())
+        .env("HOME", "/nonexistent-home")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("bash runs the hook");
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input.to_string().as_bytes())
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success(), "{tool} {args}: the hook failed");
+    let said = String::from_utf8_lossy(&out.stdout);
+    if said.trim().is_empty() {
+        return args.clone();
+    }
+    let said: serde_json::Value = serde_json::from_str(&said).unwrap();
+    said["hookSpecificOutput"]["updatedInput"].clone()
+}
+
+/// Every memory call a host makes, one per branch (and a branch's list
+/// that names a day): the arguments a model writes before the hook.
+fn memory_calls() -> Vec<(&'static str, serde_json::Value)> {
+    let cat = catalog();
+    let mut calls = Vec::new();
+    for branch in cat.branches() {
+        if !branch.tool.starts_with("memory_") {
+            continue;
+        }
+        let mut args = serde_json::json!({});
+        if cat.visible(View::Local, branch.tool).len() > 1 {
+            args["op"] = serde_json::json!(branch.op);
+        }
+        if branch.advertises("day") {
+            let mut on_a_day = args.clone();
+            on_a_day["day"] = serde_json::json!("2026-11-01");
+            calls.push((branch.tool, on_a_day));
+        }
+        calls.push((branch.tool, args));
+    }
+    // An op-less query: the tool's implicit branch.
+    calls.push(("memory_search", serde_json::json!({"query": "q"})));
+    calls
+}
+
+/// Which memory call gets which stamp is the catalogue's to say (each
+/// branch's HOST-FILLED fields, `Branch::host_fills`): the stamp hook adds
+/// exactly those, on every branch — a list that names a day included,
+/// which is never narrowed to a place.
+#[test]
+fn the_stamp_hook_adds_what_the_catalogue_says_the_host_fills() {
+    let cat = catalog();
+    let mut wrong = Vec::new();
+    for (tool, args) in memory_calls() {
+        let branch = cat
+            .branch_of(View::Local, tool, &args)
+            .unwrap_or_else(|| panic!("{tool} {args}"));
+        let mut want = branch.host_filled(&args);
+        let sent = stamp_hook(tool, &args);
+        let mut added: Vec<String> = sent
+            .as_object()
+            .into_iter()
+            .flat_map(|o| o.keys().cloned())
+            .filter(|k| args.get(k).is_none())
+            .collect();
+        want.sort();
+        added.sort();
+        if want != added {
+            wrong.push(format!("{tool} {args}: catalogue {want:?}, hook {added:?}"));
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}

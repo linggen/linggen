@@ -30,7 +30,7 @@
           },
           "scope_root": {
             "type": "string",
-            "description": "op=semantic: HOST-FILLED — leave it out; the host stamps the session root, which weighs each row by how near its stored scope is to the root (a skill's dir sees only its own rows). · op=list: A session root: rows whose stored scope is under it or at its parents, and rows about the person (no scope). A skill's dir sees only its own rows."
+            "description": "op=semantic: HOST-FILLED — leave it out; the host stamps the session root, which weighs each row by how near its stored scope is to the root (a skill's dir sees only its own rows). · op=list: HOST-FILLED unless `day` is given — leave it out; the host stamps the session root: rows whose stored scope is under it or at its parents, and rows about the person (no scope). A skill's dir sees only its own rows. A day's worklist is never narrowed."
           },
           "limit": {
             "type": "integer",

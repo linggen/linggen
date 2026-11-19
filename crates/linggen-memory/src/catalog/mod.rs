@@ -141,7 +141,39 @@ impl<D: Copy + 'static> Branch<D> {
     pub fn advertises(&self, key: &str) -> bool {
         self.properties().contains_key(key)
     }
+
+    /// Whether the host stamps `field` on a call of this branch with
+    /// `args` — the one rule for both hosts' hooks and the engine's own
+    /// agents. A field is the host's when its description begins
+    /// [`HOST_FILLED`]; "HOST-FILLED unless `x` is given" leaves it to the
+    /// call that names `x`.
+    pub fn host_fills(&self, field: &str, args: &Value) -> bool {
+        let props = self.properties();
+        let Some(said) = props.get(field).and_then(|p| p["description"].as_str()) else {
+            return false;
+        };
+        let Some(rest) = said.strip_prefix(HOST_FILLED) else {
+            return false;
+        };
+        match rest.strip_prefix(" unless `").and_then(|r| r.split_once('`')) {
+            Some((named, _)) => args.get(named).is_none_or(Value::is_null),
+            None => true,
+        }
+    }
+
+    /// Every field the host stamps on a call of this branch with `args`
+    /// ([`host_fills`](Self::host_fills)), in the schema's order.
+    pub fn host_filled(&self, args: &Value) -> Vec<String> {
+        self.properties()
+            .keys()
+            .filter(|f| self.host_fills(f, args))
+            .cloned()
+            .collect()
+    }
 }
+
+/// How a field's description says the host fills it, not the caller.
+pub const HOST_FILLED: &str = "HOST-FILLED";
 
 /// A tool's own name and text. Its branches are the entries naming it;
 /// `implicit_op` is the branch a call without `op` means, when its fields

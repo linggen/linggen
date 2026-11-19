@@ -8,11 +8,15 @@
 #                                  source_session, host
 #   memory_search, op omitted /    scope_root = root (recall: rows under the
 #     semantic                     root, at its parents, and about the person)
+#   memory_search op=list          scope_root = root, unless the list names a
+#                                  `day` (a day's worklist must see every row
+#                                  of the day, wherever it is filed)
 #   memory_upkeep op=session_start cwd, root
 #
-# Nothing else is stamped: memory_search op=get and op=list (a browse — a
-# dream's day worklist must see the day's rows wherever they are filed, as
-# the browse always has), every other memory_upkeep
+# The catalogue decides this table: each op's HOST-FILLED fields (its schema
+# says so), and the engine stamps its own agents' calls by the same reading.
+# A test runs this hook against the catalogue (the door's repo_check).
+# Nothing else is stamped: memory_search op=get, every other memory_upkeep
 # op, memory_update and memory_delete take none of these fields, and the
 # door's schemas are strict — a field an op does not take is refused, so a
 # stamp there would break the call.
@@ -64,6 +68,7 @@ case "$tool:$op" in
   *__memory_add:|memory_add:)                 verb="add" ;;
   *__memory_search:|memory_search:)           verb="search" ;;
   *__memory_search:semantic|memory_search:semantic) verb="search" ;;
+  *__memory_search:list|memory_search:list)   verb="list" ;;
   *__memory_upkeep:session_start|memory_upkeep:session_start) verb="session_start" ;;
   *) exit 0 ;;
 esac
@@ -103,6 +108,10 @@ case "$verb" in
     # there); the per-turn recall (recall.sh) is the one that narrows those
     # sessions to rows about the person.
     if is_project_dir "$root"; then add_field scope_root "$root"; fi
+    ;;
+  list)
+    # A day's worklist is never narrowed to a place.
+    if ! has day && is_project_dir "$root"; then add_field scope_root "$root"; fi
     ;;
   session_start)
     add_field cwd "$cwd"

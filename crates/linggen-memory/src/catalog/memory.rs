@@ -157,7 +157,7 @@ pub const BRANCHES: &[Branch<&str>] = &[
                 "properties": {
                     "tier":     {"type": "string", "enum": ["core", "semantic", "episodic"]},
                     "types":    {"type": "array", "items": {"type": "string", "enum": ["fact", "preference", "decision", "tried", "fixed", "learned", "built"]}, "description": "Only rows of these types."},
-                    "scope_root": {"type": "string", "description": "A session root: rows whose stored scope is under it or at its parents, and rows about the person (no scope). A skill's dir sees only its own rows."},
+                    "scope_root": {"type": "string", "description": "HOST-FILLED unless `day` is given — leave it out; the host stamps the session root: rows whose stored scope is under it or at its parents, and rows about the person (no scope). A skill's dir sees only its own rows. A day's worklist is never narrowed."},
                     "indexed":  {"type": "boolean", "description": "Only indexed rows (true) or only the rest (false)."},
                     "past_ttl": {"type": "boolean", "description": "Return only rows past the configured episodic TTL. Implies tier=episodic."},
                     "day":      {"type": "string", "description": "One local calendar day, YYYY-MM-DD — the remember stage lists a single day's worklist with this."},

@@ -52,11 +52,12 @@ out="$(jq -nc --arg c "$proj/sub" '{tool_name:"mcp__linggen__memory_add", tool_i
 printf '%s' "$out" | jq -e '.hookSpecificOutput.updatedInput | .host == "codex" and .source_session == "s1"' >/dev/null \
   || fail "Codex add: got $out"
 
-# memory_search: scope_root only on semantic (op omitted or named); a list
-# (a day's worklist) and a get are never narrowed
+# memory_search: scope_root on semantic (op omitted or named) and on a list
+# that names no day; a day's worklist and a get are never narrowed
 stamped "${ns}memory_search" '{"query":"q"}' '. == {query:"q", scope_root:$r}'
 stamped "${ns}memory_search" '{"op":"semantic","query":"q"}' '. == {op:"semantic", query:"q", scope_root:$r}'
 untouched "${ns}memory_search" '{"op":"list","day":"2026-11-01"}'
+stamped "${ns}memory_search" '{"op":"list","tier":"semantic"}' '. == {op:"list", tier:"semantic", scope_root:$r}'
 untouched "${ns}memory_search" '{"query":"q","scope_root":"/mine"}'
 untouched "${ns}memory_search" '{"op":"get","id":"abc"}'
 

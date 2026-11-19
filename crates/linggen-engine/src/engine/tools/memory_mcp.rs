@@ -92,14 +92,14 @@ pub(crate) async fn augment(tools: &Tools, qualified: &str, mut args: Value) -> 
     // The writing session, so a later scan knows this content is already
     // stored. Only when the model didn't supply one — the dream's promote path
     // carries the ORIGINAL row's session forward, and that must win.
-    if takes.field("source_session") && !has(&args, "source_session") {
+    if takes.stamps("source_session", &args) && !has(&args, "source_session") {
         if let Some(sid) = tools.session_id.clone() {
             set(&mut args, "source_session", Value::String(sid));
         }
     }
 
     // The caller naming itself.
-    if takes.field("host") && !has(&args, "host") {
+    if takes.stamps("host", &args) && !has(&args, "host") {
         set(&mut args, "host", Value::String(HOST.to_string()));
     }
 
@@ -136,7 +136,7 @@ pub(crate) async fn augment(tools: &Tools, qualified: &str, mut args: Value) -> 
                 ("cwd_scope", &place.root),
             ];
             for (field, value) in stamps {
-                if takes.field(field) && wants_project(&args, field) {
+                if takes.stamps(field, &args) && wants_project(&args, field) {
                     set(&mut args, field, Value::String(value.clone()));
                 }
             }
@@ -178,6 +178,20 @@ impl<'a> Takes<'a> {
     fn field(&self, field: &str) -> bool {
         match self {
             Self::Branch(schema, branch) => declares(schema, field) && branch.advertises(field),
+            Self::Nothing => false,
+            Self::Schema(schema) => declares(schema, field),
+        }
+    }
+
+    /// Whether the engine stamps `field` on this call: for a folded tool,
+    /// what the catalogue says the host fills (`Branch::host_fills` — the
+    /// same reading the plugin's hook is checked against); for an older
+    /// server's tool, any field it declares.
+    fn stamps(&self, field: &str, args: &Value) -> bool {
+        match self {
+            Self::Branch(schema, branch) => {
+                declares(schema, field) && branch.host_fills(field, args)
+            }
             Self::Nothing => false,
             Self::Schema(schema) => declares(schema, field),
         }
@@ -455,7 +469,7 @@ mod tests {
         let takes = Takes::of(&tool, &args);
         ["host", "source_session", "cwd", "root", "scope_root", "cwd_scope"]
             .into_iter()
-            .filter(|f| takes.field(f))
+            .filter(|f| takes.stamps(f, &args))
             .collect()
     }
 
@@ -466,6 +480,10 @@ mod tests {
         assert_eq!(stamped("memory_search", json!({"query": "q"})), ["scope_root"], "an op-less query is a search");
         assert_eq!(stamped("memory_search", json!({"op": "semantic", "query": "q"})), ["scope_root"]);
         assert_eq!(stamped("memory_search", json!({"op": "list"})), ["scope_root"]);
+        assert!(
+            stamped("memory_search", json!({"op": "list", "day": "2026-11-01"})).is_empty(),
+            "a day's worklist is never narrowed to a place"
+        );
         assert!(stamped("memory_search", json!({"op": "get", "id": "a"})).is_empty(), "get takes no place");
         assert!(stamped("memory_search", json!({"id": "a"})).is_empty(), "no branch, nothing filled");
         assert_eq!(
