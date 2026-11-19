@@ -28,11 +28,28 @@ pub(crate) async fn update_config_api(
     State(state): State<Arc<ServerState>>,
     Json(mut new_config): Json<Config>,
 ) -> impl IntoResponse {
+    if let Err(e) = take_credentials(&mut new_config, &credentials::credentials_file()) {
+        return (StatusCode::BAD_REQUEST, e).into_response();
+    }
+    match state.manager.apply_config(new_config).await {
+        Ok(()) => {
+            // apply_config rebuilt ModelManager from static config and dropped
+            // any dynamically-registered proxy models. Restore them so chats
+            // requesting `proxy:*` ids don't fall back to local defaults.
+            crate::server::rtc::proxy_room::reapply_proxy_models(&state).await;
+            Json(serde_json::json!({ "status": "ok" })).into_response()
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+/// Take the keys out of a posted config into `creds_file` and prune the
+/// per-model overrides of rows it no longer has.
+fn take_credentials(new_config: &mut Config, creds_file: &std::path::Path) -> Result<(), String> {
     // Strip API keys from config — they should be saved via /api/credentials instead.
     // For backward compat: if the UI sends a non-redacted, non-empty key, migrate it
     // to credentials.json.
-    let creds_file = credentials::credentials_file();
-    let mut creds = Credentials::load_for(&creds_file, &new_config.models);
+    let mut creds = Credentials::load_for(creds_file, &new_config.models);
     let mut creds_changed = false;
 
     for model in &mut new_config.models {
@@ -54,25 +71,14 @@ pub(crate) async fn update_config_api(
         creds_changed = true;
     }
 
+    // A config the save refuses writes nothing.
+    new_config.validate().map_err(|e| e.to_string())?;
     if creds_changed {
-        if let Err(e) = creds.save(&creds_file) {
+        if let Err(e) = creds.save(creds_file) {
             tracing::warn!("Failed to save credentials.json: {}", e);
         }
     }
-
-    if let Err(e) = new_config.validate() {
-        return (StatusCode::BAD_REQUEST, e.to_string()).into_response();
-    }
-    match state.manager.apply_config(new_config).await {
-        Ok(()) => {
-            // apply_config rebuilt ModelManager from static config and dropped
-            // any dynamically-registered proxy models. Restore them so chats
-            // requesting `proxy:*` ids don't fall back to local defaults.
-            crate::server::rtc::proxy_room::reapply_proxy_models(&state).await;
-            Json(serde_json::json!({ "status": "ok" })).into_response()
-        }
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -463,4 +469,47 @@ pub(crate) async fn list_mcp_api() -> impl IntoResponse {
         })
         .collect();
     axum::Json(serde_json::json!({ "servers": servers }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn model(id: &str, name: &str) -> crate::config::ModelConfig {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "provider": "openai", "url": "https://api.example.com/v1", "model": name
+        }))
+        .unwrap()
+    }
+
+    /// A config the save refuses writes nothing: the key it carried is not
+    /// stored and no override of a row it left out is pruned.
+    #[test]
+    fn a_refused_config_writes_no_credentials() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("credentials.json");
+        let mut creds = Credentials::default();
+        creds.set_model_override("kept", Some("sk-kept".into()));
+        creds.save(&file).unwrap();
+        let before = std::fs::read(&file).unwrap();
+
+        let mut posted = Config::default();
+        let mut bad = model("new", "");
+        bad.api_key = Some("sk-new".into());
+        posted.models = vec![bad];
+        assert!(take_credentials(&mut posted, &file).is_err());
+        assert_eq!(std::fs::read(&file).unwrap(), before);
+
+        // The same post, made valid, is taken.
+        posted.models[0].model = "gpt".into();
+        posted.models[0].api_key = Some("sk-new".into());
+        take_credentials(&mut posted, &file).unwrap();
+        assert!(posted.models[0].api_key.is_none());
+        let after = Credentials::load(&file);
+        assert!(after.model_override("kept").is_none());
+        assert_eq!(
+            after.endpoint_key("openai", "https://api.example.com/v1"),
+            Some("sk-new")
+        );
+    }
 }
