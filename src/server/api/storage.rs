@@ -116,17 +116,19 @@ fn validate_root(root: &str) -> Option<PathBuf> {
 /// Resolve a relative `path` within `root`, rejecting traversal and symlink
 /// escape. Returns the full canonical path on success.
 fn safe_resolve(root: &Path, rel_path: &str) -> Result<PathBuf, StatusCode> {
-    if rel_path.contains("..") {
-        return Err(StatusCode::BAD_REQUEST);
-    }
-    let full = root.join(rel_path);
-    // Canonicalize only if it already exists; for writes we allow new paths
-    // but still verify prefix.
-    let resolved = full.canonicalize().unwrap_or_else(|_| full.clone());
-    if !resolved.starts_with(root) {
-        return Err(StatusCode::BAD_REQUEST);
-    }
-    Ok(resolved)
+    crate::util::inside(root, Path::new(rel_path)).ok_or(StatusCode::BAD_REQUEST)
+}
+
+#[cfg(all(test, unix))]
+#[test]
+fn new_storage_files_stay_under_the_canonical_root() {
+    let root = tempfile::tempdir_in(".").unwrap();
+    let outside = tempfile::tempdir_in(".").unwrap();
+    let root = root.path().canonicalize().unwrap();
+    let outside_path = outside.path().canonicalize().unwrap();
+    std::os::unix::fs::symlink(outside_path, root.join("linked")).unwrap();
+    assert!(safe_resolve(&root, "linked/new.md").is_err());
+    assert_eq!(safe_resolve(&root, "new/notes.md").unwrap(), root.join("new/notes.md"));
 }
 
 fn is_binary(path: &Path) -> bool {

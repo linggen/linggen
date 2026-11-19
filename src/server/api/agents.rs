@@ -236,13 +236,12 @@ fn normalize_agent_md_path(path: &str) -> Result<String, String> {
 
 /// Resolve an agent path to an absolute filesystem path. Handles both
 /// project-relative paths (`agents/coder.md`) and global paths
-/// (`~/.linggen/agents/coder.md`).
-fn resolve_agent_path(root: &std::path::Path, rel: &str) -> PathBuf {
-    if rel.starts_with("~/") {
-        let home = dirs::home_dir().unwrap_or_default();
-        crate::util::expand_tilde(rel.as_ref(), Some(&home))
-    } else {
-        root.join(rel)
+/// (`~/.linggen/agents/coder.md`). `None` when the path leaves its root
+/// (home, or the project): `crate::util::inside` decides.
+fn resolve_agent_path(root: &std::path::Path, rel: &str) -> Option<PathBuf> {
+    match rel.strip_prefix("~/") {
+        Some(rest) => crate::util::inside(&dirs::home_dir()?, rest.as_ref()),
+        None => crate::util::inside(root, rel.as_ref()),
     }
 }
 
@@ -298,7 +297,9 @@ pub(crate) async fn get_agent_file_api(Query(query): Query<AgentFileQuery>) -> i
         Ok(path) => path,
         Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
     };
-    let full_path = resolve_agent_path(&root, &rel);
+    let Some(full_path) = resolve_agent_path(&root, &rel) else {
+        return (StatusCode::BAD_REQUEST, "path leaves its folder").into_response();
+    };
     let content = match std::fs::read_to_string(&full_path) {
         Ok(content) => content,
         Err(_) => return StatusCode::NOT_FOUND.into_response(),
@@ -326,7 +327,9 @@ pub(crate) async fn upsert_agent_file_api(
         Ok(parsed) => parsed,
         Err(err) => return (StatusCode::BAD_REQUEST, err.to_string()).into_response(),
     };
-    let full_path = resolve_agent_path(&root, &rel);
+    let Some(full_path) = resolve_agent_path(&root, &rel) else {
+        return (StatusCode::BAD_REQUEST, "path leaves its folder").into_response();
+    };
     if let Some(parent) = full_path.parent() {
         if let Err(err) = std::fs::create_dir_all(parent) {
             return (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response();
@@ -355,7 +358,9 @@ pub(crate) async fn delete_agent_file_api(
         Ok(path) => path,
         Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
     };
-    let full_path = resolve_agent_path(&root, &rel);
+    let Some(full_path) = resolve_agent_path(&root, &rel) else {
+        return (StatusCode::BAD_REQUEST, "path leaves its folder").into_response();
+    };
     if !full_path.exists() {
         return StatusCode::NOT_FOUND.into_response();
     }
@@ -422,5 +427,24 @@ pub(crate) async fn drop_pending_asks(
             widget_id,
             session_id,
         });
+    }
+}
+
+#[cfg(test)]
+mod path_tests {
+    use super::*;
+
+    /// `~//abs/x.md` names a file outside home: it is refused, never read.
+    #[tokio::test]
+    async fn an_agent_path_never_leaves_its_root() {
+        let dir = tempfile::tempdir_in(".").unwrap();
+        let outside = dir.path().canonicalize().unwrap().join("outside.md");
+        std::fs::write(&outside, "---\nname: x\n---\n").unwrap();
+        let query = AgentFileQuery {
+            project_root: dir.path().to_string_lossy().into_owned(),
+            path: format!("~/{}", outside.display()),
+        };
+        let status = get_agent_file_api(Query(query)).await.into_response().status();
+        assert_ne!(status, StatusCode::OK, "a file outside home was read");
     }
 }

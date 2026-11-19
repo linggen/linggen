@@ -185,6 +185,41 @@ pub fn resolve_path(path: &Path) -> PathBuf {
     expanded.canonicalize().unwrap_or(expanded)
 }
 
+/// `rel` under `root`, if it stays there: `rel` is normalised first (only
+/// plain names — no root, no `..`, no prefix), then the deepest part of the
+/// path that exists has its links followed and must still lie inside the
+/// real `root`. A part not made yet is checked through the folder that will
+/// hold it. The one check every "a path inside this root" asks.
+pub fn inside(root: &Path, rel: &Path) -> Option<PathBuf> {
+    use std::path::Component;
+    let mut parts = Vec::new();
+    for part in rel.components() {
+        match part {
+            Component::Normal(name) => parts.push(name),
+            Component::CurDir => {}
+            _ => return None,
+        }
+    }
+    let real_root = root.canonicalize().ok()?;
+    let mut real = real_root.clone();
+    let mut rest = parts.as_slice();
+    while let Some((name, tail)) = rest.split_first() {
+        match real.join(name).canonicalize() {
+            Ok(next) => {
+                real = next;
+                rest = tail;
+            }
+            // There but not followable (a dangling link): refused.
+            Err(_) if real.join(name).symlink_metadata().is_ok() => return None,
+            Err(_) => break,
+        }
+    }
+    if !real.starts_with(&real_root) {
+        return None;
+    }
+    Some(rest.iter().fold(real, |path, name| path.join(name)))
+}
+
 #[cfg(test)]
 pub(crate) mod tilde_cases {
     use std::path::Path;
