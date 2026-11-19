@@ -383,8 +383,9 @@ async fn a_restart_continues_her_turn(origin: Option<&str>, her_reply: crate::su
     w.api.post("/api/yinyue/chat", json!({"text": "Hello"})).await;
     w.wait_agent(Agent::Yinyue, mark).await;
     let day = w.api.get("/api/sessions/day").await["id"].as_str().unwrap().to_string();
+    let interrupted = origin != Some("task_end");
     let mut entry = json!({"session_id": day, "agent_id": "yinyue", "caller": false,
-        "turn_interrupted": true, "tasks": []});
+        "turn_interrupted": interrupted, "tasks": []});
     if let Some(origin) = origin {
         entry["origin"] = json!(origin);
     }
@@ -412,4 +413,17 @@ async fn an_event_turn_continued_after_a_restart_speaks_only_in_the_envelope() {
     assert!(!every_row(&w).contains("BARE-PROSE"), "bare prose reached a thread");
     let w = a_restart_continues_her_turn(Some("herald"), say("RESTART-LINE back on the new build.")).await;
     assert_eq!(every_row(&w).matches("RESTART-LINE").count(), 1);
+}
+
+/// A notice told to her with no turn of hers behind it (a task's end, a
+/// restart's note): she speaks only in the envelope, and the contract is
+/// attached — a bare reply says nothing, an envelope is one row, one line.
+#[tokio::test]
+async fn a_task_end_told_to_her_speaks_only_in_the_envelope() {
+    let w = a_restart_continues_her_turn(Some("task_end"), text("BARE-PROSE the job finished.")).await;
+    assert!(!every_row(&w).contains("BARE-PROSE"), "bare prose reached a thread");
+    let w = a_restart_continues_her_turn(Some("task_end"), say("TASK-LINE the job finished.")).await;
+    assert_eq!(every_row(&w).matches("TASK-LINE").count(), 1);
+    let told = w.model.calls_of(Agent::Yinyue).pop().expect("her call");
+    assert!(told.text().contains("<say>"), "the speaking contract was not attached to the notice");
 }
