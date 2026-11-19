@@ -44,7 +44,7 @@ pub use look_again::yinyue_look_again_loop;
 pub(crate) use session_roll::is_own_session;
 use session_roll::*;
 use spoken::*;
-pub(crate) use spoken::{is_engine_prompt, is_silent_reply, speak_reply};
+pub(crate) use spoken::{is_engine_prompt, is_silent_reply, speak_reply, Line};
 pub use triggers::yinyue_watch_loop;
 pub(crate) use triggers::{moment_source, user_sees, wake_for_moment, wake_herald, Sight, Table};
 pub(crate) use turn::run_yinyue_turn;

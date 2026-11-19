@@ -104,8 +104,7 @@ fn herald_ask(
         let Some(reply) = herald_line(&state, kickoff).await else {
             return;
         };
-        let Some(line) = spoken_line(&reply) else {
-            tracing::info!("[yinyue-watch] Yinyue chose silence");
+        let Some(said) = finalize_event(Some(&reply), "ask") else {
             return;
         };
         if !ask_still_pending(&state, &question_id).await {
@@ -120,9 +119,9 @@ fn herald_ask(
         }
         tracing::info!(
             "[yinyue-watch] Yinyue heralds ({} chars, neutral)",
-            line.len()
+            said.line.text().len()
         );
-        crate::server::api::yinyue::emit_speak(&state, line, Some("neutral".to_string()), Default::default());
+        crate::server::api::yinyue::emit_speak(&state, said.line, Some("neutral".to_string()), Default::default());
     });
 }
 
@@ -147,13 +146,13 @@ fn herald_kept_ask(state: &Arc<ServerState>, app: String, question_id: String, s
         let Some(reply) = herald_line(&state, kept_ask_kickoff(&app)).await else {
             return;
         };
-        let Some(line) = spoken_line(&reply) else {
+        let Some(said) = finalize_event(Some(&reply), "kept ask") else {
             return;
         };
         if !ask_still_pending(&state, &question_id).await || user_sees(&state, Sight::Screen) {
             return;
         }
-        crate::server::api::yinyue::emit_speak(&state, line, Some("neutral".to_string()), Default::default());
+        crate::server::api::yinyue::emit_speak(&state, said.line, Some("neutral".to_string()), Default::default());
     });
 }
 
@@ -274,19 +273,17 @@ fn on_agent_chat(
                  You're reached via agent_chat, so you can't pass it to a third agent."
             );
             if let Some(reply) = run_yinyue_turn(&state, kickoff, "agent_chat").await {
-                if let Some(line) = spoken_line(&reply) {
+                if let Some(said) = finalize_event(Some(&reply), "agent_chat") {
                     tracing::info!(
                         "[yinyue-watch] relays agent_chat ({} chars)",
-                        line.len()
+                        said.line.text().len()
                     );
                     crate::server::api::yinyue::emit_speak(
                         &state,
-                        line,
+                        said.line,
                         Some("neutral".to_string()),
                         Default::default(),
                     );
-                } else {
-                    tracing::info!("[yinyue-watch] chose silence (agent_chat)");
                 }
             }
         });
@@ -633,20 +630,22 @@ pub(super) async fn wake_and_offer(
             super::turn::run_home(&state, kickoff, trigger_source, reach, language).await
         }
     };
-    let (shown, unlabelled) =
-        super::offer_labels::shown(raised.as_ref().map(|r| r.offers), reply.as_deref());
+    let said = finalize_event(reply.as_deref(), trigger_source);
+    let (shown, unlabelled) = super::offer_labels::shown(
+        raised.as_ref().map(|r| r.offers),
+        said.as_ref().map(|e| e.labels.as_slice()),
+    );
     if unlabelled {
         tracing::warn!("[yinyue-watch] a problem's offers were left unlabelled — said without buttons");
     }
-    let line = reply.as_deref().and_then(spoken_line);
-    let Some(line) = line else {
+    let Some(said) = said else {
         // Unsaid: the fact it carried waits for the next turn.
         if let Some(f) = rode {
             super::run_fault::hold(f);
         }
-        tracing::info!("[yinyue-watch] Yinyue chose silence");
         return None;
     };
+    let line = said.line;
     if let Some(source) = unprompted_source(reach, trigger_source) {
         if !passes_last_word(&state, source).await {
             return None;
@@ -657,7 +656,7 @@ pub(super) async fn wake_and_offer(
     }
     tracing::info!(
         "[yinyue-watch] Yinyue heralds ({} chars, {emotion})",
-        line.len()
+        line.text().len()
     );
     crate::server::api::yinyue::emit_speak_offering(
         &state,
@@ -669,7 +668,7 @@ pub(super) async fn wake_and_offer(
         },
         raised.map(|r| (r.problem.to_string(), shown)),
     );
-    Some(line)
+    Some(line.text().to_string())
 }
 
 /// What woke an unprompted turn of hers — `None` for a reply: her ordinary

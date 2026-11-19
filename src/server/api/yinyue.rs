@@ -14,6 +14,7 @@ use axum::response::IntoResponse;
 use axum::Json;
 use serde::Deserialize;
 
+use crate::server::resident::Line;
 use crate::server::{ServerEvent, ServerState};
 
 /// Where a line of hers is said: its session (`None`: her own thread) — with
@@ -28,15 +29,15 @@ pub struct SaidAt<'a> {
 
 /// Push a speak cue to the user's surfaces. The single producer — the
 /// event-reactive watch loop calls this when Yinyue reacts.
-pub fn emit_speak(state: &Arc<ServerState>, text: String, emotion: Option<String>, at: SaidAt<'_>) {
-    emit_speak_offering(state, text, emotion, at, None);
+pub(crate) fn emit_speak(state: &Arc<ServerState>, line: Line, emotion: Option<String>, at: SaidAt<'_>) {
+    emit_speak_offering(state, line, emotion, at, None);
 }
 
 /// A line that raised a problem, with its offers under her labels — the
 /// buttons the bubble shows (`problem`: its key, what answers are kept on).
 pub(crate) fn emit_speak_offering(
     state: &Arc<ServerState>,
-    text: String,
+    line: Line,
     emotion: Option<String>,
     at: SaidAt<'_>,
     problem: Option<(String, Vec<crate::perception::offer::Shown>)>,
@@ -59,7 +60,7 @@ pub(crate) fn emit_speak_offering(
         None => (None, Vec::new()),
     };
     let _ = state.events_tx.send(ServerEvent::PetSpeak {
-        text,
+        text: line.text().to_string(),
         emotion,
         voice,
         session_id: session.map(str::to_string),
@@ -332,7 +333,7 @@ pub(crate) async fn chat_handler(
     tokio::spawn(async move {
         if let Some(reply) = crate::server::resident::run_yinyue_turn(&state, task, "user").await {
             if !reply.eq_ignore_ascii_case("silent") {
-                emit_speak(&state, reply, None, SaidAt::default());
+                emit_speak(&state, Line::answer(reply), None, SaidAt::default());
             }
         }
     });

@@ -53,9 +53,10 @@ pub(crate) fn is_engine_prompt(from_id: &str, content: &str) -> bool {
     content.contains(HIDDEN) || (from_id == "user" && content.contains(SPOKEN_CONTRACT))
 }
 
-/// What a reply under [`SPOKEN_CONTRACT`] actually says: the final paragraph,
-/// unwrapped from quotes. `None` when it is — or ends in — SILENT.
-pub(crate) fn spoken_line(reply: &str) -> Option<String> {
+/// What a reply to a PERSON (or to an answer they asked for) says: the final
+/// paragraph, unwrapped from quotes. `None` when it is — or ends in — SILENT.
+/// The answer path only: a turn the engine started is read by [`spoken_line`].
+pub(crate) fn answer_line(reply: &str) -> Option<String> {
     // Her labels on a problem's offers are buttons, never words to say.
     let reply = super::offer_labels::strip(reply);
     let paragraphs: Vec<&str> = reply
@@ -130,22 +131,159 @@ pub(crate) fn is_silent_reply(from_id: &str, content: &str) -> bool {
         .is_some_and(is_silence)
 }
 
-/// Say her reply: its spoken line, when it has one (not SILENT). `at`: where
-/// she said it — whether it is heard or only read is the voice's own rule
-/// (`emit_speak`).
+/// Say her reply to a person: its spoken line, when it has one (not SILENT).
+/// `at`: where she said it — whether it is heard or only read is the voice's
+/// own rule (`emit_speak`).
 pub(crate) fn speak_reply(
     state: &std::sync::Arc<crate::server::ServerState>,
     reply: &str,
     at: crate::server::api::yinyue::SaidAt<'_>,
 ) {
-    if let Some(line) = spoken_line(reply) {
-        crate::server::api::yinyue::emit_speak(state, line, None, at);
+    if let Some(line) = answer_line(reply) {
+        crate::server::api::yinyue::emit_speak(state, Line::answer(line), None, at);
     }
+}
+
+/// The most a spoken line may be, in characters: an app moment's text is cut
+/// at the same 300 (`api::yinyue::EVENT_TEXT_MAX`), and a phone notice's body
+/// at 320 (`push::compose`) — a line the voice is to say is shorter than both.
+pub(crate) const LINE_MAX: usize = 300;
+
+const SAY_OPEN: &str = "<say>";
+const SAY_CLOSE: &str = "</say>";
+
+/// Why a reply of an engine-started turn said nothing. Logged by name, never
+/// with the text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Rejected {
+    NoEnvelope,
+    Several,
+    Unclosed,
+    TextAfter,
+    Empty,
+    LineBreak,
+    TooLong,
+}
+
+impl Rejected {
+    fn name(self) -> &'static str {
+        match self {
+            Self::NoEnvelope => "no envelope",
+            Self::Several => "more than one envelope",
+            Self::Unclosed => "unclosed envelope",
+            Self::TextAfter => "text after the envelope",
+            Self::Empty => "empty envelope",
+            Self::LineBreak => "line break inside the envelope",
+            Self::TooLong => "longer than a spoken line",
+        }
+    }
+}
+
+/// What an engine-started turn's reply says: the one `<say>…</say>` that is
+/// the last thing in it. Text before it (a model thinking first) is dropped.
+/// Anything else — no envelope, two, text after, empty, broken, too long — is
+/// nothing. The raw inside is returned: offer labels ride in it.
+fn envelope(reply: &str) -> Result<&str, Rejected> {
+    let opens = reply.matches(SAY_OPEN).count();
+    let closes = reply.matches(SAY_CLOSE).count();
+    if opens == 0 && closes == 0 {
+        return Err(Rejected::NoEnvelope);
+    }
+    if opens > 1 || closes > 1 {
+        return Err(Rejected::Several);
+    }
+    let (Some(open), Some(close)) = (reply.find(SAY_OPEN), reply.find(SAY_CLOSE)) else {
+        return Err(Rejected::Unclosed);
+    };
+    if close < open {
+        return Err(Rejected::Unclosed);
+    }
+    if !reply[close + SAY_CLOSE.len()..].trim().is_empty() {
+        return Err(Rejected::TextAfter);
+    }
+    Ok(reply[open + SAY_OPEN.len()..close].trim())
+}
+
+/// The line an engine-started turn's reply speaks, with her labels on the
+/// offers it raised; `Err` says why it is nothing.
+fn read_envelope(reply: &str) -> Result<(String, Vec<(usize, String)>), Rejected> {
+    // Her labels on offers are metadata, read wherever she put them and taken
+    // out before the envelope is judged.
+    let (bare, labels) = super::offer_labels::take(reply);
+    let raw = envelope(&bare)?;
+    let line = crate::engine::answer_refs::strip_ids(raw);
+    let line = line.trim();
+    if line.is_empty() {
+        return Err(Rejected::Empty);
+    }
+    if line.contains('\n') {
+        return Err(Rejected::LineBreak);
+    }
+    if line.chars().count() > LINE_MAX {
+        return Err(Rejected::TooLong);
+    }
+    Ok((line.to_string(), labels))
+}
+
+/// A line of hers that may be published: the one type the row, the live
+/// event and the voice take (`api::yinyue::emit_speak_offering`,
+/// [`publish_row`]). Made two ways only — by [`finalize_event`] from an
+/// engine-started turn's envelope, or by [`Line::answer`] from a reply to a
+/// person — so no other path can put words in her mouth.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Line {
+    text: String,
+}
+
+impl Line {
+    /// A reply to what a person said or asked for: the answer path.
+    pub(crate) fn answer(text: String) -> Self {
+        Self { text }
+    }
+
+    pub(crate) fn text(&self) -> &str {
+        &self.text
+    }
+}
+
+/// What an engine-started turn's finalizer hands back: the line she chose to
+/// say, and the labels she gave the offers it raised.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct Event {
+    pub line: Line,
+    pub labels: Vec<(usize, String)>,
+}
+
+/// The one decision for every turn the engine started: did she choose to
+/// speak? `source` names the wake, for the log. Nothing else she wrote in the
+/// turn is shown, kept or spoken.
+pub(super) fn finalize_event(reply: Option<&str>, source: &str) -> Option<Event> {
+    let reply = reply?;
+    match read_envelope(reply) {
+        Ok((text, labels)) => Some(Event {
+            line: Line { text },
+            labels,
+        }),
+        Err(why) => {
+            tracing::info!(
+                "[yinyue] {source}: nothing said ({}; {} chars dropped)",
+                why.name(),
+                reply.chars().count()
+            );
+            None
+        }
+    }
+}
+
+/// [`finalize_event`]'s line, bare — for the tests that only ask what is said.
+#[cfg(test)]
+pub(super) fn spoken_line(reply: &str) -> Option<String> {
+    finalize_event(Some(reply), "test").map(|e| e.line.text)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{is_engine_prompt, spoken_line, with_contract};
+    use super::{answer_line, is_engine_prompt, spoken_line, with_contract};
 
     #[test]
     fn an_asked_turn_is_not_offered_silence() {
@@ -203,10 +341,42 @@ mod tests {
     }
 
     #[test]
+    fn event_speech_requires_one_final_envelope() {
+        for reply in [
+            "A reply is ready.", "他不在，先不说。", "<say>Unclosed",
+            "<say></say>", "<say>Hi</say> more", "<say>Hi\nthere</say>",
+            "<say>First</say><say>Second</say>",
+        ] {
+            assert_eq!(spoken_line(reply), None, "{reply:?}");
+        }
+        assert_eq!(spoken_line("Thinking. <say>好了。</say> \n").as_deref(), Some("好了。"));
+        assert_eq!(spoken_line(&format!("<say>{}</say>", "字".repeat(301))), None);
+    }
+
+    #[test]
+    fn the_envelope_limit_and_offer_labels_are_metadata() {
+        use super::{finalize_event, LINE_MAX};
+        let at_limit = format!("<say>{}</say>", "字".repeat(LINE_MAX));
+        assert!(spoken_line(&at_limit).is_some());
+        assert_eq!(spoken_line("</say>x<say>"), None);
+        assert_eq!(spoken_line("<say>Hi</say></say>"), None);
+        // Labels ride beside the line and are never part of it.
+        let e = finalize_event(Some("<say>Full. [offer 1: Open Files]</say>"), "t").unwrap();
+        assert_eq!(e.line.text(), "Full.");
+        assert_eq!(e.labels, vec![(1, "Open Files".to_string())]);
+        // A label outside the envelope, after it, is still metadata.
+        let e = finalize_event(Some("<say>Full.</say> [offer 1: Open]"), "t").unwrap();
+        assert_eq!((e.line.text(), e.labels.len()), ("Full.", 1));
+        // A bare reply, or SILENT, says nothing.
+        assert!(finalize_event(Some("SILENT"), "t").is_none());
+        assert!(finalize_event(None, "t").is_none());
+    }
+
+    #[test]
     fn a_bare_silent_is_silence() {
-        assert_eq!(spoken_line("SILENT"), None);
-        assert_eq!(spoken_line("silent."), None);
-        assert_eq!(spoken_line("  SILENT\n"), None);
+        assert_eq!(answer_line("SILENT"), None);
+        assert_eq!(answer_line("silent."), None);
+        assert_eq!(answer_line("  SILENT\n"), None);
     }
 
     #[test]
@@ -214,34 +384,34 @@ mod tests {
         // The three shapes deepseek-v4-flash produced on 2026-09-08.
         let silent = "The user said just \"hi\" and ling has replied. That's a routine \
                       greeting, not something worth pinging Hanli about. Silence.\n\nSILENT";
-        assert_eq!(spoken_line(silent), None);
+        assert_eq!(answer_line(silent), None);
 
         let spoken = "They asked something real: checking on Marine Thinking's IPO progress. \
                       Hanli is still away, but this is worth knowing.\n\n\
                       \"Ling's looked into the Marine Thinking IPO — the answer's waiting for you.\"";
         assert_eq!(
-            spoken_line(spoken).as_deref(),
+            answer_line(spoken).as_deref(),
             Some("Ling's looked into the Marine Thinking IPO — the answer's waiting for you.")
         );
 
         // The marker glued to the last sentence still means silence.
-        assert_eq!(spoken_line("Routine greeting. Silence. SILENT"), None);
+        assert_eq!(answer_line("Routine greeting. Silence. SILENT"), None);
     }
 
     #[test]
     fn a_plain_line_is_spoken_as_is() {
         assert_eq!(
-            spoken_line("Ling's reply is ready, Hanli.").as_deref(),
+            answer_line("Ling's reply is ready, Hanli.").as_deref(),
             Some("Ling's reply is ready, Hanli.")
         );
         // A natural sentence that merely ends in the word is not the marker.
         assert_eq!(
-            spoken_line("The room has gone silent.").as_deref(),
+            answer_line("The room has gone silent.").as_deref(),
             Some("The room has gone silent.")
         );
         // A line broken across two lines is one line.
         assert_eq!(
-            spoken_line("Ling's reply is ready —\nthe IPO question.").as_deref(),
+            answer_line("Ling's reply is ready —\nthe IPO question.").as_deref(),
             Some("Ling's reply is ready — the IPO question.")
         );
     }
