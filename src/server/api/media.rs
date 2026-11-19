@@ -494,7 +494,23 @@ pub(crate) struct RequestDeleteBody {
 /// PhotoKit dialog; cache rows stay until reconcile sees the photo gone.
 /// `cancel: true` withdraws ids — queued intent stays reversible.
 pub(crate) async fn request_delete_handler(Json(body): Json<RequestDeleteBody>) -> Response {
-    let _guard = media_lock();
+    match tokio::task::spawn_blocking(move || queue_deletes(body)).await {
+        Ok(Ok(answer)) => Json(answer).into_response(),
+        Ok(Err(e)) => err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("queue write: {e}"),
+        ),
+        Err(e) => err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("queue task: {e}"),
+        ),
+    }
+}
+
+/// Change the phone-delete queue as `body` asks; how many are queued and how
+/// many of those wait for a backup.
+fn queue_deletes(body: RequestDeleteBody) -> std::io::Result<Value> {
+    let _one = media_lock();
     let mut queue = load_delete_queue();
     if body.cancel {
         queue.retain(|e| !body.local_ids.contains(&e.local_id));
@@ -514,12 +530,7 @@ pub(crate) async fn request_delete_handler(Json(body): Json<RequestDeleteBody>) 
         }
     }
     let n = queue.len();
-    if let Err(e) = save_delete_queue(&queue) {
-        return err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("queue write: {e}"),
-        );
-    }
+    save_delete_queue(&queue)?;
     // Queued is not offered. A photo the Mac holds only in staging cannot be
     // handed to a phone to delete — reconcile would then remove the staged copy
     // and both would be gone — so it waits here until a backup archives it.
@@ -533,7 +544,7 @@ pub(crate) async fn request_delete_handler(Json(body): Json<RequestDeleteBody>) 
         .filter(|e| !restorable.contains(e.local_id.as_str()))
         .count();
     tracing::info!("[media] phone-delete queue now {n} ids ({blocked} awaiting backup)");
-    Json(json!({"queued": n, "blocked": blocked})).into_response()
+    Ok(json!({"queued": n, "blocked": blocked}))
 }
 
 /// The queue as the caller may see it. A phone reads it whenever a route to
@@ -1228,7 +1239,7 @@ mod lock_tests {
         assert_eq!(
             names,
             [
-                "request_delete_handler",
+                "queue_deletes",
                 "reconcile_wireless",
                 "ensure_staged",
                 "ensure_archived",
