@@ -73,6 +73,9 @@ pub struct Snapshot {
     pub listed: Vec<Listed>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub listed_at: Option<u64>,
+    /// When the last refresh pass started, whether its reads worked or not.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pass_tried_at: Option<u64>,
     #[serde(default)]
     pub families: Vec<Family>,
     /// A newer model that was tried and did not answer, with when.

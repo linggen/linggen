@@ -36,6 +36,8 @@ pub mod skill_tool;
 pub mod steer;
 #[cfg(test)]
 mod steer_loop_tests;
+#[cfg(test)]
+mod cut_loop_tests;
 mod streaming;
 pub mod suggestion;
 #[cfg(any(test, feature = "test-support"))]
@@ -77,6 +79,12 @@ use anyhow::Result;
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use tracing::{debug, info, warn};
+
+/// What the model is told after the provider cut its reply at the output
+/// limit.
+const CUT_REPLY_NOTE: &str = "[Your last reply was cut off at the model's output limit, so no tool \
+call in it was run. Continue from where it stopped; write a long file in smaller parts — Write \
+the first part, then add the rest with Edit.]";
 
 impl AgentEngine {
     /// Convert native ParsedToolCalls into calls for dispatch, each with
@@ -558,6 +566,12 @@ impl AgentEngine {
                     .await;
                 continue;
             }
+            if stream_result.cut {
+                let native = native_tools.is_some();
+                self.keep_cut_reply(stream_result.full_text, native, &mut state.messages, session_id)
+                    .await;
+                continue;
+            }
             let raw = stream_result.full_text;
             let stream_first_action = stream_result.first_action;
             let native_tool_calls = stream_result.tool_calls;
@@ -986,6 +1000,27 @@ impl AgentEngine {
         info!("Steer: the reply so far is kept and the queued message goes in");
         self.emit_text_segment(text.clone(), session_id).await;
         self.push_tracked_message(messages, ChatMessage::new("assistant", text));
+    }
+
+    /// A reply the provider cut at its output limit: what it said stays, as
+    /// a steered reply's does; no tool call it was writing runs (its
+    /// arguments are incomplete); and the model is told, so it goes on.
+    /// With native tools the whole text is words; only a JSON-action reply
+    /// (`native` false) is cut before its first action.
+    async fn keep_cut_reply(
+        &mut self,
+        raw: String,
+        native: bool,
+        messages: &mut Vec<ChatMessage>,
+        session_id: Option<&str>,
+    ) {
+        warn!("model '{}' reply was cut at its output limit; asking it to go on", self.model_id);
+        let text = if native { raw.trim().to_string() } else { text_before_first_json(&raw) };
+        if !text.trim().is_empty() {
+            self.emit_text_segment(text.clone(), session_id).await;
+            self.push_tracked_message(messages, ChatMessage::new("assistant", text));
+        }
+        self.push_tracked_message(messages, ChatMessage::new("user", CUT_REPLY_NOTE.to_string()));
     }
 
     /// Take in what the person sent while the turn ran, as user messages.

@@ -313,10 +313,21 @@ impl ResponsesStream {
                 vec![]
             }
             "response.completed" => self.completed(val),
+            "response.incomplete" => self.incomplete(val),
             "error" | "response.failed" => vec![Err(error_event(val))],
             _ => return None,
         };
         Some(chunks)
+    }
+
+    /// A response that ended short: what `completed` reports, then
+    /// [`StreamChunk::Cut`] when the output limit is why.
+    fn incomplete(&mut self, val: &Value) -> Vec<Result<StreamChunk>> {
+        let reason = val.pointer("/response/incomplete_details/reason");
+        let cut = reason.and_then(|r| r.as_str()) == Some("max_output_tokens");
+        let mut chunks = self.completed(val);
+        chunks.extend(cut.then_some(Ok(StreamChunk::Cut)));
+        chunks
     }
 
     /// The end of the response: the sources, if any came, then the usage.
@@ -562,7 +573,7 @@ mod tests {
                 match chunk.unwrap() {
                     StreamChunk::Token(t) => text.push_str(&t),
                     StreamChunk::ToolCall(c) => calls.push(c),
-                    StreamChunk::Usage(_) => {}
+                    StreamChunk::Usage(_) | StreamChunk::Cut => {}
                 }
             }
         }
@@ -849,5 +860,23 @@ mod tests {
             .collect();
         assert_eq!(deltas, vec!["{\"query\":\"press", "urized\"}"]);
         assert_eq!(assemble(&calls)[0].3, "{\"query\":\"pressurized\"}");
+    }
+}
+
+#[cfg(test)]
+mod cut_tests {
+    use super::*;
+
+    fn is_cut(chunks: &[Result<StreamChunk>]) -> bool {
+        chunks.iter().any(|c| matches!(c, Ok(StreamChunk::Cut)))
+    }
+
+    #[test]
+    fn a_reply_stopped_at_the_output_limit_reads_as_cut() {
+        let incomplete = r#"{"type":"response.incomplete","response":{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"usage":{"input_tokens":10,"output_tokens":128000}}}"#;
+        assert!(is_cut(&ResponsesStream::default().tool_event(incomplete)));
+        assert!(is_cut(&ResponsesStream::default().text_event(incomplete)));
+        let done = r#"{"type":"response.completed","response":{"usage":{"input_tokens":10,"output_tokens":5}}}"#;
+        assert!(!is_cut(&ResponsesStream::default().tool_event(done)));
     }
 }

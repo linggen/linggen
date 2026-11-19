@@ -209,6 +209,11 @@ const LOOP_CALLERS: &[(&str, usize, &str)] = &[
         1,
         "a test",
     ),
+    (
+        "crates/linggen-engine/src/engine/cut_loop_tests.rs",
+        1,
+        "a test",
+    ),
 ];
 
 fn is_ident(c: char) -> bool {

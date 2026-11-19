@@ -573,6 +573,9 @@ pub(crate) struct StreamResult {
     /// Steer stopped the stream: `full_text` is what came so far, and no
     /// tool call it began is kept.
     pub steered: bool,
+    /// The provider cut the reply at its output limit: `full_text` is what
+    /// came, and no tool call it began is kept.
+    pub cut: bool,
 }
 
 /// Cached system prompt with hash for quick staleness checks.

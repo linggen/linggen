@@ -43,15 +43,9 @@ pub struct OllamaClient {
 
 impl OllamaClient {
     pub fn new(base_url: String, api_key: Option<String>) -> Self {
-        let http = Client::builder()
-            .timeout(std::time::Duration::from_secs(300))
-            .connect_timeout(std::time::Duration::from_secs(10))
-            // Bounds streamed reads too — the total timeout doesn't (see
-            // provider/openai.rs for the full rationale). Generous because
-            // local models can pause long between tokens under load.
-            .read_timeout(std::time::Duration::from_secs(300))
-            .build()
-            .unwrap_or_else(|_| Client::new());
+        // Idle limit generous because local models can pause long between
+        // tokens under load.
+        let http = crate::provider::stream_http(std::time::Duration::from_secs(300));
         Self {
             http,
             base_url: base_url.trim_end_matches('/').to_string(),
@@ -226,6 +220,9 @@ impl OllamaClient {
             if line.trim().is_empty() {
                 return None;
             }
+            if let Some(err) = stream_error_line(&line) {
+                return Some(Err(err));
+            }
             // Ollama sends one JSON object per line
             let payload: ChatStreamResponse = match serde_json::from_str(&line) {
                 Ok(p) => p,
@@ -371,6 +368,9 @@ impl OllamaClient {
                 };
                 if line.trim().is_empty() {
                     return vec![];
+                }
+                if let Some(err) = stream_error_line(&line) {
+                    return vec![Err(err)];
                 }
 
                 // Parse as generic JSON to handle both text tokens and tool_calls.
@@ -742,6 +742,17 @@ struct ChatStreamResponse {
     eval_count: Option<u64>,
 }
 
+/// An `{"error": …}` line Ollama sends inside an open stream: the provider's
+/// error, with its message, classified like any other.
+fn stream_error_line(line: &str) -> Option<anyhow::Error> {
+    #[derive(Deserialize)]
+    struct ErrorLine {
+        error: String,
+    }
+    let said: ErrorLine = serde_json::from_str(line).ok()?;
+    Some(crate::provider::error::ProviderError::stream_event(said.error).into())
+}
+
 /// One line's `tool_calls` → one chunk per call, numbered after the
 /// `calls_seen` earlier lines held. Ollama streams parallel calls one per
 /// line, each array starting at 0: numbered per line, the second call
@@ -819,5 +830,69 @@ mod tool_call_tests {
                 ),
             ]
         );
+    }
+}
+
+#[cfg(test)]
+mod stream_error_tests {
+    use super::*;
+    use futures_util::StreamExt;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    const SAID: &str = "model runner has unexpectedly stopped, this may be due to resource limitations";
+
+    /// An Ollama that streams one token and then its own error line.
+    async fn ollama_that_fails_mid_stream() -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let Ok((mut sock, _)) = listener.accept().await else {
+                return;
+            };
+            let mut buf = vec![0u8; 65536];
+            let _ = sock.read(&mut buf).await;
+            let body = format!(
+                "{}\n{{\"error\":\"{SAID}\"}}\n",
+                r#"{"message":{"role":"assistant","content":"hi"},"done":false}"#
+            );
+            let reply = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/x-ndjson\r\nconnection: close\r\n\r\n{body}"
+            );
+            let _ = sock.write_all(reply.as_bytes()).await;
+        });
+        format!("http://{addr}")
+    }
+
+    fn the_error(items: Vec<Result<StreamChunk>>) -> anyhow::Error {
+        items
+            .into_iter()
+            .find_map(|i| i.err())
+            .expect("the provider's error reaches the caller")
+    }
+
+    #[tokio::test]
+    async fn a_mid_stream_error_line_is_the_providers_error_in_a_text_stream() {
+        let client = OllamaClient::new(ollama_that_fails_mid_stream().await, None);
+        let msgs = vec![ChatMessage::new("user", "hi")];
+        let stream = client
+            .chat_text_stream_with_keep_alive("m", &msgs, None)
+            .await
+            .unwrap();
+        let err = the_error(stream.collect().await);
+        assert_eq!(err.to_string(), SAID);
+        assert!(err.downcast_ref::<crate::provider::error::ProviderError>().is_some());
+    }
+
+    #[tokio::test]
+    async fn a_mid_stream_error_line_is_the_providers_error_in_a_tool_stream() {
+        let client = OllamaClient::new(ollama_that_fails_mid_stream().await, None);
+        let msgs = vec![ChatMessage::new("user", "hi")];
+        let stream = client
+            .chat_tool_stream_with_keep_alive("m", &msgs, None, vec![])
+            .await
+            .unwrap();
+        let err = the_error(stream.collect().await);
+        assert_eq!(err.to_string(), SAID);
+        assert!(err.downcast_ref::<crate::provider::error::ProviderError>().is_some());
     }
 }

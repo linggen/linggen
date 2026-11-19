@@ -51,7 +51,7 @@ fn sse_data(line: &str) -> Option<&str> {
     if trimmed.is_empty() || trimmed.starts_with("event:") {
         return None;
     }
-    let data = trimmed.strip_prefix("data: ")?.trim();
+    let data = crate::provider::sse_field(trimmed, "data")?.trim();
     (data != "[DONE]").then_some(data)
 }
 
@@ -66,6 +66,11 @@ fn sse_lines(
     tokio_util::codec::FramedRead::new(reader, tokio_util::codec::LinesCodec::new())
 }
 
+/// The longest silence between two reads of a stream (see
+/// [`crate::provider::stream_http`]); reasoning models' silent thinking gaps
+/// stay well under it.
+const STREAM_IDLE: std::time::Duration = std::time::Duration::from_secs(180);
+
 #[derive(Clone)]
 pub struct OpenAiClient {
     pub(super) http: Client,
@@ -78,23 +83,13 @@ pub struct OpenAiClient {
     /// When true, resolve the linggen.dev account token on each request, so
     /// signing in/out is picked up without a daemon restart.
     linggen_account_live: bool,
+    /// The ChatGPT token file a `codex_auth_live` client reads.
+    auth_file: std::path::PathBuf,
 }
 
 impl OpenAiClient {
     pub fn new(base_url: String, api_key: Option<String>) -> Self {
-        let http = Client::builder()
-            .timeout(std::time::Duration::from_secs(300))
-            .connect_timeout(std::time::Duration::from_secs(10))
-            // The total timeout above does NOT govern bodies consumed via
-            // bytes_stream() (reqwest gap) — a backend that accepts the
-            // request and then goes silent wedges the run forever (observed
-            // live 2026-07-10: 35 min on one Responses API call). read_timeout
-            // bounds every socket read, streaming included; reasoning models'
-            // silent thinking gaps stay well under it, and the resulting
-            // error is transient-classified so the model fallback chain runs.
-            .read_timeout(std::time::Duration::from_secs(180))
-            .build()
-            .unwrap_or_else(|_| Client::new());
+        let http = crate::provider::stream_http(STREAM_IDLE);
         Self {
             http,
             base_url: base_url.trim_end_matches('/').to_string(),
@@ -102,6 +97,7 @@ impl OpenAiClient {
             chatgpt_account_id: None,
             codex_auth_live: false,
             linggen_account_live: false,
+            auth_file: crate::provider::codex_auth::codex_auth_file(),
         }
     }
 
@@ -112,19 +108,7 @@ impl OpenAiClient {
         access_token: String,
         account_id: Option<String>,
     ) -> Self {
-        let http = Client::builder()
-            .timeout(std::time::Duration::from_secs(300))
-            .connect_timeout(std::time::Duration::from_secs(10))
-            // The total timeout above does NOT govern bodies consumed via
-            // bytes_stream() (reqwest gap) — a backend that accepts the
-            // request and then goes silent wedges the run forever (observed
-            // live 2026-07-10: 35 min on one Responses API call). read_timeout
-            // bounds every socket read, streaming included; reasoning models'
-            // silent thinking gaps stay well under it, and the resulting
-            // error is transient-classified so the model fallback chain runs.
-            .read_timeout(std::time::Duration::from_secs(180))
-            .build()
-            .unwrap_or_else(|_| Client::new());
+        let http = crate::provider::stream_http(STREAM_IDLE);
         Self {
             http,
             base_url: base_url.trim_end_matches('/').to_string(),
@@ -132,7 +116,15 @@ impl OpenAiClient {
             chatgpt_account_id: account_id,
             codex_auth_live: true,
             linggen_account_live: false,
+            auth_file: crate::provider::codex_auth::codex_auth_file(),
         }
+    }
+
+    /// The same client reading its ChatGPT tokens from `file`.
+    #[cfg(test)]
+    pub(crate) fn with_auth_file(mut self, file: std::path::PathBuf) -> Self {
+        self.auth_file = file;
+        self
     }
 
     /// Create a client for the Linggen Cloud proxy (linggen.dev/api/llm).
@@ -148,7 +140,7 @@ impl OpenAiClient {
         if self.codex_auth_live {
             // Read fresh token from disk so login/refresh is picked up immediately
             let tokens = crate::provider::codex_auth::CodexAuthTokens::load(
-                &crate::provider::codex_auth::codex_auth_file(),
+                &self.auth_file,
             );
             if let Some(ref token) = tokens.access_token {
                 rb = rb.header("Authorization", format!("Bearer {}", token));
@@ -256,6 +248,7 @@ impl OpenAiClient {
         &self,
         rb: reqwest::RequestBuilder,
     ) -> anyhow::Result<reqwest::Response> {
+        let sent = self.codex_auth_live.then(|| self.codex_tokens().access_token).flatten();
         let first = self.apply_auth(
             rb.try_clone()
                 .ok_or_else(|| anyhow::anyhow!("request body not cloneable for auth retry"))?,
@@ -264,42 +257,35 @@ impl OpenAiClient {
         if resp.status() != reqwest::StatusCode::UNAUTHORIZED || !self.codex_auth_live {
             return Ok(resp);
         }
-        if !self.try_refresh_codex_tokens().await {
+        if !self.try_refresh_codex_tokens(sent.as_deref()).await {
             return Ok(resp);
         }
         // apply_auth re-reads codex_auth.json, so the retry uses the fresh token.
         Ok(self.apply_auth(rb).send().await?)
     }
 
-    /// Attempt a one-shot refresh of the on-disk ChatGPT OAuth tokens.
-    /// Returns true if a new token was fetched and saved.
-    async fn try_refresh_codex_tokens(&self) -> bool {
-        use crate::provider::codex_auth;
-        let tokens = codex_auth::CodexAuthTokens::load(&codex_auth::codex_auth_file());
-        if tokens.refresh_token.is_none() {
-            return false;
-        }
-        match codex_auth::refresh_tokens(&self.http, &tokens).await {
-            Ok(new) => match new.save(&codex_auth::codex_auth_file()) {
-                Ok(()) => {
-                    tracing::info!("Refreshed expired ChatGPT OAuth token after 401.");
-                    true
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to save refreshed ChatGPT tokens: {}", e);
-                    false
-                }
-            },
-            Err(e) => {
-                tracing::warn!("ChatGPT token refresh after 401 failed: {}", e);
-                false
-            }
-        }
+    /// The ChatGPT tokens as they are on disk now.
+    fn codex_tokens(&self) -> crate::provider::codex_auth::CodexAuthTokens {
+        crate::provider::codex_auth::CodexAuthTokens::load(&self.auth_file)
     }
 
-    /// Whether this client uses the ChatGPT Responses API (OAuth mode).
+    /// Bring the on-disk ChatGPT OAuth tokens past `rejected`, the access
+    /// token the backend refused. True when there are tokens to retry with.
+    async fn try_refresh_codex_tokens(&self, rejected: Option<&str>) -> bool {
+        use crate::provider::codex_auth;
+        let http = self.http.clone();
+        codex_auth::refresh_after_rejection(&self.auth_file, rejected, |tokens| async move {
+            codex_auth::refresh_tokens(&http, &tokens).await
+        })
+        .await
+    }
+
+    /// Whether this client uses the ChatGPT Responses API (OAuth mode). A
+    /// live ChatGPT client reads the account from the token file when it
+    /// sends, so a sign-in made after it was built is seen at once.
     pub(crate) fn uses_responses_api(&self) -> bool {
         self.chatgpt_account_id.is_some()
+            || (self.codex_auth_live && self.codex_tokens().account_id.is_some())
     }
 
     /// Read the signed-in ChatGPT account's Codex metadata.
@@ -464,11 +450,7 @@ impl OpenAiClient {
         } else {
             (
                 chat_completions::text_request(self, model, messages, reasoning_effort),
-                Box::new(|data| {
-                    chat_completions::parse_text_chunk(data)
-                        .into_iter()
-                        .collect()
-                }),
+                Box::new(chat_completions::parse_text_chunk),
             )
         };
         let first = crate::provider::FirstEvent::start(&self.base_url);
@@ -657,5 +639,20 @@ mod first_event_wire_tests {
             .expect("a local backend is exempt from the guard");
 
         crate::provider::set_first_event_timeout(None);
+    }
+}
+
+#[cfg(test)]
+mod sse_data_tests {
+    use super::sse_data;
+
+    #[test]
+    fn a_data_line_is_read_with_or_without_the_space() {
+        assert_eq!(sse_data("data: {\"a\":1}"), Some("{\"a\":1}"));
+        assert_eq!(sse_data("data:{\"a\":1}"), Some("{\"a\":1}"));
+        assert_eq!(sse_data("data:[DONE]"), None);
+        assert_eq!(sse_data("data: [DONE]"), None);
+        assert_eq!(sse_data("event: response.created"), None);
+        assert_eq!(sse_data(""), None);
     }
 }

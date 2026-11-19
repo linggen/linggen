@@ -2,7 +2,7 @@
 //! non-ChatGPT client speaks (OpenAI API keys, Gemini, DeepSeek, Groq, the
 //! Linggen Cloud proxy…): the request body and the SSE chunks it streams.
 
-use super::wire::{sanitize_json, OaiMessage, OaiMessageWithTools, OaiStreamChunk, OaiUsage};
+use super::wire::{parse_payload, OaiMessage, OaiMessageWithTools, OaiStreamChunk, OaiUsage};
 use super::OpenAiClient;
 use crate::message::ChatMessage;
 use crate::provider::models::{StreamChunk, TokenUsage, ToolCallChunk};
@@ -87,10 +87,10 @@ fn usage_chunk(usage: OaiUsage) -> StreamChunk {
     })
 }
 
-/// One SSE `data:` payload of a text turn → at most one chunk.
-pub(super) fn parse_text_chunk(data: &str) -> Option<Result<StreamChunk>> {
-    let sanitized = sanitize_json(data);
-    let chunk: OaiStreamChunk = match serde_json::from_str(&sanitized) {
+/// One SSE `data:` payload of a text turn → its token or its usage, then
+/// [`StreamChunk::Cut`] when the reply stopped at the output limit.
+pub(super) fn parse_text_chunk(data: &str) -> Vec<Result<StreamChunk>> {
+    let chunk: OaiStreamChunk = match parse_payload(data) {
         Ok(c) => c,
         Err(e) => {
             let truncated = if data.len() > 300 {
@@ -102,11 +102,11 @@ pub(super) fn parse_text_chunk(data: &str) -> Option<Result<StreamChunk>> {
             } else {
                 data.to_string()
             };
-            return Some(Err(anyhow::anyhow!(
+            return vec![Err(anyhow::anyhow!(
                 "openai json parse error: {} (data: {})",
                 e,
                 truncated
-            )));
+            ))];
         }
     };
 
@@ -115,22 +115,23 @@ pub(super) fn parse_text_chunk(data: &str) -> Option<Result<StreamChunk>> {
     // than a dropped count. The final chunk carries no content and
     // the last usage, and that is the one taken.
     let usage = chunk.usage;
-    let content = chunk
-        .choices
-        .into_iter()
-        .next()
-        .and_then(|c| c.delta.content)
-        .unwrap_or_default();
-    if !content.is_empty() {
-        return Some(Ok(StreamChunk::Token(content)));
-    }
-    usage.map(|usage| Ok(usage_chunk(usage)))
+    let choice = chunk.choices.into_iter().next();
+    let cut = choice.as_ref().is_some_and(|c| c.was_cut());
+    let content = choice.and_then(|c| c.delta.content).unwrap_or_default();
+    let said = if !content.is_empty() {
+        Some(StreamChunk::Token(content))
+    } else {
+        usage.map(usage_chunk)
+    };
+    said.into_iter()
+        .chain(cut.then_some(StreamChunk::Cut))
+        .map(Ok)
+        .collect()
 }
 
 /// One SSE `data:` payload of a tool turn → the chunks it carries.
 pub(super) fn parse_tool_chunk(data: &str) -> Vec<Result<StreamChunk>> {
-    let sanitized = sanitize_json(data);
-    let mut chunk: OaiStreamChunk = match serde_json::from_str(&sanitized) {
+    let mut chunk: OaiStreamChunk = match parse_payload(data) {
         Ok(c) => c,
         Err(e) => {
             return vec![Err(anyhow::anyhow!(
@@ -146,6 +147,9 @@ pub(super) fn parse_tool_chunk(data: &str) -> Vec<Result<StreamChunk>> {
     // Emit it beside the deltas, never instead of them (seen
     // live: three "empty responses" while the meter counted).
     let usage = chunk.usage.take().map(|u| Ok(usage_chunk(u)));
+    // The cut, when there is one, comes after the deltas its chunk carries.
+    let cut = chunk.choices.first().is_some_and(|c| c.was_cut());
+    let cut = cut.then_some(Ok(StreamChunk::Cut));
     let deltas: Vec<Result<StreamChunk>> = (|| {
         // Extract Gemini thought_signature — check chunk level first, then choice level.
         let chunk_level_sig = chunk
@@ -155,7 +159,7 @@ pub(super) fn parse_tool_chunk(data: &str) -> Vec<Result<StreamChunk>> {
             .and_then(|g| g.thought_signature.clone());
 
         let Some(choice) = chunk.choices.into_iter().next() else {
-            tracing::trace!("SSE chunk with no choices: {}", &sanitized);
+            tracing::trace!("SSE chunk with no choices: {}", data);
             return vec![];
         };
 
@@ -205,5 +209,65 @@ pub(super) fn parse_tool_chunk(data: &str) -> Vec<Result<StreamChunk>> {
             vec![Ok(StreamChunk::Token(content))]
         }
     })();
-    usage.into_iter().chain(deltas).collect()
+    usage.into_iter().chain(deltas).chain(cut).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tool_args(chunks: Vec<Result<StreamChunk>>) -> String {
+        chunks
+            .into_iter()
+            .filter_map(|c| match c.expect("parses") {
+                StreamChunk::ToolCall(tc) => tc.arguments_delta,
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_numpy_slice_in_text_is_left_as_written() {
+        let data = r#"{"choices":[{"index":0,"delta":{"content":"y = x[:, 0] and d = {a:}"}}]}"#;
+        match parse_text_chunk(data).into_iter().next() {
+            Some(Ok(StreamChunk::Token(t))) => assert_eq!(t, "y = x[:, 0] and d = {a:}"),
+            other => panic!("expected a token, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_numpy_slice_in_tool_arguments_is_left_as_written() {
+        let data = r#"{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"c1","type":"function","function":{"name":"Write","arguments":"{\"content\":\"y = x[:, 0]\"}"}}]}}]}"#;
+        assert_eq!(tool_args(parse_tool_chunk(data)), r#"{"content":"y = x[:, 0]"}"#);
+    }
+
+    #[test]
+    fn a_missing_value_outside_strings_is_repaired_and_strings_kept() {
+        // Gemini's malformed shape: `"function":,` — a key with no value.
+        let data = r#"{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"c1","type":"function","extra":,"function":{"name":"Write","arguments":"{\"content\":\"x[:, 0]\"}","more":}}]}}]}"#;
+        assert_eq!(tool_args(parse_tool_chunk(data)), r#"{"content":"x[:, 0]"}"#);
+    }
+}
+
+#[cfg(test)]
+mod cut_tests {
+    use super::*;
+
+    fn is_cut(chunks: &[Result<StreamChunk>]) -> bool {
+        chunks.iter().any(|c| matches!(c, Ok(StreamChunk::Cut)))
+    }
+
+    #[test]
+    fn finish_reason_length_reads_as_cut_and_keeps_the_last_delta() {
+        let tool = r#"{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"a\":"}}]},"finish_reason":"length"}]}"#;
+        let chunks = parse_tool_chunk(tool);
+        assert!(is_cut(&chunks));
+        assert!(chunks.iter().any(|c| matches!(c, Ok(StreamChunk::ToolCall(_)))));
+        let text = r#"{"choices":[{"index":0,"delta":{"content":"and then"},"finish_reason":"length"}]}"#;
+        let chunks: Vec<_> = parse_text_chunk(text).into_iter().collect();
+        assert!(is_cut(&chunks));
+        assert!(chunks.iter().any(|c| matches!(c, Ok(StreamChunk::Token(t)) if t == "and then")));
+        let stop = r#"{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}"#;
+        assert!(!is_cut(&parse_tool_chunk(stop)));
+    }
 }

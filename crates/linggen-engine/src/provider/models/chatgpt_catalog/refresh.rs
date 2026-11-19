@@ -11,6 +11,9 @@ use super::{Snapshot, Store};
 /// How long a read stays fresh.
 pub const REFRESH_EVERY_SECS: u64 = 24 * 60 * 60;
 
+/// How long a pass that could not read everything waits before the next try.
+pub const RETRY_AFTER_FAILURE_SECS: u64 = 4 * 60 * 60;
+
 /// What a refresh reads from.
 pub struct Sources<'a> {
     pub listing: &'a dyn PublicListing,
@@ -19,10 +22,14 @@ pub struct Sources<'a> {
 }
 
 /// Whether [snap] wants a refresh at [now]: the version or the list never
-/// read, or read more than a day ago.
+/// read, or read more than a day ago — and no pass tried in the last
+/// [`RETRY_AFTER_FAILURE_SECS`], so sources that cannot be reached are asked
+/// again after the back-off, not on every tick.
 pub fn due(snap: &Snapshot, now: u64) -> bool {
-    let stale = |at: Option<u64>| at.is_none_or(|at| now.saturating_sub(at) >= REFRESH_EVERY_SECS);
-    stale(snap.version_read_at) || stale(snap.listed_at)
+    let older_than = |at: Option<u64>, secs: u64| at.is_none_or(|at| now.saturating_sub(at) >= secs);
+    let stale = older_than(snap.version_read_at, REFRESH_EVERY_SECS)
+        || older_than(snap.listed_at, REFRESH_EVERY_SECS);
+    stale && older_than(snap.pass_tried_at, RETRY_AFTER_FAILURE_SECS)
 }
 
 /// [snap] brought up to date from [src]: the version, then the list under
@@ -87,7 +94,9 @@ pub async fn run_pass(store: &dyn Store, src: &Sources<'_>, force: bool, now: u6
     if !force && !due(&before, now) {
         return false;
     }
-    let versioned = refresh_version((*before).clone(), src.listing, now).await;
+    let mut attempt = (*before).clone();
+    attempt.pass_tried_at = Some(now);
+    let versioned = refresh_version(attempt, src.listing, now).await;
     keep(store, &before, &versioned);
     let after = refresh_models(versioned, src.backend, src.prober, now).await;
     let kept = keep(store, &before, &after);
@@ -265,6 +274,33 @@ mod tests {
         assert!(kept.family("sol").unwrap().stay, "the press survived the pass");
         assert_eq!(kept.builtin_ids()[0], "gpt-6.1-sol");
         assert_eq!(kept.listed_at, Some(100));
+    }
+
+    struct Offline;
+
+    #[async_trait]
+    impl PublicListing for Offline {
+        async fn latest(&self) -> anyhow::Result<String> {
+            anyhow::bail!("unreachable")
+        }
+    }
+
+    /// Where the public listing cannot be reached, a pass is not run again
+    /// on every hourly tick: the attempt is stamped, and the next one waits
+    /// out the back-off.
+    #[tokio::test]
+    async fn a_failed_read_retries_after_the_back_off_not_every_hour() {
+        let store = Held::new(Snapshot::seed());
+        let backend = Recording(Default::default());
+        let src = Sources { listing: &Offline, backend: &backend, prober: &Answers };
+        run_pass(&store, &src, false, 1_000).await;
+        assert_eq!(backend.0.lock().unwrap().len(), 1, "the first pass ran");
+        assert!(store.current().version_read_at.is_none(), "the read failed");
+        run_pass(&store, &src, false, 1_000 + 3_600).await;
+        assert_eq!(backend.0.lock().unwrap().len(), 1, "an hour later it waits");
+        run_pass(&store, &src, false, 1_000 + RETRY_AFTER_FAILURE_SECS).await;
+        assert_eq!(backend.0.lock().unwrap().len(), 2, "after the back-off it tries again");
+        assert!(RETRY_AFTER_FAILURE_SECS < REFRESH_EVERY_SECS);
     }
 
     #[test]

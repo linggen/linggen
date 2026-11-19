@@ -244,6 +244,9 @@ pub(super) async fn process_inference_request(
                             "total_tokens": usage.total_tokens,
                         }})
                     }
+                    Ok(crate::provider::models::StreamChunk::Cut) => {
+                        serde_json::json!({ "chunk": { "type": "cut" } })
+                    }
                     Ok(crate::provider::models::StreamChunk::ToolCall(tc)) => {
                         serde_json::json!({ "chunk": { "type": "tool_call",
                             "index": tc.index,

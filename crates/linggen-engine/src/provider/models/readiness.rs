@@ -229,33 +229,10 @@ pub(crate) fn refusing(
 /// names the key itself, so it is no sign-in.
 fn needs_key(cfg: &ModelConfig) -> bool {
     let has_key = cfg.api_key.as_deref().is_some_and(|k| !k.trim().is_empty());
-    // The model manager treats a `chatgpt` provider as signed in with
-    // ChatGPT whatever its auth mode says; so does this.
     let signs_in = cfg.auth_mode.as_deref().is_some_and(|m| m != "api_key")
-        || cfg.provider == "chatgpt";
+        || super::signs_in_with_chatgpt(cfg);
     let keyless = matches!(cfg.provider.as_str(), "ollama" | "proxy");
-    !(has_key || signs_in || keyless || on_this_network(&cfg.url))
-}
-
-/// Is `url`'s host this machine or a private network address?
-fn on_this_network(url: &str) -> bool {
-    let rest = url.split_once("://").map(|(_, r)| r).unwrap_or(url);
-    let authority = rest.split('/').next().unwrap_or("");
-    let host = match authority.strip_prefix('[') {
-        Some(v6) => v6.split(']').next().unwrap_or(""),
-        None => authority
-            .rsplit_once(':')
-            .map(|(h, _)| h)
-            .unwrap_or(authority),
-    };
-    if host.is_empty() || host == "localhost" || host.ends_with(".local") {
-        return true;
-    }
-    match host.parse::<std::net::IpAddr>() {
-        Ok(std::net::IpAddr::V4(ip)) => ip.is_loopback() || ip.is_private() || ip.is_link_local(),
-        Ok(std::net::IpAddr::V6(ip)) => ip.is_loopback(),
-        Err(_) => false,
-    }
+    !(has_key || signs_in || keyless || crate::provider::is_local_backend(&cfg.url))
 }
 
 #[cfg(test)]
@@ -336,6 +313,30 @@ mod tests {
             None,
             None
         )));
+    }
+
+    /// A `chatgpt` model with no auth mode signs in with ChatGPT like any
+    /// other: signed out (the test home has no token file), it is not ready
+    /// and its pre-flight refuses.
+    #[test]
+    fn a_chatgpt_model_without_an_auth_mode_needs_the_sign_in() {
+        assert!(
+            !crate::provider::codex_auth::chatgpt_signed_in(),
+            "the test home is signed out"
+        );
+        let cfg = model(
+            "readiness-chatgpt-bare",
+            "chatgpt",
+            "https://chatgpt.com/backend-api",
+            None,
+            None,
+        );
+        let err = ModelManager::check_provider_auth(&cfg).unwrap_err();
+        assert!(err.to_string().starts_with("AUTH_REQUIRED:"), "{err}");
+        let models = ModelManager::new_with_credentials(vec![cfg], &Default::default());
+        let r = models.readiness("readiness-chatgpt-bare").unwrap();
+        assert!(!r.ready);
+        assert_eq!(r.reason, Some(NotReady::ProviderSignIn));
     }
 
     /// A usage limit is a fact with its reset; a blind rate limit and a

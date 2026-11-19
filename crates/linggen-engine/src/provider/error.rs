@@ -211,12 +211,24 @@ fn classify_http(status: u16, body: &str) -> ProviderErrorKind {
     }
 }
 
+/// The providers' own codes and phrases for a request bigger than the
+/// model's window. A body that merely names tokens or a context (an invalid
+/// `max_tokens`, an unsupported parameter) is a bad request, not this.
 fn names_context_limit(lower: &str) -> bool {
-    lower.contains("context")
-        || lower.contains("token")
-        || lower.contains("too long")
-        || lower.contains("max_tokens")
-        || lower.contains("content_too_large")
+    const OVERFLOW: &[&str] = &[
+        "context_length_exceeded",   // OpenAI, Groq, DeepSeek (code)
+        "context length",            // "maximum context length is …"
+        "context window",            // Responses: "exceeds the context window"
+        "exceed context limit",      // Anthropic: input + max_tokens over the window
+        "context size",              // llama.cpp: "exceeds the available context size"
+        "maximum prompt length",     // xAI
+        "prompt is too long",        // Anthropic
+        "input is too long",
+        "exceeds the maximum number of tokens", // Gemini
+        "reduce the length of the messages",    // OpenAI-compatible servers
+        "content_too_large",
+    ];
+    OVERFLOW.iter().any(|p| lower.contains(p))
 }
 
 /// The status a client wrote into its message — `"openai error (429 Too Many
@@ -382,6 +394,42 @@ mod tests {
         );
         assert_eq!(kind_of(&anthropic), ContextTooLong);
         assert_eq!(kind_of(&http(413, "content_too_large")), ContextTooLong);
+    }
+
+    #[test]
+    fn a_request_that_merely_names_tokens_is_a_bad_request() {
+        for body in [
+            r#"{"error":{"message":"Invalid 'max_tokens': integer above maximum value. Expected a value <= 32768, but got 65536 instead.","type":"invalid_request_error","param":"max_tokens","code":"integer_above_max_value"}}"#,
+            r#"{"error":{"message":"Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead.","type":"invalid_request_error","param":"max_tokens","code":"unsupported_parameter"}}"#,
+            r#"{"error":{"message":"Invalid token in request body","type":"invalid_request_error"}}"#,
+            r#"{"error":{"message":"Invalid value for 'context': expected an object"}}"#,
+        ] {
+            let err = http(400, body);
+            assert_eq!(kind_of(&err), BadRequest, "{body}");
+            assert!(!kind_of(&err).is_fallback_worthy(), "{body}");
+        }
+        assert_eq!(kind_of(&http(422, "max_tokens must be positive")), BadRequest);
+    }
+
+    #[test]
+    fn the_providers_own_overflow_words_are_context_too_long() {
+        for body in [
+            // Gemini's OpenAI-compatible endpoint.
+            r#"{"error":{"message":"The input token count (1200000) exceeds the maximum number of tokens allowed (1048576).","code":400,"status":"INVALID_ARGUMENT"}}"#,
+            // The Responses API.
+            r#"{"error":{"message":"Your input exceeds the context window of this model. Please adjust your input and try again.","type":"invalid_request_error","code":"context_length_exceeded"}}"#,
+            // Groq / OpenAI's older wording.
+            r#"{"error":{"message":"Please reduce the length of the messages or completion.","type":"invalid_request_error"}}"#,
+            "HTTP error (400) context length exceeded, max_tokens 8192",
+            // Anthropic, when the input plus max_tokens is over the window.
+            r#"{"type":"error","error":{"type":"invalid_request_error","message":"input length and `max_tokens` exceed context limit: 197202 + 8192 > 200000, decrease input length or `max_tokens` and try again"}}"#,
+            // llama.cpp's server.
+            r#"{"error":{"code":400,"message":"the request exceeds the available context size, try increasing it","type":"exceed_context_size_error"}}"#,
+            // xAI.
+            r#"{"error":"This model's maximum prompt length is 131072 but the request contains 140000 tokens."}"#,
+        ] {
+            assert_eq!(kind_of(&http(400, body)), ContextTooLong, "{body}");
+        }
     }
 
     #[test]
