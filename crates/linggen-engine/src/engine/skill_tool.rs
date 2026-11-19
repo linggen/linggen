@@ -291,14 +291,20 @@ impl SkillToolDef {
         // Drain both pipes while we wait. The OS pipe buffer is ~64 KB: a
         // command that writes more than that blocks on the write until
         // someone reads, so a poll loop that only watches for exit would see
-        // a working command as a timeout.
-        let stdout_handle = std::thread::spawn(drain(child.stdout.take()));
-        let stderr_handle = std::thread::spawn(drain(child.stderr.take()));
+        // a working command as a timeout. What is read is kept up to the
+        // cap as it comes, never the whole of a noisy command.
+        let cap = self.max_output_bytes;
+        let out = Kept::drain(child.stdout.take(), cap);
+        let err = Kept::drain(child.stderr.take(), cap);
 
+        // The timeout bounds the whole call: the shell's exit and the end of
+        // both pipes, which a child left in the background can hold open.
         let start = Instant::now();
         let mut timed_out = false;
+        let mut exited = false;
         loop {
-            if child.try_wait()?.is_some() {
+            exited = exited || child.try_wait()?.is_some();
+            if exited && Kept::ended(&out) && Kept::ended(&err) {
                 break;
             }
             if start.elapsed() >= timeout {
@@ -310,8 +316,17 @@ impl SkillToolDef {
         }
 
         let status = child.wait()?;
-        let stdout = stdout_handle.join().unwrap_or_default();
-        let mut stderr = stderr_handle.join().unwrap_or_default();
+        if timed_out {
+            // The killed group closes the pipes; their readers end soon after.
+            let settle = Instant::now();
+            while !(Kept::ended(&out) && Kept::ended(&err))
+                && settle.elapsed() < Duration::from_millis(500)
+            {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+        let stdout = Kept::text(&out, cap);
+        let mut stderr = Kept::text(&err, cap);
         if timed_out {
             if !stderr.is_empty() && !stderr.ends_with('\n') {
                 stderr.push('\n');
@@ -322,12 +337,11 @@ impl SkillToolDef {
             ));
         }
 
-        Ok(ToolResult::command_output(
-            status.code(),
-            &stdout,
-            &stderr,
-            self.max_output_bytes,
-        ))
+        Ok(ToolResult::CommandOutput {
+            exit_code: status.code(),
+            stdout,
+            stderr,
+        })
     }
 
     /// The command as it runs: `$SKILL_DIR` expanded, then every `{{arg}}`
@@ -479,16 +493,70 @@ impl SkillToolDef {
     }
 }
 
-/// Reader closure for one of a child's pipes: read it to EOF on its own
-/// thread so the child is never blocked writing.
-fn drain<R: std::io::Read + Send + 'static>(stream: Option<R>) -> impl FnOnce() -> String + Send {
-    move || {
-        let mut buf = Vec::new();
-        if let Some(mut stream) = stream {
-            let _ = stream.read_to_end(&mut buf);
-        }
-        String::from_utf8_lossy(&buf).to_string()
+/// One of a child's pipes as it is read: its first `cap` bytes, the last
+/// `cap` bytes after those, and how many came in all — enough for the
+/// head-and-tail cap the model is shown (`tools::cap_stream`), and never
+/// more, however much the command writes.
+#[derive(Default)]
+struct Kept {
+    head: Vec<u8>,
+    tail: std::collections::VecDeque<u8>,
+    total: usize,
+    ended: bool,
+}
+
+type Shared = std::sync::Arc<std::sync::Mutex<Kept>>;
+
+impl Kept {
+    /// Read `stream` to its end on a thread of its own, so the child is
+    /// never blocked writing; what is kept is shared as it comes.
+    fn drain<R: std::io::Read + Send + 'static>(stream: Option<R>, cap: usize) -> Shared {
+        let kept = Shared::default();
+        let filling = kept.clone();
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 8192];
+            if let Some(mut stream) = stream {
+                while let Ok(n) = stream.read(&mut buf) {
+                    if n == 0 {
+                        break;
+                    }
+                    lock(&filling).take_in(&buf[..n], cap);
+                }
+            }
+            lock(&filling).ended = true;
+        });
+        kept
     }
+
+    fn take_in(&mut self, bytes: &[u8], cap: usize) {
+        self.total += bytes.len();
+        let room = cap.saturating_sub(self.head.len()).min(bytes.len());
+        self.head.extend_from_slice(&bytes[..room]);
+        self.tail.extend(&bytes[room..]);
+        let over = self.tail.len().saturating_sub(cap);
+        self.tail.drain(..over);
+    }
+
+    fn ended(kept: &Shared) -> bool {
+        lock(kept).ended
+    }
+
+    /// What was read, capped as `tools::cap_stream` caps it.
+    fn text(kept: &Shared, cap: usize) -> String {
+        let kept = lock(kept);
+        let tail: Vec<u8> = kept.tail.iter().copied().collect();
+        if kept.total == kept.head.len() + tail.len() {
+            // Nothing was dropped: head and tail are the whole output.
+            let whole = [kept.head.as_slice(), &tail].concat();
+            return crate::engine::tools::cap_stream(&String::from_utf8_lossy(&whole), cap);
+        }
+        let head = String::from_utf8_lossy(&kept.head);
+        crate::engine::tools::cap_parts(&head, &String::from_utf8_lossy(&tail), kept.total, cap)
+    }
+}
+
+fn lock(kept: &Shared) -> std::sync::MutexGuard<'_, Kept> {
+    kept.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 /// What stands in for one `{{placeholder}}`: the given value, else the
@@ -683,6 +751,23 @@ mod tests {
         };
         assert_eq!(stdout, "started\n");
         assert!(stderr.contains("timed out after 300ms"), "stderr: {stderr}");
+    }
+
+    /// A noisy command is kept only up to its cap while it is read: the
+    /// head and the tail, and the size it came to.
+    #[test]
+    fn output_is_kept_up_to_the_cap_while_it_is_read() {
+        let mut kept = Kept::default();
+        let chunk = [b'x'; 8192];
+        for _ in 0..128 {
+            kept.take_in(&chunk, 1024);
+        }
+        assert_eq!((kept.head.len(), kept.tail.len(), kept.total), (1024, 1024, 128 * 8192));
+        let text = Kept::text(&std::sync::Arc::new(std::sync::Mutex::new(kept)), 1024);
+        assert!(text.contains("output was 1048576 bytes, capped at 1024"), "{text}");
+        let mut small = Kept::default();
+        small.take_in(b"all of it", 1024);
+        assert_eq!(Kept::text(&std::sync::Arc::new(std::sync::Mutex::new(small)), 1024), "all of it");
     }
 
     #[test]

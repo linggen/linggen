@@ -174,16 +174,25 @@ pub fn cap_stream(s: &str, max_bytes: usize) -> String {
     if s.len() <= max_bytes {
         return s.to_string();
     }
-    let head_end = floor_char_boundary(s, max_bytes * 2 / 3);
-    let tail_start = ceil_char_boundary(s, s.len() - (max_bytes - head_end));
+    cap_parts(s, s, s.len(), max_bytes)
+}
+
+/// [`cap_stream`] for output kept as it was read: `head` is its start and
+/// `tail` its end (they may be one and the same text), `total` how long it
+/// was in all. Head and tail are cut on character boundaries.
+pub fn cap_parts(head: &str, tail: &str, total: usize, max_bytes: usize) -> String {
+    let head_end = floor_char_boundary(head, max_bytes * 2 / 3);
+    let tail_len = max_bytes - head_end;
+    let tail_start = ceil_char_boundary(tail, tail.len().saturating_sub(tail_len));
+    let kept = head_end + (tail.len() - tail_start);
     format!(
         "{}\n[linggen: {} bytes omitted — output was {} bytes, capped at {}. \
 Narrow the command (filter, grep, head) to see the rest.]\n{}",
-        &s[..head_end],
-        tail_start - head_end,
-        s.len(),
+        &head[..head_end],
+        total.saturating_sub(kept),
+        total,
         max_bytes,
-        &s[tail_start..],
+        &tail[tail_start..],
     )
 }
 
