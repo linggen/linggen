@@ -19,6 +19,7 @@ mod day_session;
 mod delegate;
 mod door;
 mod event_speech;
+mod event_speech_people;
 mod drawing;
 mod fixtures;
 mod memory_ops;

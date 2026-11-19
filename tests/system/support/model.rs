@@ -51,6 +51,13 @@ pub enum Reply {
     Tool(String, Value),
     /// The provider refuses the call: an HTTP status and its message.
     Error(u16, String),
+    /// The inner reply, streamed slowly: the turn stays running meanwhile.
+    Slow(Box<Reply>),
+}
+
+/// `reply`, streamed one character at a time, 150 ms apart.
+pub fn slow(reply: Reply) -> Reply {
+    Reply::Slow(Box::new(reply))
 }
 
 pub fn text(s: &str) -> Reply {
@@ -165,6 +172,7 @@ fn respond(fixture: Fixture, reply: &Reply) -> Fixture {
             arguments: args.clone(),
         }]),
         Reply::Error(status, message) => fixture.with_error(*status, message),
+        Reply::Slow(inner) => respond(fixture, inner).with_streaming(Some(150), Some(1)),
     }
 }
 
