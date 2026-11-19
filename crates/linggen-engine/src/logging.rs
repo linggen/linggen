@@ -149,6 +149,34 @@ fn log_dir_tilde_expansion() {
     });
 }
 
+/// Clean-up in a log folder the person chose removes only the rolling log's
+/// own files (`linggen.YYYY-MM-DD`), never another file whose name starts
+/// the same.
+#[cfg(test)]
+#[test]
+fn cleanup_removes_only_the_rolling_logs_own_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let names = ["linggen.2026-01-01", "linggen-notes.txt", "linggen.txt", "linggen.2026-13-45", "other.log"];
+    for n in names {
+        std::fs::write(dir.path().join(n), "x").unwrap();
+    }
+    cleanup_old_logs(&dir.path().to_path_buf(), 0).unwrap();
+    let mut left: Vec<String> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    left.sort();
+    assert_eq!(left, ["linggen-notes.txt", "linggen.2026-13-45", "linggen.txt", "other.log"]);
+}
+
+/// A name the daily rolling log gives its files: `linggen.YYYY-MM-DD`.
+fn is_rolling_log_name(name: &str) -> bool {
+    name.strip_prefix(LOG_FILE_PREFIX)
+        .and_then(|rest| rest.strip_prefix('.'))
+        .is_some_and(|day| chrono::NaiveDate::parse_from_str(day, "%Y-%m-%d").is_ok())
+}
+
 fn cleanup_old_logs(log_dir: &PathBuf, retention_days: u64) -> Result<()> {
     let now = SystemTime::now();
     let max_age = Duration::from_secs(60 * 60 * 24 * retention_days);
@@ -168,7 +196,7 @@ fn cleanup_old_logs(log_dir: &PathBuf, retention_days: u64) -> Result<()> {
             Some(v) => v,
             None => continue,
         };
-        if !file_name.starts_with(LOG_FILE_PREFIX) {
+        if !is_rolling_log_name(file_name) {
             continue;
         }
         let modified = match entry.metadata().and_then(|m| m.modified()) {
