@@ -5,6 +5,7 @@ import { UsageMeter } from './UsageMeter';
 import { CodexUsage } from './CodexUsage';
 import { useServerStore } from '../stores/serverStore';
 import { account as accountApi, modelsApi, providerAuth } from '../lib/endpoints';
+import { toggledDefault } from '../lib/defaultChain.mts';
 
 const CODEX_STATUS = '/api/auth/codex/status';
 type CodexStatus = { authenticated: boolean; account_id?: string };
@@ -359,11 +360,9 @@ export const ModelsTab: React.FC<{
   };
 
   const toggleDefault = (modelId: string) => {
-    // Single-select: set as default, or deselect if already the default
-    changeRouting((routing) => {
-      const current = routing.default_models ?? [];
-      return { ...routing, default_models: current.length === 1 && current[0] === modelId ? [] : [modelId] };
-    });
+    // Single-select: set as default, or take the default off the chain
+    // (lib/defaultChain.mts).
+    changeRouting((routing) => ({ ...routing, default_models: toggledDefault(routing.default_models ?? [], modelId) }));
   };
 
 
