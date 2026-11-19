@@ -91,16 +91,16 @@ async fn write_row(
     } else {
         Arc::clone(&state.episodic)
     };
-    if let Some(existing) = other
+    let lower_copy = other
         .find_exact_content_public(&fact.content, fact.r#type, replace_ids, &whose)
-        .await?
-    {
+        .await?;
+    if let Some(existing) = &lower_copy {
         let new_rank = tier_rank(fact.tier);
         let existing_rank = tier_rank(existing.tier);
         if existing_rank >= new_rank {
             // Existing row is at the same or higher tier — keep it. Fill
             // what it lacks from the new write, then return as if dedup'd.
-            let merged = merge_with_existing(&existing, &fact);
+            let merged = merge_with_existing(existing, &fact);
             other.update_full_public(&existing.id, &merged).await?;
             let body = json!({
                 "action": "merged",
@@ -110,13 +110,16 @@ async fn write_row(
             });
             return Ok(apply_replace_ids(state, replace_ids, &existing.id, body).await);
         }
-        // New row is at a higher tier — promote: delete the lower-tier
-        // copy from the other table, then proceed with single-table insert.
-        let _ = other.delete(&existing.id).await?;
+        // New row is at a higher tier — promote: write it below, and only
+        // then delete the lower-tier copy (a failure between leaves two
+        // copies, never none).
     }
 
     // Never into a row this call replaces: that row is about to be retired.
     let outcome = store.insert_with_dedup_except(fact, replace_ids).await?;
+    if let Some(lower) = lower_copy {
+        let _ = other.delete(&lower.id).await?;
+    }
     let survivor = match &outcome {
         crate::memory::InsertOutcome::Added(f) => f.id.clone(),
         crate::memory::InsertOutcome::Merged { fact, .. } => fact.id.clone(),
@@ -512,6 +515,24 @@ mod tests {
         let data = write_row(&state, promoted, &[], false).await.unwrap();
         assert_eq!(data["action"], "added", "{data}");
         assert!(state.episodic.get(&staged.id).await.unwrap().is_none());
+    }
+
+    /// A promotion writes the long-term copy before it deletes the staged
+    /// one: when that write fails, the staged row is still there.
+    #[tokio::test]
+    async fn a_failed_promotion_keeps_the_staged_copy() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let state = scratch_state(dir.path()).await;
+        let mut staged = row_of("staged words", None, Tier::Episodic);
+        staged.origin = Origin::Derived;
+        state.episodic.insert(&[staged.clone()]).await.unwrap();
+
+        let mut promoted = row_of("staged words", None, Tier::Semantic);
+        promoted.origin = Origin::Derived;
+        // Not the table's vector width: the long-term write fails.
+        promoted.vector = Some(vec![0.5; 3]);
+        assert!(write_row(&state, promoted, &[], false).await.is_err());
+        assert!(state.episodic.get(&staged.id).await.unwrap().is_some());
     }
 
     /// A batch row carries the person it was written for — a person's

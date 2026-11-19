@@ -108,6 +108,41 @@ async fn sweep_removes_judged_rows_past_the_ttl() {
     assert_eq!(m.ok("sweep", json!({})).await["removed"], 0);
 }
 
+/// The stamp covers what the dream read: the day's rows from before its
+/// lease. A row filed after the worklist was read and before the stamp
+/// stays unjudged, and the sweep keeps it.
+#[tokio::test]
+async fn a_row_filed_while_a_day_is_dreamed_stays_unjudged() {
+    let m = Mem::start().await;
+    let old = days_ago(20);
+    let seen = m
+        .add(json!({"content": "Alex hiked", "occurred_at": local_noon(&old)}))
+        .await;
+    let holder = json!({"day": old, "holder": "mac-a"});
+    m.ok("dream_lease", holder.clone()).await;
+    let worklist = m.ok("list", json!({"day": old, "unjudged": true})).await;
+    assert_eq!(worklist.as_array().unwrap().len(), 1);
+    let late = m
+        .add(json!({"content": "Alex saw a lynx", "occurred_at": local_noon(&old)}))
+        .await;
+    m.ok("remember_day", json!({"date": old, "holder": "mac-a"}))
+        .await;
+
+    let unjudged = m.ok("list", json!({"day": old, "unjudged": true})).await;
+    assert_eq!(
+        unjudged.as_array().unwrap().iter().map(id).collect::<Vec<_>>(),
+        vec![id(&late)]
+    );
+    assert_eq!(m.ok("sweep", json!({})).await["removed"], 1);
+    assert_eq!(m.ok("get", json!({"id": id(&late)})).await["id"], id(&late).as_str());
+    assert_refused(
+        &m.call("get", json!({"id": id(&seen)})).await,
+        404,
+        "NOT_FOUND",
+        &format!("no fact with id {}", id(&seen)),
+    );
+}
+
 #[tokio::test]
 async fn chains_finds_rows_that_cite_each_other() {
     let m = Mem::start().await;

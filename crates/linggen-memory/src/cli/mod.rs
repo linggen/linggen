@@ -355,7 +355,10 @@ fn parse_duration_to_cutoff(s: &str) -> Result<DateTime<Utc>, String> {
     if s.is_empty() {
         return Err("duration must not be empty (e.g. 30d, 12h, 1w)".to_string());
     }
-    let (num_str, unit) = s.split_at(s.len() - 1);
+    // Split before the last character, not the last byte: a multi-byte unit
+    // is then an unknown unit instead of a panic.
+    let unit_at = s.char_indices().last().map_or(0, |(i, _)| i);
+    let (num_str, unit) = s.split_at(unit_at);
     let n: i64 = num_str
         .parse()
         .map_err(|_| format!("could not parse number from '{s}' (expected like '30d')"))?;
@@ -1520,6 +1523,14 @@ mod tests {
         assert_eq!(filters.tier, Some(Tier::Core));
         assert_eq!(filters.origin, Some(Origin::User));
         assert_eq!(filters.outcome, Some(Outcome::Positive));
+    }
+
+    /// A duration ending in a multi-byte character is refused, not a panic.
+    #[test]
+    fn a_duration_with_a_multibyte_unit_is_refused() {
+        assert!(parse_duration_to_cutoff("30天").is_err());
+        assert!(parse_duration_to_cutoff("é").is_err());
+        assert!(parse_duration_to_cutoff("30d").is_ok());
     }
 
     #[test]

@@ -21,6 +21,10 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+/// The one lock every writer of `paired-devices.json` in this process holds
+/// while it reads, changes and saves the list — the host's device store too.
+pub use crate::http::connect::devices::device_list_lock;
+
 /// Who holds a store's lock, as the holder wrote it into the lock file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Holder {

@@ -55,7 +55,28 @@ pub(crate) async fn load(data_dir: &Path) -> DaysState {
     serde_json::from_slice(&bytes).unwrap_or_default()
 }
 
-pub(crate) async fn save(data_dir: &Path, state: &DaysState) -> Result<(), std::io::Error> {
+/// The one lock around every change to `.days.json`. Its writers:
+/// `remember_day`, `harvest_day` and the sweep's forgotten counts, each a
+/// read-change-save through [`modify`]; and a replica's pull, which
+/// replaces the file with the primary's copy under [`lock`].
+static LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+pub(crate) async fn lock() -> tokio::sync::MutexGuard<'static, ()> {
+    LOCK.lock().await
+}
+
+/// Read, change and save `.days.json` under [`lock`].
+async fn modify<R>(data_dir: &Path, f: impl FnOnce(&mut DaysState) -> R) -> Result<R, MemError> {
+    let _guard = lock().await;
+    let mut state = load(data_dir).await;
+    let out = f(&mut state);
+    save(data_dir, &state)
+        .await
+        .map_err(|e| MemError::internal(anyhow::anyhow!(e)))?;
+    Ok(out)
+}
+
+async fn save(data_dir: &Path, state: &DaysState) -> Result<(), std::io::Error> {
     let path = days_path(data_dir);
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent).await?;
@@ -80,6 +101,13 @@ pub(crate) fn today_local() -> String {
 pub(crate) fn parse_day(s: &str) -> Result<NaiveDate, MemError> {
     NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d")
         .map_err(|_| MemError::bad_request(format!("invalid day {s:?}: expected YYYY-MM-DD")))
+}
+
+/// A day as the one spelling every sidecar keys on (`2026-1-5` →
+/// `2026-01-05`); a string that is not a date is refused. Every verb that
+/// takes a day and looks it up or stores it goes through here.
+pub(crate) fn day_key(s: &str) -> Result<String, MemError> {
+    Ok(parse_day(s)?.format("%Y-%m-%d").to_string())
 }
 
 /// UTC bounds `[start, end)` of a local calendar day. DST folds/gaps
@@ -302,9 +330,8 @@ pub struct RememberDayRequest {
 }
 
 pub(in crate::ops) async fn remember_day(state: &Memory, req: RememberDayRequest) -> Result<Value, MemError> {
-    let date = parse_day(&req.date)?;
+    let key = day_key(&req.date)?;
     let today = today_local();
-    let key = date.format("%Y-%m-%d").to_string();
     if key >= today {
         return Err(MemError::bad_request(format!(
             "day {key} is not over yet — only past local days can be remembered"
@@ -312,23 +339,28 @@ pub(in crate::ops) async fn remember_day(state: &Memory, req: RememberDayRequest
     }
 
     let holder = req.holder.as_deref().unwrap_or("");
-    if let Some(l) = crate::ops::lease::held_by_other(&state.data_dir, &key, holder, Utc::now()) {
+    let now = Utc::now();
+    if let Some(l) = crate::ops::lease::held_by_other(&state.data_dir, &key, holder, now) {
         return Err(crate::ops::lease::busy(&key, &l));
     }
+    // The mark covers what the caller read: rows from before its lease on
+    // the day (taken before the worklist read), so a row filed meanwhile
+    // stays unjudged. Without a lease the caller's read is unknown and the
+    // mark is the stamp's own time. It never moves back.
+    let boundary = crate::ops::lease::read_boundary(&state.data_dir, &key, holder, now)
+        .map_or(now, |b| b.min(now));
 
-    let mut days_state = load(&state.data_dir).await;
-    let rec = days_state.days.entry(key.clone()).or_default();
-    rec.remembered_at = Some(Utc::now());
-    rec.judged = rec.judged.saturating_add(req.judged);
-    rec.promoted = rec.promoted.saturating_add(req.promoted);
-    if req.harvested {
-        rec.harvested_at = Some(Utc::now());
-    }
-    let body = json!({ "date": key, "record": rec });
-    save(&state.data_dir, &days_state)
-        .await
-        .map_err(|e| MemError::internal(anyhow::anyhow!(e)))?;
-    Ok(body)
+    modify(&state.data_dir, |days_state| {
+        let rec = days_state.days.entry(key.clone()).or_default();
+        rec.remembered_at = Some(rec.remembered_at.map_or(boundary, |prev| prev.max(boundary)));
+        rec.judged = rec.judged.saturating_add(req.judged);
+        rec.promoted = rec.promoted.saturating_add(req.promoted);
+        if req.harvested {
+            rec.harvested_at = Some(Utc::now());
+        }
+        json!({ "date": key, "record": rec })
+    })
+    .await
 }
 
 // ── harvest_day (scan stamp) ────────────────────────────────────────────────
@@ -343,23 +375,20 @@ pub struct HarvestDayRequest {
 /// day. Deliberately does NOT touch `remembered_at`: scanning stages
 /// rows; the day then goes pending and a dream pass judges it.
 pub(in crate::ops) async fn harvest_day(state: &Memory, req: HarvestDayRequest) -> Result<Value, MemError> {
-    let date = parse_day(&req.date)?;
+    let key = day_key(&req.date)?;
     let today = today_local();
-    let key = date.format("%Y-%m-%d").to_string();
     if key >= today {
         return Err(MemError::bad_request(format!(
             "day {key} is not over yet — only past local days can be scanned"
         )));
     }
 
-    let mut days_state = load(&state.data_dir).await;
-    let rec = days_state.days.entry(key.clone()).or_default();
-    rec.harvested_at = Some(Utc::now());
-    let body = json!({ "date": key, "record": rec });
-    save(&state.data_dir, &days_state)
-        .await
-        .map_err(|e| MemError::internal(anyhow::anyhow!(e)))?;
-    Ok(body)
+    modify(&state.data_dir, |days_state| {
+        let rec = days_state.days.entry(key.clone()).or_default();
+        rec.harvested_at = Some(Utc::now());
+        json!({ "date": key, "record": rec })
+    })
+    .await
 }
 
 // ── sweep (forget) ──────────────────────────────────────────────────────────
@@ -372,7 +401,7 @@ pub struct SweepRequest {
 }
 
 pub(in crate::ops) async fn sweep(state: &Memory, req: SweepRequest) -> Result<Value, MemError> {
-    let mut days_state = load(&state.data_dir).await;
+    let days_state = load(&state.data_dir).await;
     let cfg = crate::ops::config::load(&state.data_dir).await;
     let ttl_cutoff = Utc::now() - chrono::Duration::days(cfg.episodic_ttl_days as i64);
 
@@ -404,14 +433,16 @@ pub(in crate::ops) async fn sweep(state: &Memory, req: SweepRequest) -> Result<V
         *per_day.entry(day.clone()).or_default() += 1;
     }
 
+    // The counts go onto the file as it is now, not the snapshot read
+    // before the deletes: a mark stamped meanwhile stays.
     if !req.dry_run && removed > 0 {
-        for (day, n) in &per_day {
-            let rec = days_state.days.entry(day.clone()).or_default();
-            rec.forgotten = rec.forgotten.saturating_add(*n);
-        }
-        save(&state.data_dir, &days_state)
-            .await
-            .map_err(|e| MemError::internal(anyhow::anyhow!(e)))?;
+        modify(&state.data_dir, |now| {
+            for (day, n) in &per_day {
+                let rec = now.days.entry(day.clone()).or_default();
+                rec.forgotten = rec.forgotten.saturating_add(*n);
+            }
+        })
+        .await?;
     }
 
     Ok(json!({
@@ -451,6 +482,39 @@ mod tests {
             assert!(r.remembered_at.is_some());
             assert!(r.harvested_at.is_none());
         });
+    }
+
+    /// Concurrent stamps of different days all land: no save carries a
+    /// snapshot that misses another's mark.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    async fn concurrent_stamps_keep_every_mark() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = crate::handle::scratch_state(
+            dir.path(),
+            std::net::SocketAddr::from(([127, 0, 0, 1], 0)),
+        )
+        .await;
+        let days: Vec<String> = (2..42)
+            .map(|n| (Local::now() - chrono::Duration::days(n)).format("%Y-%m-%d").to_string())
+            .collect();
+        let calls = days.iter().enumerate().map(|(i, day)| {
+            let state = std::sync::Arc::clone(&state);
+            let date = day.clone();
+            tokio::spawn(async move {
+                if i % 2 == 0 {
+                    let req = RememberDayRequest { date, judged: 1, promoted: 0, harvested: false, holder: None };
+                    remember_day(&state, req).await.map(drop)
+                } else {
+                    harvest_day(&state, HarvestDayRequest { date }).await.map(drop)
+                }
+            })
+        });
+        for call in calls.collect::<Vec<_>>() {
+            call.await.unwrap().unwrap();
+        }
+        let saved = load(dir.path()).await;
+        let missing: Vec<&String> = days.iter().filter(|d| !saved.days.contains_key(*d)).collect();
+        assert!(missing.is_empty(), "lost marks: {missing:?}");
     }
 
     #[test]

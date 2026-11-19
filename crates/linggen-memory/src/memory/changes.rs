@@ -12,8 +12,8 @@
 //! entry per id.
 //!
 //! On disk: `<data_dir>/memory/.changes.jsonl`, one entry per line, appended
-//! and flushed per write. A torn last line (a crash mid-append) is skipped on
-//! open. It is outside the LanceDB tables, so the frozen store schema is
+//! and flushed per write. A torn last line (a crash mid-append) is repaired
+//! on open, before any append. It is outside the LanceDB tables, so the frozen store schema is
 //! untouched. When the file does not exist yet, the daemon seeds it with one
 //! entry per existing row, so `since=0` is a full copy.
 
@@ -61,7 +61,10 @@ pub fn log_path(data_dir: &Path) -> PathBuf {
 impl ChangeLog {
     pub fn open(path: PathBuf) -> std::io::Result<Self> {
         let (entries, fresh) = match std::fs::read_to_string(&path) {
-            Ok(text) => (parse(&text), false),
+            Ok(text) => {
+                cut_torn_tail(&path, &text)?;
+                (parse(&text), false)
+            }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => (Vec::new(), true),
             Err(e) => return Err(e),
         };
@@ -142,6 +145,27 @@ impl ChangeLog {
             Err(e) => tracing::warn!("change log: compaction failed: {e}"),
         }
     }
+}
+
+/// A last line without its newline is a crash mid-append: before anything
+/// is appended it is closed with a newline when it is a whole entry, else
+/// cut off the file — never left for the next entry to be glued to.
+fn cut_torn_tail(path: &Path, text: &str) -> std::io::Result<()> {
+    if text.is_empty() || text.ends_with('\n') {
+        return Ok(());
+    }
+    let keep = text.rfind('\n').map_or(0, |i| i + 1);
+    if serde_json::from_str::<Entry>(&text[keep..]).is_ok() {
+        return append(path, "\n");
+    }
+    tracing::warn!(
+        "change log: cutting a torn last line off {}",
+        path.display()
+    );
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(path)?
+        .set_len(keep as u64)
 }
 
 fn parse(text: &str) -> Vec<Entry> {
@@ -255,5 +279,44 @@ mod tests {
         .unwrap();
         let log = ChangeLog::open(path).unwrap();
         assert_eq!(log.head(), 1);
+    }
+
+    /// The torn tail is cut off on open, so the next append starts on a line
+    /// of its own and survives the next reopen.
+    #[test]
+    fn an_append_after_a_torn_tail_survives_a_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("c.jsonl");
+        std::fs::write(
+            &path,
+            "{\"seq\":1,\"id\":\"a\",\"table\":\"semantic\",\"op\":\"upsert\"}\n{\"seq\":2,\"id\"",
+        )
+        .unwrap();
+        let log = ChangeLog::open(path.clone()).unwrap();
+        log.record("semantic", Op::Upsert, &ids(&["b"]));
+        drop(log);
+
+        let again = ChangeLog::open(path).unwrap();
+        assert_eq!(again.head(), 2);
+        let (page, _, _) = again.since(1, 10);
+        assert_eq!(page.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(), ["b"]);
+    }
+
+    /// A whole last entry that only lacks its newline is kept and closed.
+    #[test]
+    fn a_whole_last_entry_without_its_newline_is_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("c.jsonl");
+        std::fs::write(
+            &path,
+            "{\"seq\":1,\"id\":\"a\",\"table\":\"semantic\",\"op\":\"upsert\"}",
+        )
+        .unwrap();
+        ChangeLog::open(path.clone())
+            .unwrap()
+            .record("semantic", Op::Upsert, &ids(&["b"]));
+        let again = ChangeLog::open(path).unwrap();
+        assert_eq!(again.head(), 2);
+        assert_eq!(again.since(0, 10).0.len(), 2);
     }
 }

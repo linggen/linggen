@@ -62,20 +62,63 @@ pub fn len(data_dir: &Path) -> usize {
     load(data_dir).len()
 }
 
+/// The one lock around every change to the outbox: a queued write
+/// ([`push`]) and a replayed one's removal ([`replay`]). Held for the file
+/// work only, never across a call to the primary.
+static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Read, change and save the outbox under [`LOCK`]. A file that does not
+/// read or parse is set aside under a new name first, never written over.
+fn modify<R>(data_dir: &Path, f: impl FnOnce(&mut Vec<Queued>) -> R) -> std::io::Result<R> {
+    let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut q = read_for_change(data_dir)?;
+    let out = f(&mut q);
+    save(data_dir, &q)?;
+    Ok(out)
+}
+
+/// The queue as it is on disk: missing is empty; unreadable is moved aside
+/// (said in the log) and the queue starts again.
+fn read_for_change(data_dir: &Path) -> std::io::Result<Vec<Queued>> {
+    let p = path(data_dir);
+    let text = match std::fs::read_to_string(&p) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return set_aside(&p, &e.to_string()),
+    };
+    match serde_json::from_str(&text) {
+        Ok(q) => Ok(q),
+        Err(e) => set_aside(&p, &e.to_string()),
+    }
+}
+
+fn set_aside(p: &Path, why: &str) -> std::io::Result<Vec<Queued>> {
+    let aside = p.with_extension(format!(
+        "json.unreadable-{}",
+        Utc::now().format("%Y%m%dT%H%M%S%.6fZ")
+    ));
+    std::fs::rename(p, &aside)?;
+    tracing::warn!(
+        "replica: the outbox did not read ({why}); set aside as {}",
+        aside.display()
+    );
+    Ok(Vec::new())
+}
+
 /// Queue one write, after its local apply.
 pub fn push(state: &SharedState, verb: &str, args: Value, local_ids: Vec<String>) -> Result<()> {
-    let mut q = load(&state.data_dir);
-    let seq = q.last().map_or(1, |e| e.seq + 1);
     let replica_id = state.replica.snapshot().device_id.unwrap_or_default();
-    q.push(Queued {
-        seq,
-        verb: verb.to_string(),
-        args,
-        replica_id,
-        created_at: Utc::now(),
-        local_ids,
-    });
-    save(&state.data_dir, &q)?;
+    modify(&state.data_dir, |q| {
+        let seq = q.last().map_or(1, |e| e.seq + 1);
+        q.push(Queued {
+            seq,
+            verb: verb.to_string(),
+            args,
+            replica_id,
+            created_at: Utc::now(),
+            local_ids,
+        });
+    })?;
     Ok(())
 }
 
@@ -114,11 +157,7 @@ pub async fn replay(state: &SharedState) -> Result<()> {
             return Ok(());
         };
         replay_one(state, &base, &token, &first).await?;
-        let rest: Vec<Queued> = load(&state.data_dir)
-            .into_iter()
-            .filter(|e| e.seq != first.seq)
-            .collect();
-        save(&state.data_dir, &rest)?;
+        modify(&state.data_dir, |q| q.retain(|e| e.seq != first.seq))?;
     }
 }
 
@@ -271,6 +310,33 @@ mod tests {
         assert_eq!(target_ids("/api/memory/update", &upd), vec!["c"]);
         assert!(target_ids("/api/memory/add", &json!({ "content": "z" })).is_empty());
         assert!(target_ids("/api/memory/issue_add", &json!({ "id": "q" })).is_empty());
+    }
+
+    /// Writes queued at once each take a sequence number of their own and
+    /// all stay queued.
+    #[tokio::test]
+    async fn concurrent_pushes_each_queue_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = crate::hosted::open_quiet_fake(dir.path(), String::new())
+            .await
+            .unwrap();
+        let start = std::sync::Arc::new(std::sync::Barrier::new(16));
+        let threads: Vec<_> = (0..16)
+            .map(|i| {
+                let (state, start) = (state.clone(), std::sync::Arc::clone(&start));
+                std::thread::spawn(move || {
+                    start.wait();
+                    push(&state, "/api/memory/add", json!({ "content": i }), Vec::new())
+                })
+            })
+            .collect();
+        for t in threads {
+            t.join().unwrap().unwrap();
+        }
+        let mut seqs: Vec<u64> = load(dir.path()).iter().map(|e| e.seq).collect();
+        seqs.sort();
+        seqs.dedup();
+        assert_eq!(seqs.len(), 16, "{seqs:?}");
     }
 
     #[test]

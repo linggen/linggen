@@ -96,6 +96,15 @@ fn restrict(_: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// The one lock for writing `paired-devices.json` in this process. Its
+/// writers: the engine's device store (`modify`), and Allow and Revoke here.
+/// Each reads, changes and saves the list while holding it.
+static DEVICE_LIST: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+pub fn device_list_lock() -> std::sync::MutexGuard<'static, ()> {
+    DEVICE_LIST.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 fn modify<T, R>(path: &Path, f: impl FnOnce(&mut Vec<T>) -> R) -> io::Result<R>
 where
     T: Serialize + serde::de::DeserializeOwned,
@@ -137,6 +146,7 @@ pub fn allow(data_dir: &Path, device_id: &str, name: &str, ip: IpAddr) -> io::Re
         "settings": {},
     });
     let id = row["id"].as_str().unwrap_or_default().to_string();
+    let _list = device_list_lock();
     modify(&paired_path(data_dir), |rows: &mut Vec<Value>| {
         rows.retain(|r| row_device_id(r) != Some(device_id));
         rows.push(row);
@@ -173,6 +183,7 @@ pub fn is_known(data_dir: &Path, device_id: &str) -> bool {
 
 /// Revoke one machine this daemon allowed. False if it is not one of ours.
 pub fn revoke(data_dir: &Path, id: &str) -> io::Result<bool> {
+    let _list = device_list_lock();
     let ours = read_list::<Allowed>(&allowed_path(data_dir))?
         .iter()
         .any(|a| a.id == id);

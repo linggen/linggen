@@ -80,12 +80,13 @@ async fn forward(state: &SharedState, path: &str, args: &Value) -> Option<Reply>
 }
 
 /// The local apply happened and answered `data`; queue the write for the
-/// primary.
-pub(crate) fn queue(state: &SharedState, path: &str, args: Value, data: &Value) {
+/// primary. A write that could not be queued is an error its caller sees.
+pub(crate) fn queue(state: &SharedState, path: &str, args: Value, data: &Value) -> anyhow::Result<()> {
     let reply = json!({ "data": data });
-    if let Err(e) = outbox::push(state, path, args, created_ids(&reply)) {
+    outbox::push(state, path, args, created_ids(&reply)).map_err(|e| {
         tracing::warn!("replica: could not queue {path}: {e:#}");
-    }
+        e
+    })
 }
 
 /// Rows the local apply CREATED (not merged into): dropped after replay,

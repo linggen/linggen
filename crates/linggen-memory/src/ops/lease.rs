@@ -18,6 +18,12 @@ pub const LEASE_FOR_MINUTES: i64 = 30;
 pub struct Lease {
     pub holder: String,
     pub expires_at: DateTime<Utc>,
+    /// When this holder first took the day — before it read the day's
+    /// worklist — kept across renewals. Its stamp covers rows from before
+    /// this instant ([`read_boundary`]). Absent on a lease file written
+    /// before the field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acquired_at: Option<DateTime<Utc>>,
 }
 
 type Leases = BTreeMap<String, Lease>;
@@ -69,6 +75,20 @@ pub fn held_by_other(
         .cloned()
 }
 
+/// When `holder`'s live lease on `day` was taken: the instant before its
+/// worklist read, so what its stamp may cover. `None` without such a lease.
+pub fn read_boundary(
+    data_dir: &Path,
+    day: &str,
+    holder: &str,
+    now: DateTime<Utc>,
+) -> Option<DateTime<Utc>> {
+    load(data_dir)
+        .get(day)
+        .filter(|l| l.expires_at > now && l.holder == holder)
+        .and_then(|l| l.acquired_at)
+}
+
 pub fn decide(
     data_dir: &Path,
     day: &str,
@@ -88,9 +108,13 @@ pub fn decide(
             Verdict::Released
         }
         _ => {
+            // A renewal (or a second acquire) by the holder keeps the
+            // instant it first took the day.
+            let acquired_at = leases.get(day).and_then(|l| l.acquired_at).unwrap_or(now);
             let lease = Lease {
                 holder: holder.to_string(),
                 expires_at: now + Duration::minutes(LEASE_FOR_MINUTES),
+                acquired_at: Some(acquired_at),
             };
             leases.insert(day.to_string(), lease.clone());
             Verdict::Granted(lease)
@@ -125,25 +149,24 @@ pub(in crate::ops) async fn dream_lease(state: &Memory, req: LeaseRequest) -> Re
     if !matches!(req.action.as_str(), "acquire" | "renew" | "release") {
         return Err(MemError::bad_request("action is acquire, renew or release"));
     }
-    if req.holder.trim().is_empty()
-        || chrono::NaiveDate::parse_from_str(&req.day, "%Y-%m-%d").is_err()
-    {
+    let day = crate::ops::days::day_key(&req.day);
+    let (Ok(day), false) = (day, req.holder.trim().is_empty()) else {
         return Err(MemError::bad_request(
             "day is YYYY-MM-DD and holder is required",
         ));
-    }
+    };
     let verdict = decide(
         &state.data_dir,
-        &req.day,
+        &day,
         req.holder.trim(),
         &req.action,
         Utc::now(),
     )
     .map_err(|e| MemError::internal(anyhow::anyhow!(e)))?;
     match verdict {
-        Verdict::Held(l) => Err(busy(&req.day, &l)),
-        Verdict::Granted(l) => Ok(json!({ "day": req.day, "lease": l })),
-        Verdict::Released => Ok(json!({ "day": req.day, "released": true })),
+        Verdict::Held(l) => Err(busy(&day, &l)),
+        Verdict::Granted(l) => Ok(json!({ "day": day, "lease": l })),
+        Verdict::Released => Ok(json!({ "day": day, "released": true })),
     }
 }
 

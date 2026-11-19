@@ -3,17 +3,18 @@
 //! Every LAN request and every tunnelled phone call asks "which device is
 //! this?", so the list lives in memory and the file is re-read only when it
 //! changed on disk (a hand edit — revoking by deleting a row is documented).
-//! Writes go through [`DeviceStore::modify`]: one writer at a time, temp file
-//! + rename, so a reader never sees half a file.
+//! Writes go through [`DeviceStore::modify`]: one writer at a time — under
+//! `ling_mem::hosted::device_list_lock`, the lock memory's Allow and Revoke
+//! hold too — temp file + rename, so a reader never sees half a file.
 //!
 //! A file that no longer parses is never taken as "no devices": the last good
 //! list stays in memory, and the next write moves the unreadable file aside
 //! instead of overwriting it.
 
 use super::PairedDevice;
-use crate::util::{LockExt, RwLockExt};
+use crate::util::RwLockExt;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, RwLock};
+use std::sync::RwLock;
 use std::time::{Duration, Instant, SystemTime};
 
 /// How long a cached read is trusted before the file's stamp is checked again.
@@ -35,9 +36,6 @@ struct Cache {
 pub(super) struct DeviceStore {
     path: PathBuf,
     cache: RwLock<Option<Cache>>,
-    /// Serializes read-modify-write, so two concurrent updates can't each
-    /// save a list missing the other's change.
-    writer: Mutex<()>,
 }
 
 /// Seeds / migrates rows as they are read; true when a row changed and the
@@ -49,18 +47,24 @@ impl DeviceStore {
         Self {
             path,
             cache: RwLock::new(None),
-            writer: Mutex::new(()),
         }
     }
 
-    /// The current device list.
+    /// The current device list. Rows a migration changed are persisted
+    /// through [`Self::modify`], under the one writer lock.
     pub(super) fn load(&self, migrate: Migrate) -> Vec<PairedDevice> {
         if let Some(c) = self.cache.read_ok().as_ref() {
             if c.checked.is_some_and(|t| t.elapsed() < RECHECK) {
                 return c.devices.clone();
             }
         }
-        self.refresh(migrate)
+        let (devices, migrated) = self.refresh(migrate);
+        if migrated {
+            if let Err(e) = self.modify(migrate, |_| ()) {
+                tracing::warn!("[pair] could not persist migrated device rows: {e}");
+            }
+        }
+        devices
     }
 
     /// Drop what the cache knows of the file, so the next read checks it.
@@ -71,27 +75,32 @@ impl DeviceStore {
         }
     }
 
-    /// Apply `f` to the list and persist it atomically.
+    /// Apply `f` to the list and persist it atomically, holding the one lock
+    /// every writer of the device file in this process holds (memory's
+    /// Allow and Revoke too), so no save carries a list missing another's
+    /// change.
     pub(super) fn modify<R>(
         &self,
         migrate: Migrate,
         f: impl FnOnce(&mut Vec<PairedDevice>) -> R,
     ) -> std::io::Result<R> {
-        let _w = self.writer.lock_ok();
-        let mut devices = self.refresh(migrate);
+        let _w = ling_mem::hosted::device_list_lock();
+        let (mut devices, _) = self.refresh(migrate);
         let out = f(&mut devices);
         self.save(&devices)?;
         Ok(out)
     }
 
-    fn refresh(&self, migrate: Migrate) -> Vec<PairedDevice> {
+    /// The list as the file has it now, and whether a migration changed a
+    /// row (the caller persists it; this never writes).
+    fn refresh(&self, migrate: Migrate) -> (Vec<PairedDevice>, bool) {
         let stamp = stamp_of(&self.path);
         {
             let mut guard = self.cache.write_ok();
             if let Some(c) = guard.as_mut() {
                 if c.stamp == stamp {
                     c.checked = Some(Instant::now());
-                    return c.devices.clone();
+                    return (c.devices.clone(), false);
                 }
             }
         }
@@ -99,12 +108,7 @@ impl DeviceStore {
             Ok(mut devices) => {
                 let migrated = migrate(&mut devices);
                 self.set_cache(devices.clone(), stamp, false);
-                if migrated {
-                    if let Err(e) = self.save(&devices) {
-                        tracing::warn!("[pair] could not persist migrated device rows: {e}");
-                    }
-                }
-                devices
+                (devices, migrated)
             }
             Err(e) => {
                 tracing::error!(
@@ -116,7 +120,7 @@ impl DeviceStore {
                 c.stamp = stamp;
                 c.checked = Some(Instant::now());
                 c.corrupt = true;
-                c.devices.clone()
+                (c.devices.clone(), false)
             }
         }
     }
@@ -235,6 +239,39 @@ mod tests {
             .filter_map(|e| e.ok())
             .any(|e| e.file_name().to_string_lossy().contains("corrupt"));
         assert!(aside, "unreadable file is moved aside, never overwritten");
+    }
+
+    /// The device file has one writer lock in this process,
+    /// `ling_mem::hosted::device_list_lock`. Its writers are this store's
+    /// `modify` and memory's Allow and Revoke; each holds that lock while it
+    /// reads, changes and saves. A write outside them, or one that does not
+    /// hold the lock, fails here.
+    #[test]
+    fn every_write_of_the_device_file_holds_the_one_lock() {
+        let engine = include_str!("store.rs");
+        let memory = include_str!("../../../../linggen-memory/src/http/connect/devices.rs");
+        let cases: [(&str, &str, &[&str], usize); 2] = [
+            ("store.rs", engine, &["self.save(", "write_atomic(&self.path"], 1),
+            ("devices.rs", memory, &["modify(&paired_path(", "write_list(&paired_path("], 2),
+        ];
+        for (file, text, writes, expected) in cases {
+            let code = text.split("#[cfg(test)]").next().unwrap_or("");
+            let writers: Vec<&str> = code
+                .split("fn ")
+                .filter(|body| writes.iter().any(|w| body.contains(w)))
+                // The two save primitives themselves, each called only by
+                // the writers counted here.
+                .filter(|body| !body.starts_with("save(") && !body.starts_with("modify<T, R>("))
+                .collect();
+            for body in &writers {
+                let name = body.split('(').next().unwrap_or(body);
+                assert!(
+                    body.contains("device_list_lock()"),
+                    "{file}: {name} writes the device file without the one lock"
+                );
+            }
+            assert_eq!(writers.len(), expected, "{file}: writers of the device file");
+        }
     }
 
     #[test]
