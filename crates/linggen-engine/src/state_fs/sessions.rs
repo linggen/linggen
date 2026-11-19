@@ -758,8 +758,12 @@ impl SessionStore {
         Ok(messages)
     }
 
+    /// Empty a session's history, under the lock every rewrite and append
+    /// takes ([`edit_chat_history`](Self::edit_chat_history)): a summary being
+    /// written in never meets a clear halfway.
     pub fn clear_chat_history(&self, session_id: &str) -> Result<usize> {
         Self::validate_id(session_id)?;
+        let _guard = self.append_lock.lock().unwrap_or_else(|e| e.into_inner());
         let msgs_path = self.session_dir(session_id).join("messages.jsonl");
         if !msgs_path.exists() {
             return Ok(0);
