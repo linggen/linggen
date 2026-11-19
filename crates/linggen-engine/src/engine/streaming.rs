@@ -38,6 +38,64 @@ pub(crate) fn strip_think_tags(text: &str) -> String {
     result
 }
 
+/// What of a streamed reply is shown live: the text outside `<think>`
+/// blocks, decided token by token — the same text `strip_think_tags` keeps.
+/// A tag split across tokens is held until it is whole.
+#[derive(Default)]
+pub(crate) struct ThinkFilter {
+    /// Inside a think block.
+    hidden: bool,
+    /// The end of the last token, which may be the start of a tag.
+    held: String,
+}
+
+impl ThinkFilter {
+    /// The part of `token` that is shown.
+    pub(crate) fn feed(&mut self, token: &str) -> String {
+        let mut text = std::mem::take(&mut self.held);
+        text.push_str(token);
+        let mut shown = String::new();
+        let mut rest = text.as_str();
+        loop {
+            let tag = if self.hidden { "</think>" } else { "<think>" };
+            if let Some(at) = rest.find(tag) {
+                if !self.hidden {
+                    shown.push_str(&rest[..at]);
+                }
+                rest = &rest[at + tag.len()..];
+                self.hidden = !self.hidden;
+                continue;
+            }
+            let keep = partial_tag_len(rest, tag);
+            let (now, later) = rest.split_at(rest.len() - keep);
+            if !self.hidden {
+                shown.push_str(now);
+            }
+            self.held = later.to_string();
+            return shown;
+        }
+    }
+
+    /// What is still held back when the stream ends: a start of a tag that
+    /// never became one is text, shown unless inside a block.
+    pub(crate) fn finish(&mut self) -> String {
+        let held = std::mem::take(&mut self.held);
+        if self.hidden {
+            String::new()
+        } else {
+            held
+        }
+    }
+}
+
+/// How many bytes at the end of `text` could begin `tag`.
+fn partial_tag_len(text: &str, tag: &str) -> usize {
+    (1..tag.len())
+        .rev()
+        .find(|&n| text.ends_with(&tag[..n]))
+        .unwrap_or(0)
+}
+
 // ---------------------------------------------------------------------------
 // JSON recovery helpers
 // ---------------------------------------------------------------------------
@@ -268,8 +326,8 @@ impl AgentEngine {
 
         let mut accumulated_text = String::new();
         let mut token_usage: Option<crate::provider::models::TokenUsage> = None;
-        // Track whether we're inside a <think> block to suppress streaming
-        let mut in_think_block = false;
+        // What of the text is shown live: none of a <think> block.
+        let mut think = ThinkFilter::default();
         // Accumulate tool call deltas keyed by index
         let mut tc_ids: Vec<Option<String>> = Vec::new();
         let mut tc_names: Vec<Option<String>> = Vec::new();
@@ -303,20 +361,14 @@ impl AgentEngine {
             match chunk {
                 StreamChunk::Token(token) => {
                     accumulated_text.push_str(&token);
-                    // Detect <think> / </think> boundaries for streaming suppression.
-                    if !in_think_block && accumulated_text.contains("<think>") {
-                        in_think_block = true;
-                    }
-                    if in_think_block && accumulated_text.contains("</think>") {
-                        in_think_block = false;
-                    }
-                    // Stream content tokens so the UI shows progress in real time.
-                    // Skip tokens inside <think> blocks.
+                    // Stream content tokens so the UI shows progress in real time,
+                    // none of a <think> block.
                     // Plan mode tokens stream normally — the UI shows them as
                     // a generating message. When PlanUpdate arrives the frontend
                     // replaces the streaming text with the PlanBlock.
-                    if !in_think_block {
-                        self.stream(ThinkingEvent::ContentToken(token));
+                    let shown = think.feed(&token);
+                    if !shown.is_empty() {
+                        self.stream(ThinkingEvent::ContentToken(shown));
                     }
                 }
                 StreamChunk::Usage(usage) => {
@@ -354,6 +406,10 @@ impl AgentEngine {
             }
         }
 
+        let shown = think.finish();
+        if !shown.is_empty() {
+            self.stream(ThinkingEvent::ContentToken(shown));
+        }
         // Signal content stream done (not thinking done — avoids re-enabling
         // the UI thinking indicator after content tokens have been streamed).
         self.stream(ThinkingEvent::ContentDone);
@@ -719,6 +775,27 @@ impl AgentEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn shown(tokens: &[&str]) -> String {
+        let mut filter = ThinkFilter::default();
+        let mut out: String = tokens.iter().map(|t| filter.feed(t)).collect();
+        out.push_str(&filter.finish());
+        out
+    }
+
+    /// Live text shows exactly what the kept text keeps: a second think
+    /// section, a section opened and closed in one chunk, and a tag split
+    /// across chunks all stay hidden.
+    #[test]
+    fn live_text_hides_every_think_section() {
+        let two = ["<think>first", "</think>A", " <think>", "second", "</think>B"];
+        assert_eq!(shown(&two), "A B");
+        assert_eq!(shown(&two), strip_think_tags(&two.concat()));
+        assert_eq!(shown(&["Hi <think>secret</think> there"]), "Hi  there");
+        assert_eq!(shown(&["x<thi", "nk>hidden</th", "ink>y"]), "xy");
+        assert_eq!(shown(&["a <b> c", " <thin"]), "a <b> c <thin");
+        assert_eq!(shown(&["<think>never closed"]), "");
+    }
 
     #[test]
     fn strip_think_tags_basic() {
