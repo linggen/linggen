@@ -818,17 +818,7 @@ impl AgentManager {
         repo.insert(key, entry);
     }
 
-    pub async fn clear_working_place_for_agent(&self, repo_path: &str, agent_id: &str) {
-        let mut places = self.working_places.lock().await;
-        if let Some(repo_map) = places.get_mut(repo_path) {
-            // Remove entries matching this agent_id (the key might be agent_id or run_id).
-            repo_map.retain(|_, entry| entry.agent_id != agent_id);
-            if repo_map.is_empty() {
-                places.remove(repo_path);
-            }
-        }
-    }
-
+    /// A run's working paths are kept per run and cleared when that run ends.
     pub async fn clear_working_place_for_run(&self, run_id: &str) {
         let mut places = self.working_places.lock().await;
         let repos: Vec<String> = places.keys().cloned().collect();

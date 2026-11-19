@@ -125,8 +125,6 @@ impl AgentManager {
                 self.record_latest_session(agent_id, sid, &repo_path);
             }
         }
-        self.clear_working_place_for_agent(&repo_path, agent_id)
-            .await;
         tracing::info!(
             run_id = %run_id,
             agent_id = %agent_id,
@@ -388,5 +386,28 @@ mod message_tests {
         assert_eq!(manager.reap_runs(&[run.clone()], 0), [run.clone()]);
         assert!(!manager.run_messages.lock().unwrap().contains_key(&run));
         assert!(manager.run_lives.lock().unwrap().is_empty());
+    }
+
+    /// A second run of the same agent in the same project leaves the first
+    /// run's working paths alone; each run's paths go when that run ends.
+    #[tokio::test]
+    async fn a_new_run_keeps_another_runs_working_paths() {
+        let manager = AgentManager::new(
+            crate::config::Config::default(), None,
+            Arc::new(crate::engine::test_registries::Empty),
+            Arc::new(crate::engine::test_registries::Empty),
+            Arc::new(crate::engine::test_registries::Empty),
+            crate::engine::InterfaceMode::Web,
+        ).0;
+        let repo = Path::new(".").canonicalize().unwrap().to_string_lossy().to_string();
+        let first = manager.begin_agent_run(Path::new("."), Some("s1"), "ling", None, None).await.unwrap();
+        manager.upsert_working_place(&repo, "ling", "a.txt", Some(first.clone())).await;
+        let second = manager.begin_agent_run(Path::new("."), Some("s2"), "ling", None, None).await.unwrap();
+        let places = manager.list_working_places_for_repo(&repo).await;
+        assert_eq!(places.len(), 1, "the first run's path is still listed");
+        assert_eq!(places[0].run_id.as_deref(), Some(first.as_str()));
+        manager.finish_agent_run(&first, AgentRunStatus::Completed, None).await.unwrap();
+        assert!(manager.list_working_places_for_repo(&repo).await.is_empty());
+        manager.finish_agent_run(&second, AgentRunStatus::Completed, None).await.unwrap();
     }
 }
