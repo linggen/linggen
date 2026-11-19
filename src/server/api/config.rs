@@ -46,6 +46,12 @@ pub(crate) async fn update_config_api(
 /// Take the keys out of a posted config into `creds_file` and prune the
 /// per-model overrides of rows it no longer has.
 fn take_credentials(new_config: &mut Config, creds_file: &std::path::Path) -> Result<(), String> {
+    // A page opened before a ChatGPT family moved (or a Stay was pressed)
+    // posts the old ids back: they follow the catalog again here.
+    new_config.follow_chatgpt_catalog(&crate::provider::models::chatgpt_catalog::current());
+    // A config the save refuses writes nothing: checked before the
+    // credentials file is even read (reading may migrate it).
+    new_config.validate().map_err(|e| e.to_string())?;
     // Strip API keys from config — they should be saved via /api/credentials instead.
     // For backward compat: if the UI sends a non-redacted, non-empty key, migrate it
     // to credentials.json.
@@ -63,16 +69,11 @@ fn take_credentials(new_config: &mut Config, creds_file: &std::path::Path) -> Re
         // Always strip from TOML
         model.api_key = None;
     }
-    // A page opened before a ChatGPT family moved (or a Stay was pressed)
-    // posts the old ids back: they follow the catalog again here.
-    new_config.follow_chatgpt_catalog(&crate::provider::models::chatgpt_catalog::current());
     // An override belongs to a model row; a deleted row takes it along.
     if creds.prune_overrides(&new_config.models) > 0 {
         creds_changed = true;
     }
 
-    // A config the save refuses writes nothing.
-    new_config.validate().map_err(|e| e.to_string())?;
     if creds_changed {
         if let Err(e) = creds.save(creds_file) {
             tracing::warn!("Failed to save credentials.json: {}", e);
