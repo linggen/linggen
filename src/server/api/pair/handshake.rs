@@ -87,8 +87,29 @@ pub(crate) struct PairConfirm {
     code: String,
 }
 
+/// Wrong codes so far, across codes ([`super::guesses`]).
+static GUESSES: std::sync::LazyLock<Mutex<super::guesses::Guesses>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// The address a request came from; unspecified when it came in-process.
+fn peer_of(extensions: &axum::http::Extensions) -> std::net::IpAddr {
+    extensions
+        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+        .map_or(std::net::Ipv4Addr::UNSPECIFIED.into(), |info| info.0.ip())
+}
+
 /// POST /api/pair/confirm — trade the on-screen code for a device token.
-pub(crate) async fn post_pair_confirm(Json(req): Json<PairConfirm>) -> impl IntoResponse {
+/// A peer past its share of wrong codes, or all peers past theirs, waits
+/// before any guess is heard — the right one too.
+pub(crate) async fn post_pair_confirm(
+    extensions: axum::http::Extensions,
+    Json(req): Json<PairConfirm>,
+) -> impl IntoResponse {
+    let peer = peer_of(&extensions);
+    if let Some(wait) = GUESSES.lock_ok().wait(peer, Instant::now()) {
+        let secs = wait.as_secs().max(1);
+        return err(StatusCode::TOO_MANY_REQUESTS, format!("too many wrong codes — try again in {secs}s"));
+    }
     // Everything touching the lock happens in here: the guard is not Send, and
     // minting the relay grant below is an await.
     let claimed = {
@@ -109,8 +130,10 @@ pub(crate) async fn post_pair_confirm(Json(req): Json<PairConfirm>) -> impl Into
             );
         }
         if p.code != req.code.trim() {
+            GUESSES.lock_ok().wrong(peer, Instant::now());
             return err(StatusCode::UNAUTHORIZED, "wrong code");
         }
+        GUESSES.lock_ok().right(peer);
         let claimed = (
             p.device_name.clone(),
             p.device_id.clone(),
@@ -354,4 +377,44 @@ pub(crate) async fn post_pair_qr_confirm(
         "relay_grant": grant_for(&device).await,
     }))
     .into_response()
+}
+
+#[cfg(test)]
+mod guess_tests {
+    use super::*;
+
+    fn offer(code: &str) -> String {
+        let pair_id = uuid::Uuid::new_v4().to_string();
+        *PENDING.lock_ok() = Some(PendingPair {
+            pair_id: pair_id.clone(),
+            code: code.into(),
+            device_name: "test phone".into(),
+            device_id: None,
+            account: None,
+            created: Instant::now(),
+            attempts: 0,
+        });
+        pair_id
+    }
+
+    async fn confirm(peer: &str, pair_id: &str, code: &str) -> StatusCode {
+        let req = PairConfirm { pair_id: pair_id.into(), code: code.into() };
+        let mut extensions = axum::http::Extensions::new();
+        extensions.insert(axum::extract::ConnectInfo(peer.parse::<std::net::SocketAddr>().unwrap()));
+        post_pair_confirm(extensions, Json(req)).await.into_response().status()
+    }
+
+    /// Wrong guesses are counted per peer across codes: a new code does not
+    /// clear them, and a peer past its share waits — even with the right code.
+    #[tokio::test]
+    async fn a_run_of_wrong_guesses_is_locked_out_across_codes() {
+        let peer = "192.0.2.20:5000";
+        for _ in 0..3 {
+            let id = offer("123456");
+            assert_eq!(confirm(peer, &id, "000000").await, StatusCode::UNAUTHORIZED);
+        }
+        let id = offer("123456");
+        assert_eq!(confirm(peer, &id, "123456").await, StatusCode::TOO_MANY_REQUESTS);
+        *PENDING.lock_ok() = None;
+    }
 }

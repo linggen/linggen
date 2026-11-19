@@ -26,6 +26,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 mod bonjour;
+mod guesses;
 mod handshake;
 mod identity;
 mod manage;
