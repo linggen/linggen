@@ -1475,7 +1475,7 @@ mod member_tests {
         std::fs::write(root.path().join("a.txt"), "a").unwrap();
         let mut engine = engine_at(root.path());
         let task = "[HIDDEN] the page says hello (lang en)";
-        engine.task = Some(task.into());
+        engine.set_task(task.into());
         engine.native_tool_mode = true;
         let (messages, allowed_tools, read_paths) =
             engine.prepare_loop_messages(task, true, crate::engine::prompt::PromptPurpose::Turn);
