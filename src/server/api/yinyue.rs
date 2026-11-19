@@ -517,7 +517,7 @@ mod one_voice_rule {
         let voice = format!("{}{}", "speaks_", "aloud(");
         check(&voice, &[("src/server/api/yinyue.rs", 2)]);
         let seen = format!("{}{}", "Sight::", "Line");
-        check(&seen, &[("src/server/api/yinyue.rs", 1), ("src/server/resident/triggers.rs", 1)]);
+        check(&seen, &[("src/server/api/yinyue.rs", 1), ("src/server/resident/triggers.rs", 2)]);
     }
 }
 

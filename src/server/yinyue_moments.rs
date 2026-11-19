@@ -7,7 +7,7 @@
 //! said then. The moments wait here until the user has been at the screen and
 //! still for a while — or, for a `big` one (a loss, a hard win), until the
 //! screen has settled — and only then is she woken, once, with everything that
-//! piled up since she last spoke. She may say one line, or `SILENT`.
+//! piled up since she last spoke. She may say one line (a `<say>` envelope), or nothing.
 //!
 //! The engine names no app: it carries the app's own words to her. Why a
 //! queue and a gate rather than a wake per event: an LLM asked to respond
@@ -211,7 +211,7 @@ pub(crate) fn kickoff(moments: &[Moment]) -> String {
          in the language these notes are written in: comfort after a loss or a wound, gladness \
          at something hard-won, a little courage before what's ahead, or just being there. \
          Never repeat what is already on their screen, never tell them what to do next, never \
-         mention these notes or that you were told. If nothing is worth a word, SILENT. {}",
+         mention these notes or that you were told. If nothing is worth a word, say nothing. {}",
         app_names(moments),
         fact_lines(moments),
         YOURS_ALONE
@@ -905,7 +905,7 @@ mod tests {
         ]);
         assert!(k.starts_with("While the user was in game,"));
         assert!(k.find("打赢了夔").unwrap() < k.find("气血只剩 6").unwrap());
-        assert!(k.contains("SILENT"));
+        assert!(k.contains("say nothing"));
         assert_eq!(mood_of(&[m(1, false)]), "neutral");
     }
 
@@ -948,7 +948,7 @@ mod tests {
         let k = asked_kickoff(&[asked]);
         assert!(k.contains("雷神放出雷霆"));
         assert!(
-            !k.contains("SILENT"),
+            !k.contains("say nothing"),
             "the answer contract offers no silence"
         );
     }

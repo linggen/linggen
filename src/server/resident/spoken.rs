@@ -304,6 +304,19 @@ pub(super) fn finalize_event(reply: Option<&str>, source: &str) -> Option<Event>
     }
 }
 
+/// The language of a line a person wrote, when it can be told from the line:
+/// Chinese when Han characters outnumber its Latin words. Anything else says
+/// nothing — the turn then keeps the UI / selected app language the engine
+/// already knows. The sample is the person's, never the English kickoff.
+pub(crate) fn language_of_sample(sample: &str) -> Option<String> {
+    let han = crate::server::api::tts_text::han_count(sample);
+    let latin = sample
+        .split(|c: char| !c.is_ascii_alphabetic())
+        .filter(|w| w.len() >= 2)
+        .count();
+    (han > 0 && han >= latin).then(|| "zh-Hans".to_string())
+}
+
 /// Whether a turn of hers was started by the engine (a herald, a condition, a
 /// quiet moment, a peer's message, a fault, a told task end) rather than by a
 /// person — "user" — or for an answer a person asked for — "asked". Only an
@@ -531,6 +544,22 @@ mod tests {
         // A bare reply, or SILENT, says nothing.
         assert!(finalize_event(Some("SILENT"), "t").is_none());
         assert!(finalize_event(None, "t").is_none());
+    }
+
+    #[test]
+    fn the_language_comes_from_what_the_person_wrote_never_from_the_kickoff() {
+        use super::language_of_sample;
+        assert_eq!(language_of_sample("帮我看看这个文件").as_deref(), Some("zh-Hans"));
+        // English, or nothing to read: the UI language stands.
+        assert_eq!(language_of_sample("please look at this file"), None);
+        assert_eq!(language_of_sample(""), None);
+    }
+
+    #[test]
+    fn the_contract_is_one_short_sentence_said_once() {
+        let wrapped = with_contract("k".into(), "event");
+        assert_eq!(wrapped.matches("<say>").count(), 1, "{wrapped}");
+        assert!(!wrapped.contains("SILENT") && !wrapped.contains("blank line"), "{wrapped}");
     }
 
     #[test]

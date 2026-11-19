@@ -97,6 +97,16 @@ pub(super) async fn run_home(
     // Engine-authored kickoffs (heralds, agent_chat, asked) carry the
     // spoken-line contract; a person's own words are never appended to.
     let task = with_contract(task, trigger_source);
+    // The words of an engine-started turn are in the language the person
+    // writes in — the latest line they typed here — whatever language the
+    // kickoff is written in; with none to read, the UI language stands.
+    let language = match language {
+        None if is_event_turn(trigger_source) => {
+            let sample = super::triggers::last_user_line(state, &session_id).await;
+            sample.as_deref().and_then(super::spoken::language_of_sample)
+        }
+        named => named,
+    };
     // Her own thread holds no skill: home.
     let place = crate::server::chat::turn_place::of_session_id(&state.manager, &session_id);
     let turn = Turn {

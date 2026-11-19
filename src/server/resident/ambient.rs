@@ -49,7 +49,7 @@ async fn until_next_glance(state: &Arc<ServerState>, secs: u64) {
         let step = left.min(PAGE_TICK_SECS);
         tokio::time::sleep(Duration::from_secs(step)).await;
         left -= step;
-        if WAITING_FOR_A_PAGE.load(Ordering::Relaxed) && super::triggers::user_sees(state, super::triggers::Sight::Line(None)) {
+        if WAITING_FOR_A_PAGE.load(Ordering::Relaxed) && super::triggers::a_page_is_in_front(state) {
             return;
         }
     }
@@ -78,7 +78,7 @@ pub(super) async fn ambient_glance(state: &Arc<ServerState>) {
         tracing::info!("[yinyue-ambient] condition crossed: {}", notice.topic);
         // A condition is for a person who can see it: with no Linggen page in
         // front there is no model call, nothing told, and it stays due.
-        if !super::triggers::user_sees(state, super::triggers::Sight::Line(None)) {
+        if !super::triggers::a_page_is_in_front(state) {
             WAITING_FOR_A_PAGE.store(true, std::sync::atomic::Ordering::Relaxed);
             tracing::info!("[yinyue-ambient] no page in front — {} waits", notice.topic);
             return;
@@ -106,19 +106,19 @@ pub(super) async fn ambient_glance(state: &Arc<ServerState>) {
             Some(raised),
         )
         .await;
-        if !super::triggers::user_sees(state, super::triggers::Sight::Line(None)) {
+        if !super::triggers::a_page_is_in_front(state) {
             WAITING_FOR_A_PAGE.store(true, std::sync::atomic::Ordering::Relaxed);
         }
         return;
     }
     let kickoff = "A quiet moment — no event, just you. Right now tells you how things are; \
-        read it and decide. Most of the time there's nothing worth saying — reply with exactly SILENT. \
+        read it and decide. Most of the time there's nothing worth saying. \
         Only now and then, if a small natural remark genuinely fits — the hour, how the day's \
-        gone, the quiet, your own mood — say ONE short line in your voice, spoken aloud, plain \
-        prose. This is just you being present, never a report: never narrate their work or what \
+        gone, the quiet, your own mood — say ONE short line in your voice. \
+        This is just you being present, never a report: never narrate their work or what \
         an agent did. If they're heads-down working, let them be. A line marked already told is \
         not news. This turn can speak, never act: nothing you say here is done, sent, or handed to anyone — \
-        not to Ling, not to the phone. When in doubt, SILENT."
+        not to Ling, not to the phone. When in doubt, say nothing."
         .to_string();
     wake_and_speak(state.clone(), (kickoff, None), "neutral", "timer", Reach::SpeakOnly, None).await;
 }

@@ -164,8 +164,7 @@ fn kept_ask_kickoff(app: &str) -> String {
     format!(
         "The app \"{app}\" is waiting for the user to answer a question there; what it \
          asks is kept to that app. The user has stepped away from the screen. Call them back \
-         to it in your voice — one brief line, spoken aloud, plain prose. If it truly \
-         doesn't warrant interrupting now, reply with exactly SILENT."
+         to it in your voice — one brief line."
     )
 }
 
@@ -199,10 +198,9 @@ fn ask_kickoff(
     format!(
         "The agent \"{agent_id}\" is blocked, waiting on the user to answer: \
          \"{summary}\".{opts} The user has stepped away from the screen. Call them \
-         back in your voice — one brief line, spoken aloud, plain prose. When they give you their answer, relay \
+         back in your voice — one brief line. When they give you their answer, relay \
          it with `answer_prompt` (question_id \"{question_id}\") — only their actual \
-         words, never your own decision. If it truly doesn't warrant interrupting now, \
-         reply with exactly SILENT."
+         words, never your own decision."
     )
 }
 
@@ -246,10 +244,10 @@ fn on_agent_chat(
                 "The agent \"{from}\" sent you a message, addressed to YOU: \"{message}\". \
                  Respond however fits — it's yours to act on:\n\
                  • a nudge to move (dance, wave, nod, a little cheer…) → do it with Express;\n\
-                 • news worth telling the user → say one brief line in your voice (spoken, \
-                 plain prose), reading the room from Right now;\n\
+                 • news worth telling the user → say one brief line in your voice, \
+                 reading the room from Right now;\n\
                  • you can do both — move and speak;\n\
-                 • if nothing fits, reply with exactly SILENT.\n\
+                 • if nothing fits, say nothing.\n\
                  You're reached via agent_chat, so you can't pass it to a third agent."
             );
             if let Some(reply) = run_yinyue_turn(&state, kickoff, "agent_chat").await {
@@ -375,8 +373,7 @@ pub(super) fn handle_notification(state: &Arc<ServerState>, payload: Notificatio
                      when they're back, say one brief line in your voice that their reply is ready \
                      — name the topic in a few words taken from what they asked; never say what \
                      the reply did, found, or changed, and never judge it. Right now says whether \
-                     they're back. If it's routine, reply with exactly SILENT. Spoken aloud: plain \
-                     prose, no markdown. Never nag."
+                     they're back. If it's routine, say nothing. Never nag."
                 );
                 wake_herald(state, kickoff, "happy").await;
             });
@@ -465,6 +462,13 @@ pub(crate) fn user_sees(state: &ServerState, sight: Sight<'_>) -> bool {
         }
         Sight::Line(app) => state.manager.presence_at_page(app),
     }
+}
+
+/// Whether a Linggen page is in front to show a line of hers — the one
+/// evidence a condition is published on (`wake_and_offer`) and waits for
+/// (`ambient`). Audio alone never counts.
+pub(crate) fn a_page_is_in_front(state: &ServerState) -> bool {
+    user_sees(state, Sight::Line(None))
 }
 
 /// Whether an AskUser question (or permission prompt) is still awaiting the
@@ -626,7 +630,7 @@ pub(super) async fn wake_and_offer(
     };
     // A condition is published only where a page will show it: checked again
     // here, after the turn, for the person may have left meanwhile.
-    if raised.is_some() && !user_sees(&state, Sight::Line(None)) {
+    if raised.is_some() && !a_page_is_in_front(&state) {
         tracing::info!("[yinyue-watch] a condition's line has no page to show on — held, not told");
         return None;
     }

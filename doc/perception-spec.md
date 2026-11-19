@@ -188,6 +188,14 @@ next start closes the saved stretch where it was last saved, losing at most
 those 30 seconds. A record names the app, never what was on it. Time in the
 terminal, the CLI or any other program sends no beat and is not counted.
 
+What presence cannot tell apart today: the person **away from the Mac** and
+the person **working in another app** both send no beat, so they read the same
+(no Linggen page in front). A condition — a notice with something to do —
+therefore waits for a page in front (`user_sees(Sight::Line)`) and is told
+only when its line is published there; a routine herald does not wait, and is
+written and spoken under the voice rule. Telling the two apart needs a
+Mac-local awake and recent-input signal, which does not exist yet.
+
 The doorbell shows changes, not durations: a record that carries
 `detail.seconds` is written to disk and read through `recent_activity`, but
 never counted in "since you last looked" nor shown as the latest thing.
@@ -389,8 +397,9 @@ Three rules, each earned:
    after the problem has been absent for a day of readings.
 2. **Never dropped.** A problem that exists and has not been said is due at
    every moment the resident's gates allow, until it is said. The record starts
-   when the resident **speaks**, never when it is asked: a SILENT reply or a
-   failed run defers, it does not dismiss. The judge chooses when and in what
+   when a line about it is **published** with a Linggen page in front, never
+   when the resident is asked: no envelope, a failed run, or no page in front
+   defers, it does not dismiss. The judge chooses when and in what
    words, never whether: on the phone a `stay_quiet` or an unreachable model
    puts a problem off (asked again after a while, or when the app comes back)
    and only news may be judged out. A run of hers that failed is a fact held
