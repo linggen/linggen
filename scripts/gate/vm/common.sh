@@ -76,12 +76,13 @@ mem_post() { # base path json → memory's envelope
 }
 
 # initialize + tools/list on an MCP URL, listing TOOL (default memory_search);
-# MCP_DETAIL says what answered.
+# MCP_DETAIL says what answered, MCP_COUNT and MCP_NAMES what it listed.
 mcp_answers() { # url [tool]
   local init list n want="${2:-memory_search}"
   init="$(mem_post "$1" "" '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"linggen-gate","version":"1"}}}')"
   list="$(mem_post "$1" "" '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}')"
   n="$(jq -r '[.result.tools[]?.name] | length' <<<"$list" 2>/dev/null)"
+  MCP_COUNT="$n"; MCP_NAMES="$(jq -r '.result.tools[]?.name' <<<"$list" 2>/dev/null)"
   MCP_DETAIL="server $(jq -r '.result.serverInfo.name // "?"' <<<"$init" 2>/dev/null) $(jq -r '.result.serverInfo.version // ""' <<<"$init" 2>/dev/null), $n tools"
   jq -e '.result.protocolVersion' >/dev/null 2>&1 <<<"$init" \
     && jq -e --arg w "$want" '[.result.tools[]?.name] | index($w) != null' >/dev/null 2>&1 <<<"$list" && return 0
@@ -100,6 +101,9 @@ mcp_retired() { # url
   RETIRED_DETAIL="HTTP $code: $(head -c 160 <<<"$body")"
   [ "$code" = 410 ] && jq -e '.code == "UPGRADE_PLUGIN"' >/dev/null 2>&1 <<<"$body"
 }
+
+# The one door's tool count (doc/mcp-spec.md: memory 5, agents 4, browser 3).
+DOOR_TOOLS=12
 
 is_standin() { head -c 300 "$1" 2>/dev/null | grep -qF "$STANDIN_MARK"; }
 

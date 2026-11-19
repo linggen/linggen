@@ -37,6 +37,8 @@ engine_mem_health 60
 check "memory: /mem/api/health through the engine" $? "no ok from $ENGINE_MEM/api/health — $(tail -3 "$LG/ling.log" 2>/dev/null)" "v$(curl -fsS -m 3 "$ENGINE_MEM/api/health" | jq -r '.data.version // empty')"
 mcp_answers "http://127.0.0.1:$EP/mcp" memory_upkeep
 check "memory: $EP/mcp initialize + tools/list (the one door)" $? "$MCP_DETAIL" "$MCP_DETAIL"
+[ "$MCP_COUNT" = "$DOOR_TOOLS" ]
+check "memory: the one door lists $DOOR_TOOLS tools" $? "$MCP_COUNT listed: $(tr '\n' ' ' <<<"$MCP_NAMES" | cut -c1-200)" "$MCP_COUNT tools"
 mcp_retired "http://127.0.0.1:$EP/mcp/memory"
 check "memory: the retired $EP/mcp/memory answers 410 UPGRADE_PLUGIN" $? "$RETIRED_DETAIL" "$RETIRED_DETAIL"
 "$(ling_bin)" mem session-start --format json >"$OUT/session-start.json" 2>&1

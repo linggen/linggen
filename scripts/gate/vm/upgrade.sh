@@ -157,7 +157,20 @@ check "upgrade: a chat turn on the old config" $? "$CHAT_DETAIL" "$CHAT_DETAIL"
 check "upgrade: user mission kept" $? "missions/table-check gone"
 dream="$(sha "$LG/missions/dream/mission.md")"
 if [ "$dream" = "$DREAM_SHA" ]; then pass "upgrade: built-in dream mission is this release's" ""
-else info "upgrade: built-in dream mission is this release's" "kept the earlier copy (missions are install-once, cli/init.rs)"; fi
+else info "upgrade: built-in dream mission is this release's" "the file differs (its personal fields are the person's)"; fi
+# Built-in missions refresh on startup (extensions/missions/builtin.rs): the
+# instructions — everything after the front matter — are the release's.
+dream_body="$(awk 'f; /^---$/ {c++; if (c == 2) f = 1}' "$LG/missions/dream/mission.md" 2>/dev/null | shasum -a 256 | awk '{print $1}')"
+[ -n "${DREAM_BODY_SHA:-}" ] && [ "$dream_body" = "$DREAM_BODY_SHA" ]
+check "upgrade: the dream mission's instructions are this release's" $? "installed ${dream_body:0:12}, release ${DREAM_BODY_SHA:-unset}"
+# …and every memory tool they name is one the engine's memory server lists.
+mcp_answers "$ENGINE_MEM/mcp"
+missing=""
+for n in $(grep -oE 'memory_[a-z_]+' "$LG/missions/dream/mission.md" 2>/dev/null | sort -u); do
+  grep -qx "$n" <<<"$MCP_NAMES" || missing="$missing $n"
+done
+[ -n "$MCP_NAMES" ] && [ -z "$missing" ]
+check "upgrade: the dream mission names only memory tools the engine serves" $? "not served:${missing:- none}; served: $(tr '\n' ' ' <<<"$MCP_NAMES" | cut -c1-200)"
 
 # ── The store ──────────────────────────────────────────────────────────────
 "$MEM" stats >"$OUT/stats.json" 2>&1
@@ -363,6 +376,13 @@ if command -v claude >/dev/null; then
   if engine_health 5; then
     mcp_retired "http://127.0.0.1:$EP/mcp/memory"
     check "upgrade: before — the old plugin's memory address answers 410 UPGRADE_PLUGIN" $? "$RETIRED_DETAIL" "$RETIRED_DETAIL"
+    # The same call as Claude Code makes it (its User-Agent names it): the
+    # engine notes the host, and `ling status` says how to update it.
+    curl -sS -m 10 -o /dev/null -A 'claude-code/2.1 (cli)' -X POST -H 'content-type: application/json' \
+      -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' "http://127.0.0.1:$EP/mcp/memory" 2>/dev/null
+    "$LING" status >"$OUT/status-old-plugin.txt" 2>&1
+    grep -q 'Old plugin' "$OUT/status-old-plugin.txt" && grep -q 'Claude Code called the retired' "$OUT/status-old-plugin.txt"
+    check "upgrade: ling status names Claude Code's old plugin and its update" $? "$(grep -i -A1 'old plugin' "$OUT/status-old-plugin.txt" | head -c 240)" "$(grep 'Claude Code called' "$OUT/status-old-plugin.txt" | head -c 160)"
   else
     gap "upgrade: before — the old plugin's memory address answers 410" "no engine on $EP at this point"
   fi
