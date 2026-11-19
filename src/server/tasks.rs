@@ -435,6 +435,8 @@ async fn tell_in_place(
     // What kind of turn this is for the one it is told to: her turns have an
     // origin, every other agent's is answered as ever.
     let origin = Origin::for_agent(&agent, told);
+    // Her words are in the person's language, as for every turn of hers.
+    let language = crate::server::resident::language_of_turn(&state, &session, origin, None).await;
     let mut engine = engine.lock().await;
     engine.set_parent_agent(None);
     let ctx = super::chat::ChatRunCtx {
@@ -453,7 +455,7 @@ async fn tell_in_place(
         // published by the finalizer, nothing of her reply is kept as prose.
         origin,
         place: told_at.clone(),
-        turn: Default::default(),
+        turn: crate::engine::turn_place::TurnSettings { language, ..Default::default() },
     };
     super::chat::run_session_turn(&ctx, &mut engine, &state.manager, None).await;
     if origin.held() {

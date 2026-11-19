@@ -386,7 +386,7 @@ fn resend_hers(
 /// person writes in, the latest line they typed here, whatever language the
 /// kickoff is in; with none to read, the UI language stands. Set for every
 /// turn of hers in this one place, the light path included.
-pub(super) async fn language_of_turn(
+pub(crate) async fn language_of_turn(
     state: &Arc<ServerState>,
     session_id: &str,
     origin: Origin,

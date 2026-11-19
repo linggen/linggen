@@ -70,10 +70,16 @@ pub(crate) async fn reply_in_session(
 
 /// `agent`'s one line to `ask` in `session_id` now, without waiting for the
 /// turn running there: it stands at the session's own place and reads only
-/// what that place may be given. Nothing is kept and nothing is judged: this
-/// is the model's whole reply, and the caller decides what of it is said
+/// what that place may be given, in `language` (the turn's, as a full turn
+/// names it). Nothing is kept and nothing is judged: this is the model's
+/// whole reply, and the caller decides what of it is said
 /// (`resident::spoken::finalize_event`).
-pub(crate) async fn reply_now(state: Arc<ServerState>, session_id: &str, agent: &str, ask: &str) -> Option<String> {
+pub(crate) async fn reply_now(
+    state: Arc<ServerState>,
+    session_id: &str,
+    agent: &str,
+    (ask, language): (&str, Option<String>),
+) -> Option<String> {
     let meta = state.manager.global_sessions.get_session_meta(session_id).ok()??;
     let root = crate::util::resolve_path(std::path::Path::new(&meta.cwd));
     let engine = state.manager.get_or_create_session_agent(session_id, &root, agent).await.ok()?;
@@ -95,9 +101,11 @@ pub(crate) async fn reply_now(state: Arc<ServerState>, session_id: &str, agent: 
         turn: Default::default(),
     };
     ready(&ctx, &mut engine).await;
+    // The turn's language, as a full turn of hers has it: named by the caller.
+    engine.begin_turn(crate::engine::turn_place::TurnSettings { language, ..Default::default() });
     let tail = super::thread::spoken_tail(&ctx, TAIL_MESSAGES).await;
     let line = engine.light_text(tail, ask, session_id).await;
-    super::turn_place::leave_turn_place(&mut engine);
+    engine.end_turn();
     line.ok().flatten()
 }
 

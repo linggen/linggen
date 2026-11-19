@@ -47,7 +47,7 @@ use spoken::*;
 pub(crate) use spoken::{is_engine_prompt, is_silent_reply, land_row, running_origin, say_event, speak_person_reply, speak_reply, Line, Origin, RunningOrigin};
 pub use triggers::yinyue_watch_loop;
 pub(crate) use triggers::{moment_origin, user_sees, wake_for_moment, wake_herald, Sight, Table};
-pub(crate) use turn::run_yinyue_turn;
+pub(crate) use turn::{language_of_turn, run_yinyue_turn};
 pub(crate) use turn::{resolve_pet_model, tune_companion};
 use turn::{run_moment_turn, Reach};
 

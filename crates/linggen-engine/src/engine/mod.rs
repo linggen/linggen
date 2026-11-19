@@ -664,7 +664,9 @@ impl AgentEngine {
                         self.model_id, state.empty_response_streak
                     );
                     let _ = self.persist_assistant_message(&msg, session_id).await;
-                    if self.tools.get_manager().is_some() {
+                    // An engine-written text is no more shown live in a held
+                    // turn than any other (`reply_held`).
+                    if self.tools.get_manager().is_some() && !self.reply_held {
                         let agent_id = self
                             .agent_id
                             .clone()

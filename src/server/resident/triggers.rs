@@ -181,7 +181,9 @@ async fn herald_line(state: &Arc<ServerState>, kickoff: String) -> Option<String
         return run_yinyue_turn(state, kickoff, Origin::Herald).await;
     }
     let ask = super::spoken::with_contract(kickoff, Origin::Herald);
-    crate::server::chat::reply_now(state.clone(), &sid, YINYUE_AGENT, &ask).await
+    // The person's language, set here as it is for every turn of hers.
+    let language = super::turn::language_of_turn(state, &sid, Origin::Herald, None).await;
+    crate::server::chat::reply_now(state.clone(), &sid, YINYUE_AGENT, (&ask, language)).await
 }
 
 fn ask_kickoff(
