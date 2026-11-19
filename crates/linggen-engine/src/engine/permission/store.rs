@@ -1,5 +1,5 @@
 use super::model::{PathMode, PermissionMode};
-use crate::util::{default_true, expand_tilde};
+use crate::util::default_true;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
@@ -193,28 +193,10 @@ impl SessionPermissions {
             });
             return;
         }
-        let expanded = expand_tilde(Path::new(path), dirs::home_dir().as_deref());
-        let expanded = expanded.to_string_lossy();
-
+        let path = super::model::normalize_path(path);
         self.path_modes.retain(|pm| {
-            if pm.path == path {
-                return true;
-            }
-            let pm_expanded = expand_tilde(Path::new(&pm.path), dirs::home_dir().as_deref());
-            let pm_expanded = pm_expanded.to_string_lossy();
-            let is_child = pm_expanded.starts_with(&*expanded)
-                && (pm_expanded.len() == expanded.len()
-                    || pm_expanded.as_bytes().get(expanded.len()) == Some(&b'/'));
-            !is_child
+            pm.path == "*" || !Path::new(&super::model::normalize_path(&pm.path)).starts_with(&path)
         });
-
-        if let Some(existing) = self.path_modes.iter_mut().find(|pm| pm.path == path) {
-            existing.mode = mode;
-        } else {
-            self.path_modes.push(PathMode {
-                path: path.to_string(),
-                mode,
-            });
-        }
+        self.path_modes.push(PathMode { path, mode });
     }
 }

@@ -133,16 +133,33 @@ mod tests {
 
     #[test]
     fn test_set_path_mode_prunes_children() {
-        let mut sp = SessionPermissions::default();
-        sp.set_path_mode("/tmp/project/src/a.rs", PermissionMode::Edit);
-        sp.set_path_mode("/tmp/project/src/b.rs", PermissionMode::Edit);
-        sp.set_path_mode("/tmp/other", PermissionMode::Read);
-        assert_eq!(sp.path_modes.len(), 3);
+        let mut parents = vec!["/tmp/project".to_string()];
+        #[cfg(unix)]
+        let fixture = tempfile::tempdir().unwrap();
+        #[cfg(unix)]
+        {
+            let parent = fixture.path().join("parent");
+            fs::create_dir(&parent).unwrap();
+            let alias = fixture.path().join("alias");
+            std::os::unix::fs::symlink(&parent, &alias).unwrap();
+            parents.push(alias.to_string_lossy().into_owned());
+        }
+        for parent in parents {
+            let real = model::normalize_path(&parent);
+            let child = format!("{real}/src/a.rs");
+            let mut sp = SessionPermissions::default();
+            sp.set_path_mode(&child, PermissionMode::Admin);
+            sp.set_path_mode(&format!("{real}/src/b.rs"), PermissionMode::Edit);
+            sp.set_path_mode("/tmp/other", PermissionMode::Read);
+            assert_eq!(sp.path_modes.len(), 3);
 
-        sp.set_path_mode("/tmp/project", PermissionMode::Edit);
-        assert_eq!(sp.path_modes.len(), 2);
-        assert!(sp.path_modes.iter().any(|pm| pm.path == "/tmp/project"));
-        assert!(sp.path_modes.iter().any(|pm| pm.path == "/tmp/other"));
+            sp.set_path_mode(&parent, PermissionMode::Edit);
+            assert_eq!(sp.path_modes.len(), 2);
+            for path in [&real, &model::normalize_path("/tmp/other")] {
+                assert!(sp.path_modes.iter().any(|pm| &pm.path == path));
+            }
+            assert_eq!(effective_mode_for_path(&sp.path_modes, Path::new(&child)), Some(PermissionMode::Edit));
+        }
     }
 
     #[test]
@@ -151,7 +168,7 @@ mod tests {
         sp.set_path_mode("~/workspace/linggen/src/main.rs", PermissionMode::Edit);
         sp.set_path_mode("~/workspace/linggen", PermissionMode::Edit);
         assert_eq!(sp.path_modes.len(), 1);
-        assert_eq!(sp.path_modes[0].path, "~/workspace/linggen");
+        assert_eq!(sp.path_modes[0].path, model::normalize_path("~/workspace/linggen"));
     }
 
     #[test]
