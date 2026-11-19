@@ -95,7 +95,9 @@ async fn forward(state: &ServerState, headers: &HeaderMap, body: Bytes, path: &s
     };
 
     let url = format!("{}{path}", upstream_base(&cfg.url));
-    let mut rb = reqwest::Client::new()
+    // The providers' bounded client: a hung upstream fails at its connect or
+    // read timeout instead of holding the caller's request.
+    let mut rb = crate::provider::anthropic::http_client()
         .post(url)
         .headers(forwarded_headers(headers))
         .header("content-type", "application/json")
@@ -194,6 +196,18 @@ fn error(status: StatusCode, kind: &str, message: &str) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The gateway builds no HTTP client of its own: it forwards through the
+    /// providers' bounded one (a connect and a read timeout), so a hung
+    /// upstream cannot hold the caller's request forever.
+    #[test]
+    fn the_upstream_client_is_the_providers_bounded_one() {
+        let text = include_str!("anthropic_gateway.rs");
+        let code = text.split("#[cfg(test)]").next().unwrap_or("");
+        assert!(!code.contains("Client::new()"), "an unbounded client");
+        assert!(!code.contains("Client::builder()"), "a client of its own");
+        assert!(code.contains("crate::provider::anthropic::http_client()"));
+    }
 
     fn model(provider: &str, auth: Option<&str>, key: Option<&str>) -> ModelConfig {
         let mut cfg: ModelConfig = serde_json::from_value(json!({

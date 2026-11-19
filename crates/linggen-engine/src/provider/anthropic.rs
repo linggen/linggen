@@ -668,6 +668,12 @@ fn build_http() -> Client {
     crate::provider::stream_http(std::time::Duration::from_secs(180))
 }
 
+/// The bounded client the Anthropic provider streams through (a connect and
+/// a read timeout, no total), for a caller that forwards to the same API.
+pub fn http_client() -> Client {
+    build_http()
+}
+
 /// Whether this endpoint is Anthropic's own API, the one that takes the
 /// request-level `cache_control`.
 fn takes_top_level_cache_control(base_url: &str) -> bool {
