@@ -162,17 +162,23 @@ async fn a_run_continued_after_a_model_failure_keeps_what_it_read() {
     assert!(continued.contains(MARKER), "the continued turn lost what the run had read");
 }
 
-/// A Stop is no failure to continue from: nothing of a cancelled run is
-/// kept in the thread (`keep_unfinished_work` keeps only a run that cannot
-/// go on), so the run's status names no reason.
+/// A run that failed for no reason a caller acts on (not a provider's
+/// refusal) keeps nothing in the thread — `keep_unfinished_work` keeps only
+/// a run that cannot go on — so its status names no reason, and the turn
+/// that continues the session starts from its brief alone.
 #[tokio::test]
 async fn a_run_that_failed_for_no_reason_a_caller_acts_on_keeps_nothing() {
+    const MARKER: &str = "the-orchard-count-is-3319";
     let setup = Setup::default().script(
         Agent::Ling,
-        vec![tool("Read", json!({"path": "notes.txt"})), error(418, "not a provider refusal")],
+        vec![
+            tool("Read", json!({"path": "notes.txt"})),
+            error(418, "not a provider refusal"),
+            text("Starting over."),
+        ],
     );
     let w = World::start(setup).await;
-    std::fs::write(std::path::Path::new(&w.work()).join("notes.txt"), "words\n").unwrap();
+    std::fs::write(std::path::Path::new(&w.work()).join("notes.txt"), format!("{MARKER}\n")).unwrap();
     let ran = w
         .api
         .post("/mcp", agent_run(json!({"prompt": "Read notes.txt.", "write_dir": w.work()})))
@@ -185,6 +191,16 @@ async fn a_run_that_failed_for_no_reason_a_caller_acts_on_keeps_nothing() {
     let status: Value = serde_json::from_str(status["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
     assert_eq!(status["status"], "failed", "{status}");
     assert_eq!(status["cannot_run"], Value::Null, "{status}");
+
+    let again = w
+        .api
+        .post("/mcp", agent_run(json!({"prompt": "Go on.", "session_id": sid})))
+        .await;
+    assert_eq!(again["result"]["content"][0]["text"], "Starting over.", "{again}");
+    let calls = w.model.calls_of(Agent::Ling);
+    assert_eq!(calls.len(), 3, "the read, the failed call, the continued turn");
+    assert!(calls[1].body.to_string().contains(MARKER), "the failed call had read the file");
+    assert!(!calls[2].body.to_string().contains(MARKER), "the continued turn was given the failed run's reading");
 }
 
 /// A delegated run that ends because its model failed says why in a field

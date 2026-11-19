@@ -477,8 +477,10 @@ const ANSWER_SOURCES: &[(&str, &str)] = &[
 ];
 
 /// The catalogue's entry is the only place a tool's name decides
-/// anything: no dispatcher or renderer matches on a tool name (a second
-/// list that can drift from the catalogue).
+/// anything: no code of the door's — its server, its dispatchers, the agent
+/// and grant handlers they call — matches on a tool name, in any shape (a
+/// match arm, an `if` test, an alternation), which would be a second list
+/// that can drift from the catalogue.
 #[test]
 fn nothing_outside_the_catalogue_matches_on_a_tool_name() {
     let names: Vec<String> = catalog()
@@ -487,18 +489,34 @@ fn nothing_outside_the_catalogue_matches_on_a_tool_name() {
         .map(|t| t.name.to_string())
         .chain(catalog().retired().iter().map(|r| r.name.to_string()))
         .collect();
+    let mut wrong = Vec::new();
     for (file, source) in DISPATCH_SOURCES {
         let code = source.split("#[cfg(test)]").next().unwrap();
         for name in &names {
-            let arm = format!("\"{name}\" =>");
-            assert!(!code.contains(&arm), "{file} matches on {name}");
+            let quoted = format!("\"{name}\"");
+            let shapes = [
+                format!("{quoted} =>"),
+                format!("{quoted} |"),
+                format!("| {quoted}"),
+                format!("== {quoted}"),
+                format!("!= {quoted}"),
+                format!("Some({quoted})"),
+            ];
+            if shapes.iter().any(|s| code.contains(s.as_str())) {
+                wrong.push(format!("{file} matches on {name}"));
+            }
         }
     }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
 
+/// Every non-test source file of the door: the catalogue alone may name
+/// a tool.
 const DISPATCH_SOURCES: &[(&str, &str)] = &[
     ("mcp/mod.rs", include_str!("mod.rs")),
     ("mcp/dispatch.rs", include_str!("dispatch.rs")),
+    ("mcp_agent.rs", include_str!("../mcp_agent.rs")),
+    ("mcp_grants.rs", include_str!("../mcp_grants.rs")),
 ];
 
 #[tokio::test]

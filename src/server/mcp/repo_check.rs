@@ -314,7 +314,8 @@ fn the_eval_cases_carry_the_doors_server_text() {
 /// What the plugin's hooks send, as their source writes it, is a call the
 /// door takes in both views — the schemas are strict, and a hook drops a
 /// refused answer silently, so a shape the door refuses would turn recall
-/// off without a word. The stamped shapes are stamp-cwd.sh's output.
+/// off without a word. The stamped shapes are stamp-cwd.sh's real output,
+/// for every memory branch it may see.
 #[test]
 fn the_plugins_hook_calls_are_calls_the_door_takes() {
     use ling_mem::catalog::Resolved;
@@ -336,7 +337,7 @@ fn the_plugins_hook_calls_are_calls_the_door_takes() {
             "{file} no longer builds {shape}"
         );
     }
-    let calls = [
+    let mut calls = vec![
         (
             "memory_upkeep",
             serde_json::json!({"op": "session_start", "cwd": "/w/p", "root": "/w"}),
@@ -353,18 +354,26 @@ fn the_plugins_hook_calls_are_calls_the_door_takes() {
             "memory_search",
             serde_json::json!({"query": "a delegated brief", "limit": 3}),
         ),
-        // stamp-cwd.sh: an add with every stamp, a search with its root.
-        (
-            "memory_add",
-            serde_json::json!({"content": "x", "source_session": "s1", "cwd": "/w/p", "root": "/w", "host": "claude-code"}),
-        ),
-        (
-            "memory_search",
-            serde_json::json!({"op": "semantic", "query": "q", "scope_root": "/w"}),
-        ),
         // The status command's dream read, this machine's view only below.
         ("memory_upkeep", serde_json::json!({"op": "dream_status"})),
     ];
+    // stamp-cwd.sh, run: each call a model makes that the hook stamps, as
+    // the hook sends it on (an add with every stamp, a search with its root).
+    for (tool, mut args) in memory_calls() {
+        let branch = catalog().branch_of(View::Local, tool, &args).unwrap();
+        let required = (branch.schema)()["required"].clone();
+        for need in required.as_array().into_iter().flatten() {
+            let need = need.as_str().unwrap();
+            if args.get(need).is_none() {
+                args[need] = serde_json::json!("x");
+            }
+        }
+        let sent = stamp_hook(tool, &args);
+        if sent != args {
+            calls.push((tool, sent));
+        }
+    }
+    assert!(calls.len() >= 9, "the hook stamped nothing: {calls:?}");
     for view in [View::Local, View::Remote] {
         for (tool, args) in &calls {
             match catalog().resolve(view, tool, args.clone()) {
