@@ -155,24 +155,43 @@ pub fn migrate_remote_toml() {
     if !path.exists() {
         return;
     }
-    if load_account().is_none() {
-        if let Some(token) = std::fs::read_to_string(&path).ok().and_then(|raw| {
+    migrate_from(&path, || load_account(), save_account);
+}
+
+/// [`migrate_remote_toml`] from the old file at `path`, with the account
+/// read by `load` and kept by `save`. The old file is removed only once its
+/// token is written and read back: until then it may be the only copy.
+fn migrate_from(
+    path: &std::path::Path,
+    load: impl Fn() -> Option<AccountConfig>,
+    save: impl FnOnce(&AccountConfig) -> Result<()>,
+) {
+    if load().is_none() {
+        if let Some(token) = std::fs::read_to_string(path).ok().and_then(|raw| {
             raw.parse::<toml::Table>()
                 .ok()?
                 .get("api_token")?
                 .as_str()
                 .map(|s| s.to_string())
         }) {
-            let _ = save_account(&AccountConfig {
-                api_token: token,
+            let account = AccountConfig {
+                api_token: token.clone(),
                 user_id: None,
                 user_name: None,
                 avatar_url: None,
-            });
+            };
+            if let Err(e) = save(&account) {
+                tracing::warn!("remote.toml kept: its token could not be saved into account.toml: {e}");
+                return;
+            }
+            if load().is_none_or(|kept| kept.api_token != token) {
+                tracing::warn!("remote.toml kept: account.toml does not read back its token");
+                return;
+            }
             tracing::info!("Adopted the remote-access token into account.toml");
         }
     }
-    if std::fs::remove_file(&path).is_ok() {
+    if std::fs::remove_file(path).is_ok() {
         tracing::info!("Removed remote.toml — the account token is the single credential now");
     }
 }
@@ -398,6 +417,43 @@ pub async fn create_checkout(token: &str, app: &str) -> Result<String> {
         .and_then(|u| u.as_str())
         .map(String::from)
         .ok_or_else(|| anyhow!("checkout response missing url"))
+}
+
+#[cfg(test)]
+mod migrate_tests {
+    use super::*;
+
+    fn old_file(dir: &std::path::Path) -> std::path::PathBuf {
+        let path = dir.join("remote.toml");
+        std::fs::write(&path, "api_token = \"usr_old\"\n").unwrap();
+        path
+    }
+
+    /// The old file goes only once the token it holds is written and read
+    /// back; a save that failed, or one that does not read back, keeps it.
+    #[test]
+    fn the_old_file_stays_until_its_token_is_kept() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let path = old_file(dir.path());
+        migrate_from(&path, || None, |_| Err(anyhow!("disk full")));
+        assert!(path.exists(), "a failed save keeps the old file");
+
+        migrate_from(&path, || None, |_| Ok(()));
+        assert!(path.exists(), "a save that does not read back keeps the old file");
+
+        let kept = Mutex::new(None::<AccountConfig>);
+        migrate_from(
+            &path,
+            || kept.lock_ok().clone(),
+            |a| {
+                *kept.lock_ok() = Some(a.clone());
+                Ok(())
+            },
+        );
+        assert!(!path.exists(), "kept and read back: the old file goes");
+        assert_eq!(kept.lock_ok().as_ref().unwrap().api_token, "usr_old");
+    }
 }
 
 #[cfg(test)]
