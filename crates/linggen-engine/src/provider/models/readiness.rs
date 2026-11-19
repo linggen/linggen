@@ -234,28 +234,7 @@ fn needs_key(cfg: &ModelConfig) -> bool {
     let signs_in = cfg.auth_mode.as_deref().is_some_and(|m| m != "api_key")
         || cfg.provider == "chatgpt";
     let keyless = matches!(cfg.provider.as_str(), "ollama" | "proxy");
-    !(has_key || signs_in || keyless || on_this_network(&cfg.url))
-}
-
-/// Is `url`'s host this machine or a private network address?
-fn on_this_network(url: &str) -> bool {
-    let rest = url.split_once("://").map(|(_, r)| r).unwrap_or(url);
-    let authority = rest.split('/').next().unwrap_or("");
-    let host = match authority.strip_prefix('[') {
-        Some(v6) => v6.split(']').next().unwrap_or(""),
-        None => authority
-            .rsplit_once(':')
-            .map(|(h, _)| h)
-            .unwrap_or(authority),
-    };
-    if host.is_empty() || host == "localhost" || host.ends_with(".local") {
-        return true;
-    }
-    match host.parse::<std::net::IpAddr>() {
-        Ok(std::net::IpAddr::V4(ip)) => ip.is_loopback() || ip.is_private() || ip.is_link_local(),
-        Ok(std::net::IpAddr::V6(ip)) => ip.is_loopback(),
-        Err(_) => false,
-    }
+    !(has_key || signs_in || keyless || crate::provider::is_local_backend(&cfg.url))
 }
 
 #[cfg(test)]

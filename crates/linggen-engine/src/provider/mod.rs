@@ -111,16 +111,25 @@ impl FirstEvent {
     }
 }
 
-/// Whether `base_url` names this machine: `localhost` or a loopback address.
+/// Whether `base_url` names a local server: this machine (`localhost`, a
+/// loopback address) or this network (a private or link-local address, a
+/// `.local` name). The one answer for the first-event guard's patience and
+/// for readiness's "needs no key".
 pub(crate) fn is_local_backend(base_url: &str) -> bool {
-    let Ok(url) = url::Url::parse(base_url) else {
-        return false;
+    let rest = base_url.split_once("://").map(|(_, r)| r).unwrap_or(base_url);
+    let authority = rest.split('/').next().unwrap_or("");
+    let host = match authority.strip_prefix('[') {
+        Some(v6) => v6.split(']').next().unwrap_or(""),
+        None => authority.rsplit_once(':').map(|(h, _)| h).unwrap_or(authority),
     };
-    match url.host() {
-        Some(url::Host::Domain(d)) => d.eq_ignore_ascii_case("localhost"),
-        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
-        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
-        None => false,
+    let host = host.to_ascii_lowercase();
+    if host.is_empty() || host == "localhost" || host.ends_with(".local") {
+        return true;
+    }
+    match host.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(ip)) => ip.is_loopback() || ip.is_private() || ip.is_link_local(),
+        Ok(std::net::IpAddr::V6(ip)) => ip.is_loopback(),
+        Err(_) => false,
     }
 }
 
@@ -183,9 +192,28 @@ mod first_event_tests {
         for remote in [
             "https://api.openai.com/v1",
             "https://linggen.dev/api/llm",
-            "http://192.168.1.20:11434",
             "not a url",
         ] {
+            assert!(!is_local_backend(remote), "{remote}");
+        }
+    }
+
+    /// A server on this network (LM Studio, MLX, Ollama's `/v1` on another
+    /// Mac) loading a model gets the same patience as one on this machine.
+    #[test]
+    fn a_server_on_this_network_is_local_too() {
+        for lan in [
+            "http://192.168.1.20:11434/v1",
+            "http://10.0.0.5:1234/v1",
+            "http://172.16.3.4:8080",
+            "http://169.254.10.10:8000",
+            "http://studio.local:1234/v1",
+            "http://Studio.LOCAL:1234/v1",
+        ] {
+            assert!(is_local_backend(lan), "{lan}");
+            assert!(FirstEvent::start(lan).window.is_none(), "{lan}");
+        }
+        for remote in ["http://8.8.8.8/v1", "https://example.com/v1", "http://172.32.0.1"] {
             assert!(!is_local_backend(remote), "{remote}");
         }
     }
