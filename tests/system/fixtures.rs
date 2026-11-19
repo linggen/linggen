@@ -135,7 +135,7 @@ async fn a_taken_port_is_never_mistaken_for_ours() {
     let taken = stranger.local_addr().expect("stranger addr").port();
     std::thread::spawn(move || answer_healthy(stranger));
     let home = Home::new();
-    let engine = Engine::start(&home, taken, false, &[], None).await;
+    let engine = Engine::start(&home, taken, false, &[], None, None).await;
     assert_ne!(
         engine.port, taken,
         "took the stranger's port {taken} for ours"

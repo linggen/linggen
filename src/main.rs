@@ -54,6 +54,10 @@ struct Cli {
     #[arg(long, default_value_t = false)]
     dev: bool,
 
+    #[cfg(feature = "test-support")]
+    #[arg(long, hide = true)]
+    test_fetch_fixture: Option<std::net::SocketAddr>,
+
     #[command(subcommand)]
     cmd: Option<Command>,
 }
@@ -204,6 +208,10 @@ async fn main() -> Result<()> {
     });
 
     let cli = Cli::parse();
+    #[cfg(feature = "test-support")]
+    if let Some(addr) = cli.test_fetch_fixture {
+        crate::engine::web_fetch::allow_fixture_host(addr)?;
+    }
     let global_root = cli.root;
     let global_host = cli.host;
     let global_port = cli.port;

@@ -742,16 +742,21 @@ impl AgentEngine {
                     // Do not use a session grant when persisting it failed.
                     let mut updated = self.session_permissions.clone();
                     let grant_path = if all { "*" } else { chosen.as_str() };
-                    updated.set_path_mode(grant_path, mode);
+                    let edit = |perms: &mut permission::SessionPermissions| perms.set_path_mode(grant_path, mode);
                     if let Some(ref sdir) = self.session_dir {
-                        if let Err(error) = updated.try_save(sdir) {
-                            warn!("Permission grant could not be saved: {}", error);
-                            let msg = format!(
-                                "Permission denied: unable to save directory grant: {}",
-                                error
-                            );
-                            return self.refuse_saved(t, messages, msg).await;
+                        match updated.edit_saved(sdir, edit) {
+                            Ok(saved) => updated.path_modes = saved.path_modes,
+                            Err(error) => {
+                                warn!("Permission grant could not be saved: {}", error);
+                                let msg = format!(
+                                    "Permission denied: unable to save directory grant: {}",
+                                    error
+                                );
+                                return self.refuse_saved(t, messages, msg).await;
+                            }
                         }
+                    } else {
+                        edit(&mut updated);
                     }
                     self.session_permissions = updated;
                     last_grant = Some((path.clone(), mode));

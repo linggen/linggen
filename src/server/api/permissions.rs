@@ -90,9 +90,12 @@ pub(crate) async fn update_session_permission(
 
     // Persist to disk so the grant survives session restart.
     let session_dir = crate::paths::global_sessions_dir().join(&req.session_id);
-    let mut perms = SessionPermissions::load(&session_dir);
-    perms.set_path_mode(&req.path, mode);
-    perms.save(&session_dir);
+    if let Err(error) = SessionPermissions::default().edit_saved(&session_dir, |perms| {
+        perms.set_path_mode(&req.path, mode);
+    }) {
+        tracing::warn!(%error, "Permission grant could not be saved");
+        return StatusCode::INTERNAL_SERVER_ERROR;
+    }
 
     // Propagate into the live engine, if one is running for this session.
     // No-op when the session isn't currently held by a live engine — the

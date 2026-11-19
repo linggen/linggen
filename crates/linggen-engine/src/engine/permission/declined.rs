@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 /// The folders declined in the current run.
 #[derive(Debug, Clone, Default)]
-pub struct DeclinedScopes(Vec<PathBuf>);
+pub struct DeclinedScopes(Vec<(PathBuf, bool)>);
 
 impl DeclinedScopes {
     /// Forget them: a new run asks again.
@@ -18,11 +18,12 @@ impl DeclinedScopes {
 
     /// Record a declined target; returns the scope it closes.
     pub fn decline(&mut self, target: &str) -> PathBuf {
-        let scope = declined_scope(Path::new(&normalize_path(target)));
+        let target = PathBuf::from(normalize_path(target));
+        let scope = declined_scope(&target);
         if !self.0.contains(&scope) {
             self.0.push(scope.clone());
         }
-        scope
+        scope.0
     }
 
     /// The declined scope `target` falls inside, if any.
@@ -30,14 +31,17 @@ impl DeclinedScopes {
         let target = PathBuf::from(normalize_path(target));
         self.0
             .iter()
-            .find(|scope| target.starts_with(scope))
-            .map(PathBuf::as_path)
+            .find(|(scope, subtree)| target == *scope || (*subtree && target.starts_with(scope)))
+            .map(|(scope, _)| scope.as_path())
     }
 }
 
 /// The scope a declined target closes: its git project root, else its
 /// folder. Never the home folder or `/` — those close only the target.
-fn declined_scope(target: &Path) -> PathBuf {
+fn declined_scope(target: &Path) -> (PathBuf, bool) {
+    if too_wide(target) {
+        return (target.to_path_buf(), false);
+    }
     let folder = if target.is_dir() {
         target
     } else {
@@ -46,9 +50,9 @@ fn declined_scope(target: &Path) -> PathBuf {
     let scope = crate::engine::tools::search_exec_find_git_root(folder)
         .unwrap_or_else(|| folder.to_path_buf());
     if too_wide(&scope) {
-        return target.to_path_buf();
+        return (target.to_path_buf(), false);
     }
-    scope
+    (scope, true)
 }
 
 fn too_wide(scope: &Path) -> bool {
@@ -83,6 +87,14 @@ mod tests {
         assert!(scopes
             .covering(&repo.path().join("src").to_string_lossy())
             .is_none());
+    }
+
+    #[test]
+    fn declining_home_does_not_decline_its_children() {
+        let mut scopes = DeclinedScopes::default();
+        scopes.decline("~");
+        assert!(scopes.covering("~").is_some());
+        assert!(scopes.covering("~/different-target").is_none());
     }
 
     #[test]

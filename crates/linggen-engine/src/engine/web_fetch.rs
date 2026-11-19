@@ -1,7 +1,8 @@
 use anyhow::{Context, Result};
+use hyper_util::client::proxy::matcher::{Intercept, Matcher};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::sync::LazyLock;
+use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 
 const DEFAULT_MAX_BYTES: usize = 100 * 1024; // 100 KB
@@ -11,15 +12,120 @@ const DEFAULT_MAX_BYTES: usize = 100 * 1024; // 100 KB
 /// head alone can outweigh a small text limit many times over.
 const HTML_READ_CEILING: usize = 2 * 1024 * 1024;
 
-static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
+fn http_client() -> reqwest::ClientBuilder {
     reqwest::Client::builder()
         .timeout(Duration::from_secs(15))
-        .redirect(reqwest::redirect::Policy::limited(10))
-        .pool_max_idle_per_host(2)
+        .redirect(reqwest::redirect::Policy::none())
+        .no_proxy()
         .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-        .build()
-        .expect("failed to build shared HTTP client")
-});
+}
+
+fn public_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(ip) => {
+            let [a, b, _, _] = ip.octets();
+            !(ip.is_private() || ip.is_loopback() || ip.is_link_local()
+                || a == 0 || a >= 224 || (a == 100 && (64..128).contains(&b)))
+        }
+        IpAddr::V6(ip) => ip.to_ipv4_mapped().map_or_else(
+            || ip.segments()[0] & 0xe000 == 0x2000,
+            |ip| public_ip(ip.into()),
+        ),
+    }
+}
+
+const PUBLIC_ONLY: &str = "WebFetch only connects to public addresses; use Bash curl for a local URL.";
+
+/// Validate the destination and bind the client to the route just checked.
+async fn public_destination(url: &reqwest::Url, proxies: &Matcher) -> Result<reqwest::ClientBuilder> {
+    #[cfg(feature = "test-support")]
+    if fixture_matches(url) {
+        return Ok(http_client());
+    }
+    anyhow::ensure!(matches!(url.scheme(), "http" | "https"), "WebFetch needs an HTTP(S) URL");
+    let host = url.host().context("WebFetch needs an HTTP(S) host")?;
+    let port = url.port_or_known_default().context("WebFetch needs an HTTP(S) URL")?;
+    let proxy = proxies.intercept(&url.as_str().parse()?);
+    let builder = match host {
+        url::Host::Ipv4(ip) => {
+            anyhow::ensure!(public_ip(ip.into()), PUBLIC_ONLY);
+            http_client()
+        }
+        url::Host::Ipv6(ip) => {
+            anyhow::ensure!(public_ip(ip.into()), PUBLIC_ONLY);
+            http_client()
+        }
+        url::Host::Domain(name) if proxy.is_some() => {
+            let name = name.trim_end_matches('.');
+            anyhow::ensure!(name.contains('.') && !name.ends_with(".localhost") && !name.ends_with(".local"), PUBLIC_ONLY);
+            http_client()
+        }
+        url::Host::Domain(name) => {
+            let addresses: Vec<SocketAddr> = tokio::net::lookup_host((name, port))
+                .await.context("WebFetch could not resolve host")?.collect();
+            anyhow::ensure!(!addresses.is_empty() && addresses.iter().all(|a| public_ip(a.ip())), PUBLIC_ONLY);
+            // Use precisely the addresses checked above, not a second DNS lookup.
+            http_client().resolve_to_addrs(name, &addresses)
+        }
+    };
+    match proxy {
+        Some(proxy) => Ok(builder.proxy(explicit_proxy(proxy)?)),
+        None => Ok(builder),
+    }
+}
+
+fn explicit_proxy(proxy: Intercept) -> Result<reqwest::Proxy> {
+    // No automatic proxy fallback: a NO_PROXY match or a scheme without a
+    // proxy must go through the checked and pinned direct route instead.
+    let route = reqwest::Proxy::all(proxy.uri().to_string())?;
+    Ok(match (proxy.basic_auth(), proxy.raw_auth()) {
+        (Some(auth), _) => route.custom_http_auth(auth.clone()),
+        (_, Some((user, password))) => route.basic_auth(user, password),
+        _ => route,
+    })
+}
+
+#[cfg(feature = "test-support")]
+static FIXTURE: std::sync::OnceLock<SocketAddr> = std::sync::OnceLock::new();
+
+/// Allow only the loopback host and port named by this system test.
+#[cfg(feature = "test-support")]
+pub fn allow_fixture_host(addr: SocketAddr) -> Result<()> {
+    anyhow::ensure!(addr.ip().is_loopback() && addr.port() != 0, "expected a loopback fixture socket");
+    FIXTURE.set(addr).map_err(|_| anyhow::anyhow!("fixture host already set"))
+}
+
+#[cfg(feature = "test-support")]
+fn fixture_matches(url: &reqwest::Url) -> bool {
+    let ip: IpAddr = match url.host() {
+        Some(url::Host::Ipv4(ip)) => ip.into(),
+        Some(url::Host::Ipv6(ip)) => ip.into(),
+        _ => return false,
+    };
+    matches!(url.scheme(), "http" | "https")
+        && url.port().is_some_and(|port| FIXTURE.get() == Some(&SocketAddr::new(ip, port)))
+}
+
+pub(super) async fn public_response(
+    mut url: reqwest::Url,
+    max_redirects: usize,
+    timeout: Duration,
+) -> Result<reqwest::Response> {
+    let proxies = Matcher::from_env();
+    for hop in 0..=max_redirects {
+        let response = public_destination(&url, &proxies).await?.timeout(timeout).build()?
+            .get(url.clone()).send().await.context("failed to fetch URL")?;
+        if !matches!(response.status().as_u16(), 301 | 302 | 303 | 307 | 308) {
+            return Ok(response);
+        }
+        let Some(location) = response.headers().get(reqwest::header::LOCATION) else {
+            return Ok(response);
+        };
+        anyhow::ensure!(hop < max_redirects, "WebFetch redirect limit reached");
+        url = url.join(location.to_str()?).context("invalid WebFetch redirect")?;
+    }
+    unreachable!()
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct WebFetchResult {
@@ -40,13 +146,15 @@ pub struct WebFetchResult {
 /// - The body is read only up to the limit: `max_bytes` of a text body,
 ///   [`HTML_READ_CEILING`] of an HTML page's markup.
 pub async fn fetch_url(url: &str, max_bytes: Option<usize>) -> Result<WebFetchResult> {
-    let limit = max_bytes.unwrap_or(DEFAULT_MAX_BYTES);
+    let parsed = reqwest::Url::parse(url).context("invalid WebFetch URL")?;
+    let timeout = Duration::from_secs(15);
+    let resp = tokio::time::timeout(timeout, public_response(parsed, 10, timeout))
+        .await.context("WebFetch timed out")??;
+    read_response(url, max_bytes, resp).await
+}
 
-    let resp = HTTP_CLIENT
-        .get(url)
-        .send()
-        .await
-        .context("failed to fetch URL")?;
+async fn read_response(url: &str, max_bytes: Option<usize>, resp: reqwest::Response) -> Result<WebFetchResult> {
+    let limit = max_bytes.unwrap_or(DEFAULT_MAX_BYTES);
     let status = resp.status();
     if !status.is_success() {
         anyhow::bail!("HTTP {status} from {}", resp.url());
@@ -261,13 +369,66 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn direct_fetch_checks_dns_and_literals() {
+        for url in ["http://localhost/", "http://127.0.0.1/"] {
+            let err = public_destination(&reqwest::Url::parse(url).unwrap(), &Matcher::builder().build())
+                .await.err().expect("direct requests must refuse local addresses");
+            assert!(format!("{err:#}").contains("public addresses"), "{err:#}");
+        }
+        assert!(public_destination(&reqwest::Url::parse("https://8.8.8.8/").unwrap(), &Matcher::builder().build()).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn proxy_exclusions_and_other_schemes_use_checked_direct_routes() {
+        let proxies = Matcher::builder().http("http://127.0.0.1:9").no("localhost").build();
+        for url in ["http://localhost/", "https://localhost/"] {
+            let err = public_destination(&reqwest::Url::parse(url).unwrap(), &proxies)
+                .await.err().expect("an unproxied hop still needs DNS checks");
+            assert!(format!("{err:#}").contains("public addresses"), "{err:#}");
+        }
+    }
+
+    #[tokio::test]
+    async fn env_proxy_resolves_names_and_a_redirect_is_checked_again() {
+        const CHILD: &str = "LINGGEN_WEB_FETCH_PROXY_TEST_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            // The fixture proxy, not this machine's DNS, knows this name.
+            for host in ["localhost.", "foo.localhost", "foo.LOCAL.", "intranet", "[::1]"] {
+                let err = fetch_url(&format!("http://{host}/"), None).await.unwrap_err();
+                assert!(format!("{err:#}").contains("public addresses"), "{host}: {err:#}");
+            }
+            let err = fetch_url("http://page.invalid/", None).await.unwrap_err();
+            assert!(format!("{err:#}").contains("public addresses"), "{err:#}");
+            return;
+        }
+        let proxy = serve_once(
+            "HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1/\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            "",
+            0,
+        );
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "engine::web_fetch::tests::env_proxy_resolves_names_and_a_redirect_is_checked_again"])
+            .env_clear()
+            .env(CHILD, "1")
+            .env("HTTP_PROXY", proxy)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+    }
+
+    async fn read_fixture(url: &str, max_bytes: Option<usize>) -> Result<WebFetchResult> {
+        let response = http_client().build()?.get(url).send().await?;
+        read_response(url, max_bytes, response).await
+    }
+
+    #[tokio::test]
     async fn a_failed_status_is_told_with_its_code() {
         let url = serve_once(
             "HTTP/1.1 404 Not Found\r\nContent-Type: text/html\r\nContent-Length: 22\r\nConnection: close\r\n\r\n",
             "<p>no such page</p>\n\n\n",
             1,
         );
-        let err = fetch_url(&url, None).await.expect_err("a 404 is no page");
+        let err = read_fixture(&url, None).await.expect_err("a 404 is no page");
         assert!(format!("{err:#}").contains("404"), "{err:#}");
     }
 
@@ -279,7 +440,7 @@ mod tests {
             usize::MAX,
         );
         let started = std::time::Instant::now();
-        let page = fetch_url(&url, Some(1000)).await.expect("the head of the body");
+        let page = read_fixture(&url, Some(1000)).await.expect("the head of the body");
         assert!(started.elapsed() < Duration::from_secs(5), "read on: {:?}", started.elapsed());
         assert!(page.truncated);
         assert_eq!(page.content.len(), 1000);
@@ -299,7 +460,7 @@ mod tests {
             page,
             1,
         );
-        let fetched = fetch_url(&url, Some(1000)).await.unwrap();
+        let fetched = read_fixture(&url, Some(1000)).await.unwrap();
         assert!(fetched.content.contains("THE PAGE TEXT"), "{}", fetched.content);
         assert!(!fetched.content.contains("var x"), "{}", fetched.content);
     }

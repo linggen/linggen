@@ -34,6 +34,8 @@ telemetry = ["linggen-engine/telemetry"]
 # failure. Shipped builds keep it. `--no-default-features --features telemetry`
 # drops candle and any-tts entirely; the fallback is then `say`.
 kokoro = ["dep:any-tts"]
+# Enables the system-test binary's explicit loopback fixture argument.
+test-support = ["linggen-engine/test-support"]
 
 [[bin]]
 name = "ling"
@@ -94,6 +96,11 @@ any-tts = { version = "0.1.2", optional = true, default-features = false, featur
 # Bonjour: macOS registers through mDNSResponder (server/api/pair/bonjour).
 mdns-sd = "0.21"
 any-tts = { version = "0.1.2", optional = true, default-features = false, features = ["kokoro", "download"] }
+
+[[test]]
+name = "system"
+path = "tests/system/main.rs"
+required-features = ["test-support"]
 
 # One hermetic world as its own process, for the web UI tests (tests/e2e):
 # the same world-builder as tests/system, run as a plain program.

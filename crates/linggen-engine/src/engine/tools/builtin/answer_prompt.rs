@@ -26,6 +26,64 @@ async fn kept_elsewhere(tools: &Tools, session: Option<&str>) -> Option<String> 
     crate::engine::turn_place::question_kept_to(&manager, session).await
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_permission_relay_needs_one_exact_non_global_label() {
+        let mut question = crate::engine::permission::build_exceeds_ceiling_question(
+            "Read", &PermissionMode::Read, "/project/file", &["/project".into()],
+        );
+        assert_eq!(relay_selection(Some(&question), "  dENY ").unwrap(), ["Deny"]);
+        assert!(relay_selection(Some(&question), "grant:at:read").is_err());
+        assert!(relay_selection(Some(&question), "grant:all:read").is_err());
+        question.permission = None;
+        assert_eq!(relay_selection(Some(&question), "I said Deny").unwrap(), ["Deny"]);
+    }
+
+    #[tokio::test]
+    async fn relay_requires_a_persons_turn_and_an_explicit_listing() {
+        let tools = Tools::new(std::env::temp_dir()).unwrap();
+        let call = ToolCall {
+            tool: "answer_prompt".into(),
+            args: json!({"answer": "Deny"}),
+            block_id: None,
+        };
+        let ToolResult::Success(reason) = AnswerPromptTool.execute(&tools, call).await.unwrap() else {
+            panic!("expected a relay refusal");
+        };
+        assert!(reason.contains("person"), "{reason}");
+        assert!(super::super::super::is_listed_only("answer_prompt"));
+    }
+}
+
+fn relay_selection(
+    question: Option<&super::super::AskUserQuestion>,
+    answer: &str,
+) -> std::result::Result<Vec<String>, &'static str> {
+    let Some(question) = question else { return Ok(Vec::new()) };
+    let permission = question.permission.is_some();
+    let lower = answer.to_lowercase();
+    let matches: Vec<String> = question.options.iter().filter(|option| {
+        let label = option.label.to_lowercase();
+        if permission {
+            label.trim() == lower.trim()
+        } else {
+            label == lower || lower.contains(&label) || label.contains(&lower)
+        }
+    }).map(|option| option.label.clone()).collect();
+    if permission {
+        if matches.len() != 1 {
+            return Err("refused: give the exact permission option label or answer on screen.");
+        }
+        if matches[0].starts_with("grant:all:") {
+            return Err("refused: grants for every folder must be answered on screen.");
+        }
+    }
+    Ok(if matches.len() == 1 { matches } else { Vec::new() })
+}
+
 pub struct AnswerPromptTool;
 #[async_trait]
 impl Tool for AnswerPromptTool {
@@ -66,6 +124,11 @@ impl Tool for AnswerPromptTool {
         })
     }
     async fn execute(&self, tools: &Tools, call: ToolCall) -> Result<ToolResult> {
+        if !tools.person_spoke || tools.delegated_session || tools.delegation_depth() > 0 {
+            return Ok(ToolResult::Success(
+                "refused: only a turn started by a person can relay an answer.".into(),
+            ));
+        }
         let args: AnswerPromptArgs = serde_json::from_value(call.args)
             .map_err(|e| anyhow::anyhow!("invalid args for answer_prompt: {}", e))?;
         let Some(bridge) = tools.ask_user_bridge() else {
@@ -99,40 +162,20 @@ impl Tool for AnswerPromptTool {
                 "refused: that question is kept to {app}; it is answered in {app}'s own chat."
             )));
         }
-        // Remove it (consuming the oneshot).
-        let entry = match target {
-            Some((id, _)) => bridge.pending.lock().await.remove(&id).map(|p| (id, p)),
-            None => None,
-        };
-        let Some((qid, pending)) = entry else {
-            return Ok(ToolResult::Success(
-                "no single open prompt to answer — nothing relayed.".to_string(),
-            ));
-        };
-
-        // Map the user's words onto an option of the first question when it
-        // matches a label cleanly (a single match); otherwise pass it as free
-        // text. Permission prompts are single-question approve/deny — a label
-        // match is the norm.
-        let lower = args.answer.to_lowercase();
-        let matches: Vec<String> = pending
-            .questions
-            .first()
-            .map(|q| {
-                q.options
-                    .iter()
-                    .filter(|o| {
-                        let l = o.label.to_lowercase();
-                        l == lower || lower.contains(&l) || l.contains(&lower)
-                    })
-                    .map(|o| o.label.clone())
-                    .collect()
-            })
-            .unwrap_or_default();
-        let selected = if matches.len() == 1 {
-            matches
-        } else {
-            Vec::new()
+        // Validate the answer before consuming the waiting prompt.
+        let (qid, pending, selected) = {
+            let mut waiting = bridge.pending.lock().await;
+            let Some((qid, pending)) = target.and_then(|(id, _)| waiting.get(&id).map(|p| (id, p))) else {
+                return Ok(ToolResult::Success(
+                    "no single open prompt to answer — nothing relayed.".into(),
+                ));
+            };
+            let selected = match relay_selection(pending.questions.first(), &args.answer) {
+                Ok(selected) => selected,
+                Err(reason) => return Ok(ToolResult::Success(reason.into())),
+            };
+            let pending = waiting.remove(&qid).expect("prompt held under lock");
+            (qid, pending, selected)
         };
         let custom_text = if selected.is_empty() {
             Some(args.answer.clone())

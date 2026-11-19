@@ -1,6 +1,7 @@
 //! Hermetic system tests (doc/test-design.md § 2):
 //!
-//!   cargo nextest run --test system        (or ./scripts/check.sh system)
+//!   cargo nextest run --features test-support --test system
+//!   (or ./scripts/check.sh system)
 //!
 //! Each test builds its own world — the fixture home (tests/fixtures/home)
 //! in a fresh root, the fake model and the built `ling` (which hosts its own

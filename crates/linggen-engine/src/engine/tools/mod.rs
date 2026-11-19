@@ -290,10 +290,10 @@ pub(crate) fn is_pet_scoped(name: &str) -> bool {
 }
 
 /// Tools only an agent that lists them EXPLICITLY gets — never part of the
-/// `*` wildcard: the pet's own ([`is_pet_scoped`]) and an agent's own notes
-/// (`crate::notes`), which belong to the agent whose spec lists them.
+/// `*` wildcard: the pet's own ([`is_pet_scoped`]), an agent's own notes
+/// (`crate::notes`), and the prompt relay.
 pub(crate) fn is_listed_only(name: &str) -> bool {
-    is_pet_scoped(name) || crate::notes::is_note_tool(name)
+    is_pet_scoped(name) || crate::notes::is_note_tool(name) || name == "answer_prompt"
 }
 
 /// Bridge between the synchronous tool executor and the async server state,
@@ -699,7 +699,7 @@ impl Tools {
             call.tool,
             summarize_tool_args(&call.tool, &call.args)
         );
-        if let Some(why) = self.exit_refusal(&call) {
+        if let Some(why) = self.exit_refusal(&call).await {
             return Ok(ToolResult::Success(why));
         }
         if let Some(tool) = builtin::lookup(&call.tool) {

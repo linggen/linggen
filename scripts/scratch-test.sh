@@ -18,7 +18,7 @@ scratch="$real_home/.cache/linggen-test-home/$(basename "$here")"
 mkdir -p "$scratch/.linggen/skills"
 case "${1:-}" in
   "") set -- --lib --bins ;;
-  system) shift; set -- --test system "$@" ;;
+  system) shift; set -- --features test-support --test system "$@" ;;
 esac
 cd "$here"
 exec env HOME="$scratch" \

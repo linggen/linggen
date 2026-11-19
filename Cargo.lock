@@ -5517,6 +5517,7 @@ dependencies = [
  "grep",
  "grep-regex",
  "grep-searcher",
+ "hyper-util",
  "ignore",
  "image",
  "libc",
