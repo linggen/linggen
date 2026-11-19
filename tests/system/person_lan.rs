@@ -406,7 +406,7 @@ async fn another_persons_phone_over_the_lan_changes_nothing_the_builder_reads() 
         ..Setup::default()
     };
     let (w, _) = day_world_at(12, setup).await;
-    pair_friends_phone(&w);
+    pair_friends_phone_with(&w, json!({"contract": 1}));
     let lan = Lan::new(&w);
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     while lan.status("/api/pair/me", Some(TOKEN)).await != 200 {
@@ -433,6 +433,8 @@ async fn another_persons_phone_over_the_lan_changes_nothing_the_builder_reads() 
         wrong.push(format!("the builder's own reading was not kept: {kept}"));
     }
     assert!(wrong.is_empty(), "{wrong:#?}");
+    let (status, _) = lan.send(reqwest::Method::GET, "/api/topic/latest?topic=phone&op=status", None).await;
+    assert_eq!(status, 404, "another person's phone gets no retained reading");
 }
 
 /// A body past the framework's limit is refused over the LAN as it is

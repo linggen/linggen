@@ -8,8 +8,9 @@
 //! person's day or session; `session_id` or `session`, in the query or at
 //! the top of a JSON body, any method) is refused there.
 
-/// The ways into the day a page reads by URL, and a person's notes: each is
-/// answered for the person on this channel, never for one the page names.
+/// The ways into the day a page reads by URL, a person's notes and the
+/// retained readings: each is answered for the person on this channel, never
+/// for one the page names.
 pub(crate) const PERSON_PATHS: &[&str] = &[
     "/api/sessions/day",
     "/api/skill-sessions",
@@ -17,6 +18,7 @@ pub(crate) const PERSON_PATHS: &[&str] = &[
     "/api/workspace/state",
     "/api/notes",
     "/api/pending-ask-user",
+    "/api/topic/latest",
 ];
 
 /// The ways into a session a page sends a body to: each body is sent as

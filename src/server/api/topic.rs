@@ -138,6 +138,9 @@ fn retained_path(topic: &str, op: &str) -> Option<PathBuf> {
     )
 }
 
+/// The most one retained reading may hold, serialized.
+const RETAIN_MAX_BYTES: usize = 1024 * 1024;
+
 /// Keep the newest payload for a topic, so a surface that was not listening —
 /// or has no peer to listen with — can still read it.
 pub(crate) fn retain(topic: &str, op: &str, payload: &serde_json::Value) {
@@ -145,6 +148,11 @@ pub(crate) fn retain(topic: &str, op: &str, payload: &serde_json::Value) {
         tracing::warn!("[topic] refusing to retain {topic}/{op}: unsafe name");
         return;
     };
+    let body = serde_json::to_vec(payload).unwrap_or_else(|_| b"null".to_vec());
+    if body.len() > RETAIN_MAX_BYTES {
+        tracing::warn!("[topic] not retaining {topic}/{op}: {} bytes is past the cap", body.len());
+        return;
+    }
     let Some(dir) = path.parent() else { return };
     if let Err(e) = std::fs::create_dir_all(dir) {
         tracing::warn!("[topic] retain {topic}/{op} failed: {e}");
@@ -152,7 +160,6 @@ pub(crate) fn retain(topic: &str, op: &str, payload: &serde_json::Value) {
     }
     // Write-then-rename: a reader polling this file never catches a half-write.
     let tmp = path.with_extension("json.tmp");
-    let body = serde_json::to_vec(payload).unwrap_or_else(|_| b"null".to_vec());
     if let Err(e) = std::fs::write(&tmp, &body).and_then(|()| std::fs::rename(&tmp, &path)) {
         tracing::warn!("[topic] retain {topic}/{op} failed: {e}");
     }
@@ -215,18 +222,29 @@ pub(crate) async fn publish(
 pub(crate) struct LatestQuery {
     topic: String,
     op: String,
+    /// The caller's person (the channel and the LAN gate set it).
+    #[serde(default)]
+    user_id: Option<String>,
 }
 
 /// GET /api/topic/latest?topic=&op= — the topic's retained value.
 ///
 /// 404 when nothing has been retained, which is a real answer and not an
 /// error: it means nobody has published this yet. Callers must show that as
-/// "no reading" rather than inventing one.
-pub(crate) async fn latest(Query(q): Query<LatestQuery>) -> impl IntoResponse {
+/// "no reading" rather than inventing one. Read by the same person rule as
+/// [`publish`]: another person's is given nothing.
+pub(crate) async fn latest(
+    State(state): State<Arc<ServerState>>,
+    Query(q): Query<LatestQuery>,
+) -> impl IntoResponse {
     let missing = (
         axum::http::StatusCode::NOT_FOUND,
         Json(serde_json::json!({ "error": "nothing retained on this topic" })),
     );
+    let asker = crate::server::person::Person::from_wire(q.user_id.as_deref());
+    if !crate::server::day_session::shares_builders(&state.manager, &asker).await {
+        return missing;
+    }
     let Some(path) = retained_path(&q.topic, &q.op) else {
         return missing;
     };
@@ -267,6 +285,17 @@ mod tests {
         assert!(retained_path("", "readout").is_none());
         assert!(retained_path("shifu", "").is_none());
         assert!(retained_path(&"x".repeat(65), "readout").is_none());
+    }
+
+    /// A reading past the cap is not kept; one within it is.
+    #[test]
+    fn a_reading_past_the_cap_is_not_retained() {
+        let big = serde_json::json!({ "blob": "x".repeat(RETAIN_MAX_BYTES) });
+        let _ = std::fs::remove_file(retained_path("cap-test", "big").unwrap());
+        retain("cap-test", "big", &big);
+        assert!(!retained_path("cap-test", "big").unwrap().exists());
+        retain("cap-test", "small", &serde_json::json!({ "ok": true }));
+        assert!(retained_path("cap-test", "small").unwrap().exists());
     }
 
     #[test]
