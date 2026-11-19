@@ -477,6 +477,7 @@ impl MissionLoader {
     }
 
     pub fn append_mission_run(&self, mission_id: &str, entry: &MissionRunEntry) -> Result<()> {
+        let _held = runs_file_lock();
         fs::create_dir_all(self.state_dir(mission_id))?;
         let path = self.runs_path(mission_id);
         let mut file = fs::OpenOptions::new()
@@ -570,6 +571,7 @@ impl MissionLoader {
         run_id: &str,
         change: impl FnOnce(&mut MissionRunEntry),
     ) -> Result<()> {
+        let _held = runs_file_lock();
         let path = self.runs_path(mission_id);
         if !path.exists() {
             return Ok(());
@@ -634,6 +636,14 @@ impl MissionLoader {
             }
         }
     }
+}
+
+/// The one lock over every mission's run history: an append and a rewrite
+/// never interleave, so a line appended while a run's end is rewritten is
+/// kept.
+fn runs_file_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock_ok()
 }
 
 impl MissionRegistry for MissionLoader {
@@ -864,6 +874,33 @@ mod tests {
         assert_eq!(runs[0].run_id, "run-2");
         assert_eq!(runs[1].run_id, "run-1");
         assert!(runs[0].skipped);
+    }
+
+    /// A run's end rewritten while the scheduler appends a skip line: the
+    /// appended line is kept.
+    #[test]
+    fn ending_a_run_while_another_line_is_appended_keeps_both() {
+        let (store, _dir) = temp_store();
+        let m = store
+            .create_mission(draft_min("Test", "0 * * * *", "Test"))
+            .unwrap();
+        let run = |id: String| MissionRunEntry { run_id: id, status: "running".into(), ..Default::default() };
+        store.append_mission_run(&m.id, &run("long".into())).unwrap();
+        let store = std::sync::Arc::new(store);
+        let ender = {
+            let (store, id) = (store.clone(), m.id.clone());
+            std::thread::spawn(move || {
+                for i in 0..300 {
+                    let status = if i % 2 == 0 { "completed" } else { "running" };
+                    store.update_mission_run_status(&id, "long", status).unwrap();
+                }
+            })
+        };
+        for i in 0..300 {
+            store.append_mission_run(&m.id, &run(format!("skip-{i}"))).unwrap();
+        }
+        ender.join().unwrap();
+        assert_eq!(store.list_mission_runs(&m.id).unwrap().len(), 301);
     }
 
     #[test]
