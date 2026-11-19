@@ -6,9 +6,10 @@ use std::time::Duration;
 
 const DEFAULT_MAX_BYTES: usize = 100 * 1024; // 100 KB
 
-/// How much of an HTML page is read for `max_bytes` of its text: markup,
-/// scripts and styles are stripped after reading.
-const HTML_READ_FACTOR: usize = 4;
+/// How much of an HTML page's markup is read, whatever `max_bytes` asks
+/// of its text: scripts and styles are stripped after reading, and a page's
+/// head alone can outweigh a small text limit many times over.
+const HTML_READ_CEILING: usize = 2 * 1024 * 1024;
 
 static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
     reqwest::Client::builder()
@@ -36,8 +37,8 @@ pub struct WebFetchResult {
 /// - HTML responses are stripped of tags to produce plain text.
 /// - Non-HTML (JSON, plain text, etc.) is returned as-is.
 /// - A status other than success fails the fetch, naming the code.
-/// - The body is read only up to the limit (`max_bytes` of text; for an
-///   HTML page, [`HTML_READ_FACTOR`] times that of markup).
+/// - The body is read only up to the limit: `max_bytes` of a text body,
+///   [`HTML_READ_CEILING`] of an HTML page's markup.
 pub async fn fetch_url(url: &str, max_bytes: Option<usize>) -> Result<WebFetchResult> {
     let limit = max_bytes.unwrap_or(DEFAULT_MAX_BYTES);
 
@@ -64,7 +65,7 @@ pub async fn fetch_url(url: &str, max_bytes: Option<usize>) -> Result<WebFetchRe
     let mut cut = false;
     let text = match body_kind(&content_type) {
         BodyKind::Html => {
-            let (bytes, more) = read_head(resp, limit.saturating_mul(HTML_READ_FACTOR)).await?;
+            let (bytes, more) = read_head(resp, HTML_READ_CEILING).await?;
             cut = more;
             let html = utf8_head(&bytes);
             facts = super::page_pictures::read(&html, &final_url);
@@ -282,6 +283,25 @@ mod tests {
         assert!(started.elapsed() < Duration::from_secs(5), "read on: {:?}", started.elapsed());
         assert!(page.truncated);
         assert_eq!(page.content.len(), 1000);
+    }
+
+    /// A small `max_bytes` still reads past a page's heavy head: the limit
+    /// is on the text, the markup has a ceiling of its own.
+    #[tokio::test]
+    async fn a_heavy_head_does_not_hide_the_page_text() {
+        let script = "<script>var x = 1;</script>".repeat(2000);
+        let page: &'static str = Box::leak(
+            format!("<html><head><title>T</title>{script}</head><body><p>THE PAGE TEXT</p></body></html>")
+                .into_boxed_str(),
+        );
+        let url = serve_once(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n",
+            page,
+            1,
+        );
+        let fetched = fetch_url(&url, Some(1000)).await.unwrap();
+        assert!(fetched.content.contains("THE PAGE TEXT"), "{}", fetched.content);
+        assert!(!fetched.content.contains("var x"), "{}", fetched.content);
     }
 
     #[test]
