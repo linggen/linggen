@@ -338,6 +338,12 @@ storage-filling   free space trend crosses "full within 2 days"
                   none:   "no app installed on this Mac offers a fix …"
 ```
 
+The Mac watches one more: `old-plugin`, a host (Claude Code or Codex) that
+called a retired Linggen door or tool in the last two days — an old plugin
+whose hooks swallow the "update the plugin" answer
+(`perception/old_plugin.rs`). Nothing on the Mac can update a host's plugin,
+so its remedy is the reason and the update command for that host.
+
 An offer is one of: a declared tool to run (with its args and tier), or a
 place to open (a skill's page at a view; on the phone, an app screen or
 Linggen's own settings page). The engine names no app: a skill declares what

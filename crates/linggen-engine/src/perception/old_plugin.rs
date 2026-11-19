@@ -63,8 +63,8 @@ pub fn host_name(host: &str) -> &'static str {
 /// plugin by itself.
 pub fn update_commands(host: &str) -> &'static str {
     match host {
-        "claude-code" => "nothing on this Mac updates a host's plugin by itself; in a terminal: claude plugin marketplace add linggen/linggen --sparse .claude-plugin plugins && claude plugin install linggen@linggen, then restart Claude Code",
-        "codex" => "nothing on this Mac updates a host's plugin by itself; in a terminal: codex plugin marketplace add linggen/linggen && codex plugin add linggen@linggen, then restart Codex",
+        "claude-code" => "nothing on this Mac updates a host's plugin by itself; in a terminal: curl -fsSL https://linggen.dev/install-plugin.sh | bash, then restart Claude Code",
+        "codex" => "nothing on this Mac updates a host's plugin by itself; in a terminal: curl -fsSL https://linggen.dev/install-plugin.sh | bash, then restart Codex",
         _ => "nothing on this Mac updates a host's plugin by itself; in a terminal: curl -fsSL https://linggen.dev/install-plugin.sh | bash, then restart Claude Code and Codex",
     }
 }
@@ -189,7 +189,7 @@ mod tests {
         )];
         let (said, fix) = situation(&hosts).unwrap();
         assert!(said.starts_with("Codex on this Mac"), "{said}");
-        assert!(fix.contains("codex plugin add linggen@linggen"), "{fix}");
+        assert!(fix.contains("install-plugin.sh") && fix.ends_with("restart Codex"), "{fix}");
         assert!(situation(&[]).is_none());
     }
 }
