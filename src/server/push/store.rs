@@ -4,7 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use crate::engine::skill::NoticeTier;
@@ -21,8 +21,10 @@ pub(crate) struct PushState {
     pub queue: Vec<Pending>,
 }
 
-/// One phone, as it last registered (`POST /api/push/device`).
+/// One phone, as it last registered (`POST /api/push/device`). Every field
+/// has a default, so a file saved before a field was added still loads.
 #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
 pub(crate) struct Phone {
     pub token: String,
     /// `sandbox` or `production`, from the phone's signed profile.
@@ -57,7 +59,8 @@ pub(crate) struct LastPush {
     pub outcome: String,
 }
 
-/// A line raised and not yet gone to every phone it should reach.
+/// A line raised and not yet gone to every phone it should reach. A field
+/// added to it later takes `#[serde(default)]`, so an older file still loads.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub(crate) struct Pending {
     pub app: String,
@@ -100,14 +103,33 @@ fn path() -> PathBuf {
 }
 
 pub(crate) fn load() -> PushState {
-    std::fs::read(path())
-        .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
-        .unwrap_or_default()
+    load_at(&path())
 }
 
-fn save(state: &PushState) -> std::io::Result<()> {
-    let file = path();
+/// For reading only: a file that cannot be read reads as empty here, and only
+/// [`modify`] decides what happens to it.
+fn load_at(file: &Path) -> PushState {
+    read_at(file).unwrap_or_default()
+}
+
+/// What `file` holds. No file yet is an empty state; a file that cannot be
+/// read is an error, never an empty state.
+fn read_at(file: &Path) -> Result<PushState, String> {
+    match std::fs::read(file) {
+        Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| e.to_string()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(PushState::default()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Move an unreadable state file aside under a new name, beside it.
+fn set_aside(file: &Path) -> std::io::Result<PathBuf> {
+    let aside = file.with_extension(format!("json.unreadable-{}", crate::util::now_ts_secs()));
+    std::fs::rename(file, &aside)?;
+    Ok(aside)
+}
+
+fn save(file: &Path, state: &PushState) -> std::io::Result<()> {
     if let Some(dir) = file.parent() {
         std::fs::create_dir_all(dir)?;
     }
@@ -125,10 +147,31 @@ fn save(state: &PushState) -> std::io::Result<()> {
 /// Read, change, write — under the lock, so the tick and the API never lose
 /// each other's writes.
 pub(crate) fn modify<T>(f: impl FnOnce(&mut PushState) -> T) -> T {
+    modify_at(&path(), f)
+}
+
+fn modify_at<T>(file: &Path, f: impl FnOnce(&mut PushState) -> T) -> T {
     let _one = LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let mut state = load();
+    let mut state = match read_at(file) {
+        Ok(state) => state,
+        Err(why) => match set_aside(file) {
+            Ok(aside) => {
+                tracing::warn!(
+                    "[push] state file unreadable ({why}); set aside as {} — starting empty",
+                    aside.display()
+                );
+                PushState::default()
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "[push] state file unreadable ({why}) and not set aside ({e}); not saved"
+                );
+                return f(&mut PushState::default());
+            }
+        },
+    };
     let out = f(&mut state);
-    if let Err(e) = save(&state) {
+    if let Err(e) = save(file, &state) {
         tracing::warn!("[push] state not saved: {e}");
     }
     out
@@ -155,6 +198,50 @@ mod tests {
             told_key("cfo", "watch", "watch|2026-10-27"),
             "cfo.watch:watch|2026-10-27"
         );
+    }
+
+    /// A state file this build cannot read (torn, or written by a build with
+    /// another shape) is set aside, never saved over with an empty state.
+    #[test]
+    fn an_unreadable_state_file_is_set_aside_not_wiped() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("state.json");
+        let unreadable = br#"{"phones":{"p1":{"token":"t"#;
+        std::fs::write(&file, unreadable).unwrap();
+        modify_at(&file, |s| s.queue.clear());
+        let aside: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p != &file)
+            .collect();
+        assert_eq!(aside.len(), 1, "set aside under a new name: {aside:?}");
+        assert_eq!(std::fs::read(&aside[0]).unwrap(), unreadable);
+    }
+
+    /// No file yet is an empty state, and is saved as one.
+    #[test]
+    fn a_missing_state_file_starts_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("push").join("state.json");
+        let phones = modify_at(&file, |s| s.phones.len());
+        assert_eq!(phones, 0);
+        assert!(file.is_file());
+        assert_eq!(
+            std::fs::read_dir(file.parent().unwrap()).unwrap().count(),
+            1
+        );
+    }
+
+    /// A phone saved before a field existed still loads: every field of a
+    /// phone has a default.
+    #[test]
+    fn a_phone_saved_with_fewer_fields_still_loads() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("state.json");
+        std::fs::write(&file, br#"{"phones":{"p1":{"token":"t","key":"k"}}}"#).unwrap();
+        let token = modify_at(&file, |s| s.phones.get("p1").map(|p| p.token.clone()));
+        assert_eq!(token.as_deref(), Some("t"));
     }
 
     #[test]
