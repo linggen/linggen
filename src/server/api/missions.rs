@@ -16,7 +16,9 @@ const VALID_MODES: &[&str] = &["read", "edit", "admin"];
 /// 409 for a change a skill mission's owner refuses (its file is the
 /// skill's), else `fallback`.
 fn status_for(e: &anyhow::Error, fallback: StatusCode) -> StatusCode {
-    if e.downcast_ref::<missions::SkillOwned>().is_some() {
+    if e.downcast_ref::<missions::SkillOwned>().is_some()
+        || e.downcast_ref::<missions::BuiltInOwned>().is_some()
+    {
         StatusCode::CONFLICT
     } else {
         fallback

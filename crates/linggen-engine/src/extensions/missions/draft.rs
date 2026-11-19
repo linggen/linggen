@@ -25,6 +25,21 @@ pub struct MissionDraft {
 }
 
 impl MissionDraft {
+    /// True when the draft changes anything but the person's own fields of
+    /// a built-in (`builtin::PERSONAL_MISSION_FIELDS`: on/off, the
+    /// schedule, catch-up and the model).
+    pub fn touches_instructions(&self) -> bool {
+        self.name.is_some()
+            || self.description.is_some()
+            || self.cwd.is_some()
+            || self.agent.is_some()
+            || self.kickoff.is_some()
+            || self.allowed_tools.is_some()
+            || self.permission.is_some()
+            || self.prompt.is_some()
+            || self.project.is_some()
+    }
+
     /// True when the draft changes anything beyond on/off and the schedule —
     /// the part of a skill mission that belongs to its skill.
     pub fn touches_definition(&self) -> bool {

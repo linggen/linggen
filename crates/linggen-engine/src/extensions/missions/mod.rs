@@ -1,3 +1,4 @@
+pub mod builtin;
 pub mod cron;
 pub mod draft;
 pub mod enter;
@@ -26,6 +27,7 @@ pub use crate::engine::mission::record::{
 };
 pub use crate::engine::mission::registry::MissionRegistry;
 
+pub use builtin::BuiltInOwned;
 pub use cron::{parse_cron, validate_cron};
 pub use draft::MissionDraft;
 use parser::{mission_to_md, name_to_filename, parse_mission_md};
@@ -198,12 +200,15 @@ impl MissionLoader {
         if id.is_empty() {
             id = format!("mission-{}", crate::util::now_ts_secs());
         }
-        if self.mission_dir(&id).exists() {
+        // A built-in's name is taken even after it was deleted: a mission
+        // made there would be refreshed into the built-in at the next start.
+        let taken = |id: &str| self.mission_dir(id).exists() || builtin::is_builtin(&self.dir, id);
+        if taken(&id) {
             let base = id.clone();
             let mut n = 2;
             loop {
                 id = format!("{}-{}", base, n);
-                if !self.mission_dir(&id).exists() {
+                if !taken(&id) {
                     break;
                 }
                 n += 1;
@@ -239,11 +244,49 @@ impl MissionLoader {
             created_at: crate::util::now_ts_secs(),
         };
 
-        fs::create_dir_all(self.mission_dir(&id))?;
-        fs::write(self.mission_path(&id), mission_to_md(&mission))?;
+        self.write_definition(&id, None, &mission_to_md(&mission))?;
         self.reload();
 
         Ok(mission)
+    }
+
+    /// The one writer of a mission's `mission.md` under the missions
+    /// folder: a built-in's file takes a change to the person's fields
+    /// alone ([`builtin::check_change`]); start-up's refresh is the
+    /// engine's own (`builtin::sync`).
+    fn write_definition(&self, id: &str, before: Option<&str>, text: &str) -> Result<()> {
+        builtin::check_change(&self.dir, id, before, text)?;
+        fs::create_dir_all(self.mission_dir(id))?;
+        fs::write(self.mission_path(id), text)?;
+        Ok(())
+    }
+
+    /// A built-in takes only the person's fields from a draft, written into
+    /// its file as they are; anything else is refused.
+    fn choose_for_builtin(&self, id: &str, draft: MissionDraft) -> Result<Mission> {
+        if draft.touches_instructions() {
+            return Err(BuiltInOwned { id: id.to_string() }.into());
+        }
+        let before = fs::read_to_string(self.mission_path(id))?;
+        let mut changes: Vec<(&str, Option<serde_norway::Value>)> = Vec::new();
+        if let Some(schedule) = draft.schedule {
+            validate_cron(&schedule)?;
+            changes.push(("schedule", Some(schedule.into())));
+        }
+        if let Some(enabled) = draft.enabled {
+            changes.push(("enabled", Some(enabled.into())));
+        }
+        if let Some(hours) = draft.catchup_hours {
+            changes.push(("catchup_hours", hours.map(Into::into)));
+        }
+        if let Some(model) = draft.model {
+            changes.push(("model", model.map(Into::into)));
+        }
+        let after = builtin::with_personal(&before, &changes)?;
+        self.write_definition(id, Some(&before), &after)?;
+        self.reload();
+        self.get_mission(id)?
+            .ok_or_else(|| anyhow::anyhow!("Mission '{}' not found", id))
     }
 
     pub fn get_mission(&self, mission_id: &str) -> Result<Option<Mission>> {
@@ -264,6 +307,9 @@ impl MissionLoader {
         };
         if mission.skill.is_some() {
             return self.choose_for_skill_mission(mission_id, draft);
+        }
+        if builtin::is_builtin(&self.dir, mission_id) {
+            return self.choose_for_builtin(mission_id, draft);
         }
 
         if let Some(n) = draft.name {
@@ -307,7 +353,8 @@ impl MissionLoader {
             mission.project = p;
         }
 
-        fs::write(self.mission_path(mission_id), mission_to_md(&mission))?;
+        let before = fs::read_to_string(self.mission_path(mission_id)).ok();
+        self.write_definition(mission_id, before.as_deref(), &mission_to_md(&mission))?;
         self.reload();
         Ok(mission)
     }
@@ -375,8 +422,8 @@ impl MissionLoader {
     pub fn write_mission_raw(&self, mission_id: &str, content: &str) -> Result<Mission> {
         self.ensure_user_owned(mission_id, "change its mission.md in the skill")?;
         let mission = parse_mission_md(mission_id, content)?;
-        fs::create_dir_all(self.mission_dir(mission_id))?;
-        fs::write(self.mission_path(mission_id), content)?;
+        let before = fs::read_to_string(self.mission_path(mission_id)).ok();
+        self.write_definition(mission_id, before.as_deref(), content)?;
         self.reload();
         Ok(mission)
     }
@@ -1325,5 +1372,64 @@ mod tests {
 
         store.delete_mission(&m.id).unwrap();
         assert!(!root.join("test-dir").exists());
+    }
+
+    /// A built-in through the mission API and the raw editor: the person's
+    /// fields change, anything else is refused with what to do, and no new
+    /// mission takes a built-in's name.
+    #[test]
+    fn a_built_in_takes_only_the_persons_fields() {
+        let tmp = tempfile::tempdir().unwrap();
+        builtin::sync(tmp.path()).unwrap();
+        let store = MissionLoader::with_dir(tmp.path().to_path_buf());
+        let path = tmp.path().join("dream/mission.md");
+        let shipped = fs::read_to_string(&path).unwrap();
+
+        let paused = store
+            .update_mission(
+                "dream",
+                MissionDraft {
+                    enabled: Some(false),
+                    schedule: Some("17 5 * * *".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert!(!paused.enabled);
+        assert_eq!(paused.schedule, "17 5 * * *");
+        let now = fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            crate::extensions::frontmatter::split(&now).1,
+            crate::extensions::frontmatter::split(&shipped).1,
+            "its instructions untouched"
+        );
+
+        let owned = |e: anyhow::Error| e.downcast_ref::<BuiltInOwned>().is_some();
+        let rewrite = MissionDraft {
+            prompt: Some("Something else.".into()),
+            ..Default::default()
+        };
+        let refused = store.update_mission("dream", rewrite).unwrap_err();
+        assert!(refused.to_string().contains("copy it under a new name"), "{refused}");
+        assert!(owned(refused));
+        let edited = now.replacen("\n\n", "\n\nSomething else.\n\n", 1);
+        assert!(owned(store.write_mission_raw("dream", &edited).unwrap_err()));
+        let raw_pause = now.replace("enabled: false", "enabled: true");
+        assert!(store.write_mission_raw("dream", &raw_pause).unwrap().enabled);
+
+        fs::remove_dir_all(tmp.path().join("dream")).unwrap();
+        let made = store
+            .create_mission(draft_min("dream", "0 3 * * *", "Mine"))
+            .unwrap();
+        assert_eq!(made.id, "dream-2", "a deleted built-in's name is still taken");
+    }
+
+    /// Every write of a mission's file under the missions folder goes
+    /// through the one writer that knows what a built-in allows.
+    #[test]
+    fn one_writer_writes_a_missions_file() {
+        let code = include_str!("mod.rs").split("#[cfg(test)]\nmod tests").next().unwrap();
+        assert_eq!(code.matches("fs::write(self.mission_path").count(), 1);
+        assert_eq!(code.matches("self.write_definition(").count(), 4);
     }
 }
