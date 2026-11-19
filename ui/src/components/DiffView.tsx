@@ -1,54 +1,5 @@
 import React from 'react';
-
-interface DiffLine {
-  type: 'add' | 'del' | 'context' | 'hunk';
-  oldNum?: number;
-  newNum?: number;
-  text: string;
-}
-
-function parseDiff(diff: string): DiffLine[] {
-  const lines = diff.split('\n');
-  const result: DiffLine[] = [];
-  let oldNum = 0;
-  let newNum = 0;
-
-  for (const line of lines) {
-    // Skip metadata lines
-    if (
-      line.startsWith('diff --git') ||
-      line.startsWith('index ') ||
-      line.startsWith('--- ') ||
-      line.startsWith('+++ ') ||
-      line.startsWith('\\ No newline')
-    ) {
-      continue;
-    }
-
-    // Hunk header
-    const hunkMatch = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)/);
-    if (hunkMatch) {
-      oldNum = parseInt(hunkMatch[1], 10);
-      newNum = parseInt(hunkMatch[2], 10);
-      result.push({ type: 'hunk', text: line });
-      continue;
-    }
-
-    if (line.startsWith('+')) {
-      result.push({ type: 'add', newNum, text: line.slice(1) });
-      newNum++;
-    } else if (line.startsWith('-')) {
-      result.push({ type: 'del', oldNum, text: line.slice(1) });
-      oldNum++;
-    } else if (line.startsWith(' ')) {
-      result.push({ type: 'context', oldNum, newNum, text: line.slice(1) });
-      oldNum++;
-      newNum++;
-    }
-  }
-
-  return result;
-}
+import { parseDiff } from '../lib/diffLines.mts';
 
 const lineStyles: Record<string, string> = {
   add: 'bg-green-100/60 dark:bg-green-950/40 text-green-900 dark:text-green-200',
