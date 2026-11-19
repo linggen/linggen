@@ -122,6 +122,8 @@ On the Mac now; the iPhone's 2.4 follows.
   saw it; it asks for a fresh read first.
 - **Stopping a background task** right after its turn ended no longer fails.
 - **A long file with non-Latin text** no longer stops the turn that writes it.
+- **The models list shows a model's settings, never its key.**
+- **A request from a paired device on the LAN must carry a JSON object.**
 - **An agent set to a retired model** now runs on its successor.
 - **A long name on a crowded 灵境 field card** no longer runs into its status.
 - **灵境: a won story fight shows one 所得 card** with everything it paid, and
