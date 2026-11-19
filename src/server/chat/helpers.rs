@@ -60,6 +60,35 @@ pub(crate) fn turn_error_row(err: &anyhow::Error) -> Option<String> {
     (!crate::engine::is_stopped(err)).then(|| format_turn_error(&err.to_string()))
 }
 
+/// How a chat turn whose run failed ends. A stopped run ends as a run with
+/// nothing to say (its outcome, `None`): no error line, and the outcome
+/// closes its bubble and has the page load the history again, where the
+/// run's calls show as an interrupted run (`run_calls`). Any other failure
+/// leaves its error line.
+pub(super) async fn end_failed_turn(
+    ctx: &super::ChatRunCtx,
+    run_id: Option<&str>,
+    err: &anyhow::Error,
+) {
+    let Some(line) = turn_error_row(err) else {
+        emit_outcome_event(ctx, &AgentOutcome::None, run_id).await;
+        return;
+    };
+    persist_and_emit_message(
+        &ctx.manager,
+        &ctx.events_tx,
+        &ctx.root,
+        &ctx.agent_id,
+        &ctx.agent_id,
+        "user",
+        &line,
+        ctx.session_id.as_deref(),
+        false,
+        run_id,
+    )
+    .await;
+}
+
 /// A turn refused on a spent Linggen Cloud allowance tells its session as a
 /// fact (`AllowanceSpent`), so a page whose turn ran unseen — a hidden
 /// kickoff, a light turn — can show the way on instead of waiting. Anything

@@ -210,3 +210,47 @@ fn belongs_to_a_run(e: &Value) -> bool {
         _ => false,
     }
 }
+
+/// A stopped run tells the page it ended, and the history it then loads marks
+/// it interrupted: the run's outcome comes on the event stream (the page
+/// reloads the history on it), the history holds the run's interrupted row,
+/// and no error line says the model failed.
+#[tokio::test]
+async fn a_stopped_run_ends_with_its_outcome_and_an_interrupted_row() {
+    let w = World::start(Setup::default().script(
+        Agent::Ling,
+        vec![tool(
+            "Bash",
+            json!({"cmd": "echo started > started.txt; sleep 120", "timeout_ms": 180_000}),
+        )],
+    ))
+    .await;
+    let root = w.work();
+    let sid = w
+        .api
+        .create_session(json!({"title": "stopped", "project_root": root}))
+        .await;
+    stop_a_sleeping_run(&w, &sid, &root).await;
+    let run = runs_of_rows(&w.raw_rows(&sid)).pop().expect("the stopped run's rows");
+
+    let start = Instant::now();
+    let outcome = loop {
+        let found = w.events().into_iter().find(|e| {
+            e["session_id"] == sid && e["kind"] == "run" && e["phase"] == "outcome" && e["run_id"] == run.as_str()
+        });
+        if found.is_some() || start.elapsed() > Duration::from_secs(10) {
+            break found;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    };
+    assert!(outcome.is_some(), "the stopped run sent no outcome: {:#?}", w.events());
+
+    let history = w.api.history(&sid, &root).await;
+    let rows = history["messages"].as_array().cloned().unwrap_or_default();
+    let cut = rows.iter().find(|r| r[0]["run"] == "interrupted");
+    assert_eq!(cut.map(|r| r[0]["run_id"].clone()), Some(json!(run)), "{history:#}");
+    assert!(
+        !rows.iter().any(|r| r[1].as_str().is_some_and(|t| t.starts_with("Error:"))),
+        "a stop told as an error: {history:#}"
+    );
+}

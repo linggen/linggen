@@ -1,7 +1,7 @@
 use crate::engine::agent::AgentManager;
 use crate::engine::{AgentEngine, Plan, PlanStatus};
 use crate::server::chat::helpers::{
-    emit_outcome_event, persist_and_emit_message, persist_message_only,
+    emit_outcome_event, persist_message_only,
 };
 use crate::server::{ServerEvent, ServerState};
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
@@ -98,21 +98,7 @@ pub(super) async fn run_plan_dispatch(ctx: &ChatRunCtx, engine: &mut crate::engi
             }
         }
         Err(err) => {
-            if let Some(error_msg) = super::helpers::turn_error_row(&err) {
-                persist_and_emit_message(
-                    &ctx.manager,
-                    &ctx.events_tx,
-                    &ctx.root,
-                    &ctx.agent_id,
-                    &ctx.agent_id,
-                    "user",
-                    &error_msg,
-                    ctx.session_id.as_deref(),
-                    false,
-                    engine.last_run_id.as_deref(),
-                )
-                .await;
-            }
+            super::helpers::end_failed_turn(ctx, engine.last_run_id.as_deref(), &err).await;
         }
     }
     let _ = ctx.events_tx.send(ServerEvent::StateUpdated);
@@ -180,21 +166,7 @@ pub(super) async fn run_plan_execution(
             }
         }
         Err(err) => {
-            if let Some(error_msg) = super::helpers::turn_error_row(&err) {
-                persist_and_emit_message(
-                    &ctx.manager,
-                    &ctx.events_tx,
-                    &ctx.root,
-                    &ctx.agent_id,
-                    &ctx.agent_id,
-                    "user",
-                    &error_msg,
-                    ctx.session_id.as_deref(),
-                    false,
-                    engine.last_run_id.as_deref(),
-                )
-                .await;
-            }
+            super::helpers::end_failed_turn(ctx, engine.last_run_id.as_deref(), &err).await;
         }
     }
     let _ = ctx.events_tx.send(ServerEvent::StateUpdated);

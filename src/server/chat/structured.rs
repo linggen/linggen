@@ -165,21 +165,7 @@ pub(super) async fn run_structured_loop(ctx: &ChatRunCtx, engine: &mut crate::en
         // AgentEvent::Message which the bridge converts to ServerEvent::Message.
         // Emitting one here would duplicate the assistant response for WebRTC consumers.
     } else if let Err(err) = outcome {
-        if let Some(error_msg) = super::helpers::turn_error_row(&err) {
-            persist_and_emit_message(
-                &ctx.manager,
-                &ctx.events_tx,
-                &ctx.root,
-                &ctx.agent_id,
-                &ctx.agent_id,
-                "user",
-                &error_msg,
-                ctx.session_id.as_deref(),
-                false,
-                engine.last_run_id.as_deref(),
-            )
-            .await;
-        }
+        super::helpers::end_failed_turn(ctx, engine.last_run_id.as_deref(), &err).await;
     }
     let _ = ctx.events_tx.send(ServerEvent::StateUpdated);
 }
