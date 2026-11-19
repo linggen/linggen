@@ -90,7 +90,7 @@ Project path encoding: `/Users/foo/project` → `-Users-foo-project` (same conve
 │   │   ├── mission.md                # Mission definition (markdown + YAML frontmatter)
 │   │   └── runs.jsonl                # Mission run history (JSONL)
 │   └── {skill}:{name}/               # A skill mission's user side (its mission.md is in skills/{skill}/missions/{name}/)
-│       ├── user.json                 # The user's on/off + schedule over the file's defaults
+│       ├── user.json                 # The user's on/off + schedule over the file's defaults (unreadable: the mission stays off; the next choice moves it aside as user.unreadable-<secs>.json)
 │       └── runs.jsonl                # Mission run history (JSONL)
 ├── quests/
 │   └── {app}.json                    # Real-life quests an app publishes; linggen.json = setup milestones

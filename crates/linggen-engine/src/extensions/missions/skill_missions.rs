@@ -88,6 +88,24 @@ impl UserChoice {
             .map_err(|e| anyhow::anyhow!("{} cannot be read: {e}", path.display()))
     }
 
+    /// The choices a new choice starts from. An unreadable file is moved
+    /// aside under a new name (kept, and said in the log) and the new choice
+    /// starts off: the mission stays off unless the new choice turns it on.
+    /// An error when the file could not be moved: then nothing is written
+    /// over it.
+    pub(super) fn load_for_new_choice(state_dir: &Path) -> Result<Self> {
+        let why = match Self::load(state_dir) {
+            Ok(choice) => return Ok(choice),
+            Err(why) => why,
+        };
+        let stamp = crate::util::now_ts_secs();
+        let aside = state_dir.join(format!("user.unreadable-{stamp}.json"));
+        fs::rename(Self::path(state_dir), &aside)
+            .map_err(|e| anyhow::anyhow!("{why:#}; it could not be set aside: {e}"))?;
+        tracing::warn!("{why:#}; kept as {} and a new choice written", aside.display());
+        Ok(Self { enabled: Some(false), schedule: None })
+    }
+
     /// Written whole (temp file, then rename), so it is never seen cut short.
     pub(super) fn save(&self, state_dir: &Path) -> Result<()> {
         let body = serde_json::to_string_pretty(self)?;
