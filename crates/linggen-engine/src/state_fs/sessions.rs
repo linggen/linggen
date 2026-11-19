@@ -481,16 +481,17 @@ impl SessionStore {
         let dir = self.session_dir(&meta.id);
         fs::create_dir_all(&dir)?;
         let yaml = meta_yaml(meta)?;
-        let file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(dir.join("session.yaml"));
-        let mut file = match file {
-            Ok(file) => file,
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => return Ok(false),
-            Err(e) => return Err(e.into()),
-        };
-        file.write_all(yaml.as_bytes())?;
+        // Written whole beside it, then put in place only if none is there
+        // yet: a reader never sees a half-made file, and a failed write
+        // leaves no file to block the next maker.
+        let mut tmp = tempfile::NamedTempFile::new_in(&dir)?;
+        tmp.write_all(yaml.as_bytes())?;
+        tmp.as_file().sync_all()?;
+        match tmp.persist_noclobber(dir.join("session.yaml")) {
+            Ok(_) => {}
+            Err(e) if e.error.kind() == std::io::ErrorKind::AlreadyExists => return Ok(false),
+            Err(e) => return Err(e.error.into()),
+        }
         let msgs_path = dir.join("messages.jsonl");
         if !msgs_path.exists() {
             fs::write(&msgs_path, "")?;
@@ -1620,5 +1621,37 @@ mod tests {
         std::fs::write(&yaml, ": not yaml [").unwrap();
         assert!(!store.add_session_if_new(&meta).unwrap());
         assert_eq!(std::fs::read_to_string(&yaml).unwrap(), ": not yaml [");
+    }
+
+    /// The maker that lost the race reads the winner's session whole: the
+    /// file is visible only once its content is in it.
+    #[test]
+    fn a_session_made_if_new_is_never_seen_half_made() {
+        let (store, _dir) = temp_store();
+        let barrier = std::sync::Barrier::new(2);
+        let half_seen = std::sync::atomic::AtomicUsize::new(0);
+        std::thread::scope(|scope| {
+            for _ in 0..2 {
+                let (store, barrier, half_seen) = (&store, &barrier, &half_seen);
+                scope.spawn(move || {
+                    for i in 0..300 {
+                        let meta = SessionMeta {
+                            id: format!("sess-race-{i}"),
+                            title: "made".into(),
+                            cwd: "/tmp".into(),
+                            ..Default::default()
+                        };
+                        barrier.wait();
+                        if !store.add_session_if_new(&meta).unwrap() {
+                            let read = store.get_session_meta(&meta.id);
+                            if !matches!(read, Ok(Some(ref m)) if m.title == "made") {
+                                half_seen.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            }
+                        }
+                    }
+                });
+            }
+        });
+        assert_eq!(half_seen.into_inner(), 0);
     }
 }
