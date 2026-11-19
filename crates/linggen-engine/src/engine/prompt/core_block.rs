@@ -218,14 +218,22 @@ pub fn user_name_from_core() -> Option<String> {
     user_name_from_rows(&rows)
 }
 
+/// Where the ASCII pattern `pat` first occurs in `text`, ignoring ASCII case
+/// — a byte position in `text` itself (a lower-cased copy can be longer).
+/// A match is ASCII bytes only, so it starts and ends on char boundaries.
+fn find_ascii_ci(text: &str, pat: &str) -> Option<usize> {
+    text.as_bytes()
+        .windows(pat.len())
+        .position(|w| w.eq_ignore_ascii_case(pat.as_bytes()))
+}
+
 fn user_name_from_rows(rows: &[CoreRow]) -> Option<String> {
     // Explicit statements first: "the user's name is X", "call them X" —
     // the shape Yinyue's onboarding writes.
     for r in rows {
         let c = r.content.trim();
-        let lower = c.to_lowercase();
         for pat in ["name is ", "call them ", "call me ", "be called ", "goes by "] {
-            if let Some(i) = lower.find(pat) {
+            if let Some(i) = find_ascii_ci(c, pat) {
                 let name: String = c[i + pat.len()..]
                     .chars()
                     .take_while(|ch| ch.is_alphanumeric())
@@ -469,6 +477,16 @@ mod tests {
             "Alex is in the ATLANTIC time zone (ADT/AST, UTC-3 in summer) — NOT Eastern.",
         )];
         assert_eq!(user_name_from_rows(&rows), None);
+    }
+
+    /// Text whose lower-case form is longer than itself (`İ` folds to two
+    /// chars) still yields the right name, and never a panic.
+    #[test]
+    fn name_after_text_whose_case_folding_changes_length() {
+        let rows = [row("İİ name is Wei")];
+        assert_eq!(user_name_from_rows(&rows).as_deref(), Some("Wei"));
+        let rows = [row("İİİİİİİİİİİİ name is Wei")];
+        assert_eq!(user_name_from_rows(&rows).as_deref(), Some("Wei"));
     }
 
     #[test]
