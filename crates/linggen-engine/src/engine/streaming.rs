@@ -167,6 +167,7 @@ impl AgentEngine {
         let mut token_usage: Option<crate::provider::models::TokenUsage> = None;
         let mut first_action: Option<(actions::ModelAction, usize)> = None;
         let mut steered = false;
+        let mut cut = false;
 
         'stream: loop {
             // A user cancel must not wait out the rest of the stream — a long
@@ -218,6 +219,7 @@ impl AgentEngine {
                         None => usage,
                     });
                 }
+                StreamChunk::Cut => cut = true,
                 StreamChunk::ToolCall(_) => {
                     // Tool call chunks are not expected in legacy streaming mode;
                     // they are handled by stream_with_tool_calling().
@@ -236,9 +238,10 @@ impl AgentEngine {
         Ok(StreamResult {
             full_text: accumulated,
             token_usage,
-            first_action: first_action.filter(|_| !steered),
+            first_action: first_action.filter(|_| !steered && !cut),
             tool_calls: Vec::new(),
             steered,
+            cut,
         })
     }
 
@@ -276,6 +279,7 @@ impl AgentEngine {
         let mut tc_args: Vec<String> = Vec::new();
         let mut tc_thought_sigs: Vec<Option<String>> = Vec::new();
         let mut steered = false;
+        let mut cut = false;
 
         'stream: loop {
             // Same cancel-poll as stream_with_thinking_model: a stop must not
@@ -325,6 +329,7 @@ impl AgentEngine {
                         None => usage,
                     });
                 }
+                StreamChunk::Cut => cut = true,
                 StreamChunk::ToolCall(tc) => {
                     let idx = tc.index;
                     // Grow accumulators if needed
@@ -363,7 +368,8 @@ impl AgentEngine {
         // output_index gaps (text blocks occupy indices before function calls).
         // A steered stream keeps none: a call with no result breaks history.
         let mut tool_calls = Vec::new();
-        let begun_calls = if steered { 0 } else { tc_ids.len() };
+        // A cut stream keeps none either: the call it was writing is incomplete.
+        let begun_calls = if steered || cut { 0 } else { tc_ids.len() };
         for i in 0..begun_calls {
             let name = tc_names[i].clone().unwrap_or_default();
             let args_str = &tc_args[i];
@@ -415,6 +421,7 @@ impl AgentEngine {
             first_action: None,
             tool_calls,
             steered,
+            cut,
         })
     }
 

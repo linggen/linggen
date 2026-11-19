@@ -230,6 +230,7 @@ impl Stream for ProxyInferenceStream {
                                 .and_then(|v| v.as_u64())
                                 .map(|v| v as usize),
                         })))),
+                        "cut" => Poll::Ready(Some(Ok(StreamChunk::Cut))),
                         "tool_call" => {
                             Poll::Ready(Some(Ok(StreamChunk::ToolCall(ToolCallChunk {
                                 index: chunk.get("index").and_then(|v| v.as_u64()).unwrap_or(0)

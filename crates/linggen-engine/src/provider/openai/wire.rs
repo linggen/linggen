@@ -332,6 +332,16 @@ pub(super) struct OaiStreamChoice {
     /// Gemini extra_content (contains thought_signature for tool calls).
     #[serde(default)]
     pub(super) extra_content: Option<OaiExtraContent>,
+    /// Why the reply ended, on its last chunk: `length` is the output limit.
+    #[serde(default)]
+    pub(super) finish_reason: Option<String>,
+}
+
+impl OaiStreamChoice {
+    /// The provider stopped this reply at its output limit.
+    pub(super) fn was_cut(&self) -> bool {
+        self.finish_reason.as_deref() == Some("length")
+    }
 }
 
 /// Gemini-specific extra_content on choices (OpenAI-compatible endpoint).

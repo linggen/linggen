@@ -234,7 +234,7 @@ async fn predict(models: &Arc<ModelManager>, call: LastCall) -> anyhow::Result<O
     while let Some(chunk) = stream.next().await {
         match chunk? {
             StreamChunk::Token(t) => text.push_str(&t),
-            StreamChunk::ToolCall(_) => return Ok(None),
+            StreamChunk::ToolCall(_) | StreamChunk::Cut => return Ok(None),
             StreamChunk::Usage(u) => tracing::debug!(
                 "next-prompt suggestion: prompt {:?}, cached {:?}, output {:?}",
                 u.prompt_tokens,
@@ -302,6 +302,7 @@ mod tests {
             first_action: None,
             tool_calls: Vec::new(),
             steered: false,
+            cut: false,
         }
     }
 

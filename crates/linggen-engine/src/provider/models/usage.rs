@@ -97,6 +97,11 @@ pub enum StreamChunk {
     Usage(TokenUsage),
     /// A tool call chunk from native function calling (incremental or complete).
     ToolCall(ToolCallChunk),
+    /// The provider stopped the reply at its output limit (Anthropic's
+    /// `max_tokens`, the Responses API's `max_output_tokens`, Chat
+    /// Completions' `length`): what came is all there is, and a tool call
+    /// still being written is incomplete.
+    Cut,
 }
 
 /// An incremental tool call chunk from the streaming API.

@@ -527,6 +527,9 @@ fn parse_sse_block(block: &str) -> Option<SseEvent> {
 #[derive(Default)]
 struct BlockState {
     tool_blocks: HashMap<u32, ToolBlock>,
+    /// The reply stopped at `max_tokens` (said by `message_delta`, reported
+    /// as [`StreamChunk::Cut`] at `message_stop`).
+    cut: bool,
 }
 
 struct ToolBlock {
@@ -625,6 +628,9 @@ fn handle_event(event: SseEvent, state: &mut BlockState) -> Option<Result<Stream
             // Only surface output_tokens from the delta. Input tokens were
             // already emitted at message_start — echoing them here would
             // double-count in the agent's running total.
+            if data.pointer("/delta/stop_reason").and_then(|v| v.as_str()) == Some("max_tokens") {
+                state.cut = true;
+            }
             let output_tokens = data
                 .get("usage")
                 .and_then(|u| u.get("output_tokens"))
@@ -637,7 +643,8 @@ fn handle_event(event: SseEvent, state: &mut BlockState) -> Option<Result<Stream
                 cached_tokens: None,
             })))
         }
-        "message_stop" | "ping" => None,
+        "message_stop" => state.cut.then_some(Ok(StreamChunk::Cut)),
+        "ping" => None,
         "error" => {
             let msg = data
                 .get("error")
@@ -738,5 +745,24 @@ mod tests {
         assert_eq!(a.system, Some(serde_json::json!("You are Ling.")));
         assert_eq!(a.system, b.system);
         assert_eq!(a.messages[..], b.messages[..a.messages.len()]);
+    }
+}
+
+#[cfg(test)]
+mod cut_tests {
+    use super::*;
+
+    fn events(sse: &str) -> Vec<Result<StreamChunk>> {
+        let mut buf = sse.as_bytes().to_vec();
+        let mut state = BlockState::default();
+        std::iter::from_fn(|| try_next_event(&mut buf, &mut state)).collect()
+    }
+
+    #[test]
+    fn stop_reason_max_tokens_reads_as_cut() {
+        let cut = "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"max_tokens\"},\"usage\":{\"output_tokens\":8192}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n";
+        assert!(events(cut).iter().any(|c| matches!(c, Ok(StreamChunk::Cut))));
+        let done = cut.replace("max_tokens", "end_turn");
+        assert!(!events(&done).iter().any(|c| matches!(c, Ok(StreamChunk::Cut))));
     }
 }

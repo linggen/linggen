@@ -450,11 +450,7 @@ impl OpenAiClient {
         } else {
             (
                 chat_completions::text_request(self, model, messages, reasoning_effort),
-                Box::new(|data| {
-                    chat_completions::parse_text_chunk(data)
-                        .into_iter()
-                        .collect()
-                }),
+                Box::new(chat_completions::parse_text_chunk),
             )
         };
         let first = crate::provider::FirstEvent::start(&self.base_url);
