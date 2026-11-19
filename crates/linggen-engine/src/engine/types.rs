@@ -544,6 +544,14 @@ pub(crate) struct ReadyExec {
     pub tool_call_id: Option<String>,
 }
 
+/// A call the model made and the id its result answers (`None` for a call
+/// written as JSON text): one value from the model's reply to the result.
+#[derive(Debug)]
+pub(crate) struct ToolUse {
+    pub action: crate::engine::actions::ModelAction,
+    pub id: Option<String>,
+}
+
 /// A fully parsed tool call from native function calling.
 #[derive(Debug, Clone)]
 pub(crate) struct ParsedToolCall {

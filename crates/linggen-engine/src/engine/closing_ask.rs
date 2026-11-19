@@ -141,7 +141,7 @@ impl AgentEngine {
         );
 
         let call_id = format!("call_{}", uuid::Uuid::new_v4().simple());
-        let tc_ids = if native {
+        let id = if native {
             for id in done_ids {
                 let done = ChatMessage::tool_result_named(id.clone(), "Done", "ok".to_string());
                 self.push_tracked_message(&mut state.messages, done);
@@ -160,11 +160,11 @@ impl AgentEngine {
                 msg.content = reply.to_string();
             }
             self.push_tracked_message(&mut state.messages, msg);
-            vec![call_id]
+            Some(call_id)
         } else {
             let msg = ChatMessage::new("assistant", reply.to_string());
             self.push_tracked_message(&mut state.messages, msg);
-            Vec::new()
+            None
         };
 
         self.last_ask_answered = false;
@@ -172,8 +172,9 @@ impl AgentEngine {
             tool: "AskUser".to_string(),
             args,
         };
+        let ask = super::types::ToolUse { action, id };
         if let Some(outcome) = self
-            .execute_action_loop(vec![action], state, session_id, &tc_ids)
+            .execute_action_loop(vec![ask], state, session_id)
             .await?
         {
             return Ok(ClosingAsk::Exit(outcome));

@@ -31,24 +31,23 @@ impl AgentEngine {
     /// Returns `Some(outcome)` if the loop should exit early.
     pub(crate) async fn handle_delegation_batch(
         &mut self,
-        batch: Vec<ModelAction>,
+        batch: Vec<ToolUse>,
         allowed_tools: &Option<HashSet<String>>,
         messages: &mut Vec<ChatMessage>,
         session_id: Option<&str>,
-        tc_ids: &[String],
-        batch_start: usize,
     ) -> Option<AgentOutcome> {
         use crate::engine::agent::AgentManager;
 
-        // Helper to get the tc_id for a given action index.
-        let tc_id_for = |idx: usize| -> Option<String> { tc_ids.get(batch_start + idx).cloned() };
+        // Each call's id, by its place in the batch.
+        let ids: Vec<Option<String>> = batch.iter().map(|u| u.id.clone()).collect();
+        let tc_id_for = |idx: usize| -> Option<String> { ids.get(idx).cloned().flatten() };
         let tool_msg = |this: &Self, content: String, idx: usize| -> ChatMessage {
             this.tool_result_msg_for(content, &tc_id_for(idx), "Task")
         };
 
         // Parse TaskArgs from each action, tracking original index.
         let mut delegation_args: Vec<(usize, tools::TaskArgs)> = Vec::new();
-        for (i, action) in batch.into_iter().enumerate() {
+        for (i, action) in batch.into_iter().map(|u| u.action).enumerate() {
             let normalized = tools::normalize_tool_args(&action.tool, action.args.clone());
             match serde_json::from_value::<tools::TaskArgs>(normalized) {
                 Ok(da) => delegation_args.push((i, da)),
@@ -333,16 +332,13 @@ impl AgentEngine {
     /// Returns `Some(outcome)` if the loop should exit early.
     pub(crate) async fn handle_parallel_batch(
         &mut self,
-        batch: Vec<ModelAction>,
+        batch: Vec<ToolUse>,
         state: &mut LoopState,
         session_id: Option<&str>,
-        tc_ids: &[String],
-        action_idx_start: usize,
     ) -> Option<AgentOutcome> {
         // Phase 1: pre-execute each tool sequentially (needs &mut self).
         let mut ready: Vec<(usize, ToolCall, ReadyExec)> = Vec::new();
-        for (idx, action) in batch.into_iter().enumerate() {
-            let tc_id = tc_ids.get(action_idx_start + idx).cloned();
+        for (idx, ToolUse { action, id: tc_id }) in batch.into_iter().enumerate() {
             match self
                 .pre_execute_tool(
                     action.tool,

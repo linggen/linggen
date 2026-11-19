@@ -70,7 +70,7 @@ pub use context::summarize_text;
 // Internal imports used by run_agent_loop
 use closing_ask::ClosingAsk;
 use streaming::{can_parallel_tool, has_write_path_conflicts};
-use types::{KickoffTurn, LoopControl, LoopState, ParsedToolCall};
+use types::{KickoffTurn, LoopControl, LoopState, ParsedToolCall, ToolUse};
 
 use crate::message::ChatMessage;
 use anyhow::Result;
@@ -79,27 +79,39 @@ use std::collections::HashMap;
 use tracing::{debug, info, warn};
 
 impl AgentEngine {
-    /// Convert native ParsedToolCalls into ModelActions for dispatch.
-    /// "Done" calls are filtered out — the loop stops when no tool calls remain.
-    fn tool_calls_to_actions(tool_calls: &[ParsedToolCall]) -> Vec<ModelAction> {
+    /// Convert native ParsedToolCalls into calls for dispatch, each with
+    /// its own id. "Done" calls are filtered out — the loop stops when no
+    /// tool calls remain.
+    fn tool_calls_to_actions(tool_calls: &[ParsedToolCall]) -> Vec<ToolUse> {
         tool_calls
             .iter()
-            .filter_map(|tc| {
-                match tc.name.as_str() {
-                    "" => {
-                        // Empty tool name — skip (some models produce phantom calls)
-                        tracing::warn!("Skipping native tool call with empty name");
-                        None
-                    }
-                    "Done" => {
-                        // No longer a real tool — ignore. Loop stops when no tool calls.
-                        None
-                    }
-                    _ => Some(ModelAction {
-                        tool: tc.name.clone(),
-                        args: tc.arguments.clone(),
-                    }),
-                }
+            .filter(|tc| dispatched(tc))
+            .map(|tc| ToolUse {
+                action: ModelAction {
+                    tool: tc.name.clone(),
+                    args: tc.arguments.clone(),
+                },
+                id: Some(tc.id.clone()),
+            })
+            .collect()
+    }
+
+    /// The calls the assistant row of a native batch records: the ones that
+    /// run, each answered under its own id — or, when none runs (a
+    /// Done-only turn), every call, answered by the closing ask.
+    fn recorded_calls(tool_calls: &[ParsedToolCall]) -> Vec<crate::message::ToolCallMessage> {
+        let any_runs = tool_calls.iter().any(dispatched);
+        tool_calls
+            .iter()
+            .filter(|tc| !any_runs || dispatched(tc))
+            .map(|tc| crate::message::ToolCallMessage {
+                id: tc.id.clone(),
+                call_type: "function".to_string(),
+                function: crate::message::ToolCallFunction {
+                    name: tc.name.clone(),
+                    arguments: tc.arguments.clone(),
+                },
+                thought_signature: tc.thought_signature.clone(),
             })
             .collect()
     }
@@ -665,26 +677,15 @@ impl AgentEngine {
                 // Record the assistant message with tool_calls in chat history.
                 // Preserve id/call_type so OpenAI-compatible APIs (Gemini, etc.)
                 // can match tool results back to their calls.
-                let tool_call_msgs: Vec<crate::message::ToolCallMessage> = native_tool_calls
-                    .iter()
-                    .map(|tc| crate::message::ToolCallMessage {
-                        id: tc.id.clone(),
-                        call_type: "function".to_string(),
-                        function: crate::message::ToolCallFunction {
-                            name: tc.name.clone(),
-                            arguments: tc.arguments.clone(),
-                        },
-                        thought_signature: tc.thought_signature.clone(),
-                    })
-                    .collect();
+                let tool_call_msgs = Self::recorded_calls(&native_tool_calls);
                 let mut assistant_msg = ChatMessage::assistant_with_tool_calls(tool_call_msgs);
                 if !raw.is_empty() {
                     assistant_msg.content = raw.clone();
                 }
                 self.push_tracked_message(&mut state.messages, assistant_msg);
 
-                // Convert ParsedToolCalls to ModelActions
-                let actions: Vec<ModelAction> = Self::tool_calls_to_actions(&native_tool_calls);
+                // Convert ParsedToolCalls to calls, each with its id
+                let actions = Self::tool_calls_to_actions(&native_tool_calls);
 
                 // All native tool calls were filtered (e.g. all were "Done") →
                 // treat as text-only response and end the loop.
@@ -730,10 +731,8 @@ impl AgentEngine {
                 }
 
                 // Execute actions (reusing shared dispatch logic)
-                let tc_ids: Vec<String> =
-                    native_tool_calls.iter().map(|tc| tc.id.clone()).collect();
                 if let Some(outcome) = self
-                    .execute_action_loop(actions, state, session_id, &tc_ids)
+                    .execute_action_loop(actions, state, session_id)
                     .await?
                 {
                     return Ok(outcome);
@@ -921,8 +920,12 @@ impl AgentEngine {
             state.invalid_json_streak = 0;
 
             // Execute actions with parallel delegation support.
+            let actions = actions
+                .into_iter()
+                .map(|action| ToolUse { action, id: None })
+                .collect();
             if let Some(outcome) = self
-                .execute_action_loop(actions, state, session_id, &[])
+                .execute_action_loop(actions, state, session_id)
                 .await?
             {
                 return Ok(outcome);
@@ -1036,13 +1039,11 @@ impl AgentEngine {
     /// success (mission runs logged `completed`, Yinyue announced them).
     async fn execute_action_loop(
         &mut self,
-        actions: Vec<ModelAction>,
+        actions: Vec<ToolUse>,
         state: &mut LoopState,
         session_id: Option<&str>,
-        tc_ids: &[String],
     ) -> Result<Option<AgentOutcome>> {
         let mut actions = actions;
-        let mut action_idx: usize = 0;
 
         while !actions.is_empty() {
             // Check cancellation before dispatching each tool/batch. Same
@@ -1052,7 +1053,7 @@ impl AgentEngine {
             }
 
             let front_is_delegation = {
-                let tool = &actions[0].tool;
+                let tool = &actions[0].action.tool;
                 self.tools
                     .canonical_tool_name(tool)
                     .unwrap_or(tool.as_str())
@@ -1062,7 +1063,8 @@ impl AgentEngine {
             let parallel_batch_size = if !front_is_delegation {
                 let candidate_count = actions
                     .iter()
-                    .take_while(|a| {
+                    .take_while(|u| {
+                        let a = &u.action;
                         let c = self
                             .tools
                             .canonical_tool_name(&a.tool)
@@ -1074,6 +1076,7 @@ impl AgentEngine {
                 if candidate_count >= 2 {
                     let pairs: Vec<(&str, &JsonValue)> = actions[..candidate_count]
                         .iter()
+                        .map(|u| &u.action)
                         .map(|a| {
                             let c = self
                                 .tools
@@ -1097,16 +1100,14 @@ impl AgentEngine {
             if front_is_delegation {
                 let batch_size = actions
                     .iter()
-                    .take_while(|a| {
+                    .take_while(|u| {
                         self.tools
-                            .canonical_tool_name(&a.tool)
-                            .unwrap_or(a.tool.as_str())
+                            .canonical_tool_name(&u.action.tool)
+                            .unwrap_or(u.action.tool.as_str())
                             == "Task"
                     })
                     .count();
-                let batch: Vec<ModelAction> = actions.drain(..batch_size).collect();
-                let batch_start = action_idx;
-                action_idx += batch_size;
+                let batch: Vec<ToolUse> = actions.drain(..batch_size).collect();
 
                 if let Some(outcome) = self
                     .handle_delegation_batch(
@@ -1114,8 +1115,6 @@ impl AgentEngine {
                         &state.allowed_tools,
                         &mut state.messages,
                         session_id,
-                        tc_ids,
-                        batch_start,
                     )
                     .await
                 {
@@ -1123,21 +1122,17 @@ impl AgentEngine {
                     return Ok(Some(outcome));
                 }
             } else if parallel_batch_size >= 2 {
-                let batch: Vec<ModelAction> = actions.drain(..parallel_batch_size).collect();
-                let batch_start = action_idx;
-                action_idx += parallel_batch_size;
+                let batch: Vec<ToolUse> = actions.drain(..parallel_batch_size).collect();
 
                 if let Some(outcome) = self
-                    .handle_parallel_batch(batch, state, session_id, tc_ids, batch_start)
+                    .handle_parallel_batch(batch, state, session_id)
                     .await
                 {
                     self.drain_tool_progress(&mut state.progress_rx).await;
                     return Ok(Some(outcome));
                 }
             } else {
-                let action = actions.remove(0);
-                let tc_id = tc_ids.get(action_idx).cloned();
-                action_idx += 1;
+                let ToolUse { action, id: tc_id } = actions.remove(0);
                 let actions_remaining = !actions.is_empty();
                 if let Some(outcome) = self
                     .dispatch_sequential_action(action, state, actions_remaining, session_id, tc_id)
@@ -1153,6 +1148,20 @@ impl AgentEngine {
         // Check if the agent cd'd into/out of a git project
         self.check_working_folder_change();
         Ok(None)
+    }
+}
+
+/// Whether a native call runs: not one with no name (some models produce
+/// phantom calls) nor `Done` (no longer a real tool; the loop stops when no
+/// tool calls remain).
+fn dispatched(tc: &ParsedToolCall) -> bool {
+    match tc.name.as_str() {
+        "" => {
+            tracing::warn!("Skipping native tool call with empty name");
+            false
+        }
+        "Done" => false,
+        _ => true,
     }
 }
 
@@ -1399,6 +1408,34 @@ mod member_tests {
                 &crate::credentials::Credentials::default(),
             ));
         AgentEngine::new(cfg, models, "m".to_string(), AgentRole::Lead).unwrap()
+    }
+
+    fn native_call(id: &str, name: &str) -> super::ParsedToolCall {
+        super::ParsedToolCall {
+            id: id.into(),
+            name: name.into(),
+            arguments: serde_json::json!({ "path": id }),
+            thought_signature: None,
+        }
+    }
+
+    /// A call the batch drops (no name, or `Done`) takes its id with it: the
+    /// call that runs is answered under its own id, and the assistant row
+    /// holds no call that goes unanswered.
+    #[test]
+    fn a_dropped_call_takes_its_id_with_it() {
+        let calls = [native_call("a", "Done"), native_call("b", "Read"), native_call("c", "")];
+        let uses = AgentEngine::tool_calls_to_actions(&calls);
+        let paired: Vec<(&str, Option<&str>)> = uses
+            .iter()
+            .map(|u| (u.action.tool.as_str(), u.id.as_deref()))
+            .collect();
+        assert_eq!(paired, [("Read", Some("b"))]);
+        let row: Vec<String> = AgentEngine::recorded_calls(&calls).into_iter().map(|c| c.id).collect();
+        assert_eq!(row, ["b"], "the row holds only the call that is answered");
+        // A Done-only turn keeps its calls: the closing ask answers them.
+        let done = [native_call("a", "Done")];
+        assert_eq!(AgentEngine::recorded_calls(&done).len(), 1);
     }
 
     /// What the person sent during the turn joins it as user messages, with
