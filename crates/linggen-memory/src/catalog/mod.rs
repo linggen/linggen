@@ -78,6 +78,10 @@ pub struct Branch<D: Copy + 'static> {
     /// Fields a programmatic caller sends that the schema does not show
     /// to a model; accepted, never advertised.
     pub hidden: &'static [&'static str],
+    /// The fields the host stamps onto a call, not the caller — the one
+    /// table both hosts' hooks and the engine's own agents follow
+    /// ([`Branch::host_fills`]). Never published.
+    pub stamps: &'static [Stamp],
     /// Arguments the branch adds before it runs (the bridge's tab `action`
     /// a tab branch stands for).
     pub fixed: &'static [(&'static str, &'static str)],
@@ -98,6 +102,7 @@ impl<D: Copy + 'static> Branch<D> {
             schema: self.schema,
             extra: self.extra,
             hidden: self.hidden,
+            stamps: self.stamps,
             fixed: self.fixed,
             check: self.check,
             timeout_ms: self.timeout_ms,
@@ -144,35 +149,49 @@ impl<D: Copy + 'static> Branch<D> {
 
     /// Whether the host stamps `field` on a call of this branch with
     /// `args` — the one rule for both hosts' hooks and the engine's own
-    /// agents. A field is the host's when its description begins
-    /// [`HOST_FILLED`]; "HOST-FILLED unless `x` is given" leaves it to the
-    /// call that names `x`.
+    /// agents: the branch's [`stamps`](Self::stamps), each unless the call
+    /// names its `unless` field.
     pub fn host_fills(&self, field: &str, args: &Value) -> bool {
-        let props = self.properties();
-        let Some(said) = props.get(field).and_then(|p| p["description"].as_str()) else {
-            return false;
-        };
-        let Some(rest) = said.strip_prefix(HOST_FILLED) else {
-            return false;
-        };
-        match rest.strip_prefix(" unless `").and_then(|r| r.split_once('`')) {
-            Some((named, _)) => args.get(named).is_none_or(Value::is_null),
-            None => true,
-        }
+        self.stamps
+            .iter()
+            .any(|s| s.field == field && s.applies(args))
     }
 
-    /// Every field the host stamps on a call of this branch with `args`
-    /// ([`host_fills`](Self::host_fills)), in the schema's order.
+    /// Every field the host stamps on a call of this branch with `args`.
     pub fn host_filled(&self, args: &Value) -> Vec<String> {
-        self.properties()
-            .keys()
-            .filter(|f| self.host_fills(f, args))
-            .cloned()
+        self.stamps
+            .iter()
+            .filter(|s| s.applies(args))
+            .map(|s| s.field.to_string())
             .collect()
     }
 }
 
-/// How a field's description says the host fills it, not the caller.
+/// A field the host stamps: unless the call names `unless` (a list that
+/// names a `day` is never narrowed to a place).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Stamp {
+    pub field: &'static str,
+    pub unless: Option<&'static str>,
+}
+
+impl Stamp {
+    /// Stamped always.
+    pub const fn always(field: &'static str) -> Self {
+        Self {
+            field,
+            unless: None,
+        }
+    }
+
+    fn applies(&self, args: &Value) -> bool {
+        self.unless
+            .is_none_or(|u| args.get(u).is_none_or(Value::is_null))
+    }
+}
+
+/// How a field's description tells a model the host fills it; every such
+/// field is one of its branch's [`Branch::stamps`].
 pub const HOST_FILLED: &str = "HOST-FILLED";
 
 /// A tool's own name and text. Its branches are the entries naming it;
@@ -323,6 +342,7 @@ mod tests {
             schema: || json!({"type": "object", "properties": {}}),
             extra: None,
             hidden: &[],
+            stamps: &[],
             fixed: &[],
             check: None,
             timeout_ms: 0,

@@ -527,3 +527,36 @@ fn the_plugin_checks_retired_names_are_the_catalogues() {
     assert_eq!(listed, want);
     assert_eq!(alternatives("a_(b|c)|d"), ["a_b", "a_c", "d"]);
 }
+
+/// What a model is told is the host's (a field described HOST-FILLED) is
+/// exactly what the catalogue's stamps say the host fills, branch by
+/// branch: the published text and the unpublished table cannot drift.
+#[test]
+fn the_host_filled_text_is_the_stamps_table() {
+    for branch in catalog().branches() {
+        let schema = (branch.schema)();
+        let mut told: Vec<String> = schema["properties"]
+            .as_object()
+            .into_iter()
+            .flatten()
+            .filter(|(_, p)| {
+                p["description"]
+                    .as_str()
+                    .is_some_and(|d| d.starts_with(ling_mem::catalog::HOST_FILLED))
+            })
+            .map(|(f, _)| f.clone())
+            .collect();
+        let mut stamped: Vec<String> = branch.stamps.iter().map(|s| s.field.to_string()).collect();
+        for field in &stamped {
+            assert!(branch.advertises(field), "{} {}: stamps {field}", branch.tool, branch.op);
+        }
+        // A list's scope_root is a filter a caller may set, and the host's
+        // when it does not (a day's list excepted): stamped, not HOST-FILLED.
+        stamped.retain(|f| {
+            branch.stamps.iter().any(|s| s.field == f && s.unless.is_none())
+        });
+        told.sort();
+        stamped.sort();
+        assert_eq!(told, stamped, "{} {}", branch.tool, branch.op);
+    }
+}
