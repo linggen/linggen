@@ -155,11 +155,14 @@ pub(crate) async fn create_mission(
     // per-path PathGrants. If the request omits permission entirely, the
     // mission gets an empty permission block (no grants — caller must list
     // paths explicitly).
-    let permission = build_permission(
+    let permission = match build_permission(
         req.permission_mode.as_deref(),
         req.permission_paths.clone(),
         req.permission_warning.clone(),
-    );
+    ) {
+        Ok(p) => p,
+        Err(e) => return (StatusCode::BAD_REQUEST, e).into_response(),
+    };
 
     let draft = MissionDraft {
         name: req.name,
@@ -189,11 +192,14 @@ pub(crate) async fn create_mission(
     }
 }
 
+/// Paths are granted at the mode the request names; none is assumed.
+const PATHS_NEED_A_MODE: &str = "permission_paths needs a permission_mode";
+
 fn build_permission(
     mode: Option<&str>,
     paths: Option<Vec<String>>,
     warning: Option<String>,
-) -> Option<MissionPermission> {
+) -> Result<Option<MissionPermission>, String> {
     use crate::extensions::skills::PathGrant;
     // Web UI still sends (mode, paths[]) as parallel fields. Apply the
     // single mode to every path to produce per-path grants. If both are
@@ -201,10 +207,14 @@ fn build_permission(
     // default empty block.
     let path_list = paths.unwrap_or_default();
     if mode.is_none() && path_list.is_empty() && warning.is_none() {
-        return None;
+        return Ok(None);
     }
-    let m = mode.unwrap_or("admin").to_string();
-    Some(MissionPermission {
+    let m = match mode {
+        Some(m) => m.to_string(),
+        None if path_list.is_empty() => String::new(),
+        None => return Err(PATHS_NEED_A_MODE.into()),
+    };
+    Ok(Some(MissionPermission {
         paths: path_list
             .into_iter()
             .map(|p| PathGrant {
@@ -213,7 +223,41 @@ fn build_permission(
             })
             .collect(),
         warning,
-    })
+    }))
+}
+
+/// A PUT's permission fields applied to the mission's `existing` grants:
+/// `None` when it names none.
+fn permission_update(
+    existing: Option<MissionPermission>,
+    mode: Option<&str>,
+    paths: Option<Vec<String>>,
+    warning: Option<String>,
+) -> Result<Option<Option<MissionPermission>>, String> {
+    if mode.is_none() && paths.is_none() && warning.is_none() {
+        return Ok(None);
+    }
+    if paths.is_some() && mode.is_none() {
+        return Err(PATHS_NEED_A_MODE.into());
+    }
+    let mut grants = existing.unwrap_or_default();
+    match (mode, paths) {
+        (Some(mode), Some(paths)) => {
+            grants.paths = build_permission(Some(mode), Some(paths), None)?
+                .map(|built| built.paths)
+                .unwrap_or_default();
+        }
+        (Some(mode), None) => {
+            for grant in &mut grants.paths {
+                grant.mode = mode.to_string();
+            }
+        }
+        _ => {}
+    }
+    if warning.is_some() {
+        grants.warning = warning;
+    }
+    Ok(Some(Some(grants)))
 }
 
 #[derive(Deserialize)]
@@ -274,18 +318,20 @@ pub(crate) async fn update_mission(
     // are passed through directly.
     let name_draft = req.name;
 
-    // Resolve permission update only if caller provided any permission fields.
-    let permission_update: Option<Option<MissionPermission>> = if req.permission_mode.is_some()
-        || req.permission_paths.is_some()
-        || req.permission_warning.is_some()
-    {
-        Some(build_permission(
-            req.permission_mode.as_deref(),
-            req.permission_paths,
-            req.permission_warning,
-        ))
-    } else {
-        None
+    let existing = state
+        .missions
+        .get_mission(&id)
+        .ok()
+        .flatten()
+        .and_then(|m| m.permission);
+    let permission_update = match permission_update(
+        existing,
+        req.permission_mode.as_deref(),
+        req.permission_paths,
+        req.permission_warning,
+    ) {
+        Ok(update) => update,
+        Err(e) => return (StatusCode::BAD_REQUEST, e).into_response(),
     };
 
     // cwd alias: update cwd and the legacy `project` field together so both
@@ -680,5 +726,76 @@ pub(crate) async fn list_mission_runs(
             format!("Failed to list mission runs: {}", e),
         )
             .into_response(),
+    }
+}
+
+#[cfg(test)]
+mod permission_tests {
+    use super::*;
+    use crate::extensions::skills::PathGrant;
+
+    fn grants(paths: &[(&str, &str)], warning: Option<&str>) -> MissionPermission {
+        MissionPermission {
+            paths: paths
+                .iter()
+                .map(|(p, m)| PathGrant {
+                    path: p.to_string(),
+                    mode: m.to_string(),
+                })
+                .collect(),
+            warning: warning.map(str::to_string),
+        }
+    }
+
+    fn pairs(p: &MissionPermission) -> Vec<(String, String)> {
+        p.paths
+            .iter()
+            .map(|g| (g.path.clone(), g.mode.clone()))
+            .collect()
+    }
+
+    #[test]
+    fn a_partial_permission_update_changes_only_the_field_it_names() {
+        let had = grants(&[("/a", "read"), ("/b", "read")], Some("careful"));
+
+        let mode_only = permission_update(Some(had.clone()), Some("edit"), None, None)
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            pairs(&mode_only),
+            vec![("/a".into(), "edit".into()), ("/b".into(), "edit".into())]
+        );
+        assert_eq!(mode_only.warning.as_deref(), Some("careful"));
+
+        let warning_only = permission_update(Some(had.clone()), None, None, Some("new".into()))
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(pairs(&warning_only), pairs(&had));
+        assert_eq!(warning_only.warning.as_deref(), Some("new"));
+
+        let both = permission_update(
+            Some(had.clone()),
+            Some("admin"),
+            Some(vec!["/c".into()]),
+            None,
+        )
+        .unwrap()
+        .unwrap()
+        .unwrap();
+        assert_eq!(pairs(&both), vec![("/c".into(), "admin".into())]);
+        assert_eq!(both.warning.as_deref(), Some("careful"));
+
+        assert!(permission_update(Some(had), None, None, None)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn paths_without_a_mode_are_refused() {
+        assert!(permission_update(None, None, Some(vec!["/a".into()]), None).is_err());
+        assert!(build_permission(None, Some(vec!["/a".into()]), None).is_err());
+        assert!(build_permission(Some("read"), Some(vec!["/a".into()]), None).is_ok());
     }
 }
