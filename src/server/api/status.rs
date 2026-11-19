@@ -21,7 +21,7 @@ pub(crate) async fn list_models_api(State(state): State<Arc<ServerState>>) -> im
         .into_iter()
         .map(|m| {
             let auth_ok = models_guard.model_auth_ok(&m.id);
-            let mut v = serde_json::to_value(m).unwrap_or_default();
+            let mut v = shown(m);
             if let Some(obj) = v.as_object_mut() {
                 obj.insert("auth_ok".into(), auth_ok.into());
                 // A ChatGPT built-in whose family moved: to what, since when.
@@ -161,4 +161,33 @@ pub(crate) async fn get_status_api(
         session_completion_tokens,
     })
     .into_response()
+}
+
+/// A model as the models list shows it: its settings, never its key. The
+/// list is read by every device that may read at all; whether a key is
+/// there is `auth_ok`, and the key itself is the credentials route's.
+fn shown(model: &crate::config::ModelConfig) -> serde_json::Value {
+    let mut v = serde_json::to_value(model).unwrap_or_default();
+    if let Some(obj) = v.as_object_mut() {
+        obj.insert("api_key".into(), serde_json::Value::Null);
+    }
+    v
+}
+
+#[cfg(test)]
+mod shown_tests {
+    use super::shown;
+
+    #[test]
+    fn a_listed_model_never_carries_its_key() {
+        let mut model: crate::config::ModelConfig = serde_json::from_value(serde_json::json!({
+            "id": "m", "provider": "openai", "url": "https://example.test/v1", "model": "m"
+        }))
+        .expect("a minimal model config");
+        model.api_key = Some("sk-secret".into());
+        let v = shown(&model);
+        assert!(v["api_key"].is_null());
+        assert!(!v.to_string().contains("sk-secret"));
+        assert_eq!(v["id"], "m");
+    }
 }

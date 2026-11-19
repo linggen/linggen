@@ -408,8 +408,9 @@ const LAN_BODY_LIMIT: usize = 2 * 1024 * 1024;
 /// The LAN gate's request from paired device `device`, sent as its person
 /// (as the channel sends a peer's): the URL's `user_id` and a JSON body's
 /// replaced, and refused (403) when it names another person's day. A body
-/// that is not a JSON object is passed through untouched — it names no
-/// session and carries no person. A body read under the framework's limit
+/// that is not JSON is passed through untouched — it names no session and
+/// carries no person; JSON that is not an object is refused (400), see
+/// [`lan_body`]. A body read under the framework's limit
 /// and over it is answered as the framework answers it (413); one that says
 /// it is longer goes on unread, for its route to read under its own limit.
 pub(crate) async fn lan_request_as(
@@ -435,9 +436,15 @@ pub(crate) async fn lan_request_as(
     let bytes = axum::body::Bytes::from_request(read, &())
         .await
         .map_err(IntoResponse::into_response)?;
-    let mut value = match serde_json::from_slice::<serde_json::Value>(&bytes) {
-        Ok(v) if v.is_object() => Some(v),
-        _ => None,
+    let mut value = match lan_body(&bytes) {
+        Ok(value) => value,
+        Err(()) => {
+            return Err((
+                axum::http::StatusCode::BAD_REQUEST,
+                "a JSON request body must be an object",
+            )
+                .into_response())
+        }
     };
     let url = send_judged(
         parts.method.as_str(),
@@ -455,6 +462,19 @@ pub(crate) async fn lan_request_as(
     };
     parts.headers.insert(CONTENT_LENGTH, bytes.len().into());
     Ok(axum::extract::Request::from_parts(parts, axum::body::Body::from(bytes)))
+}
+
+/// A LAN request's body as the gate may send it on: a JSON object, to be
+/// sent as its person (`Some`); bytes that are not JSON, passed through
+/// untouched (`None`); JSON of any other kind, refused — a route's body
+/// type can be filled from an array by position, and such a body would go
+/// on carrying no person.
+fn lan_body(bytes: &[u8]) -> Result<Option<serde_json::Value>, ()> {
+    match serde_json::from_slice::<serde_json::Value>(bytes) {
+        Ok(v) if v.is_object() => Ok(Some(v)),
+        Ok(_) => Err(()),
+        Err(_) => Ok(None),
+    }
 }
 
 /// The length a request says its body is.
@@ -502,6 +522,19 @@ fn refused(refused: Refused) -> axum::response::Response {
 
 #[cfg(test)]
 mod tests {
+
+    /// The gate sends on an object (as its person) and bytes that are not
+    /// JSON; an array or a bare value is refused, since a body type can be
+    /// filled from an array by position and would carry no person.
+    #[test]
+    fn a_lan_json_body_is_an_object_or_refused() {
+        assert!(matches!(super::lan_body(br#"{"message":"hi"}"#), Ok(Some(v)) if v.is_object()));
+        assert_eq!(super::lan_body(b"\x89PNG not json"), Ok(None));
+        assert_eq!(super::lan_body(b""), Ok(None));
+        for body in [&br#"["hi", null]"#[..], b"null", b"3", br#""text""#] {
+            assert_eq!(super::lan_body(body), Err(()), "{}", String::from_utf8_lossy(body));
+        }
+    }
     /// A request is sent as its person: a `user_id` written another way is
     /// dropped too, a body is the person's on a way in by body, and any
     /// `user_id` a body names is theirs.
