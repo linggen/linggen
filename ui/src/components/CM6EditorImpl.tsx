@@ -38,11 +38,14 @@ export const CM6EditorImpl: React.FC<CM6EditorProps> = ({ value, onChange, readO
       return;
     }
     const desc = LanguageDescription.matchFilename(languages, filePath);
-    if (desc) {
-      desc.load().then((support) => setLangExt(support));
-    } else {
+    if (!desc) {
       setLangExt(null);
+      return;
     }
+    // A syntax that loads after another file was opened is not this file's.
+    let live = true;
+    desc.load().then((support) => { if (live) setLangExt(support); });
+    return () => { live = false; };
   }, [filePath, isMarkdownFile]);
 
   const extensions = useMemo(() => {

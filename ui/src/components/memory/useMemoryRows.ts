@@ -48,6 +48,8 @@ export function useMemoryRows() {
   useEffect(() => { void reload(); }, [reload]);
 
   const loadMore = useCallback(async () => {
+    // The next page follows the rows shown only once they are this query's.
+    if (status !== 'ready') return;
     const mine = asked.current;
     setLoadingMore(true);
     try {
@@ -60,7 +62,7 @@ export function useMemoryRows() {
     } finally {
       setLoadingMore(false);
     }
-  }, [query, rows.length]);
+  }, [query, rows.length, status]);
 
   /** A row changed on the server: show its new state where it is. */
   const replaceRow = useCallback((row: MemoryRow) => {
@@ -83,5 +85,6 @@ export function useMemoryRows() {
 
   const change = useCallback((patch: Partial<Query>) => setQuery((q) => ({ ...q, ...patch })), []);
 
-  return { query, change, rows, hasMore, status, error, loadingMore, reload, loadMore, replaceRow, addRow, dropRows };
+  // While a new query loads, the rows shown are the old one's: no Load more.
+  return { query, change, rows, hasMore: hasMore && status === 'ready', status, error, loadingMore, reload, loadMore, replaceRow, addRow, dropRows };
 }

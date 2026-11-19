@@ -6,6 +6,7 @@ import { useNameSet } from '../hooks/useNameSet';
 import { confirmDialog, promptDialog } from '../lib/confirmDialog';
 import { apiErrorMessage } from '../lib/api';
 import { skillFiles as skillFilesApi, skillsApi } from '../lib/endpoints';
+import { latestOnly } from '../lib/latest.mts';
 
 /* ── Helpers ── */
 function formatRelativeDate(dateStr: string): string {
@@ -89,6 +90,8 @@ export const SkillsTab: React.FC<{
   const mpInstalling = useNameSet();
   const mpUninstalling = useNameSet();
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The results shown are the last query's (lib/latest.mts).
+  const searches = useRef(latestOnly()).current;
 
   // Trending community skills (auto-loaded)
   const [trendingSkills, setTrendingSkills] = useState<MarketplaceSkill[]>([]);
@@ -142,15 +145,18 @@ export const SkillsTab: React.FC<{
   }, [fetchSkills, fetchSkillFiles, fetchBuiltInSkills, fetchTrending]);
 
   const searchCommunity = async (q: string) => {
+    const current = searches.begin();
     if (!q.trim()) {
       setMpResults([]);
+      setMpLoading(false);
       return;
     }
     setMpLoading(true);
     try {
-      setMpResults(await skillsApi.searchCommunity<MarketplaceSkill>(q));
+      const found = await skillsApi.searchCommunity<MarketplaceSkill>(q);
+      if (current()) setMpResults(found);
     } catch { /* ignore */ }
-    setMpLoading(false);
+    if (current()) setMpLoading(false);
   };
 
   const handleMpQueryChange = (val: string) => {
