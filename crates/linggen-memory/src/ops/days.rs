@@ -55,7 +55,28 @@ pub(crate) async fn load(data_dir: &Path) -> DaysState {
     serde_json::from_slice(&bytes).unwrap_or_default()
 }
 
-pub(crate) async fn save(data_dir: &Path, state: &DaysState) -> Result<(), std::io::Error> {
+/// The one lock around every change to `.days.json`. Its writers:
+/// `remember_day`, `harvest_day` and the sweep's forgotten counts, each a
+/// read-change-save through [`modify`]; and a replica's pull, which
+/// replaces the file with the primary's copy under [`lock`].
+static LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+pub(crate) async fn lock() -> tokio::sync::MutexGuard<'static, ()> {
+    LOCK.lock().await
+}
+
+/// Read, change and save `.days.json` under [`lock`].
+async fn modify<R>(data_dir: &Path, f: impl FnOnce(&mut DaysState) -> R) -> Result<R, MemError> {
+    let _guard = lock().await;
+    let mut state = load(data_dir).await;
+    let out = f(&mut state);
+    save(data_dir, &state)
+        .await
+        .map_err(|e| MemError::internal(anyhow::anyhow!(e)))?;
+    Ok(out)
+}
+
+async fn save(data_dir: &Path, state: &DaysState) -> Result<(), std::io::Error> {
     let path = days_path(data_dir);
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent).await?;
@@ -322,19 +343,17 @@ pub(in crate::ops) async fn remember_day(state: &Memory, req: RememberDayRequest
         return Err(crate::ops::lease::busy(&key, &l));
     }
 
-    let mut days_state = load(&state.data_dir).await;
-    let rec = days_state.days.entry(key.clone()).or_default();
-    rec.remembered_at = Some(Utc::now());
-    rec.judged = rec.judged.saturating_add(req.judged);
-    rec.promoted = rec.promoted.saturating_add(req.promoted);
-    if req.harvested {
-        rec.harvested_at = Some(Utc::now());
-    }
-    let body = json!({ "date": key, "record": rec });
-    save(&state.data_dir, &days_state)
-        .await
-        .map_err(|e| MemError::internal(anyhow::anyhow!(e)))?;
-    Ok(body)
+    modify(&state.data_dir, |days_state| {
+        let rec = days_state.days.entry(key.clone()).or_default();
+        rec.remembered_at = Some(Utc::now());
+        rec.judged = rec.judged.saturating_add(req.judged);
+        rec.promoted = rec.promoted.saturating_add(req.promoted);
+        if req.harvested {
+            rec.harvested_at = Some(Utc::now());
+        }
+        json!({ "date": key, "record": rec })
+    })
+    .await
 }
 
 // ── harvest_day (scan stamp) ────────────────────────────────────────────────
@@ -357,14 +376,12 @@ pub(in crate::ops) async fn harvest_day(state: &Memory, req: HarvestDayRequest) 
         )));
     }
 
-    let mut days_state = load(&state.data_dir).await;
-    let rec = days_state.days.entry(key.clone()).or_default();
-    rec.harvested_at = Some(Utc::now());
-    let body = json!({ "date": key, "record": rec });
-    save(&state.data_dir, &days_state)
-        .await
-        .map_err(|e| MemError::internal(anyhow::anyhow!(e)))?;
-    Ok(body)
+    modify(&state.data_dir, |days_state| {
+        let rec = days_state.days.entry(key.clone()).or_default();
+        rec.harvested_at = Some(Utc::now());
+        json!({ "date": key, "record": rec })
+    })
+    .await
 }
 
 // ── sweep (forget) ──────────────────────────────────────────────────────────
@@ -377,7 +394,7 @@ pub struct SweepRequest {
 }
 
 pub(in crate::ops) async fn sweep(state: &Memory, req: SweepRequest) -> Result<Value, MemError> {
-    let mut days_state = load(&state.data_dir).await;
+    let days_state = load(&state.data_dir).await;
     let cfg = crate::ops::config::load(&state.data_dir).await;
     let ttl_cutoff = Utc::now() - chrono::Duration::days(cfg.episodic_ttl_days as i64);
 
@@ -409,14 +426,16 @@ pub(in crate::ops) async fn sweep(state: &Memory, req: SweepRequest) -> Result<V
         *per_day.entry(day.clone()).or_default() += 1;
     }
 
+    // The counts go onto the file as it is now, not the snapshot read
+    // before the deletes: a mark stamped meanwhile stays.
     if !req.dry_run && removed > 0 {
-        for (day, n) in &per_day {
-            let rec = days_state.days.entry(day.clone()).or_default();
-            rec.forgotten = rec.forgotten.saturating_add(*n);
-        }
-        save(&state.data_dir, &days_state)
-            .await
-            .map_err(|e| MemError::internal(anyhow::anyhow!(e)))?;
+        modify(&state.data_dir, |now| {
+            for (day, n) in &per_day {
+                let rec = now.days.entry(day.clone()).or_default();
+                rec.forgotten = rec.forgotten.saturating_add(*n);
+            }
+        })
+        .await?;
     }
 
     Ok(json!({
@@ -456,6 +475,39 @@ mod tests {
             assert!(r.remembered_at.is_some());
             assert!(r.harvested_at.is_none());
         });
+    }
+
+    /// Concurrent stamps of different days all land: no save carries a
+    /// snapshot that misses another's mark.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    async fn concurrent_stamps_keep_every_mark() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = crate::handle::scratch_state(
+            dir.path(),
+            std::net::SocketAddr::from(([127, 0, 0, 1], 0)),
+        )
+        .await;
+        let days: Vec<String> = (2..42)
+            .map(|n| (Local::now() - chrono::Duration::days(n)).format("%Y-%m-%d").to_string())
+            .collect();
+        let calls = days.iter().enumerate().map(|(i, day)| {
+            let state = std::sync::Arc::clone(&state);
+            let date = day.clone();
+            tokio::spawn(async move {
+                if i % 2 == 0 {
+                    let req = RememberDayRequest { date, judged: 1, promoted: 0, harvested: false, holder: None };
+                    remember_day(&state, req).await.map(drop)
+                } else {
+                    harvest_day(&state, HarvestDayRequest { date }).await.map(drop)
+                }
+            })
+        });
+        for call in calls.collect::<Vec<_>>() {
+            call.await.unwrap().unwrap();
+        }
+        let saved = load(dir.path()).await;
+        let missing: Vec<&String> = days.iter().filter(|d| !saved.days.contains_key(*d)).collect();
+        assert!(missing.is_empty(), "lost marks: {missing:?}");
     }
 
     #[test]

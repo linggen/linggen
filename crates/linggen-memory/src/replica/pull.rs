@@ -125,7 +125,11 @@ async fn fetch(base: &str, token: &str, cursor: u64) -> Result<Page, UpstreamErr
 
 async fn apply(state: &SharedState, page: &Page) -> Result<(), UpstreamError> {
     apply_rows(state, &page.rows, &page.tombstones).await?;
-    mirror(&crate::ops::days::days_path(&state.data_dir), &page.days)?;
+    {
+        let _days = crate::ops::days::lock().await;
+        mirror(&crate::ops::days::days_path(&state.data_dir), &page.days)?;
+    }
+    let _issues = crate::ops::issues::lock().await;
     mirror(
         &crate::ops::issues::issues_path(&state.data_dir),
         &page.issues,

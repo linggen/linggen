@@ -62,7 +62,34 @@ pub(crate) async fn load(data_dir: &Path) -> IssuesState {
     serde_json::from_slice(&bytes).unwrap_or_default()
 }
 
-pub(crate) async fn save(data_dir: &Path, state: &IssuesState) -> Result<(), std::io::Error> {
+/// The one lock around every change to `.issues.json`. Its writers:
+/// `issue_add` and `issue_resolve`, each a read-change-save through
+/// [`modify`]; and a replica's pull, which replaces the file with the
+/// primary's copy under [`lock`].
+static LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+pub(crate) async fn lock() -> tokio::sync::MutexGuard<'static, ()> {
+    LOCK.lock().await
+}
+
+/// Read, change and save `.issues.json` under [`lock`]; `f` answers
+/// whether to save (`Ok(false)` leaves the file as it is).
+async fn modify<R>(
+    data_dir: &Path,
+    f: impl FnOnce(&mut IssuesState) -> Result<(R, bool), crate::error::MemError>,
+) -> Result<R, crate::error::MemError> {
+    let _guard = lock().await;
+    let mut state = load(data_dir).await;
+    let (out, changed) = f(&mut state)?;
+    if changed {
+        save(data_dir, &state).await.map_err(|e| {
+            crate::error::MemError::internal(anyhow::anyhow!("persisting .issues.json: {e}"))
+        })?;
+    }
+    Ok(out)
+}
+
+async fn save(data_dir: &Path, state: &IssuesState) -> Result<(), std::io::Error> {
     let path = issues_path(data_dir);
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent).await?;
@@ -171,31 +198,30 @@ pub(in crate::ops) async fn issue_add(
     }
     let mut rows = req.row_ids.clone();
     rows.sort();
-    let mut all = load(&state.data_dir).await;
-    if let Some(existing) = all.issues.iter().find(|i| {
-        i.status == "open" && i.kind == kind && {
-            let mut theirs = i.row_ids.clone();
-            theirs.sort();
-            theirs == rows
+    modify(&state.data_dir, |all| {
+        if let Some(existing) = all.issues.iter().find(|i| {
+            i.status == "open" && i.kind == kind && {
+                let mut theirs = i.row_ids.clone();
+                theirs.sort();
+                theirs == rows
+            }
+        }) {
+            return Ok((json!({ "issue": existing, "deduped": true }), false));
         }
-    }) {
-        return Ok(json!({ "issue": existing, "deduped": true }));
-    }
-    let record = IssueRecord {
-        id: short_id(),
-        kind: kind.to_string(),
-        row_ids: req.row_ids,
-        note: req.note.trim().to_string(),
-        created_at: Utc::now(),
-        status: "open".to_string(),
-        resolved_at: None,
-        resolution: None,
-    };
-    all.issues.push(record.clone());
-    save(&state.data_dir, &all)
-        .await
-        .map_err(|e| MemError::internal(anyhow::anyhow!("persisting .issues.json: {e}")))?;
-    Ok(json!({ "issue": record, "deduped": false }))
+        let record = IssueRecord {
+            id: short_id(),
+            kind: kind.to_string(),
+            row_ids: req.row_ids,
+            note: req.note.trim().to_string(),
+            created_at: Utc::now(),
+            status: "open".to_string(),
+            resolved_at: None,
+            resolution: None,
+        };
+        all.issues.push(record.clone());
+        Ok((json!({ "issue": record, "deduped": false }), true))
+    })
+    .await
 }
 
 #[derive(Debug, Deserialize)]
@@ -220,27 +246,24 @@ pub(in crate::ops) async fn issue_resolve(
             "invalid outcome {outcome:?}: expected resolved | dismissed"
         )));
     }
-    let mut all = load(&state.data_dir).await;
-    let Some(item) = all.issues.iter_mut().find(|i| i.id == req.id) else {
-        return Err(MemError::bad_request(format!(
-            "no issue with id {:?}",
-            req.id
-        )));
-    };
-    if item.status != "open" {
-        let already = item.clone();
-        return Ok(json!({ "issue": already, "already_closed": true }));
-    }
-    item.status = outcome.to_string();
-    item.resolved_at = Some(Utc::now());
-    if let Some(note) = req.note.filter(|n| !n.trim().is_empty()) {
-        item.resolution = Some(note.trim().to_string());
-    }
-    let updated = item.clone();
-    save(&state.data_dir, &all)
-        .await
-        .map_err(|e| MemError::internal(anyhow::anyhow!("persisting .issues.json: {e}")))?;
-    Ok(json!({ "issue": updated, "already_closed": false }))
+    modify(&state.data_dir, |all| {
+        let Some(item) = all.issues.iter_mut().find(|i| i.id == req.id) else {
+            return Err(MemError::bad_request(format!(
+                "no issue with id {:?}",
+                req.id
+            )));
+        };
+        if item.status != "open" {
+            return Ok((json!({ "issue": item, "already_closed": true }), false));
+        }
+        item.status = outcome.to_string();
+        item.resolved_at = Some(Utc::now());
+        if let Some(note) = req.note.filter(|n| !n.trim().is_empty()) {
+            item.resolution = Some(note.trim().to_string());
+        }
+        Ok((json!({ "issue": item, "already_closed": false }), true))
+    })
+    .await
 }
 
 #[cfg(test)]
@@ -271,6 +294,34 @@ mod tests {
         assert_eq!(loaded.issues.len(), 1);
         assert_eq!(loaded.issues[0].kind, "chain");
         assert_eq!(open_count(dir.path()).await, 1);
+    }
+
+    /// Concurrent adds all land: no save carries a snapshot that misses
+    /// another's item.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    async fn concurrent_adds_keep_every_item() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = crate::handle::scratch_state(
+            dir.path(),
+            std::net::SocketAddr::from(([127, 0, 0, 1], 0)),
+        )
+        .await;
+        let calls: Vec<_> = (0..40)
+            .map(|i| {
+                let state = std::sync::Arc::clone(&state);
+                tokio::spawn(async move {
+                    let req: IssueAddRequest = serde_json::from_value(serde_json::json!({
+                        "kind": "chain", "row_ids": [format!("r{i}")], "note": "n"
+                    }))
+                    .unwrap();
+                    issue_add(&state, req).await.map(drop)
+                })
+            })
+            .collect();
+        for call in calls {
+            call.await.unwrap().unwrap();
+        }
+        assert_eq!(load(dir.path()).await.issues.len(), 40);
     }
 
     #[tokio::test]
