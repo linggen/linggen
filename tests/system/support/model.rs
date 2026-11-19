@@ -57,6 +57,12 @@ pub fn text(s: &str) -> Reply {
     Reply::Text(s.to_string())
 }
 
+/// Her reply to a turn the engine started, choosing to speak: one line in the
+/// envelope the kickoff asks for.
+pub fn say(line: &str) -> Reply {
+    Reply::Text(format!("<say>{line}</say>"))
+}
+
 pub fn tool(name: &str, args: Value) -> Reply {
     Reply::Tool(name.to_string(), args)
 }

@@ -493,7 +493,7 @@ pub(crate) fn converse_kickoff() -> String {
 async fn land_in_chats(
     state: &Arc<ServerState>,
     moments: &[Moment],
-    line: Option<&str>,
+    line: Option<&crate::server::resident::Line>,
     table: Option<&str>,
 ) {
     let companion = crate::engine::agent::COMPANION_AGENT_ID;
@@ -509,20 +509,7 @@ async fn land_in_chats(
             continue;
         }
         if Some(sid) != table {
-            crate::server::chat::helpers::persist_and_emit_to_store(
-                &state.manager.global_sessions,
-                &state.events_tx,
-                companion,
-                companion,
-                "user",
-                line,
-                Some(sid),
-                false,
-                None,
-                None,
-                None,
-            )
-            .await;
+            crate::server::resident::land_row(state, line, sid).await;
         }
         if !wants_reply || !claim_converse(sid, crate::util::now_ts_secs()) {
             continue;
@@ -624,7 +611,7 @@ async fn wake_her(state: Arc<ServerState>, taken: Vec<Moment>, (asked, in_use): 
         tell_unanswered(&state, &taken, "no-line");
     }
     let at = table.as_ref().map(|t| t.session.as_str());
-    land_in_chats(&state, &taken, line.as_deref(), at).await;
+    land_in_chats(&state, &taken, line.as_ref(), at).await;
 }
 
 #[cfg(test)]

@@ -121,7 +121,8 @@ fn herald_ask(
             "[yinyue-watch] Yinyue heralds ({} chars, neutral)",
             said.line.text().len()
         );
-        crate::server::api::yinyue::emit_speak(&state, said.line, Some("neutral".to_string()), Default::default());
+        let stage = Stage::of(&state, None).await;
+        spoken::publish(&state, said, &stage, Some("neutral".to_string()), None).await;
     });
 }
 
@@ -152,7 +153,8 @@ fn herald_kept_ask(state: &Arc<ServerState>, app: String, question_id: String, s
         if !ask_still_pending(&state, &question_id).await || user_sees(&state, Sight::Screen) {
             return;
         }
-        crate::server::api::yinyue::emit_speak(&state, said.line, Some("neutral".to_string()), Default::default());
+        let stage = Stage::of(&state, None).await;
+        spoken::publish(&state, said, &stage, Some("neutral".to_string()), None).await;
     });
 }
 
@@ -167,11 +169,12 @@ fn kept_ask_kickoff(app: &str) -> String {
     )
 }
 
-/// Her words for a herald. A question waits inside a turn that holds her
-/// session's turn lock when that session is the day's, so a full turn of
+/// Her reply to a herald's kickoff. A question waits inside a turn that holds
+/// her session's turn lock when that session is the day's, so a full turn of
 /// hers would wait for the very answer it is to call for: then she gives one
-/// line now, from home's view of the thread, and it is kept as her row once
-/// the session is free. Elsewhere her own turn runs, as before.
+/// reply now, from home's view of the thread. Elsewhere her own turn runs, as
+/// before. Either way it is only her reply: nothing is shown or kept until the
+/// caller has finalized it and checked the question is still waiting.
 async fn herald_line(state: &Arc<ServerState>, kickoff: String) -> Option<String> {
     let sid = super::session_roll::resolve_current_session(state).await;
     let free = state.manager.session_turn(&sid).try_lock().is_ok();
@@ -179,30 +182,7 @@ async fn herald_line(state: &Arc<ServerState>, kickoff: String) -> Option<String
         return run_yinyue_turn(state, kickoff, "event").await;
     }
     let ask = super::spoken::with_contract(kickoff, "event");
-    let line = crate::server::chat::line_now(state.clone(), &sid, YINYUE_AGENT, &ask).await?;
-    keep_when_free(state.clone(), sid, line.clone());
-    Some(line)
-}
-
-/// Keep her herald line as her row in `sid` once its running turn is over.
-fn keep_when_free(state: Arc<ServerState>, sid: String, line: String) {
-    tokio::spawn(async move {
-        let _turn = state.manager.session_turn(&sid).lock_owned().await;
-        crate::server::chat::helpers::persist_and_emit_to_store(
-            &state.manager.global_sessions,
-            &state.events_tx,
-            YINYUE_AGENT,
-            YINYUE_AGENT,
-            "user",
-            &line,
-            Some(&sid),
-            false,
-            None,
-            None,
-            None,
-        )
-        .await;
-    });
+    crate::server::chat::reply_now(state.clone(), &sid, YINYUE_AGENT, &ask).await
 }
 
 fn ask_kickoff(
@@ -278,12 +258,8 @@ fn on_agent_chat(
                         "[yinyue-watch] relays agent_chat ({} chars)",
                         said.line.text().len()
                     );
-                    crate::server::api::yinyue::emit_speak(
-                        &state,
-                        said.line,
-                        Some("neutral".to_string()),
-                        Default::default(),
-                    );
+                    let stage = Stage::of(&state, None).await;
+                    spoken::publish(&state, said, &stage, Some("neutral".to_string()), None).await;
                 }
             }
         });
@@ -510,7 +486,7 @@ pub(crate) async fn wake_herald(
     state: Arc<ServerState>,
     kickoff: String,
     emotion: &str,
-) -> Option<String> {
+) -> Option<Line> {
     wake_and_speak(state, (kickoff, None), emotion, "event", Reach::Open, None).await
 }
 
@@ -541,7 +517,7 @@ pub(crate) struct Table {
 
 /// The page a line said at `table` shows on: in a day's session the app it
 /// stands in, elsewhere the session's own app (`None`: the main page).
-fn table_page(state: &ServerState, table: &Table) -> Option<String> {
+pub(super) fn table_page(state: &ServerState, table: &Table) -> Option<String> {
     table.app.clone().or_else(|| {
         crate::server::chat::turn_place::of_session_id(&state.manager, &table.session).skill
     })
@@ -549,7 +525,7 @@ fn table_page(state: &ServerState, table: &Table) -> Option<String> {
 
 /// Wake her to tell a mission run's fault. Unprompted: quiet hours make it
 /// wait, and the hourly ceiling neither counts nor holds it ([`Source::Fault`]).
-pub(super) async fn wake_fault(state: Arc<ServerState>, fact: String) -> Option<String> {
+pub(super) async fn wake_fault(state: Arc<ServerState>, fact: String) -> Option<Line> {
     wake_and_speak(
         state,
         (fact, None),
@@ -572,7 +548,7 @@ pub(crate) async fn wake_for_moment(
     emotion: &str,
     source: &str,
     language: Option<String>,
-) -> Option<String> {
+) -> Option<Line> {
     wake_and_speak(state, moment, emotion, source, Reach::Sealed, language).await
 }
 
@@ -585,7 +561,7 @@ pub(super) async fn wake_and_speak(
     trigger_source: &str,
     reach: Reach,
     language: Option<String>,
-) -> Option<String> {
+) -> Option<Line> {
     wake_and_offer(state, moment, (emotion, trigger_source), reach, language, None).await
 }
 
@@ -606,14 +582,13 @@ pub(super) async fn wake_and_offer(
     reach: Reach,
     language: Option<String>,
     raised: Option<Raised<'_>>,
-) -> Option<String> {
+) -> Option<Line> {
     let kickoff = match &raised {
         Some(r) if !r.offers.is_empty() => format!("{kickoff} {}", super::offer_labels::CONTRACT),
         _ => kickoff,
     };
-    // The app chat it is said at, and the place there whose page shows it.
+    // The app chat it is said at.
     let said_in = table.clone();
-    let shown_on = table.as_ref().and_then(|t| table_page(&state, t));
     // A failure of hers held for a turn that can carry it rides this one —
     // her own thread's unprompted turns only: never an app's table, an asked
     // reading or a tap's outcome, whose answer is about something else.
@@ -630,7 +605,7 @@ pub(super) async fn wake_and_offer(
             super::turn::run_home(&state, kickoff, trigger_source, reach, language).await
         }
     };
-    let said = finalize_event(reply.as_deref(), trigger_source);
+    let said = finalize(reply.as_deref(), trigger_source);
     let (shown, unlabelled) = super::offer_labels::shown(
         raised.as_ref().map(|r| r.offers),
         said.as_ref().map(|e| e.labels.as_slice()),
@@ -645,7 +620,6 @@ pub(super) async fn wake_and_offer(
         }
         return None;
     };
-    let line = said.line;
     if let Some(source) = unprompted_source(reach, trigger_source) {
         if !passes_last_word(&state, source).await {
             return None;
@@ -656,19 +630,11 @@ pub(super) async fn wake_and_offer(
     }
     tracing::info!(
         "[yinyue-watch] Yinyue heralds ({} chars, {emotion})",
-        line.text().len()
+        said.line.text().len()
     );
-    crate::server::api::yinyue::emit_speak_offering(
-        &state,
-        line.clone(),
-        Some(emotion.to_string()),
-        crate::server::api::yinyue::SaidAt {
-            session: said_in.as_ref().map(|t| t.session.as_str()),
-            app: shown_on.as_deref(),
-        },
-        raised.map(|r| (r.problem.to_string(), shown)),
-    );
-    Some(line.text().to_string())
+    let stage = Stage::of(&state, said_in.as_ref()).await;
+    let problem = raised.map(|r| (r.problem.to_string(), shown));
+    Some(spoken::publish(&state, said, &stage, Some(emotion.to_string()), problem).await)
 }
 
 /// What woke an unprompted turn of hers — `None` for a reply: her ordinary
@@ -865,7 +831,7 @@ pub(super) async fn deliver_to_chat_agent(
             images: Vec::new(),
             policy: crate::engine::session_policy::SessionPolicy::owner(),
             sender: Some(from.clone()),
-            silence_ok: false,
+            reply_held: false,
             place: delivered_place(&state, &session_id, app.as_deref()),
             turn: Default::default(),
         };

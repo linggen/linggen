@@ -779,8 +779,9 @@ impl AgentEngine {
                     // Only ExitPlanMode submits a plan; a text reply is an answer.
                     self.leave_plan_mode_for_answer();
 
-                    // Pure conversational text — emit as a complete block.
-                    if self.tools.get_manager().is_some() {
+                    // Pure conversational text — emit as a complete block (a
+                    // held reply is the caller's to show).
+                    if self.tools.get_manager().is_some() && !self.reply_held {
                         let agent_id = self
                             .agent_id
                             .clone()

@@ -459,7 +459,7 @@ async fn run_approved_plan_task(
         policy: crate::engine::session_policy::SessionPolicy::default(),
         sender: None,
         via: None,
-        silence_ok: false,
+        reply_held: false,
         place,
         turn: Default::default(),
     };

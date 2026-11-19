@@ -60,7 +60,8 @@ impl AgentEngine {
         ask: &str,
         session_id: &str,
     ) -> anyhow::Result<Option<String>> {
-        let Some(line) = self.light_line(tail, ask, session_id).await? else {
+        let line = self.light_text(tail, ask, session_id).await?;
+        let Some(line) = line.as_deref().and_then(kept_line) else {
             return Ok(None);
         };
         let _ = self
@@ -69,9 +70,10 @@ impl AgentEngine {
         Ok(Some(line))
     }
 
-    /// [`Self::light_reply`]'s line, kept nowhere: the caller keeps it when
-    /// it can.
-    pub async fn light_line(
+    /// The model's whole reply to the ask, trimmed — `None` when it wrote
+    /// nothing — kept nowhere and read for nothing: the caller decides what
+    /// of it is said (`resident::spoken`).
+    pub async fn light_text(
         &mut self,
         tail: Vec<ChatMessage>,
         ask: &str,
@@ -93,7 +95,8 @@ impl AgentEngine {
                 return Err(e);
             }
         };
-        Ok(kept_line(&reply))
+        let reply = reply.trim();
+        Ok((!reply.is_empty()).then(|| reply.to_string()))
     }
 }
 

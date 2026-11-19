@@ -18,6 +18,7 @@ mod day_places;
 mod day_session;
 mod delegate;
 mod door;
+mod event_speech;
 mod drawing;
 mod fixtures;
 mod memory_ops;

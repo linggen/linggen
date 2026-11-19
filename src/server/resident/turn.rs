@@ -110,6 +110,16 @@ pub(super) async fn run_home(
     run_at(state, &turn, &pet, task, trigger_source).await
 }
 
+/// The place her turn at `table` stands in: in a day's session the app the
+/// moment came from, elsewhere the session's own.
+pub(super) fn table_place(state: &Arc<ServerState>, table: &super::Table) -> crate::engine::turn_place::TurnPlace {
+    let meta = state.manager.global_sessions.get_session_meta(&table.session).ok().flatten();
+    match crate::server::day_session::is_day(&table.session) {
+        true => crate::engine::turn_place::TurnPlace::of_request(table.app.as_deref(), meta.as_ref()),
+        false => crate::engine::turn_place::TurnPlace::of_session(meta.as_ref()),
+    }
+}
+
 /// Her moment turn at an app chat's table: seated there (for good, as an
 /// addressed member is), woken by a hidden kickoff that is hers alone —
 /// another member never reads it (`chat::thread`).
@@ -272,8 +282,9 @@ async fn run_at(
             images: Vec::new(),
             policy,
             sender: None,
-            // At a table, silence is an answer and leaves no row there.
-            silence_ok: !turn.home && trigger_source != "asked",
+            // A turn the engine started shows and keeps nothing itself: what
+            // she chose to say is published by the finalizer (`spoken`).
+            reply_held: is_event_turn(trigger_source),
             place: turn.place.clone(),
             turn: turn_settings(turn, trigger_source),
         };
@@ -343,12 +354,20 @@ fn resend_hers(
         Box::pin(async move {
             tokio::spawn(async move {
                 let pet = state.manager.get_config_snapshot().await.pet;
-                if let Some(reply) = run_at(&state, &turn, &pet, task, &trigger_source).await {
+                let Some(reply) = run_at(&state, &turn, &pet, task, &trigger_source).await else {
+                    return;
+                };
+                if !is_event_turn(&trigger_source) {
                     let at = crate::server::api::yinyue::SaidAt {
                         session: Some(&turn.session_id),
                         app: turn.place.skill.as_deref(),
                     };
                     super::speak_reply(&state, &reply, at);
+                    return;
+                }
+                if let Some(said) = finalize_event(Some(&reply), &trigger_source) {
+                    let stage = Stage::of_turn(&turn.session_id, &turn.place);
+                    spoken::publish(&state, said, &stage, Some("neutral".into()), None).await;
                 }
             });
         })

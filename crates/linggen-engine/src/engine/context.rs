@@ -135,7 +135,7 @@ impl AgentEngine {
     /// and the UI's merge drops a saved row it can already see. Plan text
     /// travels by PlanUpdate instead; subagents never write the parent's log.
     pub(crate) async fn emit_text_segment(&self, text: String, session_id: Option<&str>) {
-        if text.is_empty() || self.plan_mode {
+        if text.is_empty() || self.plan_mode || self.reply_held {
             return;
         }
         let agent_id = self
@@ -190,7 +190,11 @@ impl AgentEngine {
         content: &str,
         session_id: Option<&str>,
     ) -> anyhow::Result<()> {
-        let transient_silence = self.silence_ok && is_silence(content);
+        // A held reply (a turn the engine started) is the caller's to decide:
+        // nothing of it is shown or kept here (`reply_held`).
+        if self.reply_held {
+            return Ok(());
+        }
         if let Some(manager) = self.tools.get_manager() {
             let agent_id = self
                 .agent_id
@@ -234,9 +238,7 @@ impl AgentEngine {
             // event-ordering safety. So the on-disk persist is the only
             // step that needs to skip for delegated runs.
             let is_subagent = self.tools.builtins.delegation_depth() > 0;
-            // A silent table turn still tells the live UI to hide its work,
-            // but the silence itself is not a conversation row to keep.
-            if !is_subagent && !transient_silence {
+            if !is_subagent {
                 self.keep_answer_pictures(session_id, content).await;
                 self.save_row(
                     session_id,

@@ -8,6 +8,10 @@
 pub(crate) const SPOKEN_CONTRACT: &str =
     "If you need to think first, do it above a blank line: only your \
     final paragraph is spoken aloud, the rest is discarded.";
+/// What an engine-started kickoff carries: the one way to speak. Anything
+/// else she writes in that turn is dropped (`finalize_event`).
+pub(crate) const SAY_CONTRACT: &str =
+    "To speak, put one line in <say>…</say>. Otherwise leave it out.";
 /// The word a reply under the contract says nothing with.
 macro_rules! silent_word {
     () => {
@@ -40,7 +44,7 @@ pub(super) fn with_contract(task: String, trigger_source: &str) -> String {
     let task = task.trim_start_matches(HIDDEN).trim_start();
     match trigger_source {
         "asked" => format!("{HIDDEN} {task} {SPOKEN_CONTRACT}"),
-        _ => format!("{HIDDEN} {task} {SPOKEN_CONTRACT} {SILENT_CLAUSE}"),
+        _ => format!("{HIDDEN} {task} {SAY_CONTRACT}"),
     }
 }
 
@@ -50,7 +54,8 @@ pub(super) fn with_contract(task: String, trigger_source: &str) -> String {
 /// 2026-09-08 and no person's message does. Kept for the model; the chat
 /// never shows it.
 pub(crate) fn is_engine_prompt(from_id: &str, content: &str) -> bool {
-    content.contains(HIDDEN) || (from_id == "user" && content.contains(SPOKEN_CONTRACT))
+    content.contains(HIDDEN)
+        || (from_id == "user" && (content.contains(SPOKEN_CONTRACT) || content.contains(SAY_CONTRACT)))
 }
 
 /// What a reply to a PERSON (or to an answer they asked for) says: the final
@@ -246,12 +251,35 @@ impl Line {
     }
 }
 
-/// What an engine-started turn's finalizer hands back: the line she chose to
-/// say, and the labels she gave the offers it raised.
+/// What a finalizer hands back: the line she chose to say, and the labels
+/// she gave the offers it raised. `kept`: the turn itself already kept the
+/// line as her row (an answer to a person) — publication adds only the cue.
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct Event {
     pub line: Line,
     pub labels: Vec<(usize, String)>,
+    pub kept: bool,
+}
+
+/// An answer a person asked for, read as it always was (final paragraph, or
+/// SILENT): the answer path, never an event's.
+pub(super) fn finalize_answer(reply: Option<&str>) -> Option<Event> {
+    let reply = reply?;
+    let line = answer_line(reply)?;
+    Some(Event {
+        line: Line::answer(line),
+        labels: super::offer_labels::take(reply).1,
+        kept: true,
+    })
+}
+
+/// The finalizer for a turn by its trigger source: an answer for a person,
+/// the envelope for everything the engine started.
+pub(super) fn finalize(reply: Option<&str>, trigger_source: &str) -> Option<Event> {
+    match is_event_turn(trigger_source) {
+        true => finalize_event(reply, trigger_source),
+        false => finalize_answer(reply),
+    }
 }
 
 /// The one decision for every turn the engine started: did she choose to
@@ -263,6 +291,7 @@ pub(super) fn finalize_event(reply: Option<&str>, source: &str) -> Option<Event>
         Ok((text, labels)) => Some(Event {
             line: Line { text },
             labels,
+            kept: false,
         }),
         Err(why) => {
             tracing::info!(
@@ -273,6 +302,137 @@ pub(super) fn finalize_event(reply: Option<&str>, source: &str) -> Option<Event>
             None
         }
     }
+}
+
+/// Whether a turn of hers was started by the engine (a herald, a condition, a
+/// quiet moment, a peer's message, a fault, a told task end) rather than by a
+/// person — "user" — or for an answer a person asked for — "asked". Only an
+/// engine-started turn is held and read through [`finalize_event`].
+pub(crate) fn is_event_turn(trigger_source: &str) -> bool {
+    !matches!(trigger_source, "user" | "asked")
+}
+
+/// Where a published line stands: the session whose thread keeps it as her
+/// row, the place it was said in, and what her stage is told.
+pub(super) struct Stage {
+    row_session: String,
+    place: crate::engine::turn_place::TurnPlace,
+    said_session: Option<String>,
+    app: Option<String>,
+}
+
+impl Stage {
+    /// Her own thread (`table` none) or the app chat a moment names.
+    pub(super) async fn of(state: &std::sync::Arc<crate::server::ServerState>, table: Option<&super::Table>) -> Self {
+        let Some(table) = table else {
+            let row_session = super::session_roll::resolve_current_session(state).await;
+            let place = crate::server::chat::turn_place::of_session_id(&state.manager, &row_session);
+            return Self { row_session, place, said_session: None, app: None };
+        };
+        let place = super::turn::table_place(state, table);
+        let app = super::triggers::table_page(state, table);
+        Self { row_session: table.session.clone(), place, said_session: Some(table.session.clone()), app }
+    }
+
+    /// The turn a restart kept and ran again: where it ran.
+    pub(super) fn of_turn(session: &str, place: &crate::engine::turn_place::TurnPlace) -> Self {
+        Self {
+            row_session: session.to_string(),
+            place: place.clone(),
+            said_session: Some(session.to_string()),
+            app: place.skill.clone(),
+        }
+    }
+
+    pub(super) fn at(&self) -> crate::server::api::yinyue::SaidAt<'_> {
+        crate::server::api::yinyue::SaidAt { session: self.said_session.as_deref(), app: self.app.as_deref() }
+    }
+}
+
+/// The one publication of an engine-started turn's line: her row in the
+/// thread, and her stage (the live cue, the bubble, the voice). Every output
+/// takes the finalizer's typed [`Line`]; staleness is the caller's check,
+/// made before this is called.
+pub(super) async fn publish(
+    state: &std::sync::Arc<crate::server::ServerState>,
+    said: Event,
+    stage: &Stage,
+    emotion: Option<String>,
+    problem: Option<(String, Vec<crate::perception::offer::Shown>)>,
+) -> Line {
+    let Event { line, labels, kept } = said;
+    if !kept {
+        keep_row(state, &line, &labels, (&stage.row_session, stage.place.key())).await;
+    }
+    crate::server::api::yinyue::emit_speak_offering(state, line.clone(), emotion, stage.at(), problem);
+    line
+}
+
+/// Her line copied into another chat an app moment names: a row there, no cue.
+pub(crate) async fn land_row(state: &std::sync::Arc<crate::server::ServerState>, line: &Line, session: &str) {
+    let place = crate::server::chat::turn_place::of_session_id(&state.manager, session);
+    keep_row(state, line, &[], (session, place.key())).await;
+}
+
+/// A turn of hers the engine started in `session` (a told task end), finalized
+/// and published where it stood.
+pub(crate) async fn say_event(
+    state: &std::sync::Arc<crate::server::ServerState>,
+    reply: Option<&str>,
+    source: &str,
+    (session, place): (&str, &crate::engine::turn_place::TurnPlace),
+) {
+    let Some(said) = finalize_event(reply, source) else {
+        return;
+    };
+    let stage = Stage::of_turn(session, place);
+    publish(state, said, &stage, Some("neutral".to_string()), None).await;
+}
+
+/// Her line as a row of the thread, her labels kept on it as the record of
+/// what she offered (the UI strips them out of the words).
+async fn keep_row(
+    state: &std::sync::Arc<crate::server::ServerState>,
+    line: &Line,
+    labels: &[(usize, String)],
+    (session, place): (&str, &str),
+) {
+    let mut content = line.text().to_string();
+    for (n, label) in labels {
+        content.push_str(&format!(" [offer {n}: {label}]"));
+    }
+    let her = crate::engine::agent::COMPANION_AGENT_ID;
+    let msg = crate::state_fs::sessions::ChatMsg {
+        run_id: None,
+        via: None,
+        via_note: None,
+        agent_id: her.to_string(),
+        from_id: her.to_string(),
+        to_id: "user".to_string(),
+        content: content.clone(),
+        timestamp: crate::util::now_ts_secs(),
+        is_observation: false,
+        client_id: None,
+        failed: false,
+        images: Vec::new(),
+        place: Some(place.to_string()),
+    };
+    if let Err(e) = state.manager.global_sessions.add_chat_message(session, &msg) {
+        tracing::warn!("[yinyue] her line was not kept as a row: {e}");
+        return;
+    }
+    let _ = state.events_tx.send(crate::engine::events::ServerEvent::Message {
+        from: her.to_string(),
+        to: "user".to_string(),
+        content,
+        session_id: Some(session.to_string()),
+        run_id: None,
+        parent_agent_id: None,
+        client_id: None,
+        via: None,
+        via_note: None,
+        images: Vec::new(),
+    });
 }
 
 /// [`finalize_event`]'s line, bare — for the tests that only ask what is said.
@@ -287,7 +447,8 @@ mod tests {
 
     #[test]
     fn an_asked_turn_is_not_offered_silence() {
-        assert!(with_contract("k".into(), "event").contains("SILENT"));
+        let event = with_contract("k".into(), "event");
+        assert!(event.contains("<say>") && !event.contains("SILENT"));
         let asked = with_contract("k".into(), "asked");
         assert!(asked.contains("final paragraph is spoken"));
         assert!(!asked.contains("SILENT"));

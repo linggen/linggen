@@ -429,6 +429,7 @@ async fn tell_in_place(
         }
     }
     drop(gate);
+    let told_her = super::chat::members::is_companion(&agent);
     let mut engine = engine.lock().await;
     engine.set_parent_agent(None);
     let ctx = super::chat::ChatRunCtx {
@@ -443,11 +444,18 @@ async fn tell_in_place(
         images: Vec::new(),
         policy: crate::engine::session_policy::SessionPolicy::owner(),
         sender: Some(sender),
-        silence_ok: false,
-        place: told_at,
+        // Told to her, the notice is an event: what she chooses to say is
+        // published by the finalizer, nothing of her reply is kept as prose.
+        reply_held: told_her,
+        place: told_at.clone(),
         turn: Default::default(),
     };
     super::chat::run_session_turn(&ctx, &mut engine, &state.manager, None).await;
+    if told_her {
+        let reply = engine.last_assistant_text.clone();
+        drop(engine);
+        crate::server::resident::say_event(&state, reply.as_deref(), "task end", (&session, &told_at)).await;
+    }
 }
 
 /// `place` in the session's turn line, with the admission gate to hold

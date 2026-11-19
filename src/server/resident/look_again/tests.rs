@@ -134,10 +134,10 @@ fn the_kickoff_marks_the_note_as_the_reason_and_leaves_the_judging_to_her() {
     );
     assert!(k.contains("cannot act"), "{k}");
     assert!(k.contains("say nothing"), "{k}");
-    // Under the spoken contract a woken note may end SILENT.
+    // Under the speaking contract a woken note speaks only in <say>.
     let task = super::super::with_contract(k, LOOK_AGAIN_SOURCE);
     assert!(
-        task.starts_with("[HIDDEN]") && task.ends_with("exactly SILENT."),
+        task.starts_with("[HIDDEN]") && task.ends_with("Otherwise leave it out."),
         "{task}"
     );
 }

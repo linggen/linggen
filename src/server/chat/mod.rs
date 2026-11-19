@@ -52,7 +52,7 @@ pub(crate) use handler::{
     run_session_turn,
     resend_chat, say_in_app, say_in_session, start_turn, TurnOrigin,
 };
-pub(crate) use light::{line_now, reply_in_session};
+pub(crate) use light::{reply_in_session, reply_now};
 pub(crate) use plan_flow::{approve_plan_handler, edit_plan_handler, reject_plan_handler};
 pub(crate) use runtime::close_turn;
 
@@ -82,7 +82,7 @@ pub(super) struct ChatRunCtx {
     pub(super) via: Option<String>,
     /// The kickoff offers silence: a reply that is exactly `SILENT` is
     /// neither streamed, shown nor kept.
-    pub(super) silence_ok: bool,
+    pub(super) reply_held: bool,
     /// The place this turn stands in: what it takes from an app
     /// (`turn_place`) is set from this when it starts and cleared when it
     /// ends.

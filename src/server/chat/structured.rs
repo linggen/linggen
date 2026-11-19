@@ -71,8 +71,8 @@ pub(super) async fn run_structured_loop(ctx: &ChatRunCtx, engine: &mut crate::en
     // A kickoff that offers silence streams nothing: the reply is shown
     // whole, or — when it is SILENT — not at all.
     let mut run = crate::engine::turn_place::RunSetup::task(ctx.clean_msg.trim())
-        .silence_ok(ctx.silence_ok)
-        .thinking((!ctx.silence_ok).then_some(thinking_tx));
+        .reply_held(ctx.reply_held)
+        .thinking((!ctx.reply_held).then_some(thinking_tx));
     if !ctx.images.is_empty() {
         run = run.images(ctx.images.clone());
     }
