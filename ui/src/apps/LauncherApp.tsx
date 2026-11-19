@@ -19,6 +19,7 @@ import { appLabel } from './appLabel';
 import { useYinyuePresenter } from '../hooks/useTransport';
 import type { SkillAppConfig, SkillInfoFull } from '../types';
 import { frameAllow } from '../lib/frameAllow.mts';
+import { launcherNote, type ListState } from '../lib/launcherNote.mts';
 import { setAppHost } from '../lib/appHost';
 
 /** A skill that is an app. */
@@ -69,7 +70,10 @@ export const LauncherApp: React.FC = () => {
 
   // Self-fetch the app list over HTTP so the launcher doesn't depend on the
   // WebRTC page_state timing (the dev console's source).
+  const [listState, setListState] = useState<ListState>('loading');
+  const [listTry, setListTry] = useState(0);
   useEffect(() => {
+    setListState('loading');
     skillsApi.list()
       .then((data) => {
         const list: SkillInfoFull[] = Array.isArray(data) ? data : [];
@@ -80,9 +84,11 @@ export const LauncherApp: React.FC = () => {
           orderIndex(a.name) - orderIndex(b.name) ||
           appLabel(a).localeCompare(appLabel(b)));
         setApps(web);
+        setListState('ready');
       })
-      .catch(() => {});
-  }, []);
+      .catch(() => setListState('error'));
+  }, [listTry]);
+  const note = launcherNote(listState, apps.length);
 
   // Open the last active app (if still installed) once the list arrives,
   // falling back to the preferred default. Only the active app is mounted
@@ -194,9 +200,14 @@ export const LauncherApp: React.FC = () => {
 
       {/* Body: each opened app kept mounted; only the active one is visible. */}
       <div className="flex-1 relative min-h-0">
-        {apps.length === 0 && (
-          <div className="absolute inset-0 flex items-center justify-center text-sm text-slate-400">
-            Loading apps…
+        {note && apps.length === 0 && (
+          <div className="absolute inset-0 flex items-center justify-center gap-2 text-sm text-slate-400">
+            {note}
+            {listState === 'error' && (
+              <button onClick={() => setListTry((n) => n + 1)} className="text-blue-600 dark:text-blue-400 hover:underline">
+                Retry
+              </button>
+            )}
           </div>
         )}
         {opened.map((name) => {

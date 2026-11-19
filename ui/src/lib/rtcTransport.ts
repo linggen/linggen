@@ -183,6 +183,8 @@ export class RtcTransport implements Transport {
   }
 
   unsubscribeSession(sessionId: string): void {
+    // A session left while the link was down is not opened again on reconnect.
+    this.pendingSubscriptions.delete(sessionId);
     const dc = this.sessionChannels.get(sessionId);
     if (dc) {
       dc.close();

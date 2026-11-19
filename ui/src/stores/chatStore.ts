@@ -8,7 +8,7 @@ import { create } from 'zustand';
 import type { AgentRunInfo, ChatMessage, ContentBlock, SubagentTreeEntry, SessionState } from '../types';
 import { rowForRun, settleTree, subagentHostIndex, unshownChildren } from '../lib/subagentRuns.mts';
 import { isToolStatusText } from '../components/chat/MessagePhase';
-import { dedupFetch } from '../lib/dedupFetch';
+import { dedupFetch } from '../lib/dedupFetch.mts';
 import {
   stripEmbeddedStructuredJson,
   isStatusLineText,

@@ -43,21 +43,19 @@ export function dedupFetch(input: RequestInfo | URL, init?: RequestInit, revisio
   const existing = inflight.get(key);
   if (existing) return existing.then(toResponse);
 
-  const promise = fetch(input, init).then(async (resp) => {
-    const body = await resp.arrayBuffer();
-    const cached: CachedResponse = {
-      status: resp.status,
-      statusText: resp.statusText,
-      headers: [...resp.headers.entries()],
-      body,
-    };
-    inflight.delete(key);
-    return cached;
-  }, (err) => {
-    inflight.delete(key);
-    throw err;
-  });
+  const promise = fetch(input, init).then(async (resp): Promise<CachedResponse> => ({
+    status: resp.status,
+    statusText: resp.statusText,
+    headers: [...resp.headers.entries()],
+    body: await resp.arrayBuffer(),
+  }));
 
   inflight.set(key, promise);
+  // Settled either way — the fetch or its body read failed too — it is no
+  // longer in flight: the next load asks again.
+  promise.then(
+    () => { if (inflight.get(key) === promise) inflight.delete(key); },
+    () => { if (inflight.get(key) === promise) inflight.delete(key); },
+  );
   return promise.then(toResponse);
 }

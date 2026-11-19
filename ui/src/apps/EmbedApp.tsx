@@ -228,7 +228,8 @@ export const EmbedApp: React.FC = () => {
       const text = sel?.toString();
       switch (e.data.action) {
         case 'copy': if (text) navigator.clipboard.writeText(text).catch(() => {}); break;
-        case 'cut': if (text) { navigator.clipboard.writeText(text).catch(() => {}); document.execCommand('delete'); } break;
+        // The selection goes only once the clipboard holds it.
+        case 'cut': if (text) navigator.clipboard.writeText(text).then(() => { document.execCommand('delete'); }, () => {}); break;
         case 'selectAll': document.execCommand('selectAll'); break;
       }
     };

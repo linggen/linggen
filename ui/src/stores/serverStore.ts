@@ -6,7 +6,7 @@ import type { AgentInfo, AgentRunInfo, AgentTreeItem, ModelInfo, OllamaPsRespons
 import { apiGet } from '../lib/api';
 import { useSessionStore } from './sessionStore';
 import { TOKEN_RATE_WINDOW_MS } from '../lib/messageUtils';
-import { dedupFetch } from '../lib/dedupFetch';
+import { dedupFetch } from '../lib/dedupFetch.mts';
 import { agentTracker } from '../lib/agentTracker';
 import { presentAgents, type AgentMet } from '../lib/agentsMet.mts';
 import { agentsApi, appConfig, skillsApi } from '../lib/endpoints';
