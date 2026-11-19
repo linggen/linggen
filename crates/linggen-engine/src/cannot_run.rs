@@ -124,11 +124,12 @@ impl CannotRun {
         Some(Self::StoreUnavailable { detail })
     }
 
-    /// A memory call that got no answer at all: none in this process, or
-    /// none in time.
+    /// A memory call that got no answer because there is no store: none in
+    /// this process. One that got none in time is no such reason — its verb
+    /// may still finish, so a write may have landed
+    /// (`memory_host::NoAnswerInTime`, said as memory's own runner says it).
     pub fn of_memory_error(msg: &str) -> Option<Self> {
-        let unreachable = msg.contains("memory is not reachable")
-            || msg.contains("memory is not hosted by this process")
+        let unreachable = msg.contains("memory is not hosted by this process")
             || msg.contains("MEMORY_UNAVAILABLE");
         unreachable.then(|| Self::StoreUnavailable {
             detail: msg.to_string(),
@@ -431,9 +432,14 @@ mod tests {
         );
         let bad = json!({"ok": false, "error": "content must not be empty", "code": "BAD_REQUEST"});
         assert_eq!(CannotRun::of_memory_answer(400, &bad), None);
-        let silent =
-            CannotRun::of_memory_error("memory is not reachable — check `ling status`").unwrap();
-        assert!(silent.line().contains("ling status"));
+        let absent = CannotRun::of_memory_error("memory is not hosted by this process").unwrap();
+        assert!(absent.line().contains("ling status"));
+        // A store that answered too late may still land the write: no
+        // unavailable store.
+        assert_eq!(
+            CannotRun::of_memory_error("memory is not reachable — check `ling status`"),
+            None
+        );
         assert_eq!(
             CannotRun::of_message("invalid JSON in response", None),
             None

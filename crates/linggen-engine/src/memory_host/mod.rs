@@ -32,7 +32,7 @@ mod routes;
 mod standin;
 mod takeover;
 
-pub use call::{post_verb, post_verb_blocking, Answer};
+pub use call::{post_verb, post_verb_blocking, Answer, NoAnswerInTime};
 #[cfg(any(test, feature = "test-support"))]
 pub use call::{TestHost, TEST_HOST};
 pub use routes::{is_open_path, routes};

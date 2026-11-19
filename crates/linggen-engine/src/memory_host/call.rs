@@ -68,9 +68,21 @@ pub fn post_verb_blocking(
     }
 }
 
-/// The words for a memory that did not answer in time.
+/// A memory that did not answer in time — typed, so a caller tells it from
+/// one that is not there: the verb may still finish on memory's runtime.
+#[derive(Debug)]
+pub struct NoAnswerInTime;
+
+impl std::fmt::Display for NoAnswerInTime {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("memory is not reachable — check `ling status`")
+    }
+}
+
+impl std::error::Error for NoAnswerInTime {}
+
 fn no_answer() -> anyhow::Error {
-    anyhow!("memory is not reachable — check `ling status`")
+    anyhow::Error::new(NoAnswerInTime)
 }
 
 /// The verb, started on memory's runtime.
@@ -234,6 +246,7 @@ mod tests {
     async fn an_async_call_gives_up_after_its_timeout() {
         let call = post_verb(Who::Owner, "count", json!({}), Duration::from_millis(50));
         let err = TEST_HOST.scope(TestHost::Silent, call).await.unwrap_err();
+        assert!(err.is::<NoAnswerInTime>(), "{err}");
         assert_eq!(
             err.to_string(),
             "memory is not reachable — check `ling status`"

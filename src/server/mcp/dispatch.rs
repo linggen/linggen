@@ -177,7 +177,7 @@ async fn dream_run(deps: &McpDeps<'_>, args: Value) -> Value {
 /// A memory branch, through the memory this process hosts: the same
 /// adapters memory's own server runs a branch with
 /// (`ling_mem::catalog::memory`), as the owner.
-async fn memory(verb: &'static str, mut args: Value, timeout_ms: u64) -> Value {
+pub(super) async fn memory(verb: &'static str, mut args: Value, timeout_ms: u64) -> Value {
     use ling_mem::catalog::memory::{finish, prepare, read_envelope};
     prepare(&mut args);
     let wait = Duration::from_millis(timeout_ms);
@@ -188,6 +188,12 @@ async fn memory(verb: &'static str, mut args: Value, timeout_ms: u64) -> Value {
             Some(why) => return unavailable(&why),
             None => envelope,
         },
+        // No answer in time is what memory's own runner says it is: the
+        // verb may still finish, so a write may have landed.
+        Err(e) if e.is::<crate::memory_host::NoAnswerInTime>() => {
+            let line = ling_mem::catalog::memory::timed_out_line(verb, wait);
+            return tool_content(line, true);
+        }
         Err(e) => match CannotRun::of_memory_error(&e.to_string()) {
             Some(why) => return unavailable(&why),
             None => return tool_content(e.to_string(), true),

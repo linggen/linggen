@@ -684,10 +684,16 @@ pub async fn run(
 /// A timeout says what it means for a write: the store may have finished the
 /// work after we stopped waiting, so look before doing it again.
 pub(crate) fn timed_out(verb: &str, wait: Duration) -> ApiError {
-    ApiError::internal(anyhow::anyhow!(
+    ApiError::internal(anyhow::anyhow!(timed_out_line(verb, wait)))
+}
+
+/// What a memory branch that got no answer in time means, in the words
+/// every door says it with — memory's own runner and the engine's.
+pub fn timed_out_line(verb: &str, wait: Duration) -> String {
+    format!(
         "{verb} timed out after {}s — a write may still have landed; search before retrying",
         wait.as_secs()
-    ))
+    )
 }
 
 /// The route's answer, read as the HTTP caller read it.

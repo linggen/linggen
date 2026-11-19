@@ -652,6 +652,26 @@ async fn memory_runs_through_the_engines_door_without_an_account_or_a_model() {
     );
 }
 
+/// A memory branch that got no answer in time means what memory's own
+/// runner says it means: a write may still have landed, so search before
+/// retrying. It is never "memory unavailable".
+#[tokio::test]
+async fn a_memory_timeout_at_the_door_says_a_write_may_have_landed() {
+    use crate::memory_host::{TestHost, TEST_HOST};
+    let late = TEST_HOST
+        .scope(
+            TestHost::Silent,
+            super::dispatch::memory("add", json!({"content": "x"}), 1_000),
+        )
+        .await;
+    assert_eq!(late["isError"], true);
+    assert_eq!(
+        text(&late),
+        "add timed out after 1s — a write may still have landed; search before retrying"
+    );
+    assert!(!text(&late).contains("unavailable"), "{}", text(&late));
+}
+
 /// Every folded schema is a strict object; every branch has a form a
 /// refusal can show.
 #[test]
