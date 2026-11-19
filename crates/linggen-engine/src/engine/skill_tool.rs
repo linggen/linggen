@@ -333,8 +333,10 @@ impl SkillToolDef {
             ));
         }
 
+        // A call the timeout ended has no exit of its own, whatever the
+        // shell returned before its child was killed: it failed.
         Ok(ToolResult::CommandOutput {
-            exit_code: status.code(),
+            exit_code: if timed_out { None } else { status.code() },
             stdout,
             stderr,
         })
@@ -518,11 +520,13 @@ impl Kept {
         std::thread::spawn(move || {
             let mut buf = [0u8; 8192];
             if let Some(mut stream) = stream {
-                while let Ok(n) = stream.read(&mut buf) {
-                    if n == 0 {
-                        break;
+                loop {
+                    match stream.read(&mut buf) {
+                        Ok(0) => break,
+                        Ok(n) => lock(&filling).take_in(&buf[..n], cap),
+                        Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                        Err(_) => break,
                     }
-                    lock(&filling).take_in(&buf[..n], cap);
                 }
             }
             lock(&filling).ended = true;
@@ -748,11 +752,12 @@ mod tests {
             "returned in {:?}, not after the background sleep",
             start.elapsed()
         );
-        let ToolResult::CommandOutput { stdout, stderr, .. } = result else {
-            panic!("expected CommandOutput");
+        let ToolResult::CommandOutput { stdout, stderr, exit_code } = result else {
+            unreachable!()
         };
         assert_eq!(stdout, "started\n");
         assert!(stderr.contains("timed out after 300ms"), "stderr: {stderr}");
+        assert_eq!(exit_code, None, "a timed-out call has no clean exit");
     }
 
     /// A noisy command is kept only up to its cap while it is read: the
