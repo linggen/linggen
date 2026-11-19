@@ -155,24 +155,43 @@ pub fn migrate_remote_toml() {
     if !path.exists() {
         return;
     }
-    if load_account().is_none() {
-        if let Some(token) = std::fs::read_to_string(&path).ok().and_then(|raw| {
+    migrate_from(&path, || load_account(), save_account);
+}
+
+/// [`migrate_remote_toml`] from the old file at `path`, with the account
+/// read by `load` and kept by `save`. The old file is removed only once its
+/// token is written and read back: until then it may be the only copy.
+fn migrate_from(
+    path: &std::path::Path,
+    load: impl Fn() -> Option<AccountConfig>,
+    save: impl FnOnce(&AccountConfig) -> Result<()>,
+) {
+    if load().is_none() {
+        if let Some(token) = std::fs::read_to_string(path).ok().and_then(|raw| {
             raw.parse::<toml::Table>()
                 .ok()?
                 .get("api_token")?
                 .as_str()
                 .map(|s| s.to_string())
         }) {
-            let _ = save_account(&AccountConfig {
-                api_token: token,
+            let account = AccountConfig {
+                api_token: token.clone(),
                 user_id: None,
                 user_name: None,
                 avatar_url: None,
-            });
+            };
+            if let Err(e) = save(&account) {
+                tracing::warn!("remote.toml kept: its token could not be saved into account.toml: {e}");
+                return;
+            }
+            if load().is_none_or(|kept| kept.api_token != token) {
+                tracing::warn!("remote.toml kept: account.toml does not read back its token");
+                return;
+            }
             tracing::info!("Adopted the remote-access token into account.toml");
         }
     }
-    if std::fs::remove_file(&path).is_ok() {
+    if std::fs::remove_file(path).is_ok() {
         tracing::info!("Removed remote.toml — the account token is the single credential now");
     }
 }
@@ -186,6 +205,7 @@ pub fn delete_account() -> Result<bool> {
     std::fs::remove_file(&path).context("remove account.toml")?;
     let _ = std::fs::remove_file(entitlement_snapshot_path());
     invalidate_entitlement_cache();
+    cloud::forget_readings();
     Ok(true)
 }
 
@@ -263,6 +283,8 @@ pub fn config_from_me(token: String, me: &serde_json::Value) -> AccountConfig {
 // --- Entitlement (short-TTL cache + disk snapshot for offline grace) ---
 
 struct CachedEntitlement {
+    /// The account it is about ([`account_key`]).
+    account: String,
     fetched: Instant,
     value: serde_json::Value,
 }
@@ -272,6 +294,41 @@ const ENT_TTL: Duration = Duration::from_secs(60);
 
 fn invalidate_entitlement_cache() {
     *ENT_CACHE.lock_ok() = None;
+}
+
+/// The key every cached account fact is kept under: the account's token,
+/// hashed (the token itself is kept in account.toml alone). A fact fetched
+/// for one account is never read for another, however late it arrives.
+pub(crate) fn account_key(token: &str) -> String {
+    use sha2::Digest;
+    let digest = sha2::Sha256::digest(token.as_bytes());
+    digest.iter().take(8).map(|b| format!("{b:02x}")).collect()
+}
+
+/// The cached entitlement of `account`, and whether it is still fresh.
+fn entitlement_in_memory(account: &str) -> Option<(serde_json::Value, bool)> {
+    let cache = ENT_CACHE.lock_ok();
+    let c = cache.as_ref().filter(|c| c.account == account)?;
+    Some((c.value.clone(), c.fetched.elapsed() < ENT_TTL))
+}
+
+fn keep_entitlement(account: &str, value: &serde_json::Value) {
+    *ENT_CACHE.lock_ok() = Some(CachedEntitlement {
+        account: account.to_string(),
+        fetched: Instant::now(),
+        value: value.clone(),
+    });
+}
+
+/// The offline snapshot at `path`, when it is `account`'s.
+fn snapshot_of(path: &std::path::Path, account: &str) -> Option<serde_json::Value> {
+    let kept: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
+    (kept["account"].as_str() == Some(account)).then(|| kept["value"].clone())
+}
+
+fn write_snapshot(path: &std::path::Path, account: &str, value: &serde_json::Value) {
+    let kept = serde_json::json!({ "account": account, "value": value });
+    let _ = std::fs::write(path, kept.to_string());
 }
 
 /// The token linggen.dev last refused with 401, if any. A key on disk is
@@ -327,27 +384,22 @@ async fn fetch_entitlement(token: &str) -> Result<serde_json::Value> {
 /// flagged offline — consumers bound the grace via `current_period_end` /
 /// `expires_at`. None = offline with nothing cached.
 pub async fn entitlement_cached(token: &str) -> Option<(serde_json::Value, bool)> {
-    if let Some(c) = ENT_CACHE.lock_ok().as_ref() {
-        if c.fetched.elapsed() < ENT_TTL {
-            return Some((c.value.clone(), false));
-        }
+    let account = account_key(token);
+    if let Some((value, true)) = entitlement_in_memory(&account) {
+        return Some((value, false));
     }
     match fetch_entitlement(token).await {
         Ok(v) => {
-            *ENT_CACHE.lock_ok() = Some(CachedEntitlement {
-                fetched: Instant::now(),
-                value: v.clone(),
-            });
-            let _ = std::fs::write(entitlement_snapshot_path(), v.to_string());
+            keep_entitlement(&account, &v);
+            write_snapshot(&entitlement_snapshot_path(), &account, &v);
             Some((v, false))
         }
         Err(e) => {
             tracing::warn!("entitlement fetch failed, serving last known state: {e:#}");
-            if let Some(c) = ENT_CACHE.lock_ok().as_ref() {
-                return Some((c.value.clone(), true));
+            if let Some((value, _)) = entitlement_in_memory(&account) {
+                return Some((value, true));
             }
-            let disk = std::fs::read_to_string(entitlement_snapshot_path()).ok()?;
-            serde_json::from_str(&disk).ok().map(|v| (v, true))
+            snapshot_of(&entitlement_snapshot_path(), &account).map(|v| (v, true))
         }
     }
 }
@@ -398,6 +450,68 @@ pub async fn create_checkout(token: &str, app: &str) -> Result<String> {
         .and_then(|u| u.as_str())
         .map(String::from)
         .ok_or_else(|| anyhow!("checkout response missing url"))
+}
+
+#[cfg(test)]
+mod account_cache_tests {
+    use super::*;
+
+    /// An entitlement kept for one account is never read for another — in
+    /// memory or from the offline snapshot.
+    #[test]
+    fn a_cached_entitlement_is_read_only_for_its_account() {
+        let _guard = cloud::TEST_LOCK.lock_ok();
+        let (a, b) = (account_key("usr_cache_a"), account_key("usr_cache_b"));
+        assert_ne!(a, b);
+        let value = serde_json::json!({"apps": {"cfo": {"status": "active"}}});
+        keep_entitlement(&a, &value);
+        assert_eq!(entitlement_in_memory(&a), Some((value.clone(), true)));
+        assert_eq!(entitlement_in_memory(&b), None, "another account's entitlement was served");
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("account-entitlement.json");
+        write_snapshot(&path, &a, &value);
+        assert_eq!(snapshot_of(&path, &a), Some(value));
+        assert_eq!(snapshot_of(&path, &b), None, "another account's snapshot was served");
+        invalidate_entitlement_cache();
+    }
+}
+
+#[cfg(test)]
+mod migrate_tests {
+    use super::*;
+
+    fn old_file(dir: &std::path::Path) -> std::path::PathBuf {
+        let path = dir.join("remote.toml");
+        std::fs::write(&path, "api_token = \"usr_old\"\n").unwrap();
+        path
+    }
+
+    /// The old file goes only once the token it holds is written and read
+    /// back; a save that failed, or one that does not read back, keeps it.
+    #[test]
+    fn the_old_file_stays_until_its_token_is_kept() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let path = old_file(dir.path());
+        migrate_from(&path, || None, |_| Err(anyhow!("disk full")));
+        assert!(path.exists(), "a failed save keeps the old file");
+
+        migrate_from(&path, || None, |_| Ok(()));
+        assert!(path.exists(), "a save that does not read back keeps the old file");
+
+        let kept = Mutex::new(None::<AccountConfig>);
+        migrate_from(
+            &path,
+            || kept.lock_ok().clone(),
+            |a| {
+                *kept.lock_ok() = Some(a.clone());
+                Ok(())
+            },
+        );
+        assert!(!path.exists(), "kept and read back: the old file goes");
+        assert_eq!(kept.lock_ok().as_ref().unwrap().api_token, "usr_old");
+    }
 }
 
 #[cfg(test)]

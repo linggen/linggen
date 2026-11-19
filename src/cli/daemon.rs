@@ -63,6 +63,14 @@ async fn stop_process_by_pid_file(pid_path: &Path, label: &str) -> Result<()> {
         let _ = fs::remove_file(pid_path);
         return Ok(());
     }
+    if !super::engine_restart::is_our_engine(pid) {
+        println!(
+            "{}: process {} is not Linggen's engine; left alone. Cleaning up PID file.",
+            label, pid
+        );
+        let _ = fs::remove_file(pid_path);
+        return Ok(());
+    }
 
     // Send SIGTERM
     let _ = std::process::Command::new("kill")
@@ -163,4 +171,23 @@ pub async fn start_agent(
 
 pub async fn stop_agent() -> Result<()> {
     stop_process_by_pid_file(&agent_pid_file(), "Agent server").await
+}
+
+#[cfg(test)]
+mod tests {
+    /// Stop signals the pid its file names only when that pid is our
+    /// engine: another program now holding the number is left alone.
+    #[tokio::test]
+    async fn stop_leaves_another_program_under_the_recorded_pid() {
+        let dir = tempfile::tempdir().unwrap();
+        let pid_file = dir.path().join("ling.pid");
+        let mut other = std::process::Command::new("sleep").arg("30").spawn().unwrap();
+        std::fs::write(&pid_file, other.id().to_string()).unwrap();
+        super::stop_process_by_pid_file(&pid_file, "Agent server").await.unwrap();
+        let alive = other.try_wait().unwrap().is_none();
+        let _ = other.kill();
+        let _ = other.wait();
+        assert!(alive, "stop signalled a program that is not the engine");
+        assert!(!pid_file.exists(), "the stale pid file is cleaned up");
+    }
 }

@@ -16,7 +16,7 @@ use crate::server::ServerState;
 
 /// Everything a relay round needs: the one account credential plus this
 /// machine's address. Rebuilt from disk each cycle, never cached to a file.
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 struct Link {
     token: String,
     instance_id: String,
@@ -53,60 +53,72 @@ pub fn spawn_relay_tasks(state: Arc<ServerState>) {
 /// Supervisor: follows the account credential. Starts relay tasks when signed
 /// in, restarts them when the token changes, stops when signed out.
 async fn relay_supervisor(state: Arc<ServerState>) {
-    let mut last_token: Option<String> = None;
+    let run = move |link: Link| {
+        let state = state.clone();
+        tokio::spawn(async move { run_relay(link, state).await })
+    };
+    supervise(Link::current, run, || tokio::time::sleep(Duration::from_secs(30))).await;
+}
 
+/// One relay round on `link`: register, then heartbeat and poll for offers
+/// until either stops. Both run in this one task, so stopping it stops both.
+async fn run_relay(link: Link, state: Arc<ServerState>) {
+    info!(
+        "Remote access enabled: {} ({})",
+        crate::account::instance_name(),
+        link.instance_id
+    );
+    // Assert the machine's registration before serving. Idempotent, so this
+    // both creates the row on first sign-in and refreshes a renamed host.
+    match crate::account::register_instance().await {
+        Ok(_) => debug!("Instance registered"),
+        Err(e) => warn!("Instance registration failed: {e}"),
+    }
+    tokio::select! {
+        _ = heartbeat_loop(&link) => {}
+        _ = offer_poll_loop(&link, state) => {}
+    }
+    info!("Relay tasks stopped — will re-check credentials in 30s");
+}
+
+/// Run `run` on the credential `current` reads, checking it every `tick`:
+/// a change of account (a switch, a sign-out) stops the running task at
+/// once and a new one starts on the new credential; a task that exits is
+/// started again after one tick.
+async fn supervise<L, R, T, TF>(mut current: impl FnMut() -> Option<L>, mut run: R, mut tick: T)
+where
+    L: Clone + PartialEq,
+    R: FnMut(L) -> tokio::task::JoinHandle<()>,
+    T: FnMut() -> TF,
+    TF: std::future::Future<Output = ()>,
+{
+    let mut signed_in = false;
     loop {
-        let link = Link::current();
-
-        match (&link, &last_token) {
-            (Some(l), None) => {
-                info!(
-                    "Remote access enabled: {} ({})",
-                    crate::account::instance_name(),
-                    l.instance_id
-                );
+        let Some(link) = current() else {
+            if std::mem::take(&mut signed_in) {
+                info!("Signed out — remote access is off");
             }
-            (Some(l), Some(old)) if l.token != *old => {
-                info!("Account credential changed — restarting relay tasks");
-            }
-            (Some(_), Some(_)) => {
-                tokio::time::sleep(Duration::from_secs(30)).await;
-                continue;
-            }
-            (None, _) => {
-                if last_token.is_some() {
-                    info!("Signed out — remote access is off");
+            tick().await;
+            continue;
+        };
+        signed_in = true;
+        let mut task = run(link.clone());
+        let exited = loop {
+            tokio::select! {
+                _ = &mut task => break true,
+                _ = tick() => {
+                    if current().as_ref() != Some(&link) {
+                        info!("Account credential changed — stopping relay tasks");
+                        task.abort();
+                        let _ = (&mut task).await;
+                        break false;
+                    }
                 }
-                last_token = None;
-                tokio::time::sleep(Duration::from_secs(30)).await;
-                continue;
             }
+        };
+        if exited {
+            tick().await;
         }
-
-        let link = link.unwrap();
-        last_token = Some(link.token.clone());
-
-        // Assert the machine's registration before serving. Idempotent, so this
-        // both creates the row on first sign-in and refreshes a renamed host.
-        match crate::account::register_instance().await {
-            Ok(_) => debug!("Instance registered"),
-            Err(e) => warn!("Instance registration failed: {e}"),
-        }
-
-        let l1 = link.clone();
-        let l2 = link.clone();
-        let st = state.clone();
-
-        let hb = tokio::spawn(async move { heartbeat_loop(&l1).await });
-        let poll = tokio::spawn(async move { offer_poll_loop(&l2, st).await });
-
-        tokio::select! {
-            _ = hb => {}
-            _ = poll => {}
-        }
-
-        info!("Relay tasks stopped — will re-check credentials in 30s");
-        tokio::time::sleep(Duration::from_secs(30)).await;
     }
 }
 
@@ -345,5 +357,76 @@ mod tests {
         for own in [json!({}), json!({"paired": true}), json!({"pairing": true})] {
             assert!(context_for_offer(&own, "n", false).is_some(), "{own}");
         }
+    }
+}
+
+#[cfg(test)]
+mod supervise_tests {
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+    use tokio::sync::{mpsc, Notify};
+
+    /// Sends `Stopped` when its task ends, however it ends.
+    struct Ends(&'static str, mpsc::UnboundedSender<(&'static str, &'static str)>);
+    impl Drop for Ends {
+        fn drop(&mut self) {
+            let _ = self.1.send(("stopped", self.0));
+        }
+    }
+
+    async fn next(events: &mut mpsc::UnboundedReceiver<(&'static str, &'static str)>) -> (&'static str, &'static str) {
+        tokio::time::timeout(Duration::from_secs(10), events.recv())
+            .await
+            .expect("the supervisor did nothing")
+            .unwrap()
+    }
+
+    /// A change of credential stops the running task at once and starts one
+    /// on the new; a task that exits is started again; signing out stops it.
+    #[tokio::test]
+    async fn the_relay_follows_the_credential_and_restarts_an_exited_task() {
+        let creds = Arc::new(Mutex::new(Some("a")));
+        let exit = Arc::new(Notify::new());
+        let (tx, mut events) = mpsc::unbounded_channel();
+        let (tick_tx, tick_rx) = mpsc::unbounded_channel::<()>();
+        let tick_rx = Arc::new(tokio::sync::Mutex::new(tick_rx));
+        let current = {
+            let creds = creds.clone();
+            move || *creds.lock().unwrap()
+        };
+        let run = {
+            let exit = exit.clone();
+            move |link: &'static str| {
+                let (tx, exit) = (tx.clone(), exit.clone());
+                tokio::spawn(async move {
+                    let _ends = Ends(link, tx.clone());
+                    let _ = tx.send(("started", link));
+                    exit.notified().await;
+                })
+            }
+        };
+        let tick = move || {
+            let rx = tick_rx.clone();
+            async move {
+                rx.lock().await.recv().await;
+            }
+        };
+        let supervisor = tokio::spawn(super::supervise(current, run, tick));
+
+        assert_eq!(next(&mut events).await, ("started", "a"));
+        *creds.lock().unwrap() = Some("b");
+        tick_tx.send(()).unwrap();
+        assert_eq!(next(&mut events).await, ("stopped", "a"), "the old account's task went on");
+        assert_eq!(next(&mut events).await, ("started", "b"));
+
+        exit.notify_one();
+        assert_eq!(next(&mut events).await, ("stopped", "b"));
+        tick_tx.send(()).unwrap();
+        assert_eq!(next(&mut events).await, ("started", "b"), "an exited task was not restarted");
+
+        *creds.lock().unwrap() = None;
+        tick_tx.send(()).unwrap();
+        assert_eq!(next(&mut events).await, ("stopped", "b"), "signed out, the task went on");
+        supervisor.abort();
     }
 }

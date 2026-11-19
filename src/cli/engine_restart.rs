@@ -96,18 +96,29 @@ pub fn find(target: &Path, binary_name: &str) -> Found {
 
 /// None: not a `ling --web` engine. Some(true): started from `target`.
 pub fn classify(target: &Path, binary_name: &str, info: &ProcessInfo) -> Option<bool> {
-    if !info.argv.iter().skip(1).any(|a| a == "--web") {
+    if !is_engine(binary_name, info) {
         return None;
     }
     let argv0 = info.argv.first().map(PathBuf::from);
-    let named = |p: &Path| p.file_name().is_some_and(|n| n == binary_name);
-    let is_ling = info.exe.as_deref().is_some_and(named) || argv0.as_deref().is_some_and(named);
-    if !is_ling {
-        return None;
-    }
     let target = canonical(target);
     let same = |p: &Path| p.is_absolute() && canonical(p) == target;
     Some(info.exe.as_deref().is_some_and(same) || argv0.as_deref().is_some_and(same))
+}
+
+/// Whether `info` is a `ling --web` engine: its executable (or argv0) is
+/// named `binary_name` and it was started with `--web`.
+fn is_engine(binary_name: &str, info: &ProcessInfo) -> bool {
+    let argv0 = info.argv.first().map(PathBuf::from);
+    let named = |p: &Path| p.file_name().is_some_and(|n| n == binary_name);
+    let is_ling = info.exe.as_deref().is_some_and(named) || argv0.as_deref().is_some_and(named);
+    is_ling && info.argv.iter().skip(1).any(|a| a == "--web")
+}
+
+/// Whether the process `pid` is our engine (`ling --web`), whatever path it
+/// runs from. A pid read from a file is acted on or reported only then:
+/// once that engine is gone the number may belong to anything.
+pub fn is_our_engine(pid: u32) -> bool {
+    process_info(pid).is_some_and(|info| is_engine("ling", &info))
 }
 
 fn canonical(p: &Path) -> PathBuf {

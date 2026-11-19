@@ -54,3 +54,31 @@ async fn active_and_idle_focused_surfaces_read_present() {
     );
     w.assert_all_scripted();
 }
+
+/// An app that keeps Yinyue away until its own state says she joined.
+async fn install_gated(w: &World) {
+    let dir = w.home.linggen_home().join("skills/gated");
+    std::fs::create_dir_all(&dir).expect("gated dir");
+    std::fs::write(
+        dir.join("SKILL.md"),
+        "---\nname: gated\ndescription: A test app that keeps her away.\nallowed-tools: []\n\
+         members: [ling, yinyue]\nplace:\n  yinyue:\n    absent_until: {file: state.json, path: companion.joined}\n\
+         ---\n\nOne line.\n",
+    )
+    .expect("SKILL.md");
+    w.api.post("/api/skills/reload", json!({})).await;
+}
+
+/// The app's presence rule holds for a first message too: with no session
+/// yet, the place is the request's app, and she is refused there before any
+/// session is made or any model is called.
+#[tokio::test]
+async fn a_first_message_meets_the_apps_presence_rule() {
+    let w = World::start(Setup::default().setting_off()).await;
+    install_gated(&w).await;
+    let root = w.work();
+    let first = json!({"project_root": root, "message": "hi", "agent_id": "yinyue", "skill_name": "gated"});
+    let refused = w.api.post("/api/chat", first).await;
+    assert_eq!(refused["status"], "absent", "{refused}");
+    assert!(w.model.calls_of(Agent::Yinyue).is_empty(), "a model call ran for her");
+}

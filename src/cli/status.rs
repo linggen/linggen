@@ -58,7 +58,7 @@ pub async fn run(config: &Config, config_path: Option<&Path>) -> Result<()> {
     let recorded = std::fs::read_to_string(crate::paths::linggen_home().join("ling.pid"))
         .ok()
         .and_then(|s| s.trim().parse::<u32>().ok())
-        .map(|pid| (pid, is_process_running(pid)));
+        .map(recorded_pid);
     let listener = if listening { listener_pid(port) } else { None };
     let (icon, detail) = server_verdict(port, listening, recorded, listener);
     println!("  Agent:       {} {}", icon, detail);
@@ -198,6 +198,11 @@ fn server_verdict(
     recorded: Option<(u32, bool)>,
     listener: Option<u32>,
 ) -> (&'static str, String) {
+    // The recorded engine is the server only when no other holder of the port is known.
+    let recorded = match (recorded, listener) {
+        (Some((pid, true)), Some(holder)) if holder != pid => Some((pid, false)),
+        _ => recorded,
+    };
     match (listening, recorded) {
         (true, Some((pid, true))) => ("\u{2705}", format!("port {} running (PID {})", port, pid)),
         (true, stale) => {
@@ -244,6 +249,11 @@ fn listener_pid(port: u16) -> Option<u32> {
 #[cfg(not(unix))]
 fn listener_pid(_port: u16) -> Option<u32> {
     None
+}
+
+/// The pid `ling.pid` names, and whether it is our engine running.
+fn recorded_pid(pid: u32) -> (u32, bool) {
+    (pid, is_process_running(pid) && super::engine_restart::is_our_engine(pid))
 }
 
 fn is_process_running(pid: u32) -> bool {
@@ -536,6 +546,20 @@ mod tests {
             s,
             "port 9527 running (PID 71972) \u{b7} ling.pid is stale (45747)"
         );
+    }
+
+    /// A live pid is the listener only when it is our engine and the port's
+    /// holder is not known to be another process.
+    #[test]
+    fn a_live_pid_that_is_not_ours_or_not_the_listener_is_not_the_server() {
+        let mut other = std::process::Command::new("sleep").arg("30").spawn().unwrap();
+        let recorded = super::recorded_pid(other.id());
+        let _ = other.kill();
+        let _ = other.wait();
+        assert_eq!(recorded, (other.id(), false), "another program under the recorded pid");
+
+        let (_, s) = server_verdict(9527, true, Some((4724, true)), Some(71972));
+        assert_eq!(s, "port 9527 running (PID 71972) \u{b7} ling.pid is stale (4724)");
     }
 
     #[test]

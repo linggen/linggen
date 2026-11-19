@@ -167,10 +167,18 @@ pub(crate) async fn compact_session(
         images: Vec::new(),
         place: None,
     };
-    // The prefix up to `cut` is the snapshot's — rows written meanwhile
-    // only append after it — so the summary goes in at the same place.
-    if let Err(e) = store.edit_chat_history(session_id, |now| with_summary(now, cut, row)) {
+    let mut applied = false;
+    let edited = store.edit_chat_history(session_id, |now| {
+        let (rows, ok) = summary_onto(now, &rows[..cut], row);
+        applied = ok;
+        rows
+    });
+    if let Err(e) = edited {
         tracing::warn!("[compact] could not write the summary into {session_id}: {e}");
+        return None;
+    }
+    if !applied {
+        tracing::warn!("[compact] {session_id}: its history changed while the summary was written — summary dropped");
         return None;
     }
     tracing::info!(
@@ -180,6 +188,17 @@ pub(crate) async fn compact_session(
         models.summarizer
     );
     Some(summary)
+}
+
+/// `now` with the summary of `made_from` in where `made_from` ends, and
+/// whether it went in. Rows written meanwhile only append after it; when
+/// the history no longer opens with `made_from` (a clear, another summary)
+/// the summary is not of it, and `now` stays as it is.
+fn summary_onto(now: Vec<ChatMsg>, made_from: &[ChatMsg], summary: ChatMsg) -> (Vec<ChatMsg>, bool) {
+    if !now.starts_with(made_from) {
+        return (now, false);
+    }
+    (with_summary(now, made_from.len(), summary), true)
 }
 
 /// Before a turn: when the speaking member's thread has outgrown the
@@ -256,6 +275,29 @@ mod tests {
     }
 
     /// The summarizer reads who said what — each member under its name.
+    /// A summary goes only onto the history it was made from: rows added
+    /// after it are fine, a history cleared or cut meanwhile drops it.
+    #[test]
+    fn a_summary_goes_only_onto_the_history_it_was_made_from() {
+        let made_from = vec![row("user", "a"), row("ling", "b"), row("user", "c")];
+        let summary = || row(COMPACTION_SENDER, "S");
+
+        let mut grown = made_from.clone();
+        grown.push(row("user", "d"));
+        let (rows, ok) = summary_onto(grown, &made_from[..2], summary());
+        assert!(ok);
+        let texts: Vec<_> = rows.iter().map(|r| r.content.as_str()).collect();
+        assert_eq!(texts, ["a", "b", "S", "c", "d"]);
+
+        let cut_out = vec![row("user", "a"), row("user", "c")];
+        let (rows, ok) = summary_onto(cut_out.clone(), &made_from[..2], summary());
+        assert!(!ok, "a place's rows were cleared meanwhile");
+        assert_eq!(rows, cut_out);
+
+        let (rows, ok) = summary_onto(Vec::new(), &made_from[..2], summary());
+        assert!(!ok && rows.is_empty(), "the session was cleared meanwhile");
+    }
+
     #[test]
     fn the_transcript_names_every_speaker() {
         let mut call = row("ling", r#"{"type":"tool","tool":"Look"}"#);

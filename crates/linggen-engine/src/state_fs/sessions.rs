@@ -650,18 +650,25 @@ impl SessionStore {
         Ok(result)
     }
 
-    /// Update the per-session compact config (threshold + focus) in session.yaml.
-    /// Read-modify-write so other fields (title, cwd, model_id, ...) aren't disturbed.
-    /// Either field can be `None` to clear that override.
-    pub fn set_compact_config(
+    /// Merge a change of the session's compact settings into session.yaml and
+    /// return the pair as kept: `Some` sets a field (an empty focus clears
+    /// it), `None` keeps it. Read, merge and write under the one lock
+    /// (`edit`), so two partial changes at once both survive. An error when
+    /// the session's file is not there or cannot be written.
+    pub fn update_compact_config(
         &self,
         session_id: &str,
         threshold: Option<f32>,
         focus: Option<String>,
-    ) -> Result<()> {
+    ) -> Result<(Option<f32>, Option<String>)> {
         self.edit(session_id, |meta| {
-            meta.compact_threshold = threshold;
-            meta.compact_focus = focus;
+            if threshold.is_some() {
+                meta.compact_threshold = threshold;
+            }
+            if let Some(focus) = focus {
+                meta.compact_focus = (!focus.is_empty()).then_some(focus);
+            }
+            (meta.compact_threshold, meta.compact_focus.clone())
         })
     }
 
@@ -758,8 +765,12 @@ impl SessionStore {
         Ok(messages)
     }
 
+    /// Empty a session's history, under the lock every rewrite and append
+    /// takes ([`edit_chat_history`](Self::edit_chat_history)): a summary being
+    /// written in never meets a clear halfway.
     pub fn clear_chat_history(&self, session_id: &str) -> Result<usize> {
         Self::validate_id(session_id)?;
+        let _guard = self.append_lock.lock().unwrap_or_else(|e| e.into_inner());
         let msgs_path = self.session_dir(session_id).join("messages.jsonl");
         if !msgs_path.exists() {
             return Ok(0);
