@@ -38,6 +38,14 @@ if $HOSTS_MEMORY; then
   start_engine 90
   engine_mem_health 60
   check "prev: the engine serves memory (/mem/api/health)" $? "no ok from $ENGINE_MEM/api/health"
+  # From 2.4 the embedder warms up in the background — on a clean VM that
+  # includes the model's first download — and a call waits at most 20 s for
+  # it, then is refused WARMING_UP. Seed only once a search answers.
+  for _ in $(seq 60); do
+    "$(ling_bin)" mem search "warm-up probe" >"$OUT/mem-warm.log" 2>&1
+    grep -q 'WARMING_UP' "$OUT/mem-warm.log" || break
+  done
+  info "prev: memory warm before seeding" "$(tail -c 160 "$OUT/mem-warm.log" | tr '\n' ' ')"
   "$(ling_bin)" mem add --stdin <"$OUT/facts.ndjson" >"$OUT/mem-add.log" 2>&1
   check "prev: ling mem stores the fixture facts" $? "$(tail -3 "$OUT/mem-add.log")"
   "$(ling_bin)" mem stats >"$OUT/stats-prev.json" 2>&1
