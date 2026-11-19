@@ -170,6 +170,7 @@ impl Tools {
 
         match skill {
             Some(skill) => {
+                self.model_may_start(&skill).await?;
                 let app = skill.app.as_ref().ok_or_else(|| {
                     anyhow::anyhow!(
                         "Skill '{}' does not have an app configuration. Only skills with 'app.launcher' can be run as apps.",
@@ -260,6 +261,25 @@ impl Tools {
         }
     }
 
+    /// Whether the model may start `skill` — by Skill or by RunApp alike:
+    /// never a user-only skill, nor one that keeps a session of its own out
+    /// of the day's.
+    async fn model_may_start(&self, skill: &crate::engine::skill::Skill) -> Result<()> {
+        if skill.disable_model_invocation {
+            anyhow::bail!(
+                "Skill '{}' is user-only (disable_model_invocation). It can only be invoked by the user via /{}.",
+                skill.name, skill.name
+            );
+        }
+        if self.kept_out_of_day(skill).await {
+            anyhow::bail!(
+                "refused: {} keeps a session of its own; it is not taken up in the day's session.",
+                skill.name
+            );
+        }
+        Ok(())
+    }
+
     pub(super) async fn invoke_skill(&self, args: SkillArgs) -> Result<ToolResult> {
         let manager = self
             .manager
@@ -270,18 +290,7 @@ impl Tools {
 
         match skill {
             Some(skill) => {
-                if skill.disable_model_invocation {
-                    anyhow::bail!(
-                        "Skill '{}' is user-only (disable_model_invocation). It can only be invoked by the user via /{}.",
-                        args.skill, args.skill
-                    );
-                }
-                if self.kept_out_of_day(&skill).await {
-                    anyhow::bail!(
-                        "refused: {} keeps a session of its own; it is not taken up in the day's session.",
-                        skill.name
-                    );
-                }
+                self.model_may_start(&skill).await?;
                 // Replace $SKILL_DIR in content so the model sees the actual path.
                 let resolved_content = if let Some(ref dir) = skill.skill_dir {
                     skill.content.replace("$SKILL_DIR", &dir.to_string_lossy())
@@ -645,5 +654,19 @@ mod run_app_tests {
             unsafe { libc::kill(pid, libc::SIGKILL) };
         }
         assert!(!survived, "the app's script outlived its call");
+    }
+
+    /// A user-only skill is refused to the model through RunApp as through
+    /// Skill: one rule decides whether a model may start a skill.
+    #[tokio::test]
+    async fn a_user_only_app_is_refused_to_the_model() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("ran");
+        let script = format!("touch '{}'\n", marker.display());
+        let skill = bash_app(dir.path(), "private", "disable-model-invocation: true\n", &script);
+        let tools = tools_with(dir.path(), vec![skill]);
+        let err = tools.execute(run_app("private")).await.unwrap_err().to_string();
+        assert!(err.contains("user-only"), "{err}");
+        assert!(!marker.exists(), "the user-only app's script ran");
     }
 }
