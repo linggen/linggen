@@ -357,14 +357,22 @@ impl TtsProvider for KokoroProvider {
     }
 }
 
+/// The voices a line may name: the GPU voice's speakers and Kokoro's packs.
+fn is_listed_voice(name: &str) -> bool {
+    super::tts_mlx::SPEAKERS.contains(&name) || [VOICE_EN, VOICE_ZH].contains(&name)
+}
+
 /// The whole line as one clip: its spoken copy, clause by clause, each
-/// followed by its pause. A one-clause line goes straight through.
+/// followed by its pause. A one-clause line goes straight through. A voice
+/// that is not one of the listed voices, by name, is not passed on: the
+/// line speaks in the default voice.
 async fn speak_line(
     tts: &dyn TtsProvider,
     text: &str,
     voice: Option<&str>,
 ) -> anyhow::Result<Vec<u8>> {
     let started = std::time::Instant::now();
+    let voice = voice.filter(|v| is_listed_voice(v));
     let chunks = super::tts_text::chunks(text);
     if let [only] = chunks.as_slice() {
         return tts.synthesize(&only.text, voice).await;
@@ -417,6 +425,30 @@ pub(crate) async fn tts_handler(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Records the voice each clip was asked for; answers no audio.
+    struct Heard(std::sync::Mutex<Vec<Option<String>>>);
+
+    #[async_trait]
+    impl TtsProvider for Heard {
+        async fn synthesize(&self, _text: &str, voice: Option<&str>) -> anyhow::Result<Vec<u8>> {
+            self.0.lock().unwrap().push(voice.map(str::to_string));
+            Ok(Vec::new())
+        }
+    }
+
+    /// A voice reaches a provider only when it is one of the listed voices,
+    /// by name — never a path or a name to fetch.
+    #[tokio::test]
+    async fn only_a_listed_voice_reaches_the_provider() {
+        let heard = Heard(std::sync::Mutex::new(Vec::new()));
+        for voice in ["../../somewhere/x", "vivian", "af_heart", "other/repo"] {
+            let _ = speak_line(&heard, "Hello.", Some(voice)).await;
+        }
+        let heard = heard.0.into_inner().unwrap();
+        let want = [None, Some("vivian".to_string()), Some("af_heart".to_string()), None];
+        assert_eq!(heard, want);
+    }
 
     #[test]
     fn english_text_takes_the_english_voice() {

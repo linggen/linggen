@@ -35,7 +35,7 @@ const MODEL: &str = crate::runtime::TTS_MODEL;
 /// Multilingual (zh + en in one timbre), so unlike Kokoro no script→voice
 /// mapping is needed. Names must match the model's speaker roster.
 const DEFAULT_VOICE: &str = "vivian";
-const SPEAKERS: [&str; 9] = [
+pub(super) const SPEAKERS: [&str; 9] = [
     "serena", "vivian", "uncle_fu", "ryan", "aiden", "ono_anna", "sohee", "eric", "dylan",
 ];
 
