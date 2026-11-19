@@ -51,7 +51,7 @@ fn sse_data(line: &str) -> Option<&str> {
     if trimmed.is_empty() || trimmed.starts_with("event:") {
         return None;
     }
-    let data = trimmed.strip_prefix("data: ")?.trim();
+    let data = crate::provider::sse_field(trimmed, "data")?.trim();
     (data != "[DONE]").then_some(data)
 }
 
@@ -657,5 +657,20 @@ mod first_event_wire_tests {
             .expect("a local backend is exempt from the guard");
 
         crate::provider::set_first_event_timeout(None);
+    }
+}
+
+#[cfg(test)]
+mod sse_data_tests {
+    use super::sse_data;
+
+    #[test]
+    fn a_data_line_is_read_with_or_without_the_space() {
+        assert_eq!(sse_data("data: {\"a\":1}"), Some("{\"a\":1}"));
+        assert_eq!(sse_data("data:{\"a\":1}"), Some("{\"a\":1}"));
+        assert_eq!(sse_data("data:[DONE]"), None);
+        assert_eq!(sse_data("data: [DONE]"), None);
+        assert_eq!(sse_data("event: response.created"), None);
+        assert_eq!(sse_data(""), None);
     }
 }

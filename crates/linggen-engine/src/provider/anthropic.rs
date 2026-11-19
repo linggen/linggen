@@ -506,10 +506,10 @@ fn parse_sse_block(block: &str) -> Option<SseEvent> {
     let mut data_lines: Vec<&str> = Vec::new();
     for line in block.lines() {
         let line = line.trim_end_matches('\r');
-        if let Some(rest) = line.strip_prefix("event:") {
+        if let Some(rest) = crate::provider::sse_field(line, "event") {
             event_name = rest.trim().to_string();
-        } else if let Some(rest) = line.strip_prefix("data:") {
-            data_lines.push(rest.trim_start());
+        } else if let Some(rest) = crate::provider::sse_field(line, "data") {
+            data_lines.push(rest);
         }
     }
     if data_lines.is_empty() {

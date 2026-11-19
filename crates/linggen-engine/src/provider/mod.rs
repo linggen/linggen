@@ -33,6 +33,13 @@ pub(crate) fn stream_read_error(e: impl std::fmt::Display) -> anyhow::Error {
     error::ProviderError::new(error::ProviderErrorKind::Network, msg).into()
 }
 
+/// The value of one SSE line's `field` (`data`, `event`), or `None` for a
+/// line of another field. SSE allows the space after the colon or none.
+pub(crate) fn sse_field<'a>(line: &'a str, field: &str) -> Option<&'a str> {
+    let rest = line.strip_prefix(field)?.strip_prefix(':')?;
+    Some(rest.trim_start())
+}
+
 /// Seconds of total silence the first answer of a call may take: no response
 /// headers and no first stream event. Holds `[routing].first_event_timeout_secs`
 /// (the built-in default when that is unset); `0` means the guard is off.
