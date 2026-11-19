@@ -4,8 +4,8 @@
 
 On the Mac now; the iPhone's 2.4 follows.
 
-- **Memory warms up in the background.** A write or search in the first seconds waits for it (up to 20 s); automatic recall skips the turn instead.
-
+- **Memory warms up in the background.** A write or search in the first
+  seconds waits for it (up to 20 s); automatic recall skips the turn instead.
 - **One Ling and one Yinyue across apps.** App chats, Yinyue's moments and
   the phone's hand-offs share one conversation a day — Linggen's daily
   session. It is on; Settings → Session turns it off.
@@ -100,6 +100,7 @@ On the Mac now; the iPhone's 2.4 follows.
 - **Write no longer overwrites a file** that changed since the session last
   saw it; it asks for a fresh read first.
 - **Stopping a background task** right after its turn ended no longer fails.
+- **A long file with non-Latin text** no longer stops the turn that writes it.
 - **An agent set to a retired model** now runs on its successor.
 - **A long name on a crowded 灵境 field card** no longer runs into its status.
 - **灵境: a won story fight shows one 所得 card** with everything it paid, and
