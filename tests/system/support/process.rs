@@ -102,11 +102,20 @@ const STOP_GRACE: Duration = Duration::from_secs(5);
 pub struct Owned {
     pub child: Child,
     pub log: PathBuf,
+    /// Where this start's lines begin in the log. A child started again on
+    /// the same log (an engine restart) appends to it, so a mark taken
+    /// before the restart still reads every line after it.
+    start: usize,
 }
 
 impl Owned {
     pub fn spawn(real: Command, env: &[(String, String)], cwd: &Path, log: PathBuf) -> Self {
-        let out = std::fs::File::create(&log).expect("create a child log");
+        let out = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log)
+            .expect("open a child log");
+        let start = out.metadata().map_or(0, |m| m.len() as usize);
         let err = out.try_clone().expect("clone the child log");
         let mut cmd = Command::new("/bin/sh");
         // Its own group, so a stop reaches the child and its children.
@@ -121,14 +130,16 @@ impl Owned {
             .stdout(out)
             .stderr(err);
         let child = cmd.spawn().unwrap_or_else(|e| panic!("spawn {cmd:?}: {e}"));
-        Self { child, log }
+        Self { child, log, start }
     }
 
+    /// This start's log: what the child wrote since it was started.
     pub fn log_text(&self) -> String {
-        self.log_from(0)
+        self.log_from(self.start)
     }
 
-    /// The log's length in bytes — a mark [`Owned::log_from`] reads after.
+    /// The log's length in bytes, across every start on it — a mark
+    /// [`Owned::log_from`] reads after.
     pub fn log_len(&self) -> usize {
         self.log_bytes().len()
     }
@@ -300,4 +311,30 @@ pub fn strip_ansi(text: &str) -> String {
         }
     }
     out
+}
+
+/// A mark taken before a child is started again on the same log still
+/// reads what the new start writes, however early in it; the whole log is
+/// the current start's alone.
+#[test]
+fn a_mark_survives_a_restart_on_the_same_log() {
+    let home = Home::new();
+    let log = home.root.join("child.log");
+    let run = |script: &str| {
+        let mut cmd = Command::new("/bin/sh");
+        cmd.args(["-c", script]);
+        let mut child = Owned::spawn(cmd, &[], &home.root, log.clone());
+        let start = Instant::now();
+        while !child.exited() && start.elapsed() < Duration::from_secs(10) {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        child
+    };
+    let first = run("printf 'before the restart %0400d\\n' 0");
+    let mark = first.log_len();
+    assert!(mark > 400);
+    drop(first);
+    let second = run("echo early");
+    assert!(second.log_from(mark).contains("early"), "the line after the restart was missed");
+    assert!(!second.log_text().contains("before the restart"), "the whole log holds the last start's lines");
 }
