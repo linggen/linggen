@@ -158,7 +158,14 @@ impl MissionLoader {
         let mut mission = parse_mission_md(id, content)?;
         if let Some((skill, _)) = skill_missions::split_id(id) {
             mission.skill = Some(skill.to_string());
-            UserChoice::load(&self.state_dir(id)).apply(&mut mission);
+            match UserChoice::load(&self.state_dir(id)) {
+                Ok(choice) => choice.apply(&mut mission),
+                Err(e) => {
+                    // Off until the choices can be read again, and said.
+                    tracing::warn!("mission '{id}' kept off: its saved choices {e:#}");
+                    mission.enabled = false;
+                }
+            }
         }
         Ok(mission)
     }
@@ -365,7 +372,7 @@ impl MissionLoader {
             self.ensure_user_owned(id, "only on/off and the schedule can change here")?;
         }
         let state_dir = self.state_dir(id);
-        let mut choice = UserChoice::load(&state_dir);
+        let mut choice = UserChoice::load(&state_dir)?;
         if let Some(schedule) = draft.schedule {
             validate_cron(&schedule)?;
             choice.schedule = Some(schedule);
@@ -1308,6 +1315,25 @@ mod tests {
             .path()
             .join("skills/cfo/missions/reports/runs.jsonl")
             .exists());
+    }
+
+    /// A choices file cut short is not "use the defaults": the mission the
+    /// person switched off stays off, and a new choice is refused rather
+    /// than written over what could not be read.
+    #[test]
+    fn an_unreadable_choice_keeps_the_mission_off() {
+        let (store, dir) = skill_store();
+        let file = dir.path().join("skills/cfo/missions/reports/mission.md");
+        std::fs::write(&file, "---\nname: Reports\nschedule: \"0 9 * * 1-5\"\nenabled: true\n---\nCheck.\n").unwrap();
+        let state = dir.path().join("missions/cfo:reports");
+        std::fs::create_dir_all(&state).unwrap();
+        std::fs::write(state.join("user.json"), "{\"enabled\": fal").unwrap();
+        store.reload();
+        assert!(!store.get_mission("cfo:reports").unwrap().unwrap().enabled);
+        assert!(store.list_enabled_missions().unwrap().is_empty());
+        let draft = MissionDraft { schedule: Some("0 10 * * *".into()), ..Default::default() };
+        assert!(store.update_mission("cfo:reports", draft).is_err());
+        assert_eq!(std::fs::read_to_string(state.join("user.json")).unwrap(), "{\"enabled\": fal");
     }
 
     #[test]
