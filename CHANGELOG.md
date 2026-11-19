@@ -1,8 +1,8 @@
 # Changelog
 
-## [Unreleased] — 2.5
+## [2.5.0] - 2026-11-19 — one MCP door
 
-The one MCP door ships as 2.5, after 2.4.
+One door for Claude Code and Codex, and the fixes of a whole-code review.
 
 - **One MCP door at /mcp with twelve tools** (memory 5, agents 4, browser 3),
   in place of two servers with 41 tools. A tool with several jobs takes an
