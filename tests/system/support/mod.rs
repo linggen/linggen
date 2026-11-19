@@ -23,6 +23,25 @@ use model::{Agent, Extra, FakeModel, Reply};
 
 pub use model::{error, text, tool};
 
+/// A test that cannot run on this machine (`why`) says so: on stderr, and by
+/// name in the file `LINGGEN_TEST_SKIPPED` names, which
+/// `scripts/scratch-test.sh` lists as SKIPPED at the end of the run — a pass
+/// on nothing is never silently green.
+pub fn skipped(test: &str, why: &str) {
+    use std::io::Write;
+    eprintln!("SKIPPED (passes on nothing): {why}");
+    let Some(file) = std::env::var_os("LINGGEN_TEST_SKIPPED") else {
+        return;
+    };
+    // One write per line: tests run in parallel, and an appended write this
+    // short lands whole.
+    let line = format!("{test} — {why}\n");
+    let opened = std::fs::OpenOptions::new().create(true).append(true).open(file);
+    if let Ok(mut out) = opened {
+        let _ = out.write_all(line.as_bytes());
+    }
+}
+
 pub struct World {
     pub api: Api,
     pub engine: Engine,

@@ -59,23 +59,15 @@ fi
 
 if [ "$what" = all ] || [ "$what" = system ]; then
   mkdir -p ui/dist
-  # The memory test is #[ignore]d (it needs the embedding model): run it
-  # when the model is here, or when it is required.
-  ignored=default
-  if [ -d "$HOME/.cache/huggingface/hub/models--Qwen--Qwen3-Embedding-0.6B" ] ||
-    [ "${LINGGEN_SYSTEM_REQUIRE_EMBED:-}" = 1 ]; then
-    ignored=all
-  fi
+  # The memory tests that embed run when the model is in
+  # ~/.cache/huggingface, and say SKIPPED when it is not (a missing model
+  # fails them with LINGGEN_SYSTEM_REQUIRE_EMBED=1). None is #[ignore]d.
   if cargo nextest --version >/dev/null 2>&1; then
     # On CI every failure is worth one run: do not stop at the first.
-    step cargo nextest run --features test-support --test system --run-ignored "$ignored" ${CI:+--no-fail-fast}
+    step cargo nextest run --features test-support --test system ${CI:+--no-fail-fast}
   else
     echo "(cargo-nextest not installed — cargo install cargo-nextest --locked; using cargo test)"
-    if [ "$ignored" = all ]; then
-      step cargo test --features test-support --test system -- --include-ignored
-    else
-      step cargo test --features test-support --test system
-    fi
+    step cargo test --features test-support --test system
   fi
 fi
 

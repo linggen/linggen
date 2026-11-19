@@ -247,12 +247,10 @@ async fn session_withheld_tools_reach_no_member() {
 /// `$HOME` session gets core rows only; a project session gets the
 /// candidates line and the index, never a sibling project's rows.
 ///
-/// Ignored by default (nextest lists it as skipped): it needs the model in
-/// `~/.cache/huggingface`. `./scripts/check.sh system` runs it when the model
-/// is there, or when `LINGGEN_SYSTEM_REQUIRE_EMBED=1` — then a missing model
-/// fails it instead of passing on nothing.
+/// It needs the model in `~/.cache/huggingface`: without it the test is
+/// reported SKIPPED (`support::skipped`), and with
+/// `LINGGEN_SYSTEM_REQUIRE_EMBED=1` a missing model fails it instead.
 #[tokio::test]
-#[ignore = "needs the embedding model (Qwen3-Embedding-0.6B in ~/.cache/huggingface)"]
 async fn memory_core_candidates_and_index_in_the_prompt() {
     if !embedder_available() {
         let required = std::env::var_os("LINGGEN_SYSTEM_REQUIRE_EMBED").is_some_and(|v| v == "1");
@@ -260,7 +258,7 @@ async fn memory_core_candidates_and_index_in_the_prompt() {
             !required,
             "LINGGEN_SYSTEM_REQUIRE_EMBED=1 but no embedding model in ~/.cache/huggingface"
         );
-        eprintln!("SKIPPED (passes on nothing): no embedding model in ~/.cache/huggingface");
+        crate::support::skipped("memory_core_candidates_and_index_in_the_prompt", "no embedding model in ~/.cache/huggingface");
         return;
     }
     let started = Instant::now();
