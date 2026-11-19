@@ -84,6 +84,11 @@ async fn forward_or_queue(
         return Ok(answer);
     }
     let data = (verb.run)(Arc::clone(state), args.clone()).await?;
-    forward::queue(state, verb.path, args, &data);
+    // Applied here; not queued means the primary will never hear of it.
+    forward::queue(state, verb.path, args, &data).map_err(|e| {
+        MemError::internal(anyhow::anyhow!(
+            "applied on this machine but not queued for the primary: {e:#}"
+        ))
+    })?;
     Ok(Reply::Queued(data))
 }

@@ -79,6 +79,49 @@ async fn a_queued_write_keeps_fields_this_store_does_not_know() {
     assert_eq!(q[0]["verb"], "/api/memory/add");
 }
 
+/// An outbox that does not parse is set aside under a new name, never
+/// written over; the next offline write starts a new queue.
+#[tokio::test]
+async fn an_unreadable_outbox_is_set_aside() {
+    let (_a, b, front) = pair().await;
+    front.set_up(false);
+    let mem = b.data_dir().join("memory");
+    std::fs::write(mem.join(".outbox.json"), "[{\"seq\": 1, torn").unwrap();
+    let (status, _, env) = b
+        .post_with_headers("/api/memory/add", json!({"content": "Alex keeps bees"}))
+        .await;
+    assert_eq!(status, 200, "{env}");
+    assert_eq!(outbox(&b).as_array().unwrap().len(), 1);
+    let aside: Vec<String> = std::fs::read_dir(&mem)
+        .unwrap()
+        .filter_map(|e| e.ok()?.file_name().into_string().ok())
+        .filter(|n| n.starts_with(".outbox.json.unreadable-"))
+        .collect();
+    assert_eq!(aside.len(), 1, "{aside:?}");
+    assert_eq!(
+        std::fs::read_to_string(mem.join(&aside[0])).unwrap(),
+        "[{\"seq\": 1, torn"
+    );
+}
+
+/// A write that could not be queued says so: no "queued" answer.
+#[tokio::test]
+async fn a_write_that_could_not_be_queued_says_so() {
+    let (_a, b, front) = pair().await;
+    front.set_up(false);
+    // The queue's temp file cannot be written: a directory holds its name.
+    std::fs::create_dir_all(b.data_dir().join("memory/.outbox.json.tmp/x")).unwrap();
+    let (status, headers, env) = b
+        .post_with_headers("/api/memory/add", json!({"content": "Alex keeps bees"}))
+        .await;
+    assert_eq!(status, 500, "{env}");
+    assert!(headers.get("x-ling-mem-queued").is_none());
+    assert!(
+        env["error"].as_str().unwrap().contains("not queued"),
+        "{env}"
+    );
+}
+
 const MISSING: &str = "Failed to deserialize the JSON body into the target type: missing field `content` at line 1 column 16";
 const NOT_JSON: &str =
     "Failed to parse the request body as JSON: key must be a string at line 1 column 2";
