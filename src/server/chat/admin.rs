@@ -427,42 +427,26 @@ pub(crate) async fn compact_config_api(
 
     // Never create an engine here: engine creation belongs to the chat path,
     // which knows the session's real project root. Creating one from this
-    // out-of-band call could pin the session to the wrong workspace. Update
-    // the live engine when one exists; otherwise merge against the persisted
-    // session.yaml values — engine creation re-applies them (agent/mod.rs).
-    let engines = state.manager.session_engines_of(&session_id).await;
-    let meta = state
-        .manager
-        .global_sessions
-        .get_session_meta(&session_id)
-        .ok()
-        .flatten();
-    let (mut threshold, mut focus) = (
-        meta.as_ref().and_then(|m| m.compact_threshold),
-        meta.and_then(|m| m.compact_focus),
+    // out-of-band call could pin the session to the wrong workspace. The
+    // change is merged into session.yaml first (engine creation re-applies
+    // it, agent/mod.rs), then a live engine takes what was kept.
+    let kept = state.manager.global_sessions.update_compact_config(
+        &session_id,
+        req.threshold.map(|t| t.clamp(0.1, 0.99)),
+        req.focus,
     );
-    if let Some(t) = req.threshold {
-        threshold = Some(t.clamp(0.1, 0.99));
-    }
-    if let Some(f) = req.focus {
-        focus = if f.is_empty() { None } else { Some(f) };
-    }
-
-    for arc in engines {
-        let mut engine = arc.lock().await;
-        engine.set_compaction(threshold, focus.clone());
-    }
-
-    // Persist to session.yaml so the config survives engine restart and is
-    // picked up when the chat path creates the engine. Best-effort: log on
-    // failure but still return the merged state.
-    if let Err(e) =
-        state
-            .manager
-            .global_sessions
-            .set_compact_config(&session_id, threshold, focus.clone())
-    {
-        tracing::warn!("compact_config: persist to session.yaml failed: {e}");
+    let (threshold, focus) = match kept {
+        Ok(kept) => kept,
+        Err(e) => {
+            let status = match state.manager.global_sessions.get_session_meta(&session_id) {
+                Ok(Some(_)) => StatusCode::INTERNAL_SERVER_ERROR,
+                _ => StatusCode::NOT_FOUND,
+            };
+            return (status, Json(serde_json::json!({ "error": e.to_string() }))).into_response();
+        }
+    };
+    for arc in state.manager.session_engines_of(&session_id).await {
+        arc.lock().await.set_compaction(threshold, focus.clone());
     }
 
     Json(serde_json::json!({

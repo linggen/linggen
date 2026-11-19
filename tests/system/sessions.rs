@@ -41,6 +41,23 @@ async fn work_update_switch() {
     }
 }
 
+/// A session's compaction settings: each partial change keeps the other
+/// field, and a session with no file to keep them in is an error, not ok.
+#[tokio::test]
+async fn compact_config_merges_and_refuses_an_unkept_session() {
+    let w = World::start(Setup::default()).await;
+    let sid = w.api.create_session(json!({"title":"chat"})).await;
+    let threshold = w.api.post("/api/chat/compact_config", json!({"session_id": sid, "threshold": 0.5})).await;
+    assert_eq!(threshold["ok"], true, "{threshold}");
+    let focus = w.api.post("/api/chat/compact_config", json!({"session_id": sid, "focus": "Keep the paths."})).await;
+    assert_eq!((focus["threshold"].as_f64(), focus["focus"].as_str()), (Some(0.5), Some("Keep the paths.")), "{focus}");
+    let kept = work_meta(&w, &sid);
+    assert_eq!((kept["compact_threshold"].as_f64(), kept["compact_focus"].as_str()), (Some(0.5), Some("Keep the paths.")));
+
+    let missing = json!({"session_id": "sess-1790000099-0000dead", "threshold": 0.5});
+    assert_eq!(w.api.post_status("/api/chat/compact_config", missing).await, 404);
+}
+
 const SHARED: &str = "sess-1790000001-5a1ed001";
 const COMPACTED: &str = "sess-1790000002-c0ac7ed2";
 const INTERRUPTED: &str = "sess-1790000003-1e7e5ed3";
