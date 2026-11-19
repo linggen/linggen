@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ArrowLeft,
   ChevronDown,
@@ -14,6 +14,7 @@ import type { StorageEntry, StorageRoot } from '../types';
 import { cn } from '../lib/cn';
 import { confirmDialog } from '../lib/confirmDialog';
 import { storageApi } from '../lib/endpoints';
+import { latestOnly } from '../lib/latest.mts';
 
 // ---------------------------------------------------------------------------
 // API helpers
@@ -114,6 +115,8 @@ export const StoragePage: React.FC<{
   const [savedContent, setSavedContent] = useState('');
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  // A file read answers the file picked last (lib/latest.mts).
+  const reads = useRef(latestOnly()).current;
 
   const isDirty = fileContent !== savedContent;
   const isMarkdown = selectedFile?.endsWith('.md') ?? false;
@@ -165,9 +168,14 @@ export const StoragePage: React.FC<{
   const selectFile = useCallback(
     async (path: string) => {
       if (path === selectedFile) return;
+      const current = reads.begin();
       setLoading(true);
       setSelectedFile(path);
+      // The last file's text never stands under this one's name.
+      setFileContent('');
+      setSavedContent('');
       const data = await fetchFile(activeRoot, path);
+      if (!current()) return;
       if (data) {
         setFileContent(data.content);
         setSavedContent(data.content);
@@ -177,17 +185,17 @@ export const StoragePage: React.FC<{
       }
       setLoading(false);
     },
-    [activeRoot, selectedFile],
+    [activeRoot, selectedFile, reads],
   );
 
   // --- Save ---
   const handleSave = useCallback(async () => {
-    if (!selectedFile || !isDirty) return;
+    if (!selectedFile || !isDirty || loading) return;
     setSaving(true);
     const ok = await saveFile(activeRoot, selectedFile, fileContent);
     if (ok) setSavedContent(fileContent);
     setSaving(false);
-  }, [activeRoot, selectedFile, fileContent, isDirty]);
+  }, [activeRoot, selectedFile, fileContent, isDirty, loading]);
 
   // --- Delete ---
   const handleDelete = useCallback(async () => {
@@ -214,7 +222,7 @@ export const StoragePage: React.FC<{
     <div className="flex items-center gap-2">
       <button
         onClick={handleSave}
-        disabled={!isDirty || saving}
+        disabled={!isDirty || saving || loading}
         className={cn(
           'flex items-center gap-1.5 px-3 py-1 rounded text-xs font-medium transition-colors',
           isDirty

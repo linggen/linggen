@@ -1,6 +1,7 @@
 // The agent-spec editor's data: list agents/*.md, load one, save, create,
 // delete. Shared by the Settings tab and the modal editor.
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { latestOnly } from '../lib/latest.mts';
 import type { AgentFileInfo } from '../types';
 import { apiErrorMessage } from '../lib/api';
 import { confirmDialog, promptDialog } from '../lib/confirmDialog';
@@ -46,18 +47,27 @@ export function useAgentFiles(projectRoot: string, enabled: boolean, onChanged?:
     }
   }, [projectRoot]);
 
+  // A file read answers the file picked last (lib/latest.mts).
+  const reads = useRef(latestOnly()).current;
   const loadFile = useCallback(async (path: string) => {
     if (!projectRoot || !path) return;
+    const current = reads.begin();
     setLoadingFile(true);
+    // The last file's text never stands under this one's name.
+    setContent('');
+    setSavedContent('');
     try {
       const data = await agentFiles.read(projectRoot, path);
+      if (!current()) return;
       setContent(data.content || '');
       setSavedContent(data.content || '');
       setValidationError(data.valid ? null : data.error || 'Invalid markdown frontmatter.');
-    } catch { /* leave the editor as it was */ } finally {
-      setLoadingFile(false);
+    } catch (e) {
+      if (current()) setValidationError(apiErrorMessage(e) || 'Failed to load the file.');
+    } finally {
+      if (current()) setLoadingFile(false);
     }
-  }, [projectRoot]);
+  }, [projectRoot, reads]);
 
   useEffect(() => { if (enabled) fetchList(); }, [enabled, fetchList]);
   useEffect(() => { if (enabled && selectedPath) loadFile(selectedPath); }, [enabled, selectedPath, loadFile]);
@@ -81,7 +91,7 @@ export function useAgentFiles(projectRoot: string, enabled: boolean, onChanged?:
   };
 
   const saveFile = async () => {
-    if (!projectRoot || !selectedPath) return;
+    if (!projectRoot || !selectedPath || loadingFile) return;
     setSaving(true);
     setValidationError(null);
     try {
