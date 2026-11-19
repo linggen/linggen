@@ -32,7 +32,8 @@ use std::time::Duration;
 /// How often a replica pulls when nothing asks sooner.
 pub const PULL_EVERY: Duration = Duration::from_secs(30);
 /// Requests to the primary give up after this — a dead primary must not stall
-/// a client's write for long before it is queued instead.
+/// a client's write for long before it is queued instead. A write's own
+/// client ([`write_http`]) uses it to connect and waits longer for the answer.
 pub const UPSTREAM_TIMEOUT: Duration = Duration::from_secs(5);
 /// A pull page carries vectors (~10 MB per 500 rows), so it gets longer to
 /// arrive; a dead primary is still caught by the connect timeout.

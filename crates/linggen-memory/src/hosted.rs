@@ -376,13 +376,20 @@ mod tests {
             let args = json!({"facts": [{"content": "an unrelated note about tea"}]});
             batcher.call(&Who::Owner, "add_batch", args).await
         });
+        let searcher = state.clone();
+        let search = tokio::spawn(async move {
+            let args = json!({"query": "a row written while warming"});
+            searcher.call(&Who::Owner, "search", args).await
+        });
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
         assert!(!add.is_finished(), "the write must wait for the warm-up");
+        assert!(!search.is_finished(), "a search must wait for the warm-up");
         assert!(!batch.is_finished(), "the batch must wait for the warm-up");
         release.send(()).unwrap();
         warmup.await.unwrap();
         let added = add.await.unwrap().unwrap().into_result().unwrap();
         batch.await.unwrap().unwrap().into_result().unwrap();
+        search.await.unwrap().unwrap().into_result().unwrap();
         let count = state.call(&Who::Owner, "count", json!({})).await.unwrap();
         assert_eq!(count.into_result().unwrap()["count"], 2);
         let query = json!({"query": "a row written while warming"});
