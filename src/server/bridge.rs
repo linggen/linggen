@@ -331,7 +331,6 @@ impl BridgeHub {
     ) -> ResData {
         let id = self.next_id();
         let (tx, rx) = oneshot::channel();
-        self.pending.lock_ok().insert(id.clone(), tx);
         let _waiting = WaitingGuard {
             hub: self,
             id: id.clone(),
@@ -348,7 +347,7 @@ impl BridgeHub {
 
         let trace = CallTrace::new(module, op, &id);
         let frame = json!({ "t": "req", "id": id, "module": module, "op": op, "params": params });
-        let res = self.exchange(frame, rx, timeout_ms).await;
+        let res = self.exchange(&id, frame, (tx, rx), timeout_ms).await;
         trace.finish(&res);
         res
     }
@@ -356,11 +355,12 @@ impl BridgeHub {
     /// Send one `req` and wait for its `res`, the timeout, or a dropped link.
     async fn exchange(
         &self,
+        id: &str,
         frame: Value,
-        rx: oneshot::Receiver<ResData>,
+        (waiter, rx): (oneshot::Sender<ResData>, oneshot::Receiver<ResData>),
         timeout_ms: u64,
     ) -> ResData {
-        if !self.send_frame(frame).await {
+        if !self.send_req(id, waiter, frame).await {
             return ResData::err("no_bridge", "no browser extension is connected");
         }
         match tokio::time::timeout(Duration::from_millis(timeout_ms), rx).await {
@@ -368,6 +368,18 @@ impl BridgeHub {
             Ok(Err(_)) => ResData::err("no_bridge", "bridge connection dropped"),
             Err(_) => ResData::err("timeout", "extension did not respond in time"),
         }
+    }
+
+    /// Register a call and send its frame on the live socket, both under the
+    /// connection lock: a socket that supersedes this one answers every call
+    /// sent on the old one, and never one it carries itself.
+    async fn send_req(&self, id: &str, waiter: oneshot::Sender<ResData>, frame: Value) -> bool {
+        let inner = self.inner.lock().await;
+        let Some(tx) = &inner.tx else {
+            return false;
+        };
+        self.pending.lock_ok().insert(id.to_string(), waiter);
+        tx.send(frame.to_string()).is_ok()
     }
 
     /// Broker one op for an in-process caller (the engine's `Browser_*`
@@ -606,6 +618,30 @@ mod tests {
         assert!(started.elapsed() < Duration::from_secs(5));
         assert_eq!(res.code.as_deref(), Some("no_bridge"));
         assert_eq!(res.message.as_deref(), Some("the browser disconnected"));
+    }
+
+    /// A second socket supersedes the first: what was sent on the first is
+    /// answered at once, and a call made after goes to the second.
+    #[tokio::test]
+    async fn a_superseding_socket_answers_the_calls_sent_on_the_old_one() {
+        let hub = BridgeHub::new();
+        let (old_tx, _old_rx) = mpsc::unbounded_channel::<String>();
+        hub.attach(old_tx).await;
+        let call = hub.call("x", "read", json!({}), 20_000, None);
+        let (new_tx, mut new_rx) = mpsc::unbounded_channel::<String>();
+        let replaced = async {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            hub.attach(new_tx).await;
+        };
+        let both = async { tokio::join!(call, replaced) };
+        let (res, _) = tokio::time::timeout(Duration::from_secs(5), both)
+            .await
+            .expect("answered before its own timeout");
+        assert_eq!(res.message.as_deref(), Some("the browser disconnected"));
+        assert!(new_rx.try_recv().is_err(), "an old call was resent");
+        let later = hub.call("x", "read", json!({}), 50, None).await;
+        assert_eq!(later.code.as_deref(), Some("timeout"));
+        assert!(new_rx.try_recv().is_ok(), "a later call is sent there");
     }
 
     /// A caller that goes away (a stopped tool) takes its entry with it.
