@@ -426,6 +426,12 @@ async fn search_rows(
     let raw = match tokio::time::timeout(budget, dispatch).await {
         Ok(Ok(v)) => v,
         Ok(Err(e)) => {
+            let warming = i64::from(ling_mem::ErrorCode::WarmingUp.mcp_status());
+            if e.downcast_ref::<crate::mcp_client::RpcError>()
+                .is_some_and(|e| e.code == warming)
+            {
+                return None;
+            }
             warn_recall_unreachable(&e.to_string());
             return None;
         }

@@ -117,8 +117,8 @@ _ling_auth=()
 # unwraps one layer and the caller parses the rest.
 #
 # Empty output on ANY failure: unreachable engine, gate refusal, malformed
-# reply. Every caller is a hook that must never block a session, so a failure
-# here is silence, not an error.
+# reply, or a JSON-RPC refusal such as memory warming up. Every caller is
+# a hook that must never block a session, so a failure here is silent.
 #
 # `${_ling_auth[@]+…}` because bash 3.2 (stock macOS) treats an empty array
 # as unbound under `set -u`.

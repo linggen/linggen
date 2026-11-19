@@ -223,6 +223,13 @@ at start-up and serves it (`src/memory_host/`, code in `crates/linggen-memory`).
 - **CLI.** `ling mem <verb>`: to the engine when it is up, else on the store
   directly under the lock.
 
+The engine loads the embedding model and runs one throw-away inference in the
+background. Startup, health, and calls that do not embed do not wait. Until
+that inference finishes, embedding calls say how long memory has been warming.
+Writes that receive this answer were neither applied nor queued; retry once
+memory is warm. Automatic recall skips the turn quietly. The MCP call limit
+remains 25 seconds after warm-up.
+
 ### Who reaches memory, and whose rows they see
 
 One rule, in one place (`memory_host::caller`), for every memory route on
