@@ -31,6 +31,8 @@ mod pattern_text;
 mod prompt;
 #[cfg(test)]
 mod readable_shapes_tests;
+#[cfg(test)]
+mod read_policy_tests;
 mod scripts;
 mod shell_text;
 mod store;

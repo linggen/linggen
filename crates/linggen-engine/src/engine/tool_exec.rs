@@ -1827,6 +1827,61 @@ mod declined_gate_tests {
     }
 
     #[tokio::test]
+    async fn read_policy_local_coding_caller_reads_without_a_grant() {
+        let home = dirs::home_dir().unwrap();
+        let work = tempfile::tempdir_in(&home).unwrap();
+        let source = tempfile::tempdir_in(&home).unwrap();
+        let path = source.path().join("notes.txt");
+        std::fs::write(&path, "fixture").unwrap();
+        let pending: Pending = Default::default();
+        let asked = deny_all(&pending);
+        let mut engine = engine(work.path(), &pending, true);
+        crate::engine::session_spec::coding_caller_fixture().apply(&mut engine);
+        let args = serde_json::json!({"path": path});
+        let id = Some("c1".to_string());
+        let t = ToolTurn { tool: "Read", canonical: "Read", args: &args, session_id: None, tool_call_id: &id };
+        assert!(engine.gate_permission(&t, &mut Vec::new()).await.is_none());
+        assert_eq!(asked.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn read_policy_recursive_glob_requires_grant_for_its_root() {
+        let home = dirs::home_dir().unwrap();
+        let work = tempfile::tempdir_in(&home).unwrap();
+        let private = tempfile::tempdir_in(crate::paths::linggen_home()).unwrap();
+        let pending: Pending = Default::default();
+        let mut engine = admin_engine(work.path(), &pending, false, false);
+        let args = serde_json::json!({"globs": [format!("{}/**/*", private.path().display())]});
+        gate(&mut engine, "Glob", args).await;
+    }
+
+    #[tokio::test]
+    async fn read_policy_protected_search_root_is_refused_unattended() {
+        let private = tempfile::tempdir_in(crate::paths::linggen_home()).unwrap();
+        let pending: Pending = Default::default();
+        let mut engine = engine(private.path(), &pending, false);
+        engine.session_permissions.interactive = false;
+        engine.session_permissions.set_path_mode("*", PermissionMode::Read);
+        gate(&mut engine, "Grep", serde_json::json!({"query": "fixture"})).await;
+    }
+
+    #[tokio::test]
+    async fn read_policy_secrets_never_reach_the_approval_path() {
+        use std::sync::atomic::Ordering::SeqCst;
+        let home = crate::paths::linggen_home();
+        let work = tempfile::tempdir_in(dirs::home_dir().unwrap()).unwrap();
+        let pending: Pending = Default::default();
+        let asked = deny_all(&pending);
+        let mut engine = admin_engine(work.path(), &pending, true, false);
+        for name in ["account.toml", "credentials.json", "codex_auth.json", "paired-devices.json", "push/state.json"] {
+            let file = home.join(name);
+            engine.session_permissions.set_path_mode(file.to_str().unwrap(), PermissionMode::Admin);
+            gate(&mut engine, "Read", serde_json::json!({"path": file})).await;
+        }
+        assert_eq!(asked.load(SeqCst), 0);
+    }
+
+    #[tokio::test]
     async fn an_outward_command_is_refused_unattended_without_asking() {
         let work = tempfile::tempdir_in(dirs::home_dir().unwrap()).unwrap();
         let pending: Pending = Default::default();
