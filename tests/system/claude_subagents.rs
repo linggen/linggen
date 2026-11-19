@@ -145,12 +145,11 @@ async fn stopping_a_child_uses_sdk_control_and_leaves_its_parent_running() {
         }
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
-    w.api
-        .post(
-            "/api/agent-cancel",
-            json!({"run_id":id.expect("child did not start")}),
-        )
-        .await;
+    let id = id.expect("child did not start");
+    // Another person may not stop a run of this session.
+    let other = w.api.post_status("/api/agent-cancel", json!({"run_id": &id, "user_id": "u-friend"}));
+    assert_eq!(other.await, 403);
+    w.api.post("/api/agent-cancel", json!({"run_id": &id})).await;
     finish(&w, &sid, mark).await;
     let state = w.api.history(&sid, &w.work()).await;
     assert_eq!(trees(&state)[0]["status"], "failed");

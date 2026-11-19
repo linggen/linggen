@@ -389,6 +389,23 @@ pub(crate) async fn cancel(state: &ServerState, run: &str) -> Option<Result<()>>
     if !run.starts_with("sdk-sub-") {
         return None;
     }
+    match find(state, run) {
+        Some((session, Some(task))) => Some(super::stop_task(state, &session, &task).await),
+        Some((_, None)) => None,
+        None => Some(Err(anyhow::anyhow!("Claude subagent was not found"))),
+    }
+}
+
+/// The session a Claude subagent run belongs to, if one holds it.
+pub(crate) fn session_of(state: &ServerState, run: &str) -> Option<String> {
+    find(state, run).map(|(session, _)| session)
+}
+
+/// The session holding subagent `run`, and its SDK task when it names one.
+fn find(state: &ServerState, run: &str) -> Option<(String, Option<String>)> {
+    if !run.starts_with("sdk-sub-") {
+        return None;
+    }
     for session in state.manager.global_sessions.list_sessions().ok()? {
         if session.runtime.is_linggen() {
             continue;
@@ -407,12 +424,12 @@ pub(crate) async fn cancel(state: &ServerState, run: &str) -> Option<Result<()>>
             .filter_map(Value::as_array)
         {
             if let Some(entry) = entries.iter().find(|entry| entry["subagentId"] == run) {
-                let task = entry["sdkTaskId"].as_str()?.to_owned();
-                return Some(super::stop_task(state, &session.id, &task).await);
+                let task = entry["sdkTaskId"].as_str().map(str::to_owned);
+                return Some((session.id, task));
             }
         }
     }
-    Some(Err(anyhow::anyhow!("Claude subagent was not found")))
+    None
 }
 
 #[cfg(test)]

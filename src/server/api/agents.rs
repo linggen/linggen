@@ -75,8 +75,20 @@ pub(crate) async fn cancel_agent_run(
     State(state): State<Arc<ServerState>>,
     Json(req): Json<CancelRunRequest>,
 ) -> impl IntoResponse {
-    let session = state.manager.run_store.get_run(&req.run_id).map(|r| r.session_id);
-    if session.is_some_and(|sid| !crate::server::day_session::may_enter(&sid, &crate::server::person::Person::from_wire(req.user_id.as_deref()))) {
+    // A run is stopped only by a person shown to own its session; a run no
+    // session can be found for, only by the builder.
+    let asker = crate::server::person::Person::from_wire(req.user_id.as_deref());
+    let session = state
+        .manager
+        .run_store
+        .get_run(&req.run_id)
+        .map(|r| r.session_id)
+        .or_else(|| crate::server::claude::subagents::session_of(&state, &req.run_id));
+    let theirs = match &session {
+        Some(sid) => crate::server::day_session::may_enter(sid, &asker),
+        None => asker.is_owner(),
+    };
+    if !theirs {
         return (StatusCode::FORBIDDEN, "that session is another person's").into_response();
     }
     if let Some(result) = crate::server::claude::subagents::cancel(&state, &req.run_id).await {
