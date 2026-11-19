@@ -515,7 +515,7 @@ impl AgentEngine {
     /// the error still is one (its provider kind, its reset), noted on the
     /// run: its outcome carries it to `agent_status`, the wait stream's last
     /// frame and a mission run's record. The model is the one that failed.
-    fn note_cannot_run(&self, err: &anyhow::Error) {
+    pub(super) fn note_cannot_run(&self, err: &anyhow::Error) {
         let (Some(manager), Some(run_id)) = (self.tools.get_manager(), &self.run_id) else {
             return;
         };

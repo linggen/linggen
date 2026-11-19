@@ -86,6 +86,11 @@ const CUT_REPLY_NOTE: &str = "[Your last reply was cut off at the model's output
 call in it was run. Continue from where it stopped; write a long file in smaller parts — Write \
 the first part, then add the rest with Edit.]";
 
+/// After this many cut replies in a row the turn ends as a failure
+/// (`ProviderErrorKind::OutputCut`) instead of asking again until the step
+/// limit.
+const MAX_CUT_REPLIES: usize = 3;
+
 impl AgentEngine {
     /// Convert native ParsedToolCalls into calls for dispatch, each with
     /// its own id. "Done" calls are filtered out — the loop stops when no
@@ -491,6 +496,7 @@ impl AgentEngine {
         let log_run = self.run_id.clone().unwrap_or_else(|| "root".to_string());
 
         let mut iterations = 0;
+        let mut cut_streak = 0;
         loop {
             if iterations >= self.cfg.max_iters {
                 if self.close_or_receive_run_messages(&mut state.messages, None).await {
@@ -567,11 +573,16 @@ impl AgentEngine {
                 continue;
             }
             if stream_result.cut {
+                cut_streak += 1;
                 let native = native_tools.is_some();
                 self.keep_cut_reply(stream_result.full_text, native, &mut state.messages, session_id)
                     .await;
+                if cut_streak >= MAX_CUT_REPLIES {
+                    return Err(self.cut_too_often());
+                }
                 continue;
             }
+            cut_streak = 0;
             let raw = stream_result.full_text;
             let stream_first_action = stream_result.first_action;
             let native_tool_calls = stream_result.tool_calls;
@@ -1021,6 +1032,20 @@ impl AgentEngine {
             self.push_tracked_message(messages, ChatMessage::new("assistant", text));
         }
         self.push_tracked_message(messages, ChatMessage::new("user", CUT_REPLY_NOTE.to_string()));
+    }
+
+    /// The turn's end after [`MAX_CUT_REPLIES`] cut replies in a row: a
+    /// failure of its kind (`OutputCut`), noted on the run as why it could
+    /// not go on.
+    fn cut_too_often(&self) -> anyhow::Error {
+        use crate::provider::error::{ProviderError, ProviderErrorKind, OUTPUT_CUT_WORDS};
+        let words = format!(
+            "model '{}': its {OUTPUT_CUT_WORDS} its answer ({MAX_CUT_REPLIES} replies in a row were cut)",
+            self.model_id
+        );
+        let err = ProviderError::new(ProviderErrorKind::OutputCut, words).into();
+        self.note_cannot_run(&err);
+        err
     }
 
     /// Take in what the person sent while the turn ran, as user messages.

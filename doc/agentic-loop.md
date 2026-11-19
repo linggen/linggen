@@ -34,6 +34,8 @@ for iter in 0..max_iters {
 
 **Termination**: Done (plain text answer), EnterPlanMode, cancellation, or `max_iters` reached.
 
+A reply the provider cut at its output limit runs none of its tool calls; the model is told and goes on. After three cut replies in a row the turn ends as a failure of kind `output_cut` ("the model's output limit keeps cutting its answer"), noted on the run as why it could not go on.
+
 Same loop for all execution types: user chat, idle prompt, delegation.
 
 **Implementation**: `engine/mod.rs` → `run_agent_loop()`

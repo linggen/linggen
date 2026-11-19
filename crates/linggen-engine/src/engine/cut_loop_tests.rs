@@ -42,9 +42,79 @@ async fn chat(State(fake): State<Fake>, Json(body): Json<serde_json::Value>) -> 
 #[tokio::test]
 async fn a_cut_tool_call_is_not_run_and_the_model_is_told() {
     let fake = Fake::default();
+    let (mut engine, root) = engine_on(fake.clone(), post(chat)).await;
+
+    tokio::time::timeout(Duration::from_secs(20), engine.run_agent_loop(None))
+        .await
+        .expect("the turn ended")
+        .unwrap();
+
+    let requests = fake.requests.lock().unwrap().clone();
+    assert_eq!(requests.len(), 2, "the turn went on after the cut");
+    let sent = requests[1]["messages"].as_array().unwrap();
+    assert!(
+        !sent.iter().any(|m| m["role"] == "tool" || m.get("tool_calls").is_some()),
+        "the cut call was never run: {sent:#?}"
+    );
+    assert!(
+        sent.iter().any(|m| m["role"] == "assistant"
+            && m["content"] == "The config is {\"a\": 1}; now the file."),
+        "what the cut reply said stays whole, JSON in it included: {sent:#?}"
+    );
+    let last = sent.last().unwrap();
+    assert_eq!(last["role"], "user");
+    assert!(
+        last["content"].as_str().unwrap().contains("output limit"),
+        "the model is told its output was cut: {last}"
+    );
+    assert!(!root.path().join("cut.txt").exists(), "nothing was written");
+    assert_eq!(engine.last_assistant_text.as_deref(), Some("Written in two parts."));
+}
+
+/// Every reply is cut at the output limit.
+async fn always_cut(State(fake): State<Fake>, Json(body): Json<serde_json::Value>) -> String {
+    fake.requests.lock().unwrap().push(body);
+    sse(&[
+        serde_json::json!({"choices":[{"index":0,"delta":{"content":"Here is the first part of"}}]}),
+        serde_json::json!({"choices":[{"index":0,"delta":{},"finish_reason":"length"}]}),
+    ])
+}
+
+/// A reply cut every time does not loop to the step limit: after three cut
+/// replies in a row the turn ends as a failure that says the model's output
+/// limit keeps cutting its answer.
+#[tokio::test]
+async fn three_cut_replies_in_a_row_end_the_turn_as_a_failure() {
+    let fake = Fake::default();
+    let (mut engine, _root) = engine_on(fake.clone(), post(always_cut)).await;
+
+    let ended = tokio::time::timeout(Duration::from_secs(20), engine.run_agent_loop(None))
+        .await
+        .expect("the turn ended");
+
+    assert_eq!(fake.requests.lock().unwrap().len(), 3, "the turn stopped after three cut replies");
+    let err = ended.expect_err("a turn cut every time is a failure");
+    assert!(format!("{err:#}").contains("output limit keeps cutting"), "{err:#}");
+    assert_eq!(
+        crate::provider::error::kind_of(&err),
+        crate::provider::error::ProviderErrorKind::OutputCut,
+        "the reason is typed"
+    );
+    assert_eq!(
+        crate::provider::error::kind_of_message(&err.to_string()),
+        crate::provider::error::ProviderErrorKind::OutputCut,
+        "and stays that kind as text"
+    );
+}
+
+/// An engine on a fake OpenAI-style server answering with `route`.
+async fn engine_on(
+    fake: Fake,
+    route: axum::routing::MethodRouter<Fake>,
+) -> (AgentEngine, tempfile::TempDir) {
     let app = Router::new()
-        .route("/chat/completions", post(chat))
-        .with_state(fake.clone());
+        .route("/chat/completions", route)
+        .with_state(fake);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -78,30 +148,5 @@ async fn a_cut_tool_call_is_not_run_and_the_model_is_told() {
     let mut engine = AgentEngine::new(cfg, models, id, AgentRole::Lead).unwrap();
     engine.auto_fallback = false;
     engine.set_task("write a long file".to_string());
-
-    tokio::time::timeout(Duration::from_secs(20), engine.run_agent_loop(None))
-        .await
-        .expect("the turn ended")
-        .unwrap();
-
-    let requests = fake.requests.lock().unwrap().clone();
-    assert_eq!(requests.len(), 2, "the turn went on after the cut");
-    let sent = requests[1]["messages"].as_array().unwrap();
-    assert!(
-        !sent.iter().any(|m| m["role"] == "tool" || m.get("tool_calls").is_some()),
-        "the cut call was never run: {sent:#?}"
-    );
-    assert!(
-        sent.iter().any(|m| m["role"] == "assistant"
-            && m["content"] == "The config is {\"a\": 1}; now the file."),
-        "what the cut reply said stays whole, JSON in it included: {sent:#?}"
-    );
-    let last = sent.last().unwrap();
-    assert_eq!(last["role"], "user");
-    assert!(
-        last["content"].as_str().unwrap().contains("output limit"),
-        "the model is told its output was cut: {last}"
-    );
-    assert!(!root.path().join("cut.txt").exists(), "nothing was written");
-    assert_eq!(engine.last_assistant_text.as_deref(), Some("Written in two parts."));
+    (engine, root)
 }
