@@ -1,10 +1,12 @@
 import type { ChatMessage } from '../types.ts';
 
-/** The main chat holds every member's traffic and unrouted notices. */
+/** The main chat holds every member's traffic and unrouted notices: what the
+ *  page itself says (`system`, e.g. a `!` command's output) and the lines the
+ *  person typed to it (a `!` command), whoever is selected. */
 function isMainChatRow(msg: ChatMessage, selected: string, mainAgentIds: readonly string[]): boolean {
   const from = (msg.from || msg.role).trim().toLowerCase();
   const to = (msg.to || '').trim().toLowerCase();
-  if (from === 'compaction' || from === 'assistant') return true;
+  if (from === 'system' || to === 'system' || from === 'compaction' || from === 'assistant') return true;
   if (from === selected || to === selected) return true;
   if (mainAgentIds.includes(from) || mainAgentIds.includes(to)) return true;
   return (msg.role === 'user' || from === 'user') && !to;

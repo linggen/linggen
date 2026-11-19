@@ -26,6 +26,13 @@ test('Yinyue silence hides the whole run (live or reloaded), not an adjacent tur
 test('internal rows do not interrupt or count toward a fold', () => {
   const visible = row('yinyue', 'Your fortune', { place: 'lingjing' });
   assert.deepEqual(visibleChatRows([
-    row('user', '[HIDDEN] read my fortune'), row('world', 'context'), row('system', 'tool observation'), visible,
+    row('user', '[HIDDEN] read my fortune'), row('world', 'context'), row('system', 'Tool Bash: leaked observation'), visible,
   ]), [visible]);
+});
+
+test('a note the page itself wrote (a `!` command\'s output) is shown, even from `system`', () => {
+  const command = row('user', '`$ pwd`', { to: 'system' });
+  const output = row('system', '```\n/skills/dice\n```');
+  const failure = row('system', 'Error: bash failed', { isError: true });
+  assert.deepEqual(visibleChatRows([command, output, failure]), [command, output, failure]);
 });

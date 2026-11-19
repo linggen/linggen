@@ -19,12 +19,15 @@ export const shouldHideInternalChatMessage = (_from?: string, text?: string): bo
   return false;
 };
 
-/** Display policy before binding and folding, so a silent run cannot leave a tool row. */
+/** Display policy before binding and folding, so a silent run cannot leave a tool row.
+ *  The world's context block and a leaked tool observation are never shown;
+ *  a note the page itself wrote (`system`, e.g. a `!` command's output) is
+ *  the person's own and always is. */
 export function visibleChatRows(messages: ChatMessage[]): ChatMessage[] {
   const isYinyueSilence = (m: ChatMessage) => m.from === 'yinyue' && m.silent;
   const silentRuns = new Set(messages.filter(isYinyueSilence).map((m) => m.runId).filter(Boolean));
   return messages.filter((m) => {
-    if (m.from === 'world' || m.from === 'system' || shouldHideInternalChatMessage(m.from, m.text)) return false;
+    if (m.from === 'world' || shouldHideInternalChatMessage(m.from, m.text)) return false;
     if (isYinyueSilence(m) || (m.from === 'yinyue' && m.runId && silentRuns.has(m.runId))) return false;
     return !m.silent || !!m.content?.some((b) => b.type === 'tool_use');
   });
