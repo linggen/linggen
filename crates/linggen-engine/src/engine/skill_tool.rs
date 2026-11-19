@@ -257,11 +257,7 @@ impl SkillToolDef {
             self.name,
             rendered.len()
         );
-        tracing::debug!(
-            "Skill tool '{}' command starts: {}",
-            self.name,
-            self.cmd.chars().take(160).collect::<String>()
-        );
+        tracing::debug!("Skill tool '{}' command starts: {}", self.name, self.logged_head());
 
         // Execute via sh -c. Own the process group so a timeout kills the
         // whole pipeline, not just the shell.
@@ -342,6 +338,12 @@ impl SkillToolDef {
             stdout,
             stderr,
         })
+    }
+
+    /// The head of the command as the debug log shows it: as declared, so
+    /// the script and the verb, never a value an argument put into it.
+    fn logged_head(&self) -> String {
+        self.cmd.chars().take(160).collect()
     }
 
     /// The command as it runs: `$SKILL_DIR` expanded, then every `{{arg}}`
@@ -838,31 +840,11 @@ mod tests {
     /// values put into it.
     #[test]
     fn the_debug_log_shows_the_command_as_declared() {
-        #[derive(Clone, Default)]
-        struct Log(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
-        impl std::io::Write for Log {
-            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-                self.0.lock().unwrap().extend_from_slice(buf);
-                Ok(buf.len())
-            }
-            fn flush(&mut self) -> std::io::Result<()> {
-                Ok(())
-            }
-        }
-        let log = Log::default();
-        let writer = log.clone();
-        let subscriber = tracing_subscriber::fmt()
-            .with_ansi(false)
-            .with_max_level(tracing::Level::DEBUG)
-            .with_writer(move || writer.clone())
-            .finish();
         let tool = positional_tool(&[("a", None), ("b", None), ("c", None)]);
-        tracing::subscriber::with_default(subscriber, || {
-            stdout_of(&tool, serde_json::json!({ "a": "PRIVATE-HEART-RATE" }));
-        });
-        let text = String::from_utf8(log.0.lock().unwrap().clone()).unwrap();
-        assert!(text.contains("printf '<%s>' {{a}}"), "{text}");
-        assert!(!text.contains("PRIVATE-HEART-RATE"), "{text}");
+        let args = serde_json::json!({ "a": "PRIVATE-HEART-RATE" });
+        let rendered = tool.render_cmd(&args, &SessionParams::new()).unwrap();
+        assert!(rendered.contains("PRIVATE-HEART-RATE"));
+        assert_eq!(tool.logged_head(), "printf '<%s>' {{a}} {{b}} {{c}}");
     }
 
     #[test]
