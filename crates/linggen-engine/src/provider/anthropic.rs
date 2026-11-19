@@ -658,14 +658,7 @@ fn handle_event(event: SseEvent, state: &mut BlockState) -> Option<Result<Stream
 // ---------------------------------------------------------------------------
 
 fn build_http() -> Client {
-    Client::builder()
-        .timeout(std::time::Duration::from_secs(300))
-        .connect_timeout(std::time::Duration::from_secs(10))
-        // Bounds streamed reads too — the total timeout doesn't (see
-        // provider/openai.rs for the full rationale).
-        .read_timeout(std::time::Duration::from_secs(180))
-        .build()
-        .unwrap_or_else(|_| Client::new())
+    crate::provider::stream_http(std::time::Duration::from_secs(180))
 }
 
 /// Whether this endpoint is Anthropic's own API, the one that takes the

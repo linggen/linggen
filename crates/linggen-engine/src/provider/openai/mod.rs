@@ -66,6 +66,11 @@ fn sse_lines(
     tokio_util::codec::FramedRead::new(reader, tokio_util::codec::LinesCodec::new())
 }
 
+/// The longest silence between two reads of a stream (see
+/// [`crate::provider::stream_http`]); reasoning models' silent thinking gaps
+/// stay well under it.
+const STREAM_IDLE: std::time::Duration = std::time::Duration::from_secs(180);
+
 #[derive(Clone)]
 pub struct OpenAiClient {
     pub(super) http: Client,
@@ -82,19 +87,7 @@ pub struct OpenAiClient {
 
 impl OpenAiClient {
     pub fn new(base_url: String, api_key: Option<String>) -> Self {
-        let http = Client::builder()
-            .timeout(std::time::Duration::from_secs(300))
-            .connect_timeout(std::time::Duration::from_secs(10))
-            // The total timeout above does NOT govern bodies consumed via
-            // bytes_stream() (reqwest gap) — a backend that accepts the
-            // request and then goes silent wedges the run forever (observed
-            // live 2026-07-10: 35 min on one Responses API call). read_timeout
-            // bounds every socket read, streaming included; reasoning models'
-            // silent thinking gaps stay well under it, and the resulting
-            // error is transient-classified so the model fallback chain runs.
-            .read_timeout(std::time::Duration::from_secs(180))
-            .build()
-            .unwrap_or_else(|_| Client::new());
+        let http = crate::provider::stream_http(STREAM_IDLE);
         Self {
             http,
             base_url: base_url.trim_end_matches('/').to_string(),
@@ -112,19 +105,7 @@ impl OpenAiClient {
         access_token: String,
         account_id: Option<String>,
     ) -> Self {
-        let http = Client::builder()
-            .timeout(std::time::Duration::from_secs(300))
-            .connect_timeout(std::time::Duration::from_secs(10))
-            // The total timeout above does NOT govern bodies consumed via
-            // bytes_stream() (reqwest gap) — a backend that accepts the
-            // request and then goes silent wedges the run forever (observed
-            // live 2026-07-10: 35 min on one Responses API call). read_timeout
-            // bounds every socket read, streaming included; reasoning models'
-            // silent thinking gaps stay well under it, and the resulting
-            // error is transient-classified so the model fallback chain runs.
-            .read_timeout(std::time::Duration::from_secs(180))
-            .build()
-            .unwrap_or_else(|_| Client::new());
+        let http = crate::provider::stream_http(STREAM_IDLE);
         Self {
             http,
             base_url: base_url.trim_end_matches('/').to_string(),

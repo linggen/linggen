@@ -43,15 +43,9 @@ pub struct OllamaClient {
 
 impl OllamaClient {
     pub fn new(base_url: String, api_key: Option<String>) -> Self {
-        let http = Client::builder()
-            .timeout(std::time::Duration::from_secs(300))
-            .connect_timeout(std::time::Duration::from_secs(10))
-            // Bounds streamed reads too — the total timeout doesn't (see
-            // provider/openai.rs for the full rationale). Generous because
-            // local models can pause long between tokens under load.
-            .read_timeout(std::time::Duration::from_secs(300))
-            .build()
-            .unwrap_or_else(|_| Client::new());
+        // Idle limit generous because local models can pause long between
+        // tokens under load.
+        let http = crate::provider::stream_http(std::time::Duration::from_secs(300));
         Self {
             http,
             base_url: base_url.trim_end_matches('/').to_string(),
