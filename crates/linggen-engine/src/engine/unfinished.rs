@@ -15,22 +15,29 @@
 //! (`AgentEngine::stream_with_fallback`) — never a Stop or another error —
 //! and only when the thread can take it: the run did not compact, and every
 //! call kept has its results.
+//!
+//! What is kept is exactly what the thread does not have yet: a run that
+//! went on past a reply (a kickoff's next item) already wrote that reply
+//! and the next item into the thread, so those rows take their place among
+//! the run's own, in the order they happened, and appear once.
 
 use super::AgentEngine;
 use crate::message::ChatMessage;
 
 /// Where a run's own messages begin: after its system prompt, its thread
-/// and its task.
+/// and its task; and how long the thread was then.
 pub(crate) struct Opening {
     len: usize,
     last: Option<String>,
+    thread: usize,
 }
 
 impl Opening {
-    pub(crate) fn of(messages: &[ChatMessage]) -> Self {
+    pub(crate) fn of(messages: &[ChatMessage], thread: usize) -> Self {
         Self {
             len: messages.len(),
             last: messages.last().map(|m| m.content.clone()),
+            thread,
         }
     }
 }
@@ -45,13 +52,39 @@ impl AgentEngine {
         if manager.run_store.cannot_run(&run_id).is_none() || self.reload_thread {
             return;
         }
+        if self.chat_history.len() < opening.thread {
+            return;
+        }
         let work = unfinished_work(messages, opening);
         if work.is_empty() {
             return;
         }
-        self.chat_history.extend(work);
+        let written = self.chat_history.split_off(opening.thread);
+        self.chat_history.extend(woven(work, written));
         manager.run_store.note_work_kept(&run_id);
     }
+}
+
+/// The run's work with the rows the run already wrote into the thread
+/// (`written`, in order) taken as the same rows of the work, so each is
+/// there once; a written row the work does not carry follows it.
+fn woven(work: Vec<ChatMessage>, written: Vec<ChatMessage>) -> Vec<ChatMessage> {
+    let mut from = 0;
+    let mut extra = Vec::new();
+    for row in written {
+        match work[from..].iter().position(|w| same_row(w, &row)) {
+            Some(at) => from += at + 1,
+            None => extra.push(row),
+        }
+    }
+    let mut kept = work;
+    kept.extend(extra);
+    kept
+}
+
+/// Two rows that say the same thing in the same voice, neither a call.
+fn same_row(a: &ChatMessage, b: &ChatMessage) -> bool {
+    a.role == b.role && a.content == b.content && a.tool_calls.is_empty() && b.tool_calls.is_empty()
 }
 
 /// The run's messages after `opening`, cut before the first call whose
@@ -121,7 +154,7 @@ mod tests {
             ChatMessage::new("system", "s".to_string()),
             ChatMessage::new("user", "the task".to_string()),
         ];
-        let opening = Opening::of(&messages);
+        let opening = Opening::of(&messages, 0);
         (messages, opening)
     }
 
@@ -157,6 +190,33 @@ mod tests {
         assert!(
             unfinished_work(&bare, &opening).is_empty(),
             "nothing done, nothing kept"
+        );
+    }
+
+    /// A run that went past a reply wrote that reply and the next item into
+    /// the thread already: woven into the work, each row is there once, in
+    /// the order it happened; a row the work never carried follows it.
+    #[test]
+    fn rows_the_thread_has_are_not_kept_twice() {
+        let (mut messages, opening) = opened();
+        messages.extend([
+            calls(&["a"]),
+            result("a", "x"),
+            ChatMessage::new("assistant", "first done".to_string()),
+            ChatMessage::new("user", "the next item".to_string()),
+            calls(&["b"]),
+            result("b", "y"),
+        ]);
+        let written = vec![
+            ChatMessage::new("assistant", "first done".to_string()),
+            ChatMessage::new("user", "the next item".to_string()),
+            ChatMessage::new("user", "a note the run never saw".to_string()),
+        ];
+        let kept = woven(unfinished_work(&messages, &opening), written);
+        let said: Vec<&str> = kept.iter().map(|m| m.content.as_str()).collect();
+        assert_eq!(
+            said,
+            ["", "x", "first done", "the next item", "", "y", "a note the run never saw"]
         );
     }
 

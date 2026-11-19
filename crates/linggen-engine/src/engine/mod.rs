@@ -455,7 +455,7 @@ impl AgentEngine {
     async fn run_agent_loop_unguarded(&mut self, session_id: Option<&str>) -> Result<AgentOutcome> {
         self.begin_suggestion_turn();
         let mut state = self.initialize_loop(session_id).await?;
-        let opening = unfinished::Opening::of(&state.messages);
+        let opening = unfinished::Opening::of(&state.messages, self.chat_history.len());
         let outcome = self.run_steps(&mut state, session_id).await;
         if outcome.is_err() {
             self.keep_unfinished_work(&state.messages, &opening);

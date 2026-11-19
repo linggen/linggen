@@ -392,3 +392,87 @@ async fn the_hourly_ceiling_does_not_hold_a_fault() {
     assert!(held(&w).is_empty(), "{:?}", held(&w));
     w.assert_all_scripted();
 }
+
+/// A skill with one tool, `Count`, that prints what it counted, and a
+/// mission of its own with a two-item kickoff.
+fn install_tally(skills: &Path) {
+    let dir = skills.join("tally");
+    for sub in ["scripts", "missions/trays"] {
+        fs::create_dir_all(dir.join(sub)).expect("tally dirs");
+    }
+    fs::write(
+        dir.join("SKILL.md"),
+        "---\n\
+         name: tally\n\
+         description: A test skill — counts trays.\n\
+         cwd: ~/.linggen/skills/tally\n\
+         tools:\n  - name: Count\n    description: Count a tray.\n    \
+         cmd: \"echo the-tray-holds-58\"\n    tier: read\n    timeout_ms: 5000\n\
+         ---\n\nCount the trays.\n",
+    )
+    .expect("SKILL.md");
+    fs::write(
+        dir.join("missions/trays/mission.md"),
+        "---\n\
+         name: Tray count\n\
+         schedule: '0 3 * * *'\n\
+         enabled: false\n\
+         agent: ling\n\
+         cwd: ~/.linggen/skills/tally\n\
+         kickoff:\n  - \"Count the first tray.\"\n  - \"Count the second tray.\"\n\
+         ---\n\nCount each tray once and say the number.\n",
+    )
+    .expect("mission.md");
+}
+
+/// A two-item kickoff run whose second item's model call fails keeps its
+/// work in the session's thread; the turn that continues the session sees
+/// each row of that run once, in the order it happened.
+#[tokio::test]
+async fn a_failed_kickoff_run_is_continued_with_each_row_once_in_order() {
+    let setup = Setup::default()
+        .script(
+            Agent::Ling,
+            vec![
+                tool("Count", json!({})),
+                text("First tray: 58."),
+                tool("Count", json!({})),
+                crate::support::error(500, "upstream overloaded"),
+                text("Back to the trays."),
+            ],
+        )
+        .script(Agent::Yinyue, vec![text(HER_LINE)]);
+    let w = World::start(setup).await;
+    install_tally(&w.home.linggen_home().join("skills"));
+    w.api.post("/api/skills/reload", json!({})).await;
+    let mark = w.mark();
+    let path = format!("/api/missions/{}/trigger", urlencoding::encode("tally:trays"));
+    let resp = w.api.post(&path, json!({})).await;
+    let sid = resp["session_id"].as_str().unwrap_or_else(|| panic!("no session: {resp}")).to_string();
+    let _ = w.wait_run(&sid, Agent::Ling, mark).await;
+
+    let root = w.home.linggen_home().join("skills/tally").display().to_string();
+    w.turn(&sid, &root, "Go on.", Agent::Ling).await;
+    let calls = w.model.calls_of(Agent::Ling);
+    let thread = calls.last().expect("the continued turn").thread();
+    let at = |what: &str| -> Vec<usize> {
+        thread.iter().enumerate().filter(|(_, (_, t))| t.contains(what)).map(|(i, _)| i).collect()
+    };
+    let reply = at("First tray: 58.");
+    let second = at("Count the second tray.");
+    let counted = at("[call Count");
+    let results: Vec<usize> = thread
+        .iter()
+        .enumerate()
+        .filter(|(_, (role, _))| role == "tool")
+        .map(|(i, _)| i)
+        .collect();
+    let go_on = at("Go on.");
+    assert_eq!(reply.len(), 1, "the first reply once: {thread:#?}");
+    assert_eq!(second.len(), 1, "the second item once: {thread:#?}");
+    assert_eq!(counted.len(), 2, "each call once: {thread:#?}");
+    assert_eq!(results.len(), 2, "each result once: {thread:#?}");
+    assert_eq!(go_on.len(), 1, "{thread:#?}");
+    let order = [counted[0], results[0], reply[0], second[0], counted[1], results[1], go_on[0]];
+    assert!(order.windows(2).all(|p| p[0] < p[1]), "out of order {order:?}: {thread:#?}");
+}
