@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { confirmKey } from '../lib/dialogKeys.mts';
 
 // The in-page modals behind lib/confirmDialog.
 
@@ -19,9 +20,9 @@ const inputCls =
 export const ConfirmCard: React.FC<{ message: string; onDone: (ok: boolean) => void }> = ({ message, onDone }) => {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.isComposing || e.keyCode === 229) return;
-      if (e.key === 'Escape') onDone(false);
-      if (e.key === 'Enter') onDone(true);
+      const onButton = e.target instanceof HTMLElement && e.target.tagName === 'BUTTON';
+      const act = confirmKey(e.key, e.isComposing || e.keyCode === 229, onButton);
+      if (act) onDone(act === 'confirm');
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
