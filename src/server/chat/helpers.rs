@@ -54,6 +54,12 @@ pub(crate) fn format_turn_error(msg: &str) -> String {
     format!("Error: {line}")
 }
 
+/// The row a failed turn leaves in the chat: none for a stopped run — its
+/// work shows as an interrupted run (`run_calls`) — else its error line.
+pub(crate) fn turn_error_row(err: &anyhow::Error) -> Option<String> {
+    (!crate::engine::is_stopped(err)).then(|| format_turn_error(&err.to_string()))
+}
+
 /// A turn refused on a spent Linggen Cloud allowance tells its session as a
 /// fact (`AllowanceSpent`), so a page whose turn ran unseen — a hidden
 /// kickoff, a light turn — can show the way on instead of waiting. Anything
@@ -417,6 +423,15 @@ pub(crate) async fn emit_outcome_event(
 #[cfg(test)]
 mod turn_error_tests {
     use super::format_turn_error;
+
+    /// A stopped run leaves no error line: the chat shows its work as an
+    /// interrupted run. Any other failure leaves its line.
+    #[test]
+    fn a_stopped_run_leaves_no_error_line() {
+        assert_eq!(super::turn_error_row(&anyhow::anyhow!("run cancelled")), None);
+        let failed = super::turn_error_row(&anyhow::anyhow!("connection timed out"));
+        assert!(failed.is_some_and(|line| line.starts_with("Error: ")));
+    }
 
     #[test]
     fn a_failed_turn_is_one_plain_line_never_the_providers_text() {

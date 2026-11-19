@@ -98,20 +98,21 @@ pub(super) async fn run_plan_dispatch(ctx: &ChatRunCtx, engine: &mut crate::engi
             }
         }
         Err(err) => {
-            let error_msg = super::helpers::format_turn_error(&err.to_string());
-            persist_and_emit_message(
-                &ctx.manager,
-                &ctx.events_tx,
-                &ctx.root,
-                &ctx.agent_id,
-                &ctx.agent_id,
-                "user",
-                &error_msg,
-                ctx.session_id.as_deref(),
-                false,
-                engine.last_run_id.as_deref(),
-            )
-            .await;
+            if let Some(error_msg) = super::helpers::turn_error_row(&err) {
+                persist_and_emit_message(
+                    &ctx.manager,
+                    &ctx.events_tx,
+                    &ctx.root,
+                    &ctx.agent_id,
+                    &ctx.agent_id,
+                    "user",
+                    &error_msg,
+                    ctx.session_id.as_deref(),
+                    false,
+                    engine.last_run_id.as_deref(),
+                )
+                .await;
+            }
         }
     }
     let _ = ctx.events_tx.send(ServerEvent::StateUpdated);
@@ -177,20 +178,21 @@ pub(super) async fn run_plan_execution(
             }
         }
         Err(err) => {
-            let error_msg = super::helpers::format_turn_error(&err.to_string());
-            persist_and_emit_message(
-                &ctx.manager,
-                &ctx.events_tx,
-                &ctx.root,
-                &ctx.agent_id,
-                &ctx.agent_id,
-                "user",
-                &error_msg,
-                ctx.session_id.as_deref(),
-                false,
-                engine.last_run_id.as_deref(),
-            )
-            .await;
+            if let Some(error_msg) = super::helpers::turn_error_row(&err) {
+                persist_and_emit_message(
+                    &ctx.manager,
+                    &ctx.events_tx,
+                    &ctx.root,
+                    &ctx.agent_id,
+                    &ctx.agent_id,
+                    "user",
+                    &error_msg,
+                    ctx.session_id.as_deref(),
+                    false,
+                    engine.last_run_id.as_deref(),
+                )
+                .await;
+            }
         }
     }
     let _ = ctx.events_tx.send(ServerEvent::StateUpdated);

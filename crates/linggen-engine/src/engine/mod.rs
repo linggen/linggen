@@ -1164,6 +1164,12 @@ impl AgentEngine {
     }
 }
 
+/// Whether `err` is how a stopped run ends (the loop's own "run cancelled"
+/// bail): a stop, not a failure.
+pub fn is_stopped(err: &anyhow::Error) -> bool {
+    err.to_string() == "run cancelled"
+}
+
 /// Whether a native call runs: not one with no name (some models produce
 /// phantom calls) nor `Done` (no longer a real tool; the loop stops when no
 /// tool calls remain).

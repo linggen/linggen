@@ -102,20 +102,21 @@ pub(super) async fn run_skill_dispatch(ctx: &ChatRunCtx, engine: &mut crate::eng
 
     if let Err(e) = outcome {
         tracing::warn!("Skill loop failed: {}", e);
-        let err_msg = super::helpers::format_turn_error(&e.to_string());
-        persist_and_emit_message(
-            &ctx.manager,
-            &ctx.events_tx,
-            &ctx.root,
-            &ctx.agent_id,
-            &ctx.agent_id,
-            "user",
-            &err_msg,
-            ctx.session_id.as_deref(),
-            false,
-            engine.last_run_id.as_deref(),
-        )
-        .await;
+        if let Some(err_msg) = super::helpers::turn_error_row(&e) {
+            persist_and_emit_message(
+                &ctx.manager,
+                &ctx.events_tx,
+                &ctx.root,
+                &ctx.agent_id,
+                &ctx.agent_id,
+                "user",
+                &err_msg,
+                ctx.session_id.as_deref(),
+                false,
+                engine.last_run_id.as_deref(),
+            )
+            .await;
+        }
     } else {
         tracing::info!("Skill completed: {}", cmd);
         if let Ok(outcome) = &outcome {
@@ -458,20 +459,21 @@ pub(super) async fn run_trigger_dispatch(
 
     if let Err(e) = outcome {
         tracing::warn!("Trigger skill loop failed: {}", e);
-        let err_msg = super::helpers::format_turn_error(&e.to_string());
-        persist_and_emit_message(
-            &ctx.manager,
-            &ctx.events_tx,
-            &ctx.root,
-            &ctx.agent_id,
-            &ctx.agent_id,
-            "user",
-            &err_msg,
-            ctx.session_id.as_deref(),
-            false,
-            engine.last_run_id.as_deref(),
-        )
-        .await;
+        if let Some(err_msg) = super::helpers::turn_error_row(&e) {
+            persist_and_emit_message(
+                &ctx.manager,
+                &ctx.events_tx,
+                &ctx.root,
+                &ctx.agent_id,
+                &ctx.agent_id,
+                "user",
+                &err_msg,
+                ctx.session_id.as_deref(),
+                false,
+                engine.last_run_id.as_deref(),
+            )
+            .await;
+        }
     } else {
         tracing::info!("Trigger skill completed: {}", skill_name);
         if let Ok(outcome) = &outcome {

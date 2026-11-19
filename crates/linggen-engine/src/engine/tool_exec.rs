@@ -1613,7 +1613,7 @@ fn with_gate_reason(mut text: String, reason: Option<&str>) -> String {
 }
 
 fn is_cancel_error(e: &anyhow::Error) -> bool {
-    e.to_string() == "run cancelled"
+    super::is_stopped(e)
 }
 
 fn bash_command_arg(args: &JsonValue) -> Option<String> {

@@ -636,7 +636,8 @@ async fn drive(
             };
             // The session tells a failure as a chat turn's does, before the
             // turn closes.
-            if let Err(e) = &result {
+            let shown = result.as_ref().err().and_then(crate::server::chat::helpers::turn_error_row);
+            if let Some(shown) = shown {
                 crate::server::chat::helpers::persist_and_emit_message(
                     &state.manager,
                     &state.events_tx,
@@ -644,7 +645,7 @@ async fn drive(
                     &agent_id,
                     &agent_id,
                     "user",
-                    &crate::server::chat::helpers::format_turn_error(&e.to_string()),
+                    &shown,
                     Some(&session_id),
                     false,
                     Some(&run_id),
