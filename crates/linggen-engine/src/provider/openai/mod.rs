@@ -83,6 +83,8 @@ pub struct OpenAiClient {
     /// When true, resolve the linggen.dev account token on each request, so
     /// signing in/out is picked up without a daemon restart.
     linggen_account_live: bool,
+    /// The ChatGPT token file a `codex_auth_live` client reads.
+    auth_file: std::path::PathBuf,
 }
 
 impl OpenAiClient {
@@ -95,6 +97,7 @@ impl OpenAiClient {
             chatgpt_account_id: None,
             codex_auth_live: false,
             linggen_account_live: false,
+            auth_file: crate::provider::codex_auth::codex_auth_file(),
         }
     }
 
@@ -113,7 +116,15 @@ impl OpenAiClient {
             chatgpt_account_id: account_id,
             codex_auth_live: true,
             linggen_account_live: false,
+            auth_file: crate::provider::codex_auth::codex_auth_file(),
         }
+    }
+
+    /// The same client reading its ChatGPT tokens from `file`.
+    #[cfg(test)]
+    pub(crate) fn with_auth_file(mut self, file: std::path::PathBuf) -> Self {
+        self.auth_file = file;
+        self
     }
 
     /// Create a client for the Linggen Cloud proxy (linggen.dev/api/llm).
@@ -129,7 +140,7 @@ impl OpenAiClient {
         if self.codex_auth_live {
             // Read fresh token from disk so login/refresh is picked up immediately
             let tokens = crate::provider::codex_auth::CodexAuthTokens::load(
-                &crate::provider::codex_auth::codex_auth_file(),
+                &self.auth_file,
             );
             if let Some(ref token) = tokens.access_token {
                 rb = rb.header("Authorization", format!("Bearer {}", token));
@@ -252,16 +263,21 @@ impl OpenAiClient {
         Ok(self.apply_auth(rb).send().await?)
     }
 
+    /// The ChatGPT tokens as they are on disk now.
+    fn codex_tokens(&self) -> crate::provider::codex_auth::CodexAuthTokens {
+        crate::provider::codex_auth::CodexAuthTokens::load(&self.auth_file)
+    }
+
     /// Attempt a one-shot refresh of the on-disk ChatGPT OAuth tokens.
     /// Returns true if a new token was fetched and saved.
     async fn try_refresh_codex_tokens(&self) -> bool {
         use crate::provider::codex_auth;
-        let tokens = codex_auth::CodexAuthTokens::load(&codex_auth::codex_auth_file());
+        let tokens = codex_auth::CodexAuthTokens::load(&self.auth_file);
         if tokens.refresh_token.is_none() {
             return false;
         }
         match codex_auth::refresh_tokens(&self.http, &tokens).await {
-            Ok(new) => match new.save(&codex_auth::codex_auth_file()) {
+            Ok(new) => match new.save(&self.auth_file) {
                 Ok(()) => {
                     tracing::info!("Refreshed expired ChatGPT OAuth token after 401.");
                     true
@@ -278,9 +294,12 @@ impl OpenAiClient {
         }
     }
 
-    /// Whether this client uses the ChatGPT Responses API (OAuth mode).
+    /// Whether this client uses the ChatGPT Responses API (OAuth mode). A
+    /// live ChatGPT client reads the account from the token file when it
+    /// sends, so a sign-in made after it was built is seen at once.
     pub(crate) fn uses_responses_api(&self) -> bool {
         self.chatgpt_account_id.is_some()
+            || (self.codex_auth_live && self.codex_tokens().account_id.is_some())
     }
 
     /// Read the signed-in ChatGPT account's Codex metadata.

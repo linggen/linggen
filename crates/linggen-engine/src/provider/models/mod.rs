@@ -45,6 +45,18 @@ pub(crate) fn signs_in_with_chatgpt(cfg: &ModelConfig) -> bool {
     mode != Some("linggen_account") && (mode == Some("chatgpt_oauth") || cfg.provider == "chatgpt")
 }
 
+/// The client a ChatGPT-signed-in model speaks through. It reads the tokens
+/// when it sends, never here: signing in or out after the manager was built
+/// is seen on the next request (signed out, the pre-flight refuses first).
+fn chatgpt_client(cfg: &ModelConfig) -> OpenAiClient {
+    let base_url = if cfg.url.is_empty() || cfg.url == "https://api.openai.com/v1" {
+        codex_auth::CHATGPT_API_BASE.to_string()
+    } else {
+        cfg.url.clone()
+    };
+    OpenAiClient::new_chatgpt_oauth(base_url, String::new(), None)
+}
+
 pub struct ModelManager {
     models: HashMap<String, ModelInstance>,
     /// Registered for exact pins only (older ChatGPT models the backend still
@@ -145,23 +157,6 @@ impl ModelManager {
         let hidden = inject_chatgpt_builtin(&mut configs, catalog).into_iter().collect();
         let mut models = HashMap::new();
 
-        // Load ChatGPT OAuth tokens if any model uses chatgpt_oauth
-        let codex_tokens = {
-            let needs_oauth = configs
-                .iter()
-                .any(|c| c.auth_mode.as_deref() == Some("chatgpt_oauth"));
-            if needs_oauth {
-                let tokens = codex_auth::CodexAuthTokens::load(&codex_auth::codex_auth_file());
-                if tokens.is_valid() {
-                    Some(tokens)
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        };
-
         let all_configs = configs.clone();
         for mut cfg in configs {
             // Check if this model uses ChatGPT OAuth
@@ -188,28 +183,7 @@ impl ModelManager {
                     Arc::new(AnthropicClient::new_claude_oauth(cfg.url.clone()))
                 }
                 "anthropic" => Arc::new(AnthropicClient::new(cfg.url.clone(), cfg.api_key.clone())),
-                _ if is_chatgpt_oauth => {
-                    // ChatGPT OAuth: use subscription tokens
-                    if let Some(ref tokens) = codex_tokens {
-                        let base_url =
-                            if cfg.url.is_empty() || cfg.url == "https://api.openai.com/v1" {
-                                codex_auth::CHATGPT_API_BASE.to_string()
-                            } else {
-                                cfg.url.clone()
-                            };
-                        Arc::new(OpenAiClient::new_chatgpt_oauth(
-                            base_url,
-                            tokens.access_token.clone().unwrap_or_default(),
-                            tokens.account_id.clone(),
-                        ))
-                    } else {
-                        tracing::warn!(
-                            "Model '{}' uses chatgpt_oauth but no valid tokens found. Run `ling auth login`.",
-                            cfg.id
-                        );
-                        Arc::new(OpenAiClient::new(cfg.url.clone(), None))
-                    }
-                }
+                _ if is_chatgpt_oauth => Arc::new(chatgpt_client(&cfg)),
                 // All other providers (openai, gemini, groq, deepseek, etc.) use OpenAI-compatible API.
                 _ => Arc::new(OpenAiClient::new(cfg.url.clone(), cfg.api_key.clone())),
             };
@@ -617,6 +591,60 @@ mod tests {
             provided_by: None,
             is_builtin: false,
         }
+    }
+
+    /// A backend that records the request line and the Authorization header
+    /// of each request, and answers with an empty event stream.
+    async fn recording_backend() -> (String, tokio::sync::mpsc::UnboundedReceiver<String>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            while let Ok((mut sock, _)) = listener.accept().await {
+                let mut buf = vec![0u8; 65536];
+                let n = sock.read(&mut buf).await.unwrap_or(0);
+                let head = String::from_utf8_lossy(&buf[..n]).to_string();
+                let line = head.lines().next().unwrap_or("").to_string();
+                let auth = head
+                    .lines()
+                    .find(|l| l.to_ascii_lowercase().starts_with("authorization:"))
+                    .unwrap_or("authorization: none")
+                    .to_string();
+                let _ = tx.send(format!("{line} | {auth}"));
+                let reply = "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nconnection: close\r\n\r\ndata: [DONE]\n\n";
+                let _ = sock.write_all(reply.as_bytes()).await;
+            }
+        });
+        (format!("http://{addr}"), rx)
+    }
+
+    /// A ChatGPT model's client built while signed out sees a sign-in made
+    /// afterwards on its next request: the tokens are read when it sends.
+    #[tokio::test]
+    async fn a_sign_in_after_the_client_was_built_is_used_at_once() {
+        let (url, mut seen) = recording_backend().await;
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("codex_auth.json");
+        let mut cfg = byok("chatgpt-late-sign-in");
+        cfg.provider = "chatgpt".into();
+        cfg.url = url;
+        cfg.auth_mode = Some("chatgpt_oauth".into());
+        // Built while signed out (the test home holds no token file).
+        let client = chatgpt_client(&cfg).with_auth_file(file.clone());
+        codex_auth::CodexAuthTokens {
+            access_token: Some("tok-late".into()),
+            refresh_token: Some("ref-late".into()),
+            account_id: Some("acct-late".into()),
+            ..Default::default()
+        }
+        .save(&file)
+        .unwrap();
+        let msgs = vec![ChatMessage::new("user", "hi")];
+        let _ = client.chat_text_stream("gpt-x", &msgs, None, None).await;
+        let request = seen.recv().await.unwrap();
+        assert!(request.starts_with("POST /responses "), "{request}");
+        assert!(request.ends_with("Bearer tok-late"), "{request}");
     }
 
     #[test]
