@@ -1,8 +1,8 @@
 # Changelog
 
-## [Unreleased]
+## [2.4.0] - 2026-11-18 — one Ling and one Yinyue
 
-Ships as 2.4, on the Mac and the iPhone together.
+On the Mac now; the iPhone's 2.4 follows.
 
 - **Memory warms up in the background.** Until then, searches report warm-up and new embedding writes are refused, not queued.
 
@@ -27,6 +27,10 @@ Ships as 2.4, on the Mac and the iPhone together.
   app adds a line of its own.
 - **Yinyue and Ling keep notes.** Notes ride beside their next turn, and she
   can ask to look again at a set time.
+- **Yinyue speaks aloud only where you cannot see her.** On the page where
+  her line shows it is text only; anywhere else she is heard.
+- **Rooms are off.** Nothing about rooms shows and every way in says so;
+  `rooms_on = true` in `room_config.toml` brings them back.
 - **What Yinyue says unprompted has limits.** At most 6 lines an hour and none
   from 23:00 to 07:00 by default, both set in Settings → Agents.
 - **A failed mission waits for the morning.** Yinyue is told once, and the
