@@ -27,6 +27,7 @@ pub mod apps;
 pub mod conditions;
 pub mod devices;
 pub mod offer;
+pub mod old_plugin;
 pub mod publish;
 pub mod query;
 pub mod rotation;

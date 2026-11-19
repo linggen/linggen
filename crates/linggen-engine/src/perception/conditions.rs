@@ -50,11 +50,15 @@ struct Finding {
     remedy: Remedy,
 }
 
-/// Every condition this machine watches. Exactly one ships enabled: each
-/// enabled condition is a licence to interrupt, and the next is added only
-/// after living with this one.
+/// Every condition this machine watches. Each enabled condition is a
+/// licence to interrupt, so each is added only for a problem the person
+/// would otherwise never hear of: the disk filling, and a host still on an
+/// old Linggen plugin (its hooks swallow the "update the plugin" answer).
 fn conditions() -> Vec<(&'static str, fn() -> Option<Finding>)> {
-    vec![(STORAGE_FILLING, storage_filling)]
+    vec![
+        (STORAGE_FILLING, storage_filling),
+        (super::old_plugin::OLD_PLUGIN, old_plugin),
+    ]
 }
 
 /// The Mac's disk running out of room — the key skills declare offers under.
@@ -171,6 +175,18 @@ fn runway_level(days: i64) -> u32 {
         1 => 2,
         _ => 3,
     }
+}
+
+/// A host that called a retired Linggen door or tool lately: nothing here
+/// can update its plugin, so the remedy is the reason and the commands.
+fn old_plugin() -> Option<Finding> {
+    let hosts = super::old_plugin::recent();
+    let (situation, fix) = super::old_plugin::situation(&hosts)?;
+    Some(Finding {
+        level: 1,
+        situation,
+        remedy: Remedy::of(super::offer::declared_for(super::old_plugin::OLD_PLUGIN), fix),
+    })
 }
 
 fn storage_filling() -> Option<Finding> {

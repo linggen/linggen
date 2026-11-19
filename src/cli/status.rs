@@ -82,8 +82,28 @@ pub async fn run(config: &Config, config_path: Option<&Path>) -> Result<()> {
     println!();
     check_ling_mem().await;
 
+    // 10. Hosts still on an old Linggen plugin
+    check_old_plugins();
+
     println!();
     Ok(())
+}
+
+/// A host that called a retired Linggen door or tool lately: its plugin is
+/// old, and its hooks say nothing — so this does, with the update for it.
+fn check_old_plugins() {
+    for (host, seen) in crate::perception::old_plugin::recent() {
+        let name = crate::perception::old_plugin::host_name(&host);
+        fail(
+            "Old plugin",
+            &format!(
+                "{name} called the retired {} on {} — {}",
+                seen.called,
+                seen.day,
+                crate::perception::old_plugin::update_commands(&host)
+            ),
+        );
+    }
 }
 
 /// Memory health. Memory is served by the engine itself (`memory_host`): the

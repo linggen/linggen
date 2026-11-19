@@ -49,7 +49,12 @@ async fn raw(ConnectInfo(peer): ConnectInfo<SocketAddr>, req: Request) -> Respon
 /// runs and nothing is forwarded — memory is on the engine's one door.
 async fn mcp(ConnectInfo(peer): ConnectInfo<SocketAddr>, req: Request) -> Response {
     match admit(&caller::resolve(peer.ip(), req.headers()), Door::Mcp, MCP_PATH) {
-        Admit::Through(_) => retired_door(),
+        Admit::Through(_) => {
+            let client = req.headers().get(axum::http::header::USER_AGENT);
+            let host = crate::perception::old_plugin::host_of(client.and_then(|v| v.to_str().ok()));
+            crate::perception::old_plugin::note(host, MCP_PATH);
+            retired_door()
+        }
         Admit::Refused(status, why, code) => refuse(status, why, code),
     }
 }

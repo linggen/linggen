@@ -791,3 +791,32 @@ async fn hosts_reach_memory_at_the_one_door_and_the_engines_own_at_its_own() {
     let text = days["result"]["content"][0]["text"].as_str().unwrap_or_else(|| panic!("{days}"));
     assert!(serde_json::from_str::<Value>(text).unwrap().get("days").is_some(), "{text}");
 }
+
+/// A host still on an old plugin — it calls the retired memory door, or a
+/// retired tool name at the one door — is remembered: which host and when,
+/// once per host per day, where `ling status` and Yinyue's problems read it.
+#[tokio::test]
+async fn an_old_plugins_call_is_remembered_for_the_person() {
+    let w = World::start(Setup::default()).await;
+    let rpc = |method: &str, params: Value| json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params});
+    let as_host = |ua: &'static str| reqwest::Client::builder().user_agent(ua).build().unwrap();
+    let base = w.engine.base_url();
+    let claude = as_host("claude-code/2.1.4 (cli)");
+    for _ in 0..2 {
+        let res = claude.post(format!("{base}/mcp/memory")).json(&rpc("initialize", json!({}))).send().await.unwrap();
+        assert_eq!(res.status().as_u16(), 410);
+    }
+    let codex = as_host("codex_cli_rs/0.167.0");
+    let call = rpc("tools/call", json!({"name": "memory_list", "arguments": {}}));
+    let old: Value = codex.post(format!("{base}/mcp")).json(&call).send().await.unwrap().json().await.unwrap();
+    assert_eq!(old["result"]["structuredContent"]["code"], "UPGRADE_PLUGIN", "{old}");
+
+    let record = w.home.linggen_home().join("activity/old-plugin.json");
+    let seen: Value = serde_json::from_str(&std::fs::read_to_string(&record).unwrap()).unwrap();
+    let hosts: Vec<&String> = seen.as_object().unwrap().keys().collect();
+    assert_eq!(hosts, ["claude-code", "codex"], "{seen}");
+    assert_eq!(seen["claude-code"]["called"], "/mcp/memory");
+    assert_eq!(seen["codex"]["called"], "memory_list");
+    let today = seen["claude-code"]["day"].clone();
+    assert!(today.as_str().is_some_and(|d| d.len() == 10), "{seen}");
+}

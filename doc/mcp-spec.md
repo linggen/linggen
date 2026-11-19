@@ -136,6 +136,15 @@ Linggen plugin and restart the host, and names the form that replaces it. An
 `agent_status` with only `session_id` is the old shape and is answered the same
 way.
 
+An old plugin's hooks swallow that answer, so the engine tells the person
+instead: a call to the retired door or a retired tool name is remembered —
+which host (by its client's name: Claude Code, Codex, or a host it cannot
+tell), when — once per host per day (`perception/old_plugin.rs`, kept in
+`activity/old-plugin.json`). `ling status` lists each host seen in the last
+two days with the update commands for it, and it is a problem Yinyue raises
+(`old-plugin`, perception-spec §5): said once, with those commands, since
+nothing on the Mac updates a host's plugin by itself.
+
 ## Distribution
 
 Claude Code and Codex plugins, one product name: **linggen**.

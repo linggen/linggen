@@ -373,9 +373,25 @@ pub(crate) async fn post_handler(
         state: Some(&state),
     };
     match handle_rpc(&deps, view, &body).await {
-        Some(response) => one_shot(Json(response).into_response()),
+        Some(response) => {
+            note_old_plugin(&headers, &response);
+            one_shot(Json(response).into_response())
+        }
         None => one_shot(StatusCode::ACCEPTED.into_response()),
     }
+}
+
+/// A retired tool name answered "update the plugin": the host that called
+/// it is noted (`perception::old_plugin`), so the person hears of it.
+fn note_old_plugin(headers: &HeaderMap, response: &Value) {
+    let Some(retired) = response["result"]["structuredContent"]["retired"].as_str() else {
+        return;
+    };
+    let client = headers
+        .get(axum::http::header::USER_AGENT)
+        .and_then(|v| v.to_str().ok());
+    let host = crate::perception::old_plugin::host_of(client);
+    crate::perception::old_plugin::note(host, retired);
 }
 
 /// `GET /mcp` — this server never pushes; clients poll nothing.
