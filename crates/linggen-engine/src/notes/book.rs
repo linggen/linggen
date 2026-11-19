@@ -30,15 +30,16 @@ pub struct NoteBook {
     notes: Vec<Note>,
     #[serde(skip)]
     path: PathBuf,
-    /// Why this book may not be saved: its unreadable file could not be set
-    /// aside, and saving would write over it.
+    /// Why the file on disk could not be read, when it could not: the next
+    /// save sets that file aside instead of writing over it.
     #[serde(skip)]
-    blocked: Option<String>,
+    unreadable: std::sync::Mutex<Option<String>>,
 }
 
-/// Move an unreadable notes file out of the way, keeping it, and start an
-/// empty book in its place.
-fn set_aside(path: &Path, why: &str) -> NoteBook {
+/// Move an unreadable notes file out of the way under a new name, keeping
+/// it, and say so. An error when it could not be moved: then nothing may be
+/// written in its place.
+fn set_aside(path: &Path, why: &str) -> std::io::Result<()> {
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -51,39 +52,47 @@ fn set_aside(path: &Path, why: &str) -> NoteBook {
                 path.display(),
                 aside.display()
             );
-            NoteBook::default()
+            Ok(())
         }
-        Err(e) => {
-            tracing::warn!("notes: {} could not be read ({why}) nor set aside ({e})", path.display());
-            NoteBook {
-                blocked: Some(format!("{} cannot be read and was left as it is", path.display())),
-                ..NoteBook::default()
-            }
-        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(std::io::Error::other(format!(
+            "{} cannot be read ({why}) and could not be set aside ({e}); it was left as it is",
+            path.display()
+        ))),
     }
 }
 
 impl NoteBook {
-    /// `agent`'s book in `dir`; empty when there is none yet. A file that
-    /// cannot be read or parsed is set aside under a new name and said — a
-    /// note is never worth failing a turn over, and never worth losing the
-    /// old notes to the next one.
+    /// `agent`'s book in `dir`; empty when there is none yet, or when it
+    /// cannot be read — a note is never worth failing a turn over. An
+    /// unreadable file is left as it is until a save sets it aside.
     pub fn open(dir: &Path, agent: &str) -> Self {
         let path = dir.join(format!("{}.json", file_stem(agent)));
-        let read = std::fs::read_to_string(&path);
-        let mut book: NoteBook = match read {
+        let mut book: NoteBook = match std::fs::read_to_string(&path) {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => NoteBook::default(),
-            Err(e) => set_aside(&path, &e.to_string()),
-            Ok(text) => serde_json::from_str(&text).unwrap_or_else(|e| set_aside(&path, &e.to_string())),
+            Err(e) => Self::unreadable(e.to_string()),
+            Ok(text) => serde_json::from_str(&text).unwrap_or_else(|e| Self::unreadable(e.to_string())),
         };
         book.path = path;
         book
     }
 
-    pub fn save(&self) -> std::io::Result<()> {
-        if let Some(why) = &self.blocked {
-            return Err(std::io::Error::other(why.clone()));
+    fn unreadable(why: String) -> Self {
+        NoteBook {
+            unreadable: std::sync::Mutex::new(Some(why)),
+            ..NoteBook::default()
         }
+    }
+
+    /// Written whole. A file that could not be read is first set aside —
+    /// never written over.
+    pub fn save(&self) -> std::io::Result<()> {
+        let mut unreadable = self.unreadable.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(why) = unreadable.as_deref() {
+            set_aside(&self.path, why)?;
+        }
+        *unreadable = None;
+        drop(unreadable);
         let body = serde_json::to_vec_pretty(self).map_err(std::io::Error::other)?;
         crate::state_fs::devices::write_atomic(&self.path, &body)
     }

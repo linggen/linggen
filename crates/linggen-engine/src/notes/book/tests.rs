@@ -153,7 +153,9 @@ fn an_unreadable_book_is_set_aside_not_overwritten() {
     std::fs::write(&file, "{\"next\": 4, \"notes\": [{\"id\": \"n4\", \"te").unwrap();
     let mut b = book(&dir);
     assert!(b.notes().is_empty());
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1, "reading moves nothing");
     b.write("a new note", None, "test-mac", NOW).unwrap();
+    b.save().unwrap();
     b.save().unwrap();
     let aside: Vec<_> = std::fs::read_dir(dir.path())
         .unwrap()
