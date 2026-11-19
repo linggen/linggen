@@ -225,12 +225,14 @@ pub(crate) fn refusing(
 
 /// A hosted provider reached with no key. A local or LAN server (Ollama,
 /// an OpenAI-compatible server on this network) needs none, nor does a
-/// model signed in another way or a room's proxy.
+/// model signed in another way or a room's proxy. `auth_mode = "api_key"`
+/// names the key itself, so it is no sign-in.
 fn needs_key(cfg: &ModelConfig) -> bool {
     let has_key = cfg.api_key.as_deref().is_some_and(|k| !k.trim().is_empty());
     // The model manager treats a `chatgpt` provider as signed in with
     // ChatGPT whatever its auth mode says; so does this.
-    let signs_in = cfg.auth_mode.is_some() || cfg.provider == "chatgpt";
+    let signs_in = cfg.auth_mode.as_deref().is_some_and(|m| m != "api_key")
+        || cfg.provider == "chatgpt";
     let keyless = matches!(cfg.provider.as_str(), "ollama" | "proxy");
     !(has_key || signs_in || keyless || on_this_network(&cfg.url))
 }
@@ -317,6 +319,15 @@ mod tests {
             "https://x",
             None,
             Some("chatgpt_oauth")
+        )));
+        // An auth mode that names the key is no sign-in: with no key, the
+        // model is not ready.
+        assert!(needs_key(&model(
+            "m",
+            "openai",
+            "https://api.openai.com/v1",
+            None,
+            Some("api_key")
         )));
         assert!(!needs_key(&model(
             "m",
