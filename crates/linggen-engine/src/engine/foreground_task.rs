@@ -231,6 +231,72 @@ mod tests {
         );
     }
 
+    /// A Stop that lands while a call waits ends the batch as a stopped run,
+    /// never as an empty success.
+    #[tokio::test]
+    async fn a_stop_while_a_call_waits_ends_the_run_as_stopped() {
+        let dir = tempfile::tempdir().unwrap();
+        let (manager, _events) = AgentManager::new(
+            crate::config::Config::default(),
+            None,
+            Arc::new(crate::engine::test_registries::Empty),
+            Arc::new(crate::engine::test_registries::Empty),
+            Arc::new(crate::engine::test_registries::Empty),
+            crate::engine::InterfaceMode::Web,
+        );
+        let mut engine = engine_with(manager.clone(), dir.path());
+        engine.tools.set_ask_user_bridge(Arc::new(crate::engine::tools::AskUserBridge {
+            events_tx: crate::engine::event_bus::EventBus::new(16),
+            pending: Default::default(),
+            session_id: Some("s".into()),
+        }));
+        let run = manager
+            .begin_delegated_run(dir.path(), Some("s"), "ling", None, None, false)
+            .await
+            .unwrap();
+        engine.set_run_id(Some(run.clone()));
+        let (_tx, progress_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut state = crate::engine::types::LoopState {
+            messages: Vec::new(),
+            allowed_tools: None,
+            read_paths: Default::default(),
+            tool_cache: Default::default(),
+            empty_search_streak: 0,
+            redundant_tool_streak: 0,
+            last_tool_sig: String::new(),
+            invalid_json_streak: 0,
+            last_assistant_response: String::new(),
+            identical_response_streak: 0,
+            loop_nudge_count: 0,
+            empty_response_streak: 0,
+            progress_rx,
+        };
+        let ask = crate::engine::ModelAction {
+            tool: "AskUser".into(),
+            args: serde_json::json!({ "questions": [{
+                "question": "Which?", "header": "Pick",
+                "options": [{ "label": "A" }, { "label": "B" }],
+            }] }),
+        };
+        let stopper = manager.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(400)).await;
+            stopper.cancel_run_tree(&run).await.unwrap();
+        });
+        let out = tokio::time::timeout(
+            Duration::from_secs(10),
+            engine.execute_action_loop(
+                vec![crate::engine::types::ToolUse { action: ask, id: None }],
+                &mut state,
+                None,
+            ),
+        )
+        .await
+        .expect("the stop ends the wait");
+        let err = out.err().expect("a stopped run, not an outcome");
+        assert!(err.to_string().contains("cancelled"), "{err}");
+    }
+
     /// Without a Steer the turn waits and gets the subagent's own answer.
     #[tokio::test]
     async fn an_unsteered_subagent_answers_the_turn() {

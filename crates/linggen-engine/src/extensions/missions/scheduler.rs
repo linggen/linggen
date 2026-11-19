@@ -913,20 +913,25 @@ async fn dispatch_mission_prompt(
 
     let status = match result {
         Ok(outcome) => {
-            let _ = manager
-                .finish_agent_run(
-                    &run_id,
-                    crate::engine::agent::AgentRunStatus::Completed,
-                    None,
-                )
-                .await;
-            let _ = events_tx.send(ServerEvent::Outcome {
-                agent_id: agent_id.to_string(),
-                outcome,
-                session_id: session_id.clone(),
-                run_id: Some(run_id.clone()),
-            });
-            "completed"
+            // The run record decides how the run ended: a Stop that landed
+            // as the loop finished is recorded as stopped, and the mission
+            // history says the same.
+            let completed = crate::engine::agent::AgentRunStatus::Completed;
+            let ended = manager
+                .finish_agent_run(&run_id, completed, None)
+                .await
+                .unwrap_or(completed);
+            if ended == crate::engine::agent::AgentRunStatus::Cancelled {
+                "cancelled"
+            } else {
+                let _ = events_tx.send(ServerEvent::Outcome {
+                    agent_id: agent_id.to_string(),
+                    outcome,
+                    session_id: session_id.clone(),
+                    run_id: Some(run_id.clone()),
+                });
+                "completed"
+            }
         }
         Err(err) => {
             let msg = err.to_string();

@@ -1031,6 +1031,22 @@ impl AgentEngine {
         let _ = self.persist_assistant_message(&fallback, session_id).await;
     }
 
+    /// A batch ended the loop with `outcome`. A Stop that landed while it
+    /// ran — a foreground subagent, parallel tools or a call waited on —
+    /// ends the run as stopped instead, the same bail as the loop-top check,
+    /// so the run record and the mission history say stopped alike.
+    async fn batch_ended(
+        &mut self,
+        outcome: AgentOutcome,
+        state: &mut LoopState,
+    ) -> Result<Option<AgentOutcome>> {
+        self.drain_tool_progress(&mut state.progress_rx).await;
+        if self.is_cancelled().await {
+            anyhow::bail!("run cancelled");
+        }
+        Ok(Some(outcome))
+    }
+
     /// Execute a list of model actions with batching (delegation, parallel, sequential).
     /// Shared by both native tool-call and legacy JSON paths.
     /// Returns `Ok(Some(outcome))` if the loop should exit early; errs with
@@ -1118,8 +1134,7 @@ impl AgentEngine {
                     )
                     .await
                 {
-                    self.drain_tool_progress(&mut state.progress_rx).await;
-                    return Ok(Some(outcome));
+                    return self.batch_ended(outcome, state).await;
                 }
             } else if parallel_batch_size >= 2 {
                 let batch: Vec<ToolUse> = actions.drain(..parallel_batch_size).collect();
@@ -1128,8 +1143,7 @@ impl AgentEngine {
                     .handle_parallel_batch(batch, state, session_id)
                     .await
                 {
-                    self.drain_tool_progress(&mut state.progress_rx).await;
-                    return Ok(Some(outcome));
+                    return self.batch_ended(outcome, state).await;
                 }
             } else {
                 let ToolUse { action, id: tc_id } = actions.remove(0);
@@ -1138,8 +1152,7 @@ impl AgentEngine {
                     .dispatch_sequential_action(action, state, actions_remaining, session_id, tc_id)
                     .await
                 {
-                    self.drain_tool_progress(&mut state.progress_rx).await;
-                    return Ok(Some(outcome));
+                    return self.batch_ended(outcome, state).await;
                 }
             }
         }
