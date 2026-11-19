@@ -50,7 +50,9 @@ fn read_policy_command_fixtures() {
     let sessions = tempfile::tempdir_in(state).unwrap();
     let own = sessions.path().join("own");
     let other = sessions.path().join("other");
-    file(&own, "tasks/sh-9a0f4a5f.log");
+    for id in ["9a0f4a5f", "e19e1fde", "d1edfcef", "b8c5684d"] {
+        file(&own, &format!("tasks/sh-{id}.log"));
+    }
     file(&other, "tasks/sh-6e48fc54.log");
     let grants = SessionPermissions::load(&own);
     let tests = [
@@ -65,7 +67,8 @@ fn read_policy_command_fixtures() {
         ("sed -n '280,325p;375,412p' C/registry/src/*/reqwest-0.12.28/src/proxy.rs; sed -n '62,82p' scripts/check.sh; tail -8 O/tasks/sh-9a0f4a5f.log", Allow),
         ("sed -n '1410,1434p' C/registry/src/*/reqwest-0.12.28/src/async_impl/client.rs; grep -n 'matcher' C/registry/src/*/hyper-util-0.1.21/src/client/proxy/mod.rs", Allow),
         ("tail -12 X/tasks/sh-6e48fc54.log", Ask),
-        ("for x in e19e1fde d1edfcef b8c5684d; do echo ===$x; tail -5 O/tasks/sh-$x.log; done", Ask),
+        ("for x in e19e1fde d1edfcef b8c5684d; do echo ===$x; tail -5 O/tasks/sh-$x.log; done", Allow),
+        ("for x in e19e1fde d1edfcef b8c5684d; do echo ===$x; tail -5 X/tasks/sh-$x.log; done", Ask),
         ("kill -TERM 46284; sleep 12", Ask),
         ("tail -15 O/tasks/sh-9a0f4a5f.log; kill -TERM 46284", Ask),
         ("cat S/account.toml", Refuse),
@@ -113,12 +116,22 @@ fn read_policy_protected_places_require_a_specific_grant() {
 }
 
 #[test]
-fn read_policy_account_file_is_refused_with_a_named_grant() {
+fn read_policy_account_file_requires_local_owner_or_refuses() {
     let root = crate::paths::linggen_home();
     let path = root.join("account.toml");
-    let grants = grant(path.to_str().unwrap(), PermissionMode::Admin);
-    let got = outcome(check_permission("Read", None, path.to_str(), root, &grants, None));
-    assert_eq!(got, Refuse);
+    let read = |grants: &SessionPermissions| outcome(check_permission("Read", None, path.to_str(), root, grants, None));
+    let broad = grant("*", PermissionMode::Admin);
+    let named = grant(path.to_str().unwrap(), PermissionMode::Read);
+    let parent = grant(root.to_str().unwrap(), PermissionMode::Read);
+    let delegate = |grants: SessionPermissions| SessionPermissions {
+        interactive: false,
+        ask_caller: true,
+        ..grants
+    };
+    assert_eq!(
+        [read(&broad), read(&named), read(&parent), read(&delegate(broad)), read(&delegate(named))],
+        [Ask, Allow, Allow, Refuse, Refuse]
+    );
 }
 
 #[test]
@@ -129,6 +142,36 @@ fn read_policy_skill_keeps_its_named_grant() {
     let grants = grant(folder.to_str().unwrap(), PermissionMode::Read);
     let got = outcome(check_permission("Read", None, path.to_str(), &folder, &grants, None));
     assert_eq!(got, Allow);
+}
+
+#[test]
+fn read_policy_shell_globs_need_a_safe_fixed_prefix() {
+    let world = tempfile::tempdir_in(dirs::home_dir().unwrap()).unwrap();
+    let cwd = world.path();
+    file(cwd, "safe/index/file.rs");
+    file(cwd, "mixed/index/file.rs");
+    file(cwd, "mixed/.ssh/config");
+    file(cwd, "private/.ssh/index/file.rs");
+    let grants = SessionPermissions::default();
+    let cases = [
+        ("safe/*/file.rs", Allow),
+        ("safe/inde?/file.rs", Allow),
+        ("safe/inde[xy]/file.rs", Allow),
+        ("mixed/*/file.rs", Ask),
+        ("private/.ssh/*/file.rs", Ask),
+        ("safe/*/../index/file.rs", Ask),
+        ("missing/*/file.rs", Ask),
+        ("safe/[.]*/file.rs", Ask),
+    ];
+    let mut failures = Vec::new();
+    for (path, want) in cases {
+        let cmd = format!("sed -n '1,2p' {path}");
+        let got = bash(&cmd, cwd, &grants);
+        if got != want {
+            failures.push(format!("{cmd}: expected {want:?}, got {got:?}"));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
 #[test]
