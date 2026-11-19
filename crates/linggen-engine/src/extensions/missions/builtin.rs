@@ -138,7 +138,8 @@ fn refresh(path: &Path, name: &str) -> Result<bool> {
 
     let dir = path.parent().context("Missing mission directory")?;
     let backup = path.with_extension("md.prev");
-    if !backup.try_exists()? {
+    let kept = !backup.try_exists()?;
+    if kept {
         let mut copy = tempfile::NamedTempFile::new_in(dir)?;
         copy.write_all(old.as_bytes())?;
         if let Err(e) = copy.persist_noclobber(&backup) {
@@ -152,8 +153,10 @@ fn refresh(path: &Path, name: &str) -> Result<bool> {
     replacement.as_file().set_permissions(metadata.permissions())?;
     replacement.persist(path)?;
     if merged.instructions_replaced {
+        let was = if kept { "kept at" } else { "not kept (the first one replaced is at" };
+        let close = if kept { "" } else { ")" };
         tracing::info!(
-            "built-in mission {} replaced by this engine's; the earlier file is kept at {}",
+            "built-in mission {} replaced by this engine's; the file it replaced is {was} {}{close}",
             path.display(),
             backup.display()
         );
