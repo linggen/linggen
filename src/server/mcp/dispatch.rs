@@ -39,16 +39,27 @@ async fn bridge(
         .and_then(Value::as_str)
         .unwrap_or("upstream_error");
     let message = res.get("message").and_then(Value::as_str).unwrap_or("");
+    if let Some(why) = crate::cannot_run::CannotRun::of_bridge(code) {
+        return cannot_run(&why, NOT_CONNECTED);
+    }
     tool_content(bridge_failure(code, message), true)
 }
 
-/// A bridge refusal in words a calling agent can act on.
-pub(super) fn bridge_failure(code: &str, message: &str) -> String {
+/// What a calling agent is told when the extension is not connected.
+const NOT_CONNECTED: &str = "browser not connected — the linggen-browser extension must be \
+    running and connected in Chrome. Ask the user to install or enable it, then retry.";
+
+/// A call that cannot run, for a reason a caller acts on: the words, and
+/// the reason as a field (`structuredContent.cannot_run`).
+fn cannot_run(why: &crate::cannot_run::CannotRun, text: &str) -> Value {
+    let mut res = tool_content(text.to_string(), true);
+    res["structuredContent"] = json!({ "cannot_run": why.fact() });
+    res
+}
+
+/// Any other bridge refusal, in words a calling agent can act on.
+fn bridge_failure(code: &str, message: &str) -> String {
     match code {
-        "no_bridge" | "module_unavailable" => "browser not connected — the \
-            linggen-browser extension must be running and connected in Chrome. \
-            Ask the user to install or enable it, then retry."
-            .to_string(),
         "not_permitted" => format!(
             "not_permitted: {message} — Chrome did not grant permission for this site \
             (the user declined it in Chrome's prompt); ask the user before retrying."

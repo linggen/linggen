@@ -99,16 +99,14 @@ impl CannotRun {
         if is_memory_call_error(msg) {
             return None;
         }
-        if msg.contains("browser not connected") {
-            return Some(Self::ExtensionNotConnected);
-        }
         let kind = kind_of_message(msg);
         let cloud = msg.contains("AUTH_REQUIRED") && msg.contains("linggen.dev");
         provider(kind, named_reset(msg), model, cloud)
     }
 
     /// A browser bridge refusal: only a missing connection is a reason
-    /// the call cannot run (a declined prompt is the user's answer).
+    /// the call cannot run (a declined prompt is the user's answer). The
+    /// one place this is decided; the door's browser branches carry it.
     pub fn of_bridge(code: &str) -> Option<Self> {
         matches!(code, "no_bridge" | "module_unavailable").then_some(Self::ExtensionNotConnected)
     }

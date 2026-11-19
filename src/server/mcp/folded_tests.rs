@@ -531,11 +531,9 @@ async fn a_call_reaches_its_dispatcher() {
         .unwrap();
     assert_eq!(res["isError"], true);
     assert!(text(&res).contains("not connected"));
-    let reason = crate::cannot_run::CannotRun::of_message(text(&res), None);
-    assert_eq!(
-        reason,
-        Some(crate::cannot_run::CannotRun::ExtensionNotConnected)
-    );
+    let why = &res["structuredContent"]["cannot_run"];
+    assert_eq!(why["reason"], "extension_not_connected", "{res}");
+    assert!(why["line"].as_str().is_some_and(|l| l.contains("extension")), "{res}");
     for (tool, args) in [
         ("agent_status", json!({"op": "models"})),
         ("memory_upkeep", json!({"op": "dream_status"})),

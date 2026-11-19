@@ -348,12 +348,18 @@ async fn the_rpc_shapes_are_locked() {
     )
     .await;
     assert_eq!(res, json!({ "jsonrpc": "2.0", "id": 9, "result": {} }));
+    // A browser call with no extension: a failure result whose reason is a
+    // field of its own (`structuredContent.cannot_run`), beside its words.
     let res = call(View::Local, "browser_read", json!({"op": "page"})).await;
     let result = res["result"].as_object().unwrap();
     let mut keys: Vec<&String> = result.keys().collect();
     keys.sort();
-    assert_eq!(keys, ["content", "isError"]);
+    assert_eq!(keys, ["content", "isError", "structuredContent"]);
     assert_eq!(res["result"]["content"][0]["type"], "text");
+    let why = &res["result"]["structuredContent"]["cannot_run"];
+    let mut fields: Vec<&String> = why.as_object().unwrap().keys().collect();
+    fields.sort();
+    assert_eq!(fields, ["line", "reason"]);
     let res = call(View::Local, "browser_fly", json!({})).await;
     assert_eq!(
         res["error"],
