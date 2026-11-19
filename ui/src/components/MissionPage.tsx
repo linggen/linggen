@@ -257,7 +257,13 @@ export const MissionPage: React.FC<{
   };
 
   const handleDelete = async (id: string) => {
-    try { await deleteMission(id); await loadMissions(); if (selection && 'missionId' in selection && selection.missionId === id) setSelection(null); } catch (e) { console.error('Failed to delete mission:', e); }
+    try {
+      await deleteMission(id);
+      await loadMissions();
+      // The mission being edited is gone: so is its editor.
+      if (editingMission?.id === id) handleCancel();
+      else if (selection && 'missionId' in selection && selection.missionId === id) setSelection(null);
+    } catch (e) { console.error('Failed to delete mission:', e); }
   };
 
   const handleSelectMission = (m: CronMission) => {
@@ -312,6 +318,9 @@ export const MissionPage: React.FC<{
           <div className="flex-1 flex items-center justify-center text-sm text-slate-400">Loading...</div>
         ) : rightView === 'editor' ? (
           <MissionEditor
+            // One editor per mission: its id, text and unsaved state are that
+            // mission's, never carried over to the next one picked.
+            key={editingMission?.id ?? ''}
             editing={editingMission}
             workingFolders={workingFolders}
             onSave={handleSave}
