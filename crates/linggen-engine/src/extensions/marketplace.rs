@@ -239,33 +239,14 @@ pub async fn install_skill(
     let normalized = normalize_github_url(repo_url)?;
     let (owner, repo) = parse_github_url(&normalized)?;
 
-    // Check existing
-    if target_dir.exists() {
-        if force {
-            fs::remove_dir_all(target_dir)?;
-        } else {
-            anyhow::bail!(
-                "Skill '{}' already installed at {}. Use force to overwrite.",
-                name,
-                target_dir.display()
-            );
-        }
-    }
+    refuse_unforced(name, target_dir, force)?;
 
     // Download ZIP
     let zip_url = build_github_zip_url(&owner, &repo, git_ref);
     let client = http_client()?;
     let temp_zip = download_to_temp(&client, &zip_url).await?;
 
-    // Extract
-    let result = extract_skills_from_zip(
-        &temp_zip,
-        target_dir,
-        SkillPick::Named {
-            skill: name,
-            repo: &repo,
-        },
-    );
+    let result = install_named_from_zip(&temp_zip, name, &repo, target_dir);
     let _ = fs::remove_file(&temp_zip);
 
     match result {
@@ -320,14 +301,7 @@ async fn install_skill_inner(
     let client = http_client()?;
     let temp_zip = download_to_temp(&client, &zip_url).await?;
 
-    let result = extract_skills_from_zip(
-        &temp_zip,
-        target_dir,
-        SkillPick::Named {
-            skill: name,
-            repo: &repo,
-        },
-    );
+    let result = install_named_from_zip(&temp_zip, name, &repo, target_dir);
     let _ = fs::remove_file(&temp_zip);
 
     result?;
@@ -349,18 +323,7 @@ pub async fn install_from_clawhub(
     target_dir: &Path,
     force: bool,
 ) -> Result<String> {
-    // Check existing
-    if target_dir.exists() {
-        if force {
-            fs::remove_dir_all(target_dir)?;
-        } else {
-            anyhow::bail!(
-                "Skill '{}' already installed at {}. Use force to overwrite.",
-                slug,
-                target_dir.display()
-            );
-        }
-    }
+    refuse_unforced(slug, target_dir, force)?;
 
     // Build download URL (encode params to prevent injection)
     validate_slug(slug)?;
@@ -373,25 +336,9 @@ pub async fn install_from_clawhub(
 
     let client = http_client()?;
     let temp_zip = download_to_temp(&client, &download_url).await?;
-
-    // Extract to a temp directory first, then move only the target skill to target_dir.
-    // This prevents stray dirs from multi-skill ZIPs polluting the parent.
-    let temp_dir = tempfile::tempdir().context("Failed to create temp dir for extraction")?;
-    let result = extract_skills_from_zip(&temp_zip, temp_dir.path(), SkillPick::All);
+    let result = install_first_from_zip(&temp_zip, slug, target_dir);
     let _ = fs::remove_file(&temp_zip);
-
-    let installed = result?;
-    if installed.is_empty() {
-        anyhow::bail!("No skill found in ClawHub ZIP for '{}'", slug);
-    }
-
-    // Pick the first extracted skill (ClawHub ZIPs typically contain exactly one)
-    let extracted_name = &installed[0];
-    let extracted_dir = temp_dir.path().join(extracted_name);
-
-    fs::create_dir_all(target_dir)?;
-    // Move contents from extracted dir to target_dir
-    copy_dir_all(&extracted_dir, target_dir)?;
+    result?;
 
     // Run install script if declared in frontmatter.
     if let Err(e) = super::skills::run_install_script(target_dir) {
@@ -402,6 +349,147 @@ pub async fn install_from_clawhub(
         slug,
         target_dir.display()
     ))
+}
+
+/// An installed skill is replaced only when asked — refused before anything
+/// is fetched.
+fn refuse_unforced(name: &str, target_dir: &Path, force: bool) -> Result<()> {
+    if target_dir.exists() && !force {
+        anyhow::bail!(
+            "Skill '{}' already installed at {}. Use force to overwrite.",
+            name,
+            target_dir.display()
+        );
+    }
+    Ok(())
+}
+
+/// Install the skill `name` from a downloaded repo ZIP into `target_dir`.
+fn install_named_from_zip(zip: &Path, name: &str, repo: &str, target_dir: &Path) -> Result<()> {
+    let staging = staging_beside(target_dir)?;
+    let new = staging.path().join("new");
+    extract_skills_from_zip(zip, &new, SkillPick::Named { skill: name, repo })?;
+    swap_in(staging, &new, target_dir)
+}
+
+/// Install the first skill of a ClawHub ZIP (they hold one) into `target_dir`.
+fn install_first_from_zip(zip: &Path, slug: &str, target_dir: &Path) -> Result<()> {
+    let staging = staging_beside(target_dir)?;
+    let all = staging.path().join("all");
+    let installed = extract_skills_from_zip(zip, &all, SkillPick::All)?;
+    let Some(first) = installed.first() else {
+        anyhow::bail!("No skill found in ClawHub ZIP for '{}'", slug);
+    };
+    swap_in(staging, &all.join(first), target_dir)
+}
+
+/// A folder beside `target_dir` for the new copy: on the same disk, so the
+/// swap is a rename. Its dot-name, and the copy sitting one level down in
+/// it, keep the skill loader from reading it as a skill.
+fn staging_beside(target_dir: &Path) -> Result<tempfile::TempDir> {
+    let parent = target_dir
+        .parent()
+        .context("The skill folder has no parent")?;
+    fs::create_dir_all(parent)?;
+    tempfile::Builder::new()
+        .prefix(".installing-")
+        .tempdir_in(parent)
+        .context("Failed to create the install folder")
+}
+
+/// Put the whole new copy `new` in place of `target_dir`, carrying the
+/// installed skill's state over ([`state_paths`]). A failure leaves the
+/// installed skill as it was; if even putting it back fails, the staging
+/// folder holding it is kept and named in the error.
+fn swap_in(staging: tempfile::TempDir, new: &Path, target_dir: &Path) -> Result<()> {
+    if !target_dir.exists() {
+        return fs::rename(new, target_dir).context("Failed to put the skill in place");
+    }
+    let old = staging.path().join("old");
+    let mut carried = Vec::new();
+    let swapped = carry_state(target_dir, new, &mut carried).and_then(|()| {
+        fs::rename(target_dir, &old)?;
+        fs::rename(new, target_dir)
+    });
+    let Err(error) = swapped else {
+        return Ok(());
+    };
+    if let Err(back) = put_back(target_dir, new, &old, &carried) {
+        let kept = staging.keep();
+        anyhow::bail!(
+            "Failed to replace the skill ({error}), and putting it back failed too ({back}): it is kept at {}",
+            kept.display()
+        );
+    }
+    Err(anyhow::Error::from(error).context("Failed to replace the skill"))
+}
+
+/// What of an installed skill is the person's, kept across an update: its
+/// `data/`, and every path its manifest keeps as state (`cloud.save`) that
+/// stays inside the skill folder. Outermost first; a path inside another is
+/// carried with it.
+fn state_paths(skill_dir: &Path) -> Vec<PathBuf> {
+    let declared =
+        super::skills::load_skill_from_path(skill_dir, super::skills::SkillSource::Global)
+            .ok()
+            .flatten()
+            .and_then(|skill| skill.cloud)
+            .and_then(|cloud| cloud.save)
+            .map(|save| {
+                save.paths()
+                    .into_iter()
+                    .map(PathBuf::from)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+    let mut paths: Vec<PathBuf> = std::iter::once(PathBuf::from("data"))
+        .chain(declared)
+        .filter(|p| {
+            p.components().count() > 0 && p.components().all(|c| matches!(c, Component::Normal(_)))
+        })
+        .collect();
+    paths.sort_by_key(|p| p.components().count());
+    let mut outermost: Vec<PathBuf> = Vec::new();
+    for path in paths {
+        if !outermost.iter().any(|kept| path.starts_with(kept)) {
+            outermost.push(path);
+        }
+    }
+    outermost
+}
+
+/// Move the installed skill's state into the new copy, over the archive's
+/// own; `carried` lists what has moved, so it can be put back.
+fn carry_state(old: &Path, new: &Path, carried: &mut Vec<PathBuf>) -> std::io::Result<()> {
+    for rel in state_paths(old) {
+        let (from, to) = (old.join(&rel), new.join(&rel));
+        if !from.exists() {
+            continue;
+        }
+        if to.is_dir() {
+            fs::remove_dir_all(&to)?;
+        } else if to.exists() {
+            fs::remove_file(&to)?;
+        }
+        if let Some(parent) = to.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::rename(&from, &to)?;
+        carried.push(rel);
+    }
+    Ok(())
+}
+
+/// Undo a swap that did not finish: the installed skill back at
+/// `target_dir`, and its state back in it.
+fn put_back(target_dir: &Path, new: &Path, old: &Path, carried: &[PathBuf]) -> std::io::Result<()> {
+    if old.exists() && !target_dir.exists() {
+        fs::rename(old, target_dir)?;
+    }
+    for rel in carried.iter().rev() {
+        fs::rename(new.join(rel), target_dir.join(rel))?;
+    }
+    Ok(())
 }
 
 pub fn delete_skill(name: &str, target_dir: &Path) -> Result<String> {
@@ -963,6 +1051,115 @@ mod tests {
         let got = extract_skills_from_zip(&zip, &out, SkillPick::All).unwrap();
         assert_eq!(got, vec!["_root".to_string()]);
         assert!(out.join("_root/lib/x.py").is_file());
+    }
+
+    // ---- replacing an installed skill ----
+
+    /// An installed `foo` with the person's state in `data/`.
+    fn installed_foo(skills: &Path) -> PathBuf {
+        let dir = skills.join("foo");
+        fs::create_dir_all(dir.join("data")).unwrap();
+        fs::write(dir.join("SKILL.md"), "old").unwrap();
+        fs::write(dir.join("data/state.json"), "{\"mine\":1}").unwrap();
+        dir
+    }
+
+    #[test]
+    fn an_update_replaces_the_skill_and_keeps_its_data() {
+        let tmp = tempfile::tempdir().unwrap();
+        let zip = write_zip(tmp.path(), REPO);
+        let skills = tmp.path().join("skills");
+        let dir = installed_foo(&skills);
+        install_named_from_zip(&zip, "foo", "skills", &dir).unwrap();
+        assert_eq!(
+            fs::read_to_string(dir.join("SKILL.md")).unwrap(),
+            "skills-main/foo/SKILL.md"
+        );
+        assert!(dir.join("scripts/a.js").is_file());
+        assert_eq!(
+            fs::read_to_string(dir.join("data/state.json")).unwrap(),
+            "{\"mine\":1}"
+        );
+        // Nothing of the install is left beside the skill.
+        let names: Vec<_> = fs::read_dir(&skills)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name())
+            .collect();
+        assert_eq!(names, vec![std::ffi::OsString::from("foo")]);
+    }
+
+    #[test]
+    fn a_failed_update_leaves_the_installed_skill_as_it_was() {
+        let tmp = tempfile::tempdir().unwrap();
+        let zip = write_zip(tmp.path(), REPO);
+        let skills = tmp.path().join("skills");
+        let dir = installed_foo(&skills);
+        assert!(install_named_from_zip(&zip, "nope", "skills", &dir).is_err());
+        assert_eq!(fs::read_to_string(dir.join("SKILL.md")).unwrap(), "old");
+        assert_eq!(
+            fs::read_to_string(dir.join("data/state.json")).unwrap(),
+            "{\"mine\":1}"
+        );
+        let names: Vec<_> = fs::read_dir(&skills)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name())
+            .collect();
+        assert_eq!(names, vec![std::ffi::OsString::from("foo")]);
+    }
+
+    #[test]
+    fn a_clawhub_update_keeps_the_data_and_a_failed_one_keeps_everything() {
+        let tmp = tempfile::tempdir().unwrap();
+        let zip = write_zip(tmp.path(), &["SKILL.md", "lib/x.py"]);
+        let skills = tmp.path().join("skills");
+        let dir = installed_foo(&skills);
+        install_first_from_zip(&zip, "foo", &dir).unwrap();
+        assert!(dir.join("lib/x.py").is_file());
+        assert_eq!(
+            fs::read_to_string(dir.join("SKILL.md")).unwrap(),
+            "SKILL.md"
+        );
+        assert!(dir.join("data/state.json").is_file());
+
+        let empty = tmp.path().join("empty.zip");
+        zip::ZipWriter::new(fs::File::create(&empty).unwrap())
+            .finish()
+            .unwrap();
+        assert!(install_first_from_zip(&empty, "foo", &dir).is_err());
+        assert!(dir.join("lib/x.py").is_file());
+        assert!(dir.join("data/state.json").is_file());
+    }
+
+    /// State the manifest marks as kept (`cloud.save`) outside `data/` is
+    /// carried over too.
+    #[test]
+    fn an_update_keeps_what_the_manifest_marks_as_state() {
+        let tmp = tempfile::tempdir().unwrap();
+        let zip = write_zip(tmp.path(), REPO);
+        let skills = tmp.path().join("skills");
+        let dir = installed_foo(&skills);
+        fs::write(
+            dir.join("SKILL.md"),
+            "---\nname: foo\ndescription: d\ncloud:\n  save: [config.json, ../outside.json]\n---\nBody",
+        )
+        .unwrap();
+        fs::write(dir.join("config.json"), "mine").unwrap();
+        fs::write(dir.join("scratch.txt"), "not state").unwrap();
+        install_named_from_zip(&zip, "foo", "skills", &dir).unwrap();
+        assert_eq!(fs::read_to_string(dir.join("config.json")).unwrap(), "mine");
+        assert!(dir.join("data/state.json").is_file());
+        assert!(!dir.join("scratch.txt").exists(), "only state is carried");
+    }
+
+    #[test]
+    fn a_first_install_creates_the_skills_folder() {
+        let tmp = tempfile::tempdir().unwrap();
+        let zip = write_zip(tmp.path(), REPO);
+        let dir = tmp.path().join("new/skills/foo");
+        install_named_from_zip(&zip, "foo", "skills", &dir).unwrap();
+        assert!(dir.join("SKILL.md").is_file());
     }
 
     // ---- normalize_github_url ----
