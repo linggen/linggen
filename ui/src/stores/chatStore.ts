@@ -23,7 +23,7 @@ import {
   shouldHideInternalChatMessage,
   isPersistedToolOnlyMessage,
 } from '../lib/messageUtils';
-import { cacheImages, restoreImages, clearImageCache } from '../lib/imageCache';
+import { cacheImages, restoreImages, clearImageCache } from '../lib/imageCache.mts';
 import { interruptedRunMessage, isInterruptedRunMeta, type RunMeta } from '../lib/interruptedRun.mts';
 import { endedCalls, savedToolBlocks } from '../lib/toolStatus.mts';
 import { agentTracker } from '../lib/agentTracker';
@@ -181,11 +181,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   syncPersisted: (persisted) => set(mutate((msgs) => {
     const merged = mergeChatMessages(persisted, msgs);
-    return merged.map(restoreImages);
+    const session = get()._activeSessionId;
+    return merged.map((msg) => restoreImages(session, msg));
   })),
 
   addMessage: (message) => {
-    cacheImages(message);
+    cacheImages(get()._activeSessionId, message);
     set(mutate((msgs) => [...msgs, message]));
   },
 
