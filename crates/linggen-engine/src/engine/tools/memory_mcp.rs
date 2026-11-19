@@ -700,17 +700,15 @@ mod tests {
     }
 
     /// The engine's own agents, missions and prompts call memory by its
-    /// folded tools: no retired tool name (a legacy name that is no folded
-    /// tool) is left in them for a model to call into nothing.
+    /// folded tools: none of memory's retired tool names (a legacy name that
+    /// is no folded tool) is left in them for a model to call into nothing.
+    /// The names the engine's side of the door retired (the dream's two
+    /// among them) are the door's catalogue's, checked over the same files
+    /// by the door's repo check — no list of them is kept here.
     #[test]
     fn the_engines_own_prompts_name_only_the_folded_tools() {
         let cat = catalog();
-        let retired: Vec<&str> = cat
-            .retired()
-            .iter()
-            .map(|r| r.name)
-            .chain(["memory_dream_status", "memory_dream_run"])
-            .collect();
+        let retired: Vec<&str> = cat.retired().iter().map(|r| r.name).collect();
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let mut files = Vec::new();
         for dir in ["agents", "missions", "prompts"] {

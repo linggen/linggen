@@ -110,6 +110,8 @@ expect "Codex mcp.json: one linggen server at /mcp" "$CXM" \
 # The tool names the door retired, its old memory path and the old memory
 # server's namespace: none is live in the plugin (a historical note may name
 # them as such). The engine answers a retired name with "update the plugin".
+# This list is the catalogue's retired names, checked against it by the
+# door's repo_check (a name the catalogue retires and this misses fails it).
 RETIRED_NAMES='memory_(list|get|session_start|harvest_day|days|remember_day|dream_lease|role|sweep|issues|issue_add|issue_resolve|chains|dream_status|dream_run)|agent_(stop|session_close|models)|browser_(navigate|tabs|read_page|screenshot|read_console|click|type|key|scroll|wait)|x_(search|targets|following|whotofollow|own|mentions)|plugin_linggen_memory'
 # Bounded by hand, not -w: `_` is a word character, and a namespaced name
 # (mcp__plugin_linggen_linggen__memory_dream_status) must still be seen.

@@ -465,3 +465,56 @@ fn the_stamp_hook_adds_what_the_catalogue_says_the_host_fills() {
     }
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
+
+/// The names an alternation like `a_(b|c)|d` stands for: `a_b`, `a_c`, `d`.
+fn alternatives(pattern: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    let (mut depth, mut start) = (0, 0);
+    for (i, c) in pattern.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            '|' if depth == 0 => {
+                parts.push(&pattern[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(&pattern[start..]);
+    let mut names = Vec::new();
+    for part in parts {
+        match part.split_once('(') {
+            Some((head, rest)) => {
+                let (group, tail) = rest.split_once(')').expect("a closed group");
+                names.extend(group.split('|').map(|g| format!("{head}{g}{tail}")));
+            }
+            None => names.push(part.to_string()),
+        }
+    }
+    names
+}
+
+/// plugin-check.sh's own grep for retired names in the plugin is the
+/// catalogue's retired names (and the old memory server's namespace),
+/// exactly: a name the catalogue retires and that list misses fails here.
+#[test]
+fn the_plugin_checks_retired_names_are_the_catalogues() {
+    let script = std::fs::read_to_string(root().join("scripts/plugin/plugin-check.sh")).unwrap();
+    let pattern = script
+        .lines()
+        .find_map(|l| l.strip_prefix("RETIRED_NAMES='"))
+        .and_then(|l| l.strip_suffix('\''))
+        .expect("plugin-check.sh sets RETIRED_NAMES='…'");
+    let mut listed = alternatives(pattern);
+    let mut want: Vec<String> = catalog()
+        .retired()
+        .iter()
+        .map(|r| r.name.to_string())
+        .chain(["plugin_linggen_memory".to_string()])
+        .collect();
+    listed.sort();
+    want.sort();
+    assert_eq!(listed, want);
+    assert_eq!(alternatives("a_(b|c)|d"), ["a_b", "a_c", "d"]);
+}
