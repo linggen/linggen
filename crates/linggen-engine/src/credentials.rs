@@ -192,13 +192,26 @@ impl Credentials {
     /// configured model whose key differs from its endpoint's becomes an
     /// override. An unstamped row naming no configured model has no known
     /// endpoint and is kept as a service key rather than guessed.
+    ///
+    /// A row stamped with an endpoint belongs to that endpoint only: when the
+    /// model of its id now points elsewhere, the row is an orphan of its own
+    /// endpoint, never that model's key.
     fn migrate_v1(rows: BTreeMap<String, LegacyEntry>, configured: &[ModelConfig]) -> Self {
         let mut out = Self::default();
         let key_of = |e: &LegacyEntry| e.api_key.clone().filter(|k| !k.is_empty());
+        let saved_for = |row: &LegacyEntry, m: &ModelConfig| match (&row.provider, &row.url) {
+            (Some(p), Some(u)) if !p.is_empty() && !u.is_empty() => {
+                same_endpoint(p, u, &m.provider, &m.url)
+            }
+            _ => true,
+        };
+        let model_of = |id: &String, row: &LegacyEntry| {
+            configured.iter().find(|m| &m.id == id && saved_for(row, m))
+        };
         // Pass 1: rows of configured models set their endpoint's key.
         for (id, row) in &rows {
             let Some(key) = key_of(row) else { continue };
-            if let Some(m) = configured.iter().find(|m| &m.id == id) {
+            if let Some(m) = model_of(id, row) {
                 match out.endpoint_key(&m.provider, &m.url) {
                     None => out.set_endpoint_key(&m.provider, &m.url, Some(key)),
                     Some(k) if k != key => {
@@ -212,7 +225,7 @@ impl Credentials {
         // Pass 2: stamped orphans fill endpoints still without a key.
         for (id, row) in &rows {
             let Some(key) = key_of(row) else { continue };
-            if configured.iter().any(|m| &m.id == id) {
+            if model_of(id, row).is_some() {
                 continue;
             }
             match (&row.provider, &row.url) {
@@ -504,6 +517,24 @@ mod tests {
         let c2 = Credentials::load_for(&file2, &[model("gemini-live", "gemini", GEMINI)]);
         assert_eq!(c2.endpoint_key("gemini", GEMINI), Some("AQ-new"));
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// A v1 key stamped with an endpoint stays with that endpoint, even when
+    /// a model of the same id now points elsewhere.
+    #[test]
+    fn a_v1_key_stays_with_the_endpoint_it_was_saved_for() {
+        const GROQ: &str = "https://api.groq.com/openai/v1";
+        let mut rows = BTreeMap::new();
+        rows.insert(
+            "fast".to_string(),
+            LegacyEntry { api_key: Some("gsk-1".into()), provider: Some("groq".into()), url: Some(GROQ.into()) },
+        );
+        let configured = [model("fast", "gemini", GEMINI)];
+        let creds = Credentials::migrate_v1(rows, &configured);
+        assert_eq!(creds.endpoint_key("gemini", GEMINI), None);
+        assert_eq!(creds.model_override("fast"), None);
+        assert_eq!(resolve_api_key(&configured[0], &creds), None);
+        assert_eq!(creds.endpoint_key("groq", GROQ), Some("gsk-1"));
     }
 
     #[test]
