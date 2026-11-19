@@ -4,7 +4,7 @@ import remarkGfm from 'remark-gfm';
 import remarkCjkFriendly from 'remark-cjk-friendly';
 import remarkCjkFriendlyGfmStrikethrough from 'remark-cjk-friendly-gfm-strikethrough';
 import rehypeHighlight from 'rehype-highlight';
-import { hashText, normalizeMarkdownish } from './utils/markdown';
+import { hashText, normalizeMarkdownish } from './utils/markdown.mts';
 import { getMermaid } from '../../lib/mermaid';
 import { remarkAnswerRefs } from '../../lib/answerRefs.mts';
 import { RefChip, RefPictures } from './AnswerRefs';
@@ -111,7 +111,7 @@ const MD_COMPONENTS = {
 export const MarkdownContent = React.memo<{ text: string }>(({ text }) => (
   <div className="markdown-body break-words">
     <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS} components={MD_COMPONENTS}>
-      {normalizeMarkdownish(text.replace(/<!--[\s\S]*?-->/g, ''))}
+      {normalizeMarkdownish(text)}
     </ReactMarkdown>
   </div>
 ));
