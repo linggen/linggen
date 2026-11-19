@@ -163,6 +163,9 @@ fn tool_defs() -> Vec<Value> {
             // failure these narrow schemas exist to prevent: a guessed value
             // silently narrows recall to zero rows. Omitted here, the daemon's
             // store-wide `recall_min_score` applies.
+            // `skip_if_warming` is absent for the same reason: only the
+            // automatic recall sets it, so it is refused at once while memory
+            // warms instead of waiting for the warm-up.
         }),
         json!({
             "name": "memory_list",

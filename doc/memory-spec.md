@@ -224,11 +224,15 @@ at start-up and serves it (`src/memory_host/`, code in `crates/linggen-memory`).
   directly under the lock.
 
 The engine loads the embedding model and runs one throw-away inference in the
-background. Startup, health, and calls that do not embed do not wait. Until
-that inference finishes, embedding calls say how long memory has been warming.
-Writes that receive this answer were neither applied nor queued; retry once
-memory is warm. Automatic recall skips the turn quietly. The MCP call limit
-remains 25 seconds after warm-up.
+background. Startup, health, and calls that do not embed (list, get, upkeep
+reads) do not wait. A call that embeds (add, add_batch, search) waits for that
+inference up to 20 seconds (`embed::WARM_WAIT`, under the MCP door's 25), then
+runs as usual; only a warm-up that outlasts the bound refuses the call, saying
+how long memory has been warming. A refused write is neither applied nor
+queued; retry once memory is warm. Automatic recall (the engine's and the
+plugin hook's) sends `skip_if_warming` and skips the turn quietly at once — a
+recall never holds a prompt. A replica sends its writes with a client that
+waits out the primary's bound, so it never queues a write the primary applies.
 
 ### Who reaches memory, and whose rows they see
 

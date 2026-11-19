@@ -97,6 +97,18 @@ pub fn http() -> reqwest::Client {
         .unwrap_or_default()
 }
 
+/// A client for a write sent to the primary: quick to notice a dead primary,
+/// and patient while a live one waits for its embedder to warm
+/// ([`crate::embed::WARM_WAIT`]) — giving up sooner would queue a write the
+/// primary then also applies.
+pub fn write_http() -> reqwest::Client {
+    reqwest::Client::builder()
+        .connect_timeout(UPSTREAM_TIMEOUT)
+        .timeout(crate::embed::WARM_WAIT + UPSTREAM_TIMEOUT)
+        .build()
+        .unwrap_or_default()
+}
+
 /// A client for pulling pages: quick to notice a dead primary, patient with a
 /// big page on a slow link.
 pub fn pull_http() -> reqwest::Client {

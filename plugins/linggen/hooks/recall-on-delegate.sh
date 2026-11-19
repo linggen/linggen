@@ -17,7 +17,7 @@ if [ -n "$cwd" ]; then
   scope="$(session_root "$cwd" 2>/dev/null)" || exit 0
 fi
 args="$(jq -nc --arg q "$query" --argjson l "${LINGGEN_DELEGATE_LIMIT:-3}" --arg c "$scope" '
-  {query:$q, limit:$l} + (if ($c | length) > 0 then {scope_root:$c} else {} end)
+  {query:$q, limit:$l, skip_if_warming:true} + (if ($c | length) > 0 then {scope_root:$c} else {} end)
 ' 2>/dev/null)" || exit 0
 if [ -n "${LINGGEN_SEARCH_CMD:-}" ]; then
   out="$("$LINGGEN_SEARCH_CMD" memory_search "$args" "${LINGGEN_RECALL_TIMEOUT:-3}" 2>/dev/null)" || exit 0

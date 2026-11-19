@@ -310,9 +310,12 @@ async fn auto_recall_memory(
     // floor, so all hosts share one selectivity. `Some(s)` overrides. Either
     // way the daemon drops weak rows before they cross the wire; there's no
     // separate aggregate gate.
+    // `skip_if_warming`: a recall never holds the turn — while memory warms
+    // its embedder the search is refused at once and this turn goes without.
     let mut args = serde_json::json!({
         "query": trimmed,
         "limit": FETCH_LIMIT,
+        "skip_if_warming": true,
     });
     if let Some(s) = min_score {
         // Not in `memory_search`'s advertised schema, on purpose — a model

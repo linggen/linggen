@@ -4,7 +4,7 @@
 
 On the Mac now; the iPhone's 2.4 follows.
 
-- **Memory warms up in the background.** Until then, searches report warm-up and new embedding writes are refused, not queued.
+- **Memory warms up in the background.** A write or search in the first seconds waits for it (up to 20 s); automatic recall skips the turn instead.
 
 - **One Ling and one Yinyue across apps.** App chats, Yinyue's moments and
   the phone's hand-offs share one conversation a day — Linggen's daily

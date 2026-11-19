@@ -57,7 +57,7 @@ pub(crate) async fn forward_in_order(
 /// One write to the primary. `None` when it did not answer.
 async fn forward(state: &SharedState, path: &str, args: &Value) -> Option<Reply> {
     let (base, token) = state.replica.upstream()?;
-    let sent = super::http()
+    let sent = super::write_http()
         .post(format!("{base}{path}"))
         .header(super::DEVICE_HEADER, token)
         .json(args)

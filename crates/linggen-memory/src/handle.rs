@@ -6,7 +6,7 @@
 //! Named `handle` beside `memory/` because `memory/` is the store itself
 //! (rows, tables, recall); this is the one open instance of it.
 
-use crate::embed::{Embedder, LoadOnce, WarmingUp};
+use crate::embed::{Embedder, LoadOnce, Patience, WarmingUp};
 use crate::error::{ErrorCode, MemError};
 use crate::memory::{MemoryStore, Recall};
 use std::net::SocketAddr;
@@ -26,7 +26,7 @@ pub struct Memory {
     /// Shares both handles above.
     pub recall: Arc<Recall>,
     /// Warmed in the background by the engine. Only verbs that embed
-    /// access it through [`Memory::embedder`].
+    /// access it, through [`Memory::embedder`] (which waits for the warm-up).
     pub embedder: Arc<LoadOnce<Embedder>>,
     /// Data directory root (typically `~/.linggen/`). User-tunable knobs
     /// (`.config.json` — episodic TTL etc.) live under
@@ -82,9 +82,15 @@ impl Memory {
         }
     }
 
-    /// The embedder, or an immediate refusal while the engine warms it.
+    /// The embedder, waiting for the engine's warm-up up to its bound;
+    /// past it, refused with how long memory has been warming.
     pub async fn embedder(&self) -> Result<Arc<Embedder>, MemError> {
-        self.embedder.get().await.map_err(|e| {
+        self.embedder_with(Patience::WaitForWarmup).await
+    }
+
+    /// [`Memory::embedder`], saying whether to wait for the warm-up.
+    pub async fn embedder_with(&self, patience: Patience) -> Result<Arc<Embedder>, MemError> {
+        self.embedder.get_with(patience).await.map_err(|e| {
             if e.is::<WarmingUp>() {
                 return MemError {
                     code: ErrorCode::WarmingUp,

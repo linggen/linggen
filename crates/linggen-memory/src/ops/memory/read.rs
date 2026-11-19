@@ -3,6 +3,7 @@
 //! tables, `count`; and the filter block they share, `day` folded into
 //! `since`/`until`.
 
+use crate::embed::Patience;
 use crate::error::MemError;
 use crate::handle::Memory;
 use crate::memory::{Filters, Hit};
@@ -90,8 +91,12 @@ pub(in crate::ops) async fn search(state: &Memory, req: SearchRequest) -> Result
         return Err(MemError::bad_request("query must not be empty"));
     }
 
+    let patience = match req.skip_if_warming {
+        true => Patience::AnswerNow,
+        false => Patience::WaitForWarmup,
+    };
     let vector = state
-        .embedder()
+        .embedder_with(patience)
         .await?
         .embed_query_serialized(req.query.clone())
         .await

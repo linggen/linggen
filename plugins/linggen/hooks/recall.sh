@@ -51,6 +51,8 @@ min_score="${LINGGEN_RECALL_MIN_SCORE:-0}"
 # non-preference matches filed under a directory. Memory applies it BEFORE
 # ranking — a filter applied afterwards can only shrink a list that was
 # already the wrong N — and owns the rules (linggen-memory doc/scope-index-spec.md).
+# `skip_if_warming`: while memory warms its embedder this search is refused
+# at once (empty output) instead of waiting — a recall never holds a prompt.
 # shellcheck source=./scope.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scope.sh" 2>/dev/null || true
 scope=""
@@ -58,7 +60,7 @@ if [ -n "$cwd" ] && command -v session_root >/dev/null 2>&1; then
   scope="$(session_root "$cwd")"
 fi
 search_args="$(jq -nc --arg q "$prompt" --argjson l "$limit" --arg c "$scope" '
-  {query:$q, limit:$l}
+  {query:$q, limit:$l, skip_if_warming:true}
   + (if ($c | length) > 0 then {scope_root: $c} else {} end)
 ')"
 out="$(mcp_call memory_search "$search_args" "$to")"

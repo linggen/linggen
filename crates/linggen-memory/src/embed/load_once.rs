@@ -1,19 +1,63 @@
 //! Load once on the blocking pool. The engine starts a background load and
 //! warm-up; short-lived local CLI calls keep the lazy load.
+//!
+//! While the engine warms the model, a call that needs it waits for the
+//! warm-up up to [`WARM_WAIT`], then runs; past that bound it is refused with
+//! how long memory has been warming. A caller that must never hold its turn
+//! (the automatic recall) asks with [`Patience::AnswerNow`] and is refused at
+//! once instead. [`Warmup::ready`] is the one place this is decided.
 
 use anyhow::{Context, Result};
 use std::sync::{Arc, OnceLock};
-use std::time::Instant;
-use tokio::sync::OnceCell;
+use std::time::{Duration, Instant};
+use tokio::sync::{watch, OnceCell};
+
+/// How long a call that needs the model waits for its warm-up. Under the MCP
+/// door's 25 s (`http::mcp::CALL_TIMEOUT`), leaving 5 s for the embed and the
+/// commit after the wait; the owner's Mac warms in about 12 s.
+pub const WARM_WAIT: Duration = Duration::from_secs(20);
+
+/// Whether a call that needs the model waits for its warm-up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Patience {
+    /// Wait up to the warm-up's bound, then run (or be refused).
+    WaitForWarmup,
+    /// Refused at once while warming: a caller that must never hold a turn.
+    AnswerNow,
+}
+
+type Outcome<T> = Option<Result<Arc<T>, String>>;
 
 struct Warmup<T> {
     started: Instant,
-    result: OnceLock<Result<Arc<T>, String>>,
+    /// The bound a waiting call waits for this warm-up.
+    wait: Duration,
+    result: watch::Sender<Outcome<T>>,
+}
+
+impl<T> Warmup<T> {
+    /// The model once warm; a waiting caller waits up to the bound for it.
+    async fn ready(&self, patience: Patience) -> Result<Arc<T>> {
+        let bound = match patience {
+            Patience::WaitForWarmup => self.wait,
+            Patience::AnswerNow => Duration::ZERO,
+        };
+        let mut done = self.result.subscribe();
+        // `wait_for` looks at the current value first, so a zero bound
+        // still answers from a finished warm-up.
+        let _ = tokio::time::timeout(bound, done.wait_for(Option::is_some)).await;
+        let outcome = done.borrow();
+        match &*outcome {
+            Some(Ok(model)) => Ok(Arc::clone(model)),
+            Some(Err(error)) => Err(anyhow::anyhow!(error.clone())),
+            None => Err(WarmingUp(self.started.elapsed()).into()),
+        }
+    }
 }
 
 /// The model has not yet completed its first inference.
 #[derive(Debug)]
-pub(crate) struct WarmingUp(pub std::time::Duration);
+pub(crate) struct WarmingUp(pub Duration);
 
 impl std::fmt::Display for WarmingUp {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -49,10 +93,21 @@ impl<T: Send + Sync + 'static> LoadOnce<T> {
         self: &Arc<Self>,
         probe: impl FnOnce(&T) -> Result<()> + Send + 'static,
     ) -> Option<tokio::task::JoinHandle<()>> {
+        self.start_warmup_waiting(WARM_WAIT, probe)
+    }
+
+    /// [`Self::start_warmup`] with its own bound — for tests of a warm-up
+    /// that outlasts it.
+    pub(crate) fn start_warmup_waiting(
+        self: &Arc<Self>,
+        wait: Duration,
+        probe: impl FnOnce(&T) -> Result<()> + Send + 'static,
+    ) -> Option<tokio::task::JoinHandle<()>> {
         self.warmup
             .set(Warmup {
                 started: Instant::now(),
-                result: OnceLock::new(),
+                wait,
+                result: watch::Sender::new(None),
             })
             .ok()?;
         let this = Arc::clone(self);
@@ -84,20 +139,20 @@ impl<T: Send + Sync + 'static> LoadOnce<T> {
                     Err(format!("Memory embedding warm-up failed: {error:#}"))
                 }
             };
-            let _ = warmup.result.set(ready);
+            warmup.result.send_replace(Some(ready));
         }))
     }
 
-    /// The value, loading it lazily only for callers that did not start a
-    /// background warm-up.
-    /// Concurrent callers share one load.
+    /// The value, waiting for a warm-up under way ([`Warmup::ready`]); with
+    /// none started it loads lazily, and concurrent callers share one load.
     pub async fn get(&self) -> Result<Arc<T>> {
+        self.get_with(Patience::WaitForWarmup).await
+    }
+
+    /// [`Self::get`], saying whether to wait for a warm-up under way.
+    pub async fn get_with(&self, patience: Patience) -> Result<Arc<T>> {
         if let Some(warmup) = self.warmup.get() {
-            return match warmup.result.get() {
-                Some(Ok(model)) => Ok(Arc::clone(model)),
-                Some(Err(error)) => Err(anyhow::anyhow!(error.clone())),
-                None => Err(WarmingUp(warmup.started.elapsed()).into()),
-            };
+            return warmup.ready(patience).await;
         }
         let load = self.load;
         self.cell
@@ -115,7 +170,7 @@ impl<T: Send + Sync + 'static> LoadOnce<T> {
     /// Loaded already — without waiting or starting a load.
     pub fn is_ready(&self) -> bool {
         match self.warmup.get() {
-            Some(warmup) => matches!(warmup.result.get(), Some(Ok(_))),
+            Some(warmup) => matches!(&*warmup.result.borrow(), Some(Ok(_))),
             None => self.cell.initialized(),
         }
     }
