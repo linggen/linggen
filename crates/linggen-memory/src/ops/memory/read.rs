@@ -22,9 +22,7 @@ impl FilterDTO {
         let Some(day) = self.day.take() else {
             return Ok(());
         };
-        let date = chrono::NaiveDate::parse_from_str(day.trim(), "%Y-%m-%d").map_err(|_| {
-            MemError::bad_request(format!("invalid day {day:?}: expected YYYY-MM-DD"))
-        })?;
+        let date = crate::ops::days::parse_day(&day)?;
         let (start, end) = crate::ops::days::local_day_bounds(date);
         if self.since.is_none() {
             self.since = Some(start);
@@ -215,8 +213,9 @@ async fn unjudged_since(
     let Some(day) = req.filters.day.as_deref() else {
         return Err(MemError::bad_request("unjudged needs a day"));
     };
+    let key = crate::ops::days::day_key(day)?;
     let days = crate::ops::days::load(&state.data_dir).await;
-    Ok(days.days.get(day.trim()).and_then(|r| r.remembered_at))
+    Ok(days.days.get(&key).and_then(|r| r.remembered_at))
 }
 
 fn sort_combined(rows: &mut [crate::memory::Memory], sort: crate::memory::SortOrder) {

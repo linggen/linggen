@@ -82,6 +82,13 @@ pub(crate) fn parse_day(s: &str) -> Result<NaiveDate, MemError> {
         .map_err(|_| MemError::bad_request(format!("invalid day {s:?}: expected YYYY-MM-DD")))
 }
 
+/// A day as the one spelling every sidecar keys on (`2026-1-5` →
+/// `2026-01-05`); a string that is not a date is refused. Every verb that
+/// takes a day and looks it up or stores it goes through here.
+pub(crate) fn day_key(s: &str) -> Result<String, MemError> {
+    Ok(parse_day(s)?.format("%Y-%m-%d").to_string())
+}
+
 /// UTC bounds `[start, end)` of a local calendar day. DST folds/gaps
 /// resolve to the earliest valid instant.
 pub(crate) fn local_day_bounds(day: NaiveDate) -> (DateTime<Utc>, DateTime<Utc>) {
@@ -302,9 +309,8 @@ pub struct RememberDayRequest {
 }
 
 pub(in crate::ops) async fn remember_day(state: &Memory, req: RememberDayRequest) -> Result<Value, MemError> {
-    let date = parse_day(&req.date)?;
+    let key = day_key(&req.date)?;
     let today = today_local();
-    let key = date.format("%Y-%m-%d").to_string();
     if key >= today {
         return Err(MemError::bad_request(format!(
             "day {key} is not over yet — only past local days can be remembered"
@@ -343,9 +349,8 @@ pub struct HarvestDayRequest {
 /// day. Deliberately does NOT touch `remembered_at`: scanning stages
 /// rows; the day then goes pending and a dream pass judges it.
 pub(in crate::ops) async fn harvest_day(state: &Memory, req: HarvestDayRequest) -> Result<Value, MemError> {
-    let date = parse_day(&req.date)?;
+    let key = day_key(&req.date)?;
     let today = today_local();
-    let key = date.format("%Y-%m-%d").to_string();
     if key >= today {
         return Err(MemError::bad_request(format!(
             "day {key} is not over yet — only past local days can be scanned"

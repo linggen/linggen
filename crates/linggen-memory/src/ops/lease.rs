@@ -125,25 +125,24 @@ pub(in crate::ops) async fn dream_lease(state: &Memory, req: LeaseRequest) -> Re
     if !matches!(req.action.as_str(), "acquire" | "renew" | "release") {
         return Err(MemError::bad_request("action is acquire, renew or release"));
     }
-    if req.holder.trim().is_empty()
-        || chrono::NaiveDate::parse_from_str(&req.day, "%Y-%m-%d").is_err()
-    {
+    let day = crate::ops::days::day_key(&req.day);
+    let (Ok(day), false) = (day, req.holder.trim().is_empty()) else {
         return Err(MemError::bad_request(
             "day is YYYY-MM-DD and holder is required",
         ));
-    }
+    };
     let verdict = decide(
         &state.data_dir,
-        &req.day,
+        &day,
         req.holder.trim(),
         &req.action,
         Utc::now(),
     )
     .map_err(|e| MemError::internal(anyhow::anyhow!(e)))?;
     match verdict {
-        Verdict::Held(l) => Err(busy(&req.day, &l)),
-        Verdict::Granted(l) => Ok(json!({ "day": req.day, "lease": l })),
-        Verdict::Released => Ok(json!({ "day": req.day, "released": true })),
+        Verdict::Held(l) => Err(busy(&day, &l)),
+        Verdict::Granted(l) => Ok(json!({ "day": day, "lease": l })),
+        Verdict::Released => Ok(json!({ "day": day, "released": true })),
     }
 }
 

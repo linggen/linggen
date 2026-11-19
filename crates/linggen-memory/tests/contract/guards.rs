@@ -365,6 +365,37 @@ async fn list_unjudged_is_a_days_rows_after_its_remember_pass() {
     );
 }
 
+/// A day is one key however it is spelled: `2026-1-5` names the same
+/// remembered day and the same lease as `2026-01-05`.
+#[tokio::test]
+async fn an_unpadded_day_names_the_same_day() {
+    let m = Mem::start().await;
+    let (padded, unpadded) = ("2026-01-05", "2026-1-5");
+    m.add(json!({"content": "Alex hiked a ridge", "occurred_at": local_noon(padded)}))
+        .await;
+    m.ok("remember_day", json!({"date": padded})).await;
+    assert_eq!(
+        m.ok("list", json!({"day": unpadded, "unjudged": true})).await,
+        json!([])
+    );
+    let lease = m
+        .ok("dream_lease", json!({"day": unpadded, "holder": "mac-a"}))
+        .await;
+    assert_eq!(lease["day"], json!(padded));
+    assert_eq!(
+        m.call("remember_day", json!({"date": padded, "holder": "mac-b"}))
+            .await
+            .0,
+        409
+    );
+    assert_refused(
+        &m.call("list", json!({"day": "2026-02-30", "unjudged": true})).await,
+        400,
+        "BAD_REQUEST",
+        "invalid day \"2026-02-30\": expected YYYY-MM-DD",
+    );
+}
+
 #[tokio::test]
 async fn today_and_later_cannot_be_remembered_or_harvested() {
     let m = Mem::start().await;
