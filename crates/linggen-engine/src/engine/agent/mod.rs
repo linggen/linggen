@@ -665,7 +665,10 @@ impl AgentManager {
         let engines = self.session_engines_of(session_id).await;
         for engine_arc in &engines {
             let mut engine = engine_arc.lock().await;
-            engine.session_permissions.set_path_mode(path, mode);
+            if engine.session_permissions.place.is_none() {
+                engine.session_permissions.set_path_mode(path, mode);
+                engine.sync_session_grants();
+            }
         }
         !engines.is_empty()
     }

@@ -58,6 +58,23 @@ async fn compact_config_merges_and_refuses_an_unkept_session() {
     assert_eq!(w.api.post_status("/api/chat/compact_config", missing).await, 404);
 }
 
+#[tokio::test]
+async fn permission_patch_reports_a_failed_save() {
+    let w = World::start(Setup::default()).await;
+    let sid = w.api.create_session(json!({"title":"chat"})).await;
+    let file = w.home.linggen_home().join("sessions").join(&sid).join("permission.json");
+    if file.is_file() {
+        std::fs::remove_file(&file).unwrap();
+    }
+    std::fs::create_dir(&file).unwrap();
+    let response = reqwest::Client::new()
+        .patch(format!("{}/api/sessions/permission", w.engine.base_url()))
+        .json(&json!({"session_id":sid, "path":w.work(), "mode":"read"}))
+        .send().await.unwrap();
+    assert_eq!(response.status(), 500);
+    assert!(file.is_dir());
+}
+
 const SHARED: &str = "sess-1790000001-5a1ed001";
 const COMPACTED: &str = "sess-1790000002-c0ac7ed2";
 const INTERRUPTED: &str = "sess-1790000003-1e7e5ed3";

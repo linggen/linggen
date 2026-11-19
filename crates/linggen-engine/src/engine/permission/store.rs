@@ -3,6 +3,7 @@ use crate::util::{default_true, expand_tilde};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use tracing::warn;
 
@@ -55,7 +56,7 @@ impl Default for SessionPermissions {
 
 /// `permission.json` as it is on disk: the session's own place's state at
 /// the top, as before places, and every other place's grants by its key.
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct PermissionFile {
     #[serde(flatten)]
     own: SessionPermissions,
@@ -144,11 +145,39 @@ impl SessionPermissions {
     }
 
     /// Persist an approval, reporting failure to the caller before it is used.
-    pub fn try_save(&self, session_dir: &Path) -> std::io::Result<()> {
+    pub fn try_save(&self, session_dir: &Path) -> io::Result<()> {
+        self.edit_saved(session_dir, |saved| *saved = self.clone()).map(drop)
+    }
+
+    /// Apply a change to the latest grants of this place, returning them only
+    /// once the new file is in place. A new file starts with this view.
+    pub fn edit_saved(
+        &self,
+        session_dir: &Path,
+        edit: impl FnOnce(&mut Self),
+    ) -> io::Result<Self> {
         fs::create_dir_all(session_dir)?;
-        let file = Self::read_file(session_dir).with(self);
-        let json = serde_json::to_vec_pretty(&file).map_err(std::io::Error::other)?;
-        fs::write(session_dir.join("permission.json"), json)
+        // Lock a separate inode: the permission file itself is replaced.
+        let lock = fs::OpenOptions::new().write(true).create(true).truncate(false)
+            .open(session_dir.join("permission.lock"))?;
+        lock.lock()?;
+        let path = session_dir.join("permission.json");
+        let (file, mut saved) = match fs::read_to_string(&path) {
+            Ok(text) => {
+                let file: PermissionFile = serde_json::from_str(&text).map_err(io::Error::other)?;
+                let saved = file.clone().view(self.place.as_deref());
+                (file, saved)
+            }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => (PermissionFile::default(), self.clone()),
+            Err(e) => return Err(e),
+        };
+        saved.own_dir = Some(session_dir.to_path_buf());
+        edit(&mut saved);
+        let mut temp = tempfile::NamedTempFile::new_in(session_dir)?;
+        serde_json::to_writer_pretty(&mut temp, &file.with(&saved)).map_err(io::Error::other)?;
+        temp.flush()?;
+        temp.persist(&path)?;
+        Ok(saved)
     }
 
     /// Add or update a path-mode grant. If a grant for the exact path exists, update it.
