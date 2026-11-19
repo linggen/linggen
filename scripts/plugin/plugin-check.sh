@@ -113,8 +113,8 @@ expect "Codex mcp.json: one linggen server at /mcp" "$CXM" \
 RETIRED_NAMES='memory_(list|get|session_start|harvest_day|days|remember_day|dream_lease|role|sweep|issues|issue_add|issue_resolve|chains|dream_status|dream_run)|agent_(stop|session_close|models)|browser_(navigate|tabs|read_page|screenshot|read_console|click|type|key|scroll|wait)|x_(search|targets|following|whotofollow|own|mentions)|plugin_linggen_memory'
 # Bounded by hand, not -w: `_` is a word character, and a namespaced name
 # (mcp__plugin_linggen_linggen__memory_dream_status) must still be seen.
-gone="$(grep -rnIE "(__|[^A-Za-z0-9_]|^)($RETIRED_NAMES)([^A-Za-z0-9_]|$)" "$CCP" "$REPO/.claude-plugin" 2>/dev/null | grep -vE '/evals-isolated/results/|[Hh]istorical' || true)
-$(grep -rnIF '/mcp/memory' "$CCP" "$REPO/.claude-plugin" 2>/dev/null | grep -vE '/evals-isolated/results/|[Hh]istorical|earlier versions' || true)"
+gone="$(grep -rnIE "(__|[^A-Za-z0-9_]|^)($RETIRED_NAMES)([^A-Za-z0-9_]|$)" "$CCP" "$REPO/.claude-plugin" 2>/dev/null | grep -vE '/evals-isolated/results/|/upgrade-fixture/|[Hh]istorical' || true)
+$(grep -rnIF '/mcp/memory' "$CCP" "$REPO/.claude-plugin" 2>/dev/null | grep -vE '/evals-isolated/results/|/upgrade-fixture/|[Hh]istorical|earlier versions' || true)"
 gone="$(printf '%s' "$gone" | sed '/^$/d')"
 [ -z "$gone" ] && pass "no retired tool names or /mcp/memory in the plugin" \
   || fail "no retired tool names or /mcp/memory in the plugin" "$(printf '%s' "$gone" | head -3 | tr '\n' ' ')"
@@ -122,6 +122,13 @@ old="$(grep -rnIE '9528|LING_MEM_(HOST|PORT|TOKEN)|ling-mem (start|restart|statu
   | grep -vE 'retired|old memory|older file|legacy|_ling_pick|pick\(' || true)"
 [ -z "$old" ] && pass "no retired address or daemon verbs in code" \
   || fail "no retired address or daemon verbs in code" "$(printf '%s' "$old" | head -3 | tr '\n' ' ')"
+
+# The hooks' own offline tests (no Linggen needed).
+for t in "$CCP"/hooks/tests/*.test.sh; do
+  name="hooks test: $(basename "$t" .test.sh)"
+  if out="$(bash "$t" 2>&1)"; then pass "$name"
+  else fail "$name" "$(printf '%s' "$out" | tail -3 | tr '\n' ' ')"; fi
+done
 
 # ── 3. Hooks against the scratch Linggen ────────────────────────────────────
 

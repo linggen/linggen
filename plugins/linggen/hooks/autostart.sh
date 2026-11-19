@@ -60,6 +60,13 @@ case "$PLUGIN_ROOT" in
   *)           PLUGIN_AGENT="" ;;
 esac
 
+# Codex: an earlier plugin wrote a `memory` server at the retired memory
+# door into config.toml; the plugin removes what it wrote, and nothing else.
+# First, before anything that waits on the network.
+if [ "$PLUGIN_AGENT" = codex ]; then
+  bash "$PLUGIN_ROOT/scripts/config.sh" --drop-retired >/dev/null 2>&1 || true
+fi
+
 # ── Make sure Linggen is up (this machine only) ─────────────────────────────
 #
 # `LINGGEN_URL` and `LINGGEN_LOCAL` come from mcp.sh, which resolves them from

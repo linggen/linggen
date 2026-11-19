@@ -20,6 +20,7 @@
 #   config.sh --primary 192.168.1.5         # this machine's memory follows that one
 #   config.sh --primary local               # this machine's memory is the primary
 #   config.sh --mirror                      # re-mirror client.json into the hosts (hooks)
+#   config.sh --drop-retired                # Codex: drop the retired memory server (hooks)
 #
 # Writes ~/.linggen/client.json (merged: keys it does not own are kept), which
 # the hooks read. Also mirrors the address into each host's own MCP wiring,
@@ -49,7 +50,7 @@ command -v curl >/dev/null 2>&1 || die "config: curl is required"
 
 # ── Arguments ───────────────────────────────────────────────────────────────
 
-addr="" token="" reset=0 show_only=1 mirror_only=0 primary=""
+addr="" token="" reset=0 show_only=1 mirror_only=0 primary="" drop_retired=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -58,6 +59,7 @@ while [ $# -gt 0 ]; do
         --local)    reset=1;          shift;   show_only=0 ;;
         --primary)  primary="${2:-}"; shift 2 ;;
         --mirror)   mirror_only=1;    shift;   show_only=0 ;;
+        --drop-retired) drop_retired=1; shift ;;
         -h|--help)  sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *)          die "config: unknown argument $1" ;;
     esac
@@ -76,6 +78,74 @@ normalize() {
 }
 
 addr="$(normalize "$addr")"
+
+# ── Codex's config.toml: the tables this plugin wrote ───────────────────────
+#
+# strip_codex_tables ONLY_RETIRED FILE — FILE without the tables this script
+# writes (sub-tables included) wherever a TOML-aware writer left them — a table
+# runs from its header to the next header or EOF. `linggen` and the retired
+# `ling-mem` are always ours. So is a `memory` table pointing at the retired
+# memory door (url ending in /mcp/memory), which earlier versions of the plugin
+# wrote; `memory` is a common name, so any other `memory` table stays. With
+# ONLY_RETIRED=1 only that retired `memory` table goes. No BEGIN/END markers:
+# Codex rewrites this file itself and moves comments. The blank line we put
+# before our tables goes with them when they sat at EOF, so a round trip leaves
+# the file byte-equal.
+
+strip_codex_tables() {
+    awk -v only_retired="$1" '
+        function flush_table() {
+            if (nt == 0) return
+            drop = (kind == "ours" && !only_retired) || (kind == "memory" && ours_url)
+            if (kind == "memory") memory_dropped = drop
+            if (!drop) {
+                for (i = 1; i <= nt; i++) emit(tbl[i])
+            } else {
+                # Blank lines and comments after the last line of a dropped table
+                # belong to what follows.
+                for (j = nt; j > 1 && tbl[j] ~ /^[[:space:]]*(#.*)?$/; j--) ;
+                for (i = j + 1; i <= nt; i++) emit(tbl[i])
+            }
+            nt = 0; kind = ""; ours_url = 0
+        }
+        function emit(line) { if (held) print heldline; heldline = line; held = 1 }
+        /^[[:space:]]*\[/ {
+            flush_table()
+            if ($0 ~ /^[[:space:]]*\[mcp_servers\.(ling-mem|linggen)(\.[^]]*)?\]/) { kind = "ours" }
+            else if ($0 ~ /^[[:space:]]*\[mcp_servers\.memory\]/) { kind = "memory" }
+            # A sub-table goes with the `memory` table it belongs to.
+            else if ($0 ~ /^[[:space:]]*\[mcp_servers\.memory\.[^]]*\]/) { kind = "memory"; ours_url = memory_dropped }
+            if (kind != "") {
+                # A blank line just before our table belongs to it.
+                if (held && heldline ~ /^[[:space:]]*$/) { held = 0; tbl[++nt] = heldline }
+                tbl[++nt] = $0; next
+            }
+        }
+        nt > 0 {
+            tbl[++nt] = $0
+            if ($0 ~ /^[[:space:]]*url[[:space:]]*=.*\/mcp\/memory"[[:space:]]*$/) ours_url = 1
+            next
+        }
+        { emit($0) }
+        END { flush_table(); if (held) print heldline }
+    ' "$2"
+}
+
+# `--drop-retired` (Codex's SessionStart hook): remove the retired `memory`
+# server an earlier plugin wrote, and nothing else; the file is rewritten only
+# when that table was there.
+drop_retired_codex() {
+    [ -f "$CODEX_CONFIG" ] || return 0
+    local tmp="$CODEX_CONFIG.tmp.$$"
+    strip_codex_tables 1 "$CODEX_CONFIG" > "$tmp" || { rm -f "$tmp"; return 1; }
+    if cmp -s "$tmp" "$CODEX_CONFIG"; then rm -f "$tmp"; return 0; fi
+    mv "$tmp" "$CODEX_CONFIG"
+}
+
+if [ "$drop_retired" = 1 ]; then
+    drop_retired_codex
+    exit $?
+fi
 
 # ── Read, merge, write ──────────────────────────────────────────────────────
 
@@ -188,45 +258,8 @@ mirror_codex_toml() { # exit 2 = no Codex on this machine
     [ -d "$(dirname "$CODEX_CONFIG")" ] || return 2
     [ -f "$CODEX_CONFIG" ] || : > "$CODEX_CONFIG"
     local tmp="$CODEX_CONFIG.tmp.$$"
-    # Drop the tables this script writes (sub-tables included) wherever a
-    # TOML-aware writer left them — a table runs from its header to the next
-    # header or EOF. `linggen` and the retired `ling-mem` are always ours.
-    # So is a `memory` table pointing at the retired memory door (url ending
-    # in /mcp/memory), which earlier versions of this script wrote; `memory`
-    # is a common name, so any other `memory` table stays. No BEGIN/END markers: Codex rewrites this file itself and moves
-    # comments. The blank line we put before our tables goes with them when
-    # they sat at EOF, so a round trip leaves the file byte-equal.
-    awk '
-        function flush_table() {
-            if (nt == 0) return
-            if (!(kind == "ours" || (kind == "memory" && ours_url))) {
-                for (i = 1; i <= nt; i++) emit(tbl[i])
-            } else {
-                # Blank lines after a dropped table separate what follows.
-                for (j = nt; j > 1 && tbl[j] ~ /^[[:space:]]*$/; j--) ;
-                for (i = j + 1; i <= nt; i++) emit(tbl[i])
-            }
-            nt = 0; kind = ""; ours_url = 0
-        }
-        function emit(line) { if (held) print heldline; heldline = line; held = 1 }
-        /^[[:space:]]*\[/ {
-            flush_table()
-            if ($0 ~ /^[[:space:]]*\[mcp_servers\.(ling-mem|linggen)(\.[^]]*)?\]/) { kind = "ours" }
-            else if ($0 ~ /^[[:space:]]*\[mcp_servers\.memory(\.[^]]*)?\]/) { kind = "memory" }
-            if (kind != "") {
-                # A blank line just before our table belongs to it.
-                if (held && heldline ~ /^[[:space:]]*$/) { held = 0; tbl[++nt] = heldline }
-                tbl[++nt] = $0; next
-            }
-        }
-        nt > 0 {
-            tbl[++nt] = $0
-            if ($0 ~ /^[[:space:]]*url[[:space:]]*=.*\/mcp\/memory"[[:space:]]*$/) ours_url = 1
-            next
-        }
-        { emit($0) }
-        END { flush_table(); if (held) print heldline }
-    ' "$CODEX_CONFIG" > "$tmp" || { rm -f "$tmp"; return 1; }
+    # Drop the tables this script writes (`strip_codex_tables`).
+    strip_codex_tables 0 "$CODEX_CONFIG" > "$tmp" || { rm -f "$tmp"; return 1; }
     # Any address but the default needs the override — another machine, or
     # this machine's Linggen on a port of its own.
     if [ "$new_addr" != "$DEFAULT_LINGGEN" ]; then

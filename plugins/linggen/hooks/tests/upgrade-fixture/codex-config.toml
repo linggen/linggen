@@ -1,0 +1,18 @@
+# my settings
+model = "o3"
+
+[mcp_servers.memory]
+url = "http://127.0.0.1:9527/mcp/memory"
+
+[mcp_servers.memory.http_headers]
+"x-linggen-device" = "abc"
+
+# a comment about notes
+[mcp_servers.notes]
+url = "http://127.0.0.1:7000/mcp"
+
+[mcp_servers.linggen]
+url = "http://192.168.1.5:9527/mcp"
+
+[profiles.fast]
+model = "o4-mini" # inline comment
