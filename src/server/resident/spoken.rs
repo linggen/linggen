@@ -269,8 +269,18 @@ pub(crate) fn speak_reply(
     at: crate::server::api::yinyue::SaidAt<'_>,
 ) {
     if let Some(line) = answer_line(reply) {
-        crate::server::api::yinyue::emit_speak(state, Line::answer(line), None, at);
+        crate::server::api::yinyue::emit_speak(state, Line::new(line), None, at);
     }
+}
+
+/// Say her reply to a person who talked to her on her own stage, as it
+/// always was: the whole reply, unless it is the bare word SILENT.
+pub(crate) fn speak_person_reply(state: &std::sync::Arc<crate::server::ServerState>, reply: &str) {
+    if reply.eq_ignore_ascii_case(SILENT) {
+        return;
+    }
+    let line = Line::new(reply.to_string());
+    crate::server::api::yinyue::emit_speak(state, line, None, Default::default());
 }
 
 /// The most a spoken line may be, in characters: an app moment's text is cut
@@ -308,11 +318,11 @@ impl Rejected {
     }
 }
 
-/// What an engine-started turn's reply says: the one `<say>…</say>` that is
-/// the last thing in it. Text before it (a model thinking first) is dropped.
-/// Anything else — no envelope, two, text after, empty, broken, too long — is
-/// nothing. The raw inside is returned: offer labels ride in it.
-fn envelope(reply: &str) -> Result<&str, Rejected> {
+/// The one `<say>…</say>` of an engine-started turn's reply: what is inside
+/// it and what follows it. Text before it (a model thinking first) is not
+/// returned — nothing there is read for anything. Two envelopes, an unclosed
+/// or a stray one, or none, is nothing.
+fn envelope(reply: &str) -> Result<(&str, &str), Rejected> {
     let opens = reply.matches(SAY_OPEN).count();
     let closes = reply.matches(SAY_CLOSE).count();
     if opens == 0 && closes == 0 {
@@ -327,20 +337,23 @@ fn envelope(reply: &str) -> Result<&str, Rejected> {
     if close < open {
         return Err(Rejected::Unclosed);
     }
-    if !reply[close + SAY_CLOSE.len()..].trim().is_empty() {
-        return Err(Rejected::TextAfter);
-    }
-    Ok(reply[open + SAY_OPEN.len()..close].trim())
+    Ok((&reply[open + SAY_OPEN.len()..close], &reply[close + SAY_CLOSE.len()..]))
 }
 
 /// The line an engine-started turn's reply speaks, with her labels on the
-/// offers it raised; `Err` says why it is nothing.
+/// offers it raised; `Err` says why it is nothing. The envelope must be the
+/// last thing in the reply: only her offer labels (metadata) may follow it.
+/// Labels count inside the envelope or directly after it — nothing before
+/// the envelope is read.
 fn read_envelope(reply: &str) -> Result<(String, Vec<(usize, String)>), Rejected> {
-    // Her labels on offers are metadata, read wherever she put them and taken
-    // out before the envelope is judged.
-    let (bare, labels) = super::offer_labels::take(reply);
-    let raw = envelope(&bare)?;
-    let line = crate::engine::answer_refs::strip_ids(raw);
+    let (inside, after) = envelope(reply)?;
+    let (after, mut labels) = super::offer_labels::take(after);
+    if !after.is_empty() {
+        return Err(Rejected::TextAfter);
+    }
+    let (inside, within) = super::offer_labels::take(inside);
+    labels.splice(0..0, within);
+    let line = crate::engine::answer_refs::strip_ids(&inside);
     let line = line.trim();
     if line.is_empty() {
         return Err(Rejected::Empty);
@@ -356,17 +369,17 @@ fn read_envelope(reply: &str) -> Result<(String, Vec<(usize, String)>), Rejected
 
 /// A line of hers that may be published: the one type the row, the live
 /// event and the voice take (`api::yinyue::emit_speak_offering`,
-/// [`publish_row`]). Made two ways only — by [`finalize_event`] from an
-/// engine-started turn's envelope, or by [`Line::answer`] from a reply to a
-/// person — so no other path can put words in her mouth.
+/// [`publish`]). Its field and its constructor are private to this file, so
+/// outside it a `Line` can only come from a finalizer ([`finalize_event`],
+/// [`finalize_answer`], [`speak_reply`], [`speak_person_reply`]) — no other
+/// path can put words in her mouth.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Line {
     text: String,
 }
 
 impl Line {
-    /// A reply to what a person said or asked for: the answer path.
-    pub(crate) fn answer(text: String) -> Self {
+    fn new(text: String) -> Self {
         Self { text }
     }
 
@@ -391,7 +404,7 @@ pub(super) fn finalize_answer(reply: Option<&str>) -> Option<Event> {
     let reply = reply?;
     let line = answer_line(reply)?;
     Some(Event {
-        line: Line::answer(line),
+        line: Line::new(line),
         labels: super::offer_labels::take(reply).1,
         kept: true,
     })
@@ -404,7 +417,7 @@ pub(super) fn finalize_event(reply: Option<&str>, source: &str) -> Option<Event>
     let reply = reply?;
     match read_envelope(reply) {
         Ok((text, labels)) => Some(Event {
-            line: Line { text },
+            line: Line::new(text),
             labels,
             kept: false,
         }),
@@ -433,12 +446,16 @@ pub(crate) fn language_of_sample(sample: &str) -> Option<String> {
 }
 
 /// Where a published line stands: the session whose thread keeps it as her
-/// row, the place it was said in, and what her stage is told.
+/// row, the place the row names (`None`: the store stamps the running
+/// turn's, as for any row), and what her stage is told.
 pub(super) struct Stage {
     row_session: String,
-    place: crate::engine::turn_place::TurnPlace,
+    place: Option<String>,
     said_session: Option<String>,
     app: Option<String>,
+    /// The caller holds the row session's turn lock: the row is written
+    /// under it, never waited for.
+    holds_lock: bool,
 }
 
 impl Stage {
@@ -446,21 +463,24 @@ impl Stage {
     pub(super) async fn of(state: &std::sync::Arc<crate::server::ServerState>, table: Option<&super::Table>) -> Self {
         let Some(table) = table else {
             let row_session = super::session_roll::resolve_current_session(state).await;
-            let place = crate::server::chat::turn_place::of_session_id(&state.manager, &row_session);
-            return Self { row_session, place, said_session: None, app: None };
+            return Self { row_session, place: None, said_session: None, app: None, holds_lock: false };
         };
-        let place = super::turn::table_place(state, table);
         let app = super::triggers::table_page(state, table);
-        Self { row_session: table.session.clone(), place, said_session: Some(table.session.clone()), app }
+        // At an app's table the row names the place the turn stood in, as the
+        // turn core wrote it before; her own thread's row names none.
+        let place = Some(super::turn::table_place(state, table).key().to_string());
+        Self { row_session: table.session.clone(), place, said_session: Some(table.session.clone()), app, holds_lock: false }
     }
 
-    /// The turn a restart kept and ran again: where it ran.
+    /// A turn the caller ran in `session` and still holds the turn lock of:
+    /// its place is the row's.
     pub(super) fn of_turn(session: &str, place: &crate::engine::turn_place::TurnPlace) -> Self {
         Self {
             row_session: session.to_string(),
-            place: place.clone(),
+            place: Some(place.key().to_string()),
             said_session: Some(session.to_string()),
             app: place.skill.clone(),
+            holds_lock: true,
         }
     }
 
@@ -473,29 +493,53 @@ impl Stage {
 /// thread, and her stage (the live cue, the bubble, the voice). Every output
 /// takes the finalizer's typed [`Line`]; staleness is the caller's check,
 /// made before this is called.
+///
+/// Her row lands when the session is free: while a turn runs there (a
+/// question waits inside it) the cue goes now and the row follows when the
+/// turn is over — except a condition (`problem`), which is published only
+/// with its row kept, so it can be told. `None`: nothing was published.
+/// The window between the caller's last check and the row is accepted: two
+/// awaits at most, and the worst is a line a moment late.
 pub(super) async fn publish(
     state: &std::sync::Arc<crate::server::ServerState>,
     said: Event,
     stage: &Stage,
     emotion: Option<String>,
     problem: Option<(String, Vec<crate::perception::offer::Shown>)>,
-) -> Line {
+) -> Option<Line> {
     let Event { line, labels, kept } = said;
-    if !kept {
-        keep_row(state, &line, &labels, (&stage.row_session, stage.place.key())).await;
+    let row = (stage.row_session.as_str(), stage.place.as_deref());
+    let mut later = false;
+    if !kept && !stage.holds_lock {
+        match state.manager.session_turn(&stage.row_session).try_lock_owned() {
+            Ok(_turn) => {
+                if !keep_row(state, &line, &labels, row).await {
+                    return None;
+                }
+            }
+            Err(_) if problem.is_some() => {
+                tracing::info!("[yinyue] a condition's row cannot land while a turn runs — held, not told");
+                return None;
+            }
+            Err(_) => later = true,
+        }
+    } else if !kept && !keep_row(state, &line, &labels, row).await {
+        return None;
     }
     crate::server::api::yinyue::emit_speak_offering(state, line.clone(), emotion, stage.at(), problem);
-    line
+    if later {
+        keep_row_when_free(state.clone(), line.clone(), labels, (stage.row_session.clone(), stage.place.clone()));
+    }
+    Some(line)
 }
 
 /// Her line copied into another chat an app moment names: a row there, no cue.
 pub(crate) async fn land_row(state: &std::sync::Arc<crate::server::ServerState>, line: &Line, session: &str) {
-    let place = crate::server::chat::turn_place::of_session_id(&state.manager, session);
-    keep_row(state, line, &[], (session, place.key())).await;
+    keep_row(state, line, &[], (session, None)).await;
 }
 
 /// A turn of hers the engine started in `session` (a told task end), finalized
-/// and published where it stood.
+/// and published where it stood; the caller holds the session's turn lock.
 pub(crate) async fn say_event(
     state: &std::sync::Arc<crate::server::ServerState>,
     reply: Option<&str>,
@@ -509,14 +553,29 @@ pub(crate) async fn say_event(
     publish(state, said, &stage, Some("neutral".to_string()), None).await;
 }
 
+/// The row of a cue that went out while a turn ran: kept once it is over.
+fn keep_row_when_free(
+    state: std::sync::Arc<crate::server::ServerState>,
+    line: Line,
+    labels: Vec<(usize, String)>,
+    (session, place): (String, Option<String>),
+) {
+    tokio::spawn(async move {
+        let _turn = state.manager.session_turn(&session).lock_owned().await;
+        keep_row(&state, &line, &labels, (&session, place.as_deref())).await;
+    });
+}
+
 /// Her line as a row of the thread, her labels kept on it as the record of
-/// what she offered (the UI strips them out of the words).
+/// what she offered (the UI strips them out of the words) — and the live
+/// message of it. The one writer of her rows and messages: private to this
+/// file. True when the row was kept.
 async fn keep_row(
     state: &std::sync::Arc<crate::server::ServerState>,
     line: &Line,
     labels: &[(usize, String)],
-    (session, place): (&str, &str),
-) {
+    (session, place): (&str, Option<&str>),
+) -> bool {
     let mut content = line.text().to_string();
     for (n, label) in labels {
         content.push_str(&format!(" [offer {n}: {label}]"));
@@ -535,11 +594,11 @@ async fn keep_row(
         client_id: None,
         failed: false,
         images: Vec::new(),
-        place: Some(place.to_string()),
+        place: place.map(str::to_string),
     };
     if let Err(e) = state.manager.global_sessions.add_chat_message(session, &msg) {
         tracing::warn!("[yinyue] her line was not kept as a row: {e}");
-        return;
+        return false;
     }
     let _ = state.events_tx.send(crate::engine::events::ServerEvent::Message {
         from: her.to_string(),
@@ -553,6 +612,7 @@ async fn keep_row(
         via_note: None,
         images: Vec::new(),
     });
+    true
 }
 
 /// [`finalize_event`]'s line, bare — for the tests that only ask what is said.
@@ -753,10 +813,10 @@ mod one_decision {
     #[test]
     fn a_line_of_hers_is_made_only_by_the_finalizer_or_the_answer_path() {
         // Built from parts, so this test's own text is no match.
-        let make = format!("{}{}", "Line::", "answer(");
-        check(&make, &[("src/server/resident/spoken.rs", 2), ("src/server/api/yinyue.rs", 1)]);
+        let make = format!("{}{}", "Line::", "new(");
+        check(&make, &[("src/server/resident/spoken.rs", 4)]);
         let literal = format!("{}{}", "Line { ", "text");
-        check(&literal, &[("src/server/resident/spoken.rs", 1)]);
+        check(&literal, &[]);
     }
 
     #[test]

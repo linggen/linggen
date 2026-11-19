@@ -332,9 +332,7 @@ pub(crate) async fn chat_handler(
     let task = frame_with_pending_prompt(&state, &text).await;
     tokio::spawn(async move {
         if let Some(reply) = crate::server::resident::run_yinyue_turn(&state, task, crate::server::resident::Origin::Person).await {
-            if !reply.eq_ignore_ascii_case("silent") {
-                emit_speak(&state, Line::answer(reply), None, SaidAt::default());
-            }
+            crate::server::resident::speak_person_reply(&state, &reply);
         }
     });
     (StatusCode::OK, "ok").into_response()

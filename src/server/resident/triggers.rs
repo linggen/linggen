@@ -644,10 +644,11 @@ pub(super) async fn wake_and_offer(
     let notice = raised.as_ref().map(|r| r.notice);
     let problem = raised.as_ref().map(|r| (r.problem.to_string(), shown));
     let line = spoken::publish(&state, said, &stage, Some(emotion.to_string()), problem).await;
-    if let Some(notice) = notice {
+    // Told only when the line was published — its row kept.
+    if let (Some(notice), Some(_)) = (notice, &line) {
         crate::perception::conditions::spoken(notice);
     }
-    Some(line)
+    line
 }
 
 /// What woke an unprompted turn of hers — `None` for a reply: her ordinary
