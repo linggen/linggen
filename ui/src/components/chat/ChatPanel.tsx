@@ -549,6 +549,8 @@ export const ChatPanel: React.FC<{
         summary={lastRunSummary}
       />
       <ChatInput
+        // One box per session: a draft belongs to its session (lib/chatDrafts).
+        key={sessionId ?? ''}
         projectRoot={projectRoot}
         selectedAgent={selectedAgent}
         setSelectedAgent={setSelectedAgent}

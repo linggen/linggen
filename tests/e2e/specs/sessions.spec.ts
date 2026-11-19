@@ -2,7 +2,7 @@
 // them — a run cut off before its reply, a shared table, a compacted one —
 // and what the session list does with them: switch, rename, delete.
 import type { Page } from '@playwright/test';
-import { test, expect, expectWebRtc, expectScriptedCalls, expectTurnOver, chat, send, shown } from '../support/world';
+import { test, expect, expectWebRtc, expectScriptedCalls, expectTurnOver, chat, composer, send, shown } from '../support/world';
 
 const SHARED = 'sess-1790000001-5a1ed001';
 const FERRY = 'sess-1790000002-c0ac7ed2';
@@ -79,6 +79,24 @@ test('a session deleted from the list is gone, after a reload too', async ({ pag
   await expectWebRtc(page, httpRequests);
   await expect(row(page, INTERRUPTED)).toHaveCount(1);
   await expect(row(page, FERRY)).toHaveCount(0);
+});
+
+// Found by the whole-code review (2026-11-19): the chat box kept what was
+// typed when the session changed, so a draft written in one session was
+// sent into the next. A draft belongs to its session: it waits there.
+test('a draft stays with the session it was written in', async ({ page, world, httpRequests }) => {
+  await page.goto(`${world.url}/?session=${FERRY}`);
+  await expectWebRtc(page, httpRequests);
+  await expect(shown(page, 'Every thirty minutes on Sundays.')).toHaveCount(1);
+  await composer(page).fill('A note for the ferry chat.');
+
+  await row(page, INTERRUPTED).click();
+  await expect(shown(page, 'List the notes here.')).toHaveCount(1);
+  await expect(composer(page)).toHaveValue('');
+
+  await row(page, FERRY).click();
+  await expect(shown(page, 'Every thirty minutes on Sundays.')).toHaveCount(1);
+  await expect(composer(page)).toHaveValue('A note for the ferry chat.');
 });
 
 test.describe('a shared table', () => {
