@@ -51,6 +51,15 @@ function watchVoice() {
   } as typeof BaseAudioContext.prototype.decodeAudioData;
 }
 
+/** The person is not at this page: its window is in the background, so every
+ *  presence beat it sends reads "away". Her voice is for a person who cannot
+ *  see her line; a focused page is where it is shown, and once one of its
+ *  beats lands she speaks there as words only. Without this the speech below
+ *  depended on her line arriving before the page's first beat (every 4 s). */
+function watchBackgrounded() {
+  document.hasFocus = () => false;
+}
+
 /** Click Yinyue's avatar and say `text` to her. */
 async function talkToYinyue(page: Page, text: string) {
   await page.getByTitle('Talk to Yinyue').click();
@@ -65,6 +74,7 @@ test.describe("Yinyue's voice", () => {
   test('her words and her speech come over the channel', async ({ page, world, httpRequests }) => {
     await page.addInitScript(watchAsked);
     await page.addInitScript(watchVoice);
+    await page.addInitScript(watchBackgrounded);
     await page.goto(world.url);
     await expectWebRtc(page, httpRequests);
     // The fixture home keeps her muted: unmute her, then talk.
