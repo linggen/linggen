@@ -27,7 +27,7 @@ import { useAgentPresent } from '../../hooks/useAgentPresent';
 import { useAddressable } from '../../hooks/useAddressable';
 import { COMPANION_ID } from '../../lib/agentsMet.mts';
 import { language } from '../../lib/i18n';
-import { draftOf, keepDraft, type Draft } from '../../lib/chatDrafts.mts';
+import { keepDraft, openDraft } from '../../lib/chatDrafts.mts';
 import { useUiStore } from '../../stores/uiStore';
 import { replyAddressee } from '../../lib/replyTo.mts';
 import { isRestartCommand, restartSuggestion } from '../../lib/restartCommand.mts';
@@ -74,6 +74,9 @@ export interface ChatInputProps {
   /** The session this chat shows. A skill page's embedded chat has its own;
    *  the app's global store is empty there, so the queue's ✕ did nothing. */
   sessionId?: string | null;
+  /** Whose draft this box holds (lib/chatDrafts `boxSlot`): the session, or
+   *  '' for a chat still being made. */
+  draftSlot: string;
   /** The question open in this chat (AskUser), if any. Words typed while it
    *  is open ARE its answer — the "Other" text — never a message queued
    *  behind it (his, 2026-09-23). A page tap takes another path and waits. */
@@ -105,6 +108,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   visibleQueued,
   chatMessages,
   sessionId,
+  draftSlot,
   openQuestion,
   onAnswerQuestion,
   overlay,
@@ -118,7 +122,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 }) => {
   // A draft belongs to its session: this box is made anew per session
   // (ChatPanel keys it) and opens on what was left in it there.
-  const [draft] = useState(() => draftOf(sessionId));
+  const [draft] = useState(() => openDraft(draftSlot));
   const [chatInput, setChatInput] = useState(draft?.text ?? '');
   const hintSessionId = useSessionStore((s) => s.activeSessionId);
   const nextPrompt = useSuggestionStore((s) => (hintSessionId ? s.hints[hintSessionId] : undefined));
@@ -157,10 +161,11 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   // Whom this message goes to, shown as a chip before the words; empty, the
   // chat's default answers (the placeholder names who).
   const [addressee, setAddressee] = useState(draft?.addressee ?? '');
-  // What the box holds when it goes (the session changed) stays that session's.
-  const held = useRef<Draft>({ text: chatInput, images: pendingImages, addressee });
-  held.current = { text: chatInput, images: pendingImages, addressee };
-  useEffect(() => () => keepDraft(sessionId, held.current), []); // eslint-disable-line react-hooks/exhaustive-deps
+  // What the box holds is its slot's draft, kept as it changes: the box made
+  // for the next session (or the one New chat becomes) reads it on opening.
+  useEffect(() => {
+    keepDraft(draftSlot, { text: chatInput, images: pendingImages, addressee });
+  }, [draftSlot, chatInput, pendingImages, addressee]);
   const labelOf = (id: string) => {
     const agent = mainAgents.find((a) => a.name.toLowerCase() === id);
     return agent ? agentMentionLabel(agent, mentionLang) : id.charAt(0).toUpperCase() + id.slice(1);

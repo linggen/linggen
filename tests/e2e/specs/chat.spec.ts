@@ -2,7 +2,7 @@
 // scripted reply renders.
 import {
   test, expect, expectWebRtc, expectScriptedCalls, expectTurnOver, chat, send, shown, newChat,
-  holdReplies, held, heldEvents, release,
+  holdReplies, held, heldEvents, release, composer,
 } from '../support/world';
 import type { Page } from '@playwright/test';
 
@@ -73,6 +73,32 @@ test('a message sent while New chat is being made goes to the new chat', async (
   await expect(shown(page, 'Hello from the fake model.')).toHaveCount(1);
   await expect(shown(page, 'Say hello.')).toHaveCount(1);
   await expect(shown(page, '[Ling]')).toHaveCount(1);
+  await expect(shown(page, 'Harbor Table. Alex rolled a 4.')).toHaveCount(0);
+  await expectScriptedCalls(world, ['ling']);
+});
+
+// 2b. Found on a loaded machine (2026-11-19): words typed while New chat
+//    was being made were taken away when the new session arrived (the box
+//    is made anew per session and kept them as the session before's
+//    draft), so the Enter after it sent nothing. A draft typed in a New
+//    chat is that new chat's.
+test('words typed while New chat is being made stay in the new chat', async ({ page, world, httpRequests }) => {
+  await page.addInitScript(holdReplies, { asked: [{ method: 'POST', path: '/api/sessions' }] });
+  await page.goto(world.url);
+  await expectWebRtc(page, httpRequests);
+  await expect(shown(page, 'Harbor Table. Alex rolled a 4.')).toHaveCount(1);
+
+  await newChat(page).click();
+  await expect.poll(() => held(page)).toEqual(['/api/sessions']);
+  await composer(page).fill('Say hello.');
+  await release(page);
+  await expect(page.getByTestId('session-row').filter({ hasText: /^Chat / })).toHaveCount(1);
+  await expect(composer(page)).toHaveValue('Say hello.');
+
+  await composer(page).press('Enter');
+  await expect(shown(page, 'Hello from the fake model.')).toHaveCount(1);
+  await expectTurnOver(page);
+  await expect(shown(page, 'Say hello.')).toHaveCount(1);
   await expect(shown(page, 'Harbor Table. Alex rolled a 4.')).toHaveCount(0);
   await expectScriptedCalls(world, ['ling']);
 });

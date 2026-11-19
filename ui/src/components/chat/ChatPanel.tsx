@@ -41,6 +41,7 @@ import { sessionFolderLabel } from '../../lib/sessionRoot.mts';
 import { runLabel } from '../../lib/runStatus.mts';
 import { askedElsewhere, askedFrom, pagePlace, placeName, stopLabel, withLivePlaces, workingIn } from '../../lib/dayFold.mts';
 import { useRunningElsewhere } from '../../hooks/useRunningElsewhere';
+import { boxSlot } from '../../lib/chatDrafts.mts';
 
 /**
  * Debug action buttons shown inside the expanded session header.
@@ -284,6 +285,9 @@ export const ChatPanel: React.FC<{
   const agentStatusText = useServerStore((s) => s.agentStatusText);
   const reconnecting = useUserStore((s) => s.connectionStatus === 'reconnecting');
   const { isAgentActive, spinnerVerb, thinkingElapsed, lastRunSummary } = useRunSpinner(sessionId);
+  // The chat box's slot: this session, or the New chat being made.
+  const makingNewChat = useSessionStore((s) => !!s.newChat);
+  const draftSlot = boxSlot(sessionId, makingNewChat);
 
   const mainAgentIds = useMemo(() => mainAgents.map((agent) => normalizeAgentKey(agent.name)), [mainAgents]);
   // Whom each of the person's lines went to — only where more than one
@@ -550,7 +554,8 @@ export const ChatPanel: React.FC<{
       />
       <ChatInput
         // One box per session: a draft belongs to its session (lib/chatDrafts).
-        key={sessionId ?? ''}
+        key={draftSlot}
+        draftSlot={draftSlot}
         projectRoot={projectRoot}
         selectedAgent={selectedAgent}
         setSelectedAgent={setSelectedAgent}
