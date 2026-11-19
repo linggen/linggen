@@ -51,7 +51,7 @@ Redesign of the plan feature, aligned with Claude Code. Separates planning (read
 - `PlanUpdate` events.
 - `update_plan` action for execution-time progress (separate feature).
 - `plan_mode: bool` on engine.
-- Status lifecycle: `Planned` → `Approved` → `Executing` → `Completed`. Also `Planned` → `Rejected`.
+- Status lifecycle: `Planned` → `Approved` → `Executing` → `Completed`. Also `Planned` → `Rejected`; a run that failed → `Failed`; a run the person stopped → `Planned` again.
 
 ### Added
 
@@ -98,7 +98,7 @@ Plan text and its checklist are injected into the system prompt. Model executes 
 
 ### Completion
 
-When a run ends (typed chat, `agent_run`, a mission) and its plan is executing or approved with every checklist item done, the plan becomes `Completed` and a `PlanUpdate` goes out, so the block reads done. A partial checklist stays open for the next turn. An approved plan's execution also ends `Completed` and rewrites its saved plan message.
+When a run ends (typed chat, `agent_run`, a mission) and its plan is executing or approved with every checklist item done, the plan becomes `Completed` and a `PlanUpdate` goes out, so the block reads done. A partial checklist stays open for the next turn. An approved plan's execution also ends `Completed` and rewrites its saved plan message — `Failed` when its run failed, and `Planned` again when the person stopped it, so it can be approved again (a checklist already done stays `Completed`).
 
 A checklist-only plan (`update_plan` with no plan text) shows its checklist as its text, rebuilt on every update; a real plan's text is kept.
 
