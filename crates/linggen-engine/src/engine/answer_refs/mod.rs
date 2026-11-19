@@ -176,10 +176,16 @@ pub fn ids_in(text: &str) -> Vec<String> {
         let after = &rest[open + 1..];
         let Some(close) = after.find(']') else { break };
         let id = &after[..close];
-        if is_ref_id(id) && !ids.iter().any(|i| i == id) {
+        if !is_ref_id(id) {
+            // Not an id: look again from just past this `[`, so an id
+            // inside the span is still found.
+            rest = after;
+            continue;
+        }
+        if !ids.iter().any(|i| i == id) {
             ids.push(id.to_string());
         }
-        rest = &after[close.min(after.len())..];
+        rest = &after[close + 1..];
     }
     ids
 }
@@ -242,6 +248,12 @@ mod tests {
                     again [turn1image2], a [link](x) and [turn9news1].";
         assert_eq!(ids_in(text), vec!["turn1image2", "turn1image1", "turn1search1"]);
         assert!(ids_in("[turn").is_empty());
+    }
+
+    #[test]
+    fn an_opener_that_is_no_id_leaves_the_next_id_whole() {
+        assert_eq!(ids_in("[turn notes [turn2image1]"), vec!["turn2image1"]);
+        assert_eq!(ids_in("[turn [turn [turn3search1] [turn3image2]"), vec!["turn3search1", "turn3image2"]);
     }
 
     #[test]
