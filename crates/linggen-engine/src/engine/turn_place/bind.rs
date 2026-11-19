@@ -7,6 +7,7 @@
 
 use super::TurnPlace;
 use crate::engine::skill::Skill;
+use crate::engine::skill_tool::SkillToolDef;
 use crate::engine::skill_activation::{ActivationMode, ActivationOutcome};
 use crate::engine::AgentEngine;
 use std::collections::HashSet;
@@ -17,6 +18,8 @@ use std::path::PathBuf;
 pub(crate) struct Entered {
     /// The skill tools the place registered that were not there before.
     registered: Vec<String>,
+    /// The skill tools the place replaced (same name), as they were.
+    displaced: Vec<(String, SkillToolDef)>,
     /// The scopes before the skill's were applied — `None` when the place
     /// has no skill and so set none.
     scopes: Option<Scopes>,
@@ -118,14 +121,20 @@ impl AgentEngine {
         // and the app's own memory when it declares `memory-context`.
         self.prompt_profile.include_memory = false;
         self.prompt_profile.scope_to_app(&skill);
-        let before: HashSet<String> = self.tools.skill_tools.keys().cloned().collect();
+        let before = self.tools.skill_tools.clone();
         let outcome = self.activate_skill(skill, mode).await;
         entered.registered = self
             .tools
             .skill_tools
             .keys()
-            .filter(|name| !before.contains(*name))
+            .filter(|name| !before.contains_key(*name))
             .cloned()
+            .collect();
+        entered.displaced = before
+            .into_iter()
+            .filter(|(name, was)| {
+                self.tools.skill_tools.get(name).is_some_and(|now| !same_tool(now, was))
+            })
             .collect();
         self.entered_place = Some(entered);
         outcome
@@ -145,6 +154,9 @@ impl AgentEngine {
         self.cached_system_prompt = None;
         for name in &entered.registered {
             self.tools.skill_tools.remove(name);
+        }
+        for (name, was) in entered.displaced {
+            self.tools.skill_tools.insert(name, was);
         }
         if let Some(scopes) = entered.scopes {
             self.cfg.skill_allowed_tools = scopes.skill_allowed_tools;
@@ -215,6 +227,11 @@ impl AgentEngine {
         self.tools.builtins.set_workspace_root(folder.tools_root);
         self.memory_cwd = folder.memory_cwd;
     }
+}
+
+/// Whether two declarations of a skill tool are the same one.
+fn same_tool(a: &SkillToolDef, b: &SkillToolDef) -> bool {
+    serde_json::to_value(a).ok() == serde_json::to_value(b).ok()
 }
 
 #[cfg(test)]

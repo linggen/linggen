@@ -224,6 +224,25 @@ async fn a_skill_borrowed_mid_turn_keeps_its_tools() {
     assert!(engine.tools.skill_tools.contains_key("XLook"));
 }
 
+/// A place whose skill declares a tool of a name the engine already held
+/// puts the one it replaced back when it is left.
+#[tokio::test]
+async fn leaving_puts_back_a_tool_the_place_replaced() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut engine = engine();
+    engine.enter_place(TurnPlace::home(), None, ActivationMode::SessionBound).await;
+    let mut earlier = x_app(&dir.path().join("x"));
+    earlier.tool_defs[0].cmd = "echo earlier".into();
+    engine.activate_skill(earlier, ActivationMode::ToolInvocation).await;
+    engine.leave_place();
+    engine
+        .enter_place(place("zz-x", true), Some(x_app(&dir.path().join("x"))), ActivationMode::SessionBound)
+        .await;
+    assert_eq!(engine.tools.skill_tools["XLook"].cmd, "echo x");
+    engine.leave_place();
+    assert_eq!(engine.tools.skill_tools["XLook"].cmd, "echo earlier");
+}
+
 /// In a day's session a private app (`private-talk: true`) never becomes a
 /// turn's place nor its active skill, whoever takes it up — a page, a
 /// slash command, a trigger, the Skill tool. A shared app still does, and
