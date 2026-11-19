@@ -144,9 +144,7 @@ pub(crate) async fn answer_handler(
 
 /// Keep the answer on the problem's record.
 fn answer_problem(problem: &str, answer: crate::perception::told::Answer, now: i64) {
-    let mut ledger = crate::perception::told::load();
-    ledger.answered(problem, answer, 1, now);
-    crate::perception::told::store(&ledger);
+    crate::perception::told::update(|ledger| ledger.answered(problem, answer, 1, now));
 }
 
 #[derive(Deserialize)]
