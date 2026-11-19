@@ -524,8 +524,9 @@ pub(crate) async fn dequeue_and_emit(
 }
 
 /// Keep `queued_id` (`persist`), then take it off the queue `key`, the
-/// queue locked throughout. False, and nothing kept, when it is gone.
-async fn persist_then_dequeue<F: std::future::Future>(
+/// queue locked throughout. False, and nothing kept, when it is gone; false,
+/// and still queued, when it could not be kept.
+async fn persist_then_dequeue<F: std::future::Future<Output = bool>>(
     queue: &tokio::sync::Mutex<std::collections::HashMap<String, Vec<QueuedChatItem>>>,
     key: &str,
     queued_id: &str,
@@ -538,7 +539,9 @@ async fn persist_then_dequeue<F: std::future::Future>(
     if !queued {
         return false;
     }
-    persist().await;
+    if !persist().await {
+        return false; // not kept: it stays queued, and nothing runs on it
+    }
     if let Some(items) = guard.get_mut(key) {
         items.retain(|item| item.id != queued_id);
         if items.is_empty() {
@@ -1298,7 +1301,7 @@ pub(crate) async fn start_turn(
     if !was_busy {
         // Persist + emit. The pictures ride the turn inline (base64) and a
         // copy is kept beside the transcript for the chat to draw again.
-        persist_and_emit_with_images(
+        let kept = persist_and_emit_with_images(
             &state.manager.global_sessions,
             &events_tx,
             &target_id,
@@ -1310,6 +1313,11 @@ pub(crate) async fn start_turn(
             &req.images,
         )
         .await;
+        // Not saved: refused to its sender, and no turn runs on it.
+        if !kept {
+            let error = "the message could not be saved to the session's history";
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": error }))).into_response();
+        }
     }
     // Queued messages are persisted when dequeued so they don't appear in
     // chat before the agent picks them up.
@@ -1565,6 +1573,7 @@ mod tests {
             *during.lock().unwrap() = Some(snapshot());
             tokio::task::yield_now().await;
             kept.store(true, Ordering::SeqCst);
+            true
         })
         .await;
         assert!(shown);
@@ -1579,6 +1588,29 @@ mod tests {
         })
         .await;
         assert!(!again);
+    }
+
+    /// A queued message that could not be kept stays in the queue and does
+    /// not run: nothing is removed on a failed save.
+    #[tokio::test]
+    async fn a_queued_message_not_kept_stays_queued_and_does_not_run() {
+        use super::{persist_then_dequeue, QueuedChatItem};
+        use std::collections::HashMap;
+        let item = QueuedChatItem {
+            id: "1-1".into(),
+            agent_id: "ling".into(),
+            session_id: "s".into(),
+            preview: "hi".into(),
+            timestamp: 0,
+            steerable: true,
+            place: None,
+            text: "hi".into(),
+            images: Vec::new(),
+        };
+        let queue = tokio::sync::Mutex::new(HashMap::from([("s|ling".to_string(), vec![item])]));
+        let runs = persist_then_dequeue(&queue, "s|ling", "1-1", || async { false }).await;
+        assert!(!runs, "a message that was not kept ran");
+        assert_eq!(queue.lock().await["s|ling"].len(), 1, "a message that was not kept left the queue");
     }
 
     #[test]

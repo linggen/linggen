@@ -211,21 +211,10 @@ pub(crate) async fn persist_and_emit_with_images(
     let sid = session_id.unwrap_or("default");
     // Kept first, so the live event names the same copies a reload shows.
     let kept = store.keep_images(sid, sent);
-    let _ = events_tx.send(ServerEvent::Message {
-        from: from.to_string(),
-        to: to.to_string(),
-        content: content.to_string(),
-        session_id: session_id.map(|s| s.to_string()),
-        run_id: None,
-        parent_agent_id: None,
-        client_id: client_id.clone(),
-        via: via.map(str::to_string),
-        via_note: via_note.map(str::to_string),
-        images: kept
-            .iter()
-            .map(|n| crate::state_fs::session_images::url(sid, n))
-            .collect(),
-    });
+    let images = kept
+        .iter()
+        .map(|n| crate::state_fs::session_images::url(sid, n))
+        .collect();
     let msg = crate::state_fs::sessions::ChatMsg {
         run_id: None,
         agent_id: agent_id.to_string(),
@@ -234,17 +223,30 @@ pub(crate) async fn persist_and_emit_with_images(
         content: content.to_string(),
         timestamp: crate::util::now_ts_secs(),
         is_observation,
-        client_id,
+        client_id: client_id.clone(),
         failed: false,
         via: via.map(str::to_string),
         via_note: via_note.map(str::to_string),
         images: kept,
         place: None,
     };
+    // Saved before it is shown: a page never shows what a reload would not.
     if let Err(e) = store.add_chat_message(sid, &msg) {
         tracing::warn!("Failed to persist chat message to mission store: {}", e);
         return false;
     }
+    let _ = events_tx.send(ServerEvent::Message {
+        from: from.to_string(),
+        to: to.to_string(),
+        content: content.to_string(),
+        session_id: session_id.map(|s| s.to_string()),
+        run_id: None,
+        parent_agent_id: None,
+        client_id,
+        via: via.map(str::to_string),
+        via_note: via_note.map(str::to_string),
+        images,
+    });
     true
 }
 
@@ -478,6 +480,35 @@ mod turn_error_tests {
             format_turn_error("BILLING_REQUIRED: Your free tokens are used up"),
             "Error: BILLING_REQUIRED: Your free tokens are used up"
         );
+    }
+}
+
+#[cfg(test)]
+mod unsaved_tests {
+    /// A message that could not be saved is not shown: no live event, and
+    /// the caller hears why.
+    #[tokio::test]
+    async fn a_message_not_saved_is_not_shown() {
+        let dir = tempfile::tempdir().unwrap();
+        let blocked = dir.path().join("sessions");
+        std::fs::write(&blocked, "a file where the sessions folder goes").unwrap();
+        let store = crate::state_fs::SessionStore::with_sessions_dir(blocked);
+        let tx = crate::engine::event_bus::EventBus::new(8);
+        let mut rx = tx.listen();
+        let kept = super::persist_and_emit_with_images(
+            &store,
+            &tx,
+            "ling",
+            ("user", "ling", "hello"),
+            Some("s1"),
+            false,
+            None,
+            (None, None),
+            &[],
+        )
+        .await;
+        assert!(!kept, "a failed save reads as kept");
+        assert!(rx.try_recv().is_err(), "a message that was not saved was shown");
     }
 }
 
