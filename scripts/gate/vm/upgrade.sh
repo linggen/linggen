@@ -1,7 +1,7 @@
 # Release gate — upgrade an old user (a clone of linggen-prev) to the release
 # in the mirror, then the refusal and rollback cases (doc/test-design.md § 4).
-# Env from the host: MIRROR, MODEL, DREAM_SHA (the release's built-in dream
-# mission), and expect.env. Memory is inside the engine: no ling-mem upgrade.
+# Env from the host: MIRROR, MODEL, BUILTIN_BODIES (each built-in mission's
+# name=sha of its instructions), and expect.env. Memory is inside the engine: no ling-mem upgrade.
 # What the baseline runs decides the memory checks: an old ling-mem daemon on
 # the old port (≤ 2.2.x) is taken over (takeover.sh); a `ling` that already
 # hosts memory (2.3.0 on) has its store opened in place (inplace.sh).
@@ -155,22 +155,30 @@ check "upgrade: a chat turn on the old config" $? "$CHAT_DETAIL" "$CHAT_DETAIL"
 
 [ -f "$LG/missions/table-check/mission.md" ]
 check "upgrade: user mission kept" $? "missions/table-check gone"
-dream="$(sha "$LG/missions/dream/mission.md")"
-if [ "$dream" = "$DREAM_SHA" ]; then pass "upgrade: built-in dream mission is this release's" ""
-else info "upgrade: built-in dream mission is this release's" "the file differs (its personal fields are the person's)"; fi
-# Built-in missions refresh on startup (extensions/missions/builtin.rs): the
-# instructions — everything after the front matter — are the release's.
-dream_body="$(awk 'f; /^---$/ {c++; if (c == 2) f = 1}' "$LG/missions/dream/mission.md" 2>/dev/null | shasum -a 256 | awk '{print $1}')"
-[ -n "${DREAM_BODY_SHA:-}" ] && [ "$dream_body" = "$DREAM_BODY_SHA" ]
-check "upgrade: the dream mission's instructions are this release's" $? "installed ${dream_body:0:12}, release ${DREAM_BODY_SHA:-unset}"
-# …and every memory tool they name is one the engine's memory server lists.
+# Built-in missions refresh on startup (extensions/missions/builtin.rs): for
+# each one the release ships, the installed instructions — everything after
+# the front matter — are the release's, every memory tool they name is one
+# the engine's memory server lists, and the only MCP server they allow is
+# the engine's own memory server.
+[ -n "${BUILTIN_BODIES:-}" ]
+check "upgrade: the host named the release's built-in missions" $? "BUILTIN_BODIES unset" "$(tr ',' '\n' <<<"${BUILTIN_BODIES:-}" | cut -d= -f1 | tr '\n' ' ')"
 mcp_answers "$ENGINE_MEM/mcp"
-missing=""
-for n in $(grep -oE 'memory_[a-z_]+' "$LG/missions/dream/mission.md" 2>/dev/null | sort -u); do
-  grep -qx "$n" <<<"$MCP_NAMES" || missing="$missing $n"
+IFS=',' read -r -a builtins <<<"${BUILTIN_BODIES:-}"
+for kv in "${builtins[@]}"; do
+  name="${kv%%=*}"; want="${kv#*=}"; file="$LG/missions/$name/mission.md"
+  body="$(awk 'f; /^---$/ {c++; if (c == 2) f = 1}' "$file" 2>/dev/null | shasum -a 256 | awk '{print $1}')"
+  [ -f "$file" ] && [ "$body" = "$want" ]
+  check "upgrade: built-in mission $name — its instructions are this release's" $? "installed ${body:0:12} ($( [ -f "$file" ] && echo present || echo missing)), release ${want:0:12}"
+  missing=""
+  for n in $(grep -oE 'memory_[a-z_]+' "$file" 2>/dev/null | sort -u); do
+    grep -qx "$n" <<<"$MCP_NAMES" || missing="$missing $n"
+  done
+  for s in $(grep -oE 'mcp__[a-z0-9-]+' "$file" 2>/dev/null | sort -u); do
+    [ "$s" = mcp__memory ] || missing="$missing $s"
+  done
+  [ -f "$file" ] && [ -n "$MCP_NAMES" ] && [ -z "$missing" ]
+  check "upgrade: built-in mission $name — names only tools the engine serves" $? "not served:${missing:- none}; served: $(tr '\n' ' ' <<<"$MCP_NAMES" | cut -c1-200)"
 done
-[ -n "$MCP_NAMES" ] && [ -z "$missing" ]
-check "upgrade: the dream mission names only memory tools the engine serves" $? "not served:${missing:- none}; served: $(tr '\n' ' ' <<<"$MCP_NAMES" | cut -c1-200)"
 
 # ── The store ──────────────────────────────────────────────────────────────
 "$MEM" stats >"$OUT/stats.json" 2>&1
@@ -372,7 +380,9 @@ if command -v claude >/dev/null; then
     && info "upgrade: before — claude has $OLD_PLUGIN_ID" "as the previous release installed it" \
     || gap "upgrade: before — claude has $OLD_PLUGIN_ID" "linggen-prev has no old plugin enabled — the retire step is not exercised"
   # The old plugin's memory server, before the new plugin replaces it: the
-  # engine refuses it with "update the plugin", never serves it.
+  # engine refuses it with "update the plugin", never serves it. The app was
+  # quit above, so the release's engine is started as a person starts it.
+  engine_health 5 || start_engine 90
   if engine_health 5; then
     mcp_retired "http://127.0.0.1:$EP/mcp/memory"
     check "upgrade: before — the old plugin's memory address answers 410 UPGRADE_PLUGIN" $? "$RETIRED_DETAIL" "$RETIRED_DETAIL"
@@ -384,7 +394,7 @@ if command -v claude >/dev/null; then
     grep -q 'Old plugin' "$OUT/status-old-plugin.txt" && grep -q 'Claude Code called the retired' "$OUT/status-old-plugin.txt"
     check "upgrade: ling status names Claude Code's old plugin and its update" $? "$(grep -i -A1 'old plugin' "$OUT/status-old-plugin.txt" | head -c 240)" "$(grep 'Claude Code called' "$OUT/status-old-plugin.txt" | head -c 160)"
   else
-    gap "upgrade: before — the old plugin's memory address answers 410" "no engine on $EP at this point"
+    fail "upgrade: before — the release's engine starts for the plugin step" "no health on $EP — $(tail -3 "$OUT/ling-start.log" 2>/dev/null)"
   fi
   clt_dialog_close
   install_plugin "$OUT/install-plugin.log"

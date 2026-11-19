@@ -174,8 +174,16 @@ stage_vmfiles
 start_mirror "$RUN/mirror"
 start_model
 record PASS "servers" "mirror 127.0.0.1:$MIRROR_PORT, llmposter 127.0.0.1:$MODEL_PORT (VM: $VM_MIRROR, $VM_MODEL)"
-VMENV=(MIRROR="$VM_MIRROR" MODEL="$VM_MODEL" GATE_SOURCE="$SOURCE" DREAM_SHA="$(shasum -a 256 "$REPO/missions/dream/mission.md" | awk '{print $1}')"
-  DREAM_BODY_SHA="$(awk 'f; /^---$/ {c++; if (c == 2) f = 1}' "$REPO/missions/dream/mission.md" | shasum -a 256 | awk '{print $1}')")
+# Every built-in mission the engine ships (missions/<name>/mission.md), as
+# name=sha of its instructions — the text after the front matter.
+builtin_bodies() {
+  local m out=""
+  for m in "$REPO"/missions/*/mission.md; do
+    out="$out${out:+,}$(basename "$(dirname "$m")")=$(awk 'f; /^---$/ {c++; if (c == 2) f = 1}' "$m" | shasum -a 256 | awk '{print $1}')"
+  done
+  printf '%s' "$out"
+}
+VMENV=(MIRROR="$VM_MIRROR" MODEL="$VM_MODEL" GATE_SOURCE="$SOURCE" BUILTIN_BODIES="$(builtin_bodies)")
 
 # The UI in a real browser over the tunnel (Playwright from tests/e2e).
 ui_check() { # vm label

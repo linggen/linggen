@@ -14,6 +14,7 @@
 #                               the debug engine first. Not part of `all`
 #                               (~1 min with builds; needs Chromium)
 #   ./scripts/check.sh js       node tests for the shared page helpers
+#   ./scripts/check.sh plugin   the plugin's hook tests (plugins/linggen/hooks/tests)
 #   ./scripts/check.sh live [flags]
 #                               the live regression suite against the running
 #                               engine on 9527 (scripts/live-check.sh; --no-model
@@ -87,6 +88,13 @@ fi
 
 if [ "$what" = all ] || [ "$what" = js ]; then
   step node --test tests/shared/*.test.mjs
+fi
+
+if [ "$what" = all ] || [ "$what" = plugin ]; then
+  # The plugin's hook tests: offline, each on its own scratch home.
+  for t in plugins/linggen/hooks/tests/*.test.sh; do
+    step bash "$t"
+  done
 fi
 
 [ "$fail" = 0 ] && echo "all checks passed" || echo "some checks failed"
