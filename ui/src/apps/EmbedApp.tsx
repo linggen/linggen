@@ -19,6 +19,7 @@ import { ToastContainer } from '../components/ToastContainer';
 import { useSessionStore } from '../stores/sessionStore';
 import { useServerStore, isSessionBusy } from '../stores/serverStore';
 import { useChatStore } from '../stores/chatStore';
+import { useInteractionStore } from '../stores/interactionStore';
 import { useUiStore } from '../stores/uiStore';
 import { useUserStore } from '../stores/userStore';
 import { useSuggestionStore } from '../stores/suggestionStore';
@@ -192,6 +193,21 @@ export const EmbedApp: React.FC = () => {
       }
     })();
   }, [loadSkillSessions]);
+
+  // The chat shows the active session's own messages: switched to another
+  // session (the list, a New chat), it moves to that session's bucket and
+  // loads it — its events never land in the first one's.
+  useEffect(() => {
+    const cs = useChatStore.getState();
+    if (!activeSessionId || cs._activeSessionId === activeSessionId) return;
+    cs.setActiveSession(activeSessionId);
+    const interaction = useInteractionStore.getState();
+    interaction.setQueuedMessages([]);
+    interaction.setActivePlan(null);
+    interaction.setPendingPlan(null);
+    interaction.setPendingPlanAgentId(null);
+    cs.fetchSessionState();
+  }, [activeSessionId]);
 
   // --- Clipboard + skill command bridge (postMessage from parent page) ---
   const clearChatRef = useRef(clearChat);

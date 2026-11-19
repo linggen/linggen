@@ -18,6 +18,7 @@ import { isPermissionSuppressed } from './_shared';
 import { listedAsk, settleAsks } from '../askQueue.mts';
 import { noteUiBuild, type PageFacts } from '../uiBuild.mts';
 import { toldPlaces } from '../dayFold.mts';
+import { retiredSends, scopedHere } from '../pushScope.mts';
 
 
 export function handlePageState(item: UiEventOf<'page_state'>): void {
@@ -119,7 +120,7 @@ function applyBusySessions(ps: PageState): void {
 /// reconnected as a fresh peer) kept showing a queue the server had already
 /// thrown away, and refused every new message as "agent is busy".
 function applyQueued(ps: PageState): void {
-  if (ps.queued === undefined) return;
+  if (ps.queued === undefined || !scopedForOpen(ps)) return;
   const items = (Array.isArray(ps.queued) ? ps.queued : []).flatMap((entry) =>
     Array.isArray(entry?.items) ? entry.items : []
   );
@@ -128,7 +129,7 @@ function applyQueued(ps: PageState): void {
 
 /** The session's background tasks; an absent list on a scoped push is none. */
 function applyTasks(ps: PageState): void {
-  if (ps.queued === undefined) return;
+  if (ps.queued === undefined || !scopedForOpen(ps)) return;
   useInteractionStore.getState().setBackgroundTasks(Array.isArray(ps.tasks) ? ps.tasks : []);
 }
 
@@ -152,7 +153,7 @@ function applyScopedState(ps: PageState): void {
   }
   if (ps.sessions) useSessionStore.setState({ sessions: ps.sessions });
 
-  if (!ps.session_permission) return;
+  if (!ps.session_permission || !scopedForOpen(ps)) return;
   const perm = ps.session_permission;
   const all = perm.path_modes?.find((grant) => grant.path === '*');
   useUiStore.getState().setSessionAllMode(all?.mode ?? null);
@@ -167,6 +168,12 @@ function applyScopedState(ps: PageState): void {
  *  Claude session's children are the SDK's, not engine runs. */
 function reconcilesSubagents(ps: PageState): boolean {
   return isForActiveSession(ps) && ps.session_runtime === 'linggen';
+}
+
+/** The push's queue, tasks and permission view may be written here
+ *  (lib/pushScope.mts). */
+function scopedForOpen(ps: PageState): boolean {
+  return scopedHere(ps.session_id, useSessionStore.getState().activeSessionId);
 }
 
 /** The push's scoped part describes the session on screen (not the one
@@ -225,11 +232,9 @@ function reconcileStreamingState(runs: AgentRunInfo[], runsFor: string | undefin
 
   const serverStore = useServerStore.getState();
   const now = Date.now();
-  for (const [sid, sentAt] of Object.entries(serverStore.pendingSends)) {
-    if (!running.has(sid) && now - sentAt > STREAM_STATE_STALE_MS) {
-      serverStore.setPendingSend(sid, false);
-      void markInterruptedIfUnanswered(sid);
-    }
+  for (const sid of retiredSends(serverStore.pendingSends, running, runsFor, now, STREAM_STATE_STALE_MS)) {
+    serverStore.setPendingSend(sid, false);
+    void markInterruptedIfUnanswered(sid);
   }
 
   // Frozen generating bubbles in the visible session: finalize them so the

@@ -14,6 +14,7 @@ import { billingBody } from './billing.mts';
 import { appConfig, sessionApi } from './endpoints';
 import { useChatStore } from '../stores/chatStore';
 import { useSessionStore } from '../stores/sessionStore';
+import { stillOn } from './sessionLoad.mts';
 import type { ChatMessage } from '../types';
 
 /** The Linggen Cloud model (provider/models/catalog.rs LINGGEN_CLOUD_MODEL_ID). */
@@ -119,12 +120,16 @@ export function resendOnOwnModel(row: ChatMessage, resend: (failed: ChatMessage)
   waiting = (async () => {
     const text = refusedText(row);
     if (!text) return false;
+    // The refused turn is this session's: it goes again only here.
+    const asked = useSessionStore.getState().activeSessionId;
+    const here = () => stillOn(asked, useSessionStore.getState().activeSessionId);
     // A usable own model already there goes to work now; else wait for one added.
     const owned = await ownModels();
     const added = (await standingOwnModel(owned)) ?? await waitForOwnModel(owned, signal);
     if (!added) return false;
     const agentId = row.from || 'ling';
-    await adoptOwnModel(added, useSessionStore.getState().activeSessionId, agentId);
+    await adoptOwnModel(added, asked, agentId);
+    if (!here()) return false;
     resend({ ...row, resend: { text, agentId, persisted: true } });
     return true;
   })().finally(() => { waiting = null; });

@@ -337,7 +337,7 @@ export function useChatActions(
         if (onSession(asked)) useChatStore.getState().removeLastUserMessage(userMessage, to);
         if (data.status === 'absent') {
           postToParent({ type: 'linggen-skill-event', event: 'agent_absent', payload: { agent: to, text: userMessage } });
-        } else {
+        } else if (onSession(asked)) {
           addUnavailableLine(to);
         }
         return;
@@ -425,6 +425,8 @@ export function useChatActions(
   /**
    * Send one plan decision. A failure is shown, never swallowed: a button that
    * does nothing on click is the same bug as a button that isn't there.
+   * Resolves true only while the session it was sent for is still open, so
+   * the caller's change lands on that session's plan, never another's.
    */
   const sendPlanDecision = useCallback(async (
     type: 'approve' | 'reject' | 'edit',
@@ -445,7 +447,7 @@ export function useChatActions(
         session_id: sid,
         ...extra,
       });
-      return true;
+      return onSession(sid);
     } catch (e) {
       const reason = String((e as Error)?.message ?? e);
       useUiStore.getState().addToast({ message: `Plan ${type} failed — ${reason}`, variant: 'error' });
