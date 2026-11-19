@@ -137,7 +137,7 @@ A mission body is the **runbook**: step-by-step instructions, explicit tool call
 
 The agent referenced in frontmatter (`agent: ling`, default `ling`) contributes its `## Identity` block — the first paragraph of its spec body (typically `"You are X — <short self-description>"`) plus the YAML `personality` field. This block is prepended to the mission body, giving the run a consistent voice without forcing every mission author to duplicate "You are Ling" prose.
 
-The rest of the agent's **spec body** follows the identity block, then the mission body. An agent made for mission work keeps its doctrine there — the `memory` agent's remember, scan and solve procedures — so every mission on it, and every install, gets the same text (agents are rewritten on each start; a seeded mission file is the user's). Missions on `ling` therefore carry Ling's whole soul.
+The rest of the agent's **spec body** follows the identity block, then the mission body. An agent made for mission work keeps its doctrine there — the `memory` agent's remember, scan and solve procedures — so every mission on it, and every install, gets the same text (agents are rewritten on each start; built-in missions refresh as described below). Missions on `ling` therefore carry Ling's whole soul.
 
 So the assembled system prompt for a mission is:
 
@@ -364,7 +364,8 @@ All five are omitted when empty, and lines written before them read as before. E
 create → enabled → (triggers run on schedule, each run creates a session) → disabled → delete
 ```
 
-- **Create** — user defines via Web UI, CLI, or hand-authored file. Built-in missions (`dream`, `memory-scan`, `memory-solve`) are seeded by the engine once each: `missions/.builtin-missions-installed` lists the ones seeded, so an upgrade adds a built-in the install has never had, and one the user deleted stays deleted (an empty list, from older versions, means `dream`). A seeded mission is the user's file from then on. Skill missions arrive with their skill.
+- **Create** — user defines via Web UI, CLI, or hand-authored file. Skill missions arrive with their skill.
+- **Built-in missions** — the engine seeds `dream`, `memory-scan`, and `memory-solve` once each. The install marker keeps deleted built-ins deleted. On start, an installed built-in takes its instructions (including kickoff), tools, permissions, and other engine-owned fields from the binary; the person's `enabled`, `schedule`, `catchup_hours`, and `model` settings stay as set, including unset values. Before the first refresh, the engine saves the old file as `mission.md.prev` and never overwrites that backup. Personal and skill missions, run history, and other files are not changed.
 - **Enable / disable** — toggle without deleting. Disabled missions keep config and history.
 - **Delete** — removes the directory. Sessions created by past runs are preserved (they live in the global session store).
 - **Edit** — update frontmatter or body. Takes effect on next tick. Entry script changes take effect on next run.

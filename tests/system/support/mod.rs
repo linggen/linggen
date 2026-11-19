@@ -105,6 +105,10 @@ fn save_daily_session(home: &Home, on: bool) {
 
 impl World {
     pub async fn start(setup: Setup) -> Self {
+        Self::start_with_home(setup, |_| {}).await
+    }
+
+    pub async fn start_with_home(setup: Setup, prepare: impl FnOnce(&Home)) -> Self {
         let home = Home::new();
         let model = FakeModel::start(&setup.scripts, &setup.extras).await;
         Memory::prepare(&home, setup.embedder);
@@ -133,6 +137,7 @@ impl World {
             let config = std::fs::read_to_string(home.config_path()).expect("config");
             guard::config_text(&config);
         }
+        prepare(&home);
         guard::home_files(&home.home(), &home.model_cache());
         if setup.rooms_on {
             std::fs::write(home.linggen_home().join("room_config.toml"), "rooms_on = true\n")

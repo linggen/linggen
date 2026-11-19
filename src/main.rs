@@ -379,10 +379,10 @@ async fn main() -> Result<()> {
             if let Err(e) = cli::init::install_default_agents() {
                 tracing::warn!("Failed to install default agents: {e}");
             }
-            // Seed built-in missions (memory `dream`) once; sentinel-gated
-            // so it never clobbers edits or resurrects a deleted mission.
+            // Refresh built-in instructions before loading missions. The
+            // sentinel keeps a deleted mission from being seeded again.
             if let Err(e) = cli::init::install_default_missions() {
-                tracing::warn!("Failed to seed built-in missions: {e}");
+                tracing::warn!("Failed to install built-in missions: {e}");
             }
 
             let skills = Arc::new(extensions::skills::SkillLoader::new());

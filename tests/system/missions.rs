@@ -7,8 +7,76 @@ use crate::support::model::Agent;
 use crate::support::{text, tool, Setup, World};
 use crate::unprompted::{quiet_around_now, set_pet};
 use serde_json::{json, Value};
-use std::path::Path;
+use std::{fs, path::Path};
 use std::time::{Duration, Instant};
+
+const OLD_DREAM: &str = include_str!("../fixtures/missions-main/mission.md");
+const BUILTIN_MISSIONS: &[(&str, &str)] = &[
+    ("dream", include_str!("../../missions/dream/mission.md")),
+    ("memory-scan", include_str!("../../missions/memory-scan/mission.md")),
+    ("memory-solve", include_str!("../../missions/memory-solve/mission.md")),
+];
+
+#[tokio::test]
+async fn startup_refreshes_a_pre_upgrade_dream_once() {
+    let old = OLD_DREAM
+        .replacen("schedule: \"0 3 * * *\"", "schedule: '17 5 * * *'", 1)
+        .replacen("enabled: true", "enabled: false", 1);
+    let mut w = World::start_with_home(Setup::default(), |home| {
+        let missions = home.linggen_home().join("missions");
+        let dream = missions.join("dream");
+        fs::create_dir_all(&dream).unwrap();
+        fs::write(missions.join(".builtin-missions-installed"), "dream\n").unwrap();
+        fs::write(dream.join("mission.md"), &old).unwrap();
+        fs::write(dream.join("runs.jsonl"), HISTORY).unwrap();
+        fs::write(dream.join("note.txt"), "keep this").unwrap();
+    })
+    .await;
+    let missions = w.home.linggen_home().join("missions");
+    let read = |path: &str| fs::read_to_string(missions.join(path)).unwrap();
+    let split = linggen_engine::extensions::frontmatter::split;
+    let snapshot = || {
+        let mut files = Vec::new();
+        for dir in ["", "dream", "memory-scan", "memory-solve", "table-check"] {
+            for entry in fs::read_dir(missions.join(dir)).unwrap() {
+                let entry = entry.unwrap();
+                if entry.file_type().unwrap().is_file() {
+                    let path = entry.path();
+                    files.push((path.clone(), fs::read(&path).unwrap(), entry.metadata().unwrap().modified().unwrap()));
+                }
+            }
+        }
+        files.sort();
+        files
+    };
+
+    // Check the whole file: kickoff instructions also live in frontmatter.
+    for (name, builtin) in BUILTIN_MISSIONS {
+        let installed = read(&format!("{name}/mission.md"));
+        for retired in ling_mem::catalog::memory::RETIRED {
+            assert!(
+                !installed.match_indices(retired.name).any(|(at, found)| {
+                    !installed[at + found.len()..]
+                        .starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_')
+                }),
+                "installed {name} still names {}", retired.name
+            );
+        }
+        assert_eq!(split(&installed).1, split(builtin).1, "{name} body");
+    }
+    let installed = read("dream/mission.md");
+    let yaml: serde_norway::Value = serde_norway::from_str(split(&installed).0.unwrap()).unwrap();
+    assert_eq!(yaml["schedule"].as_str(), Some("17 5 * * *"));
+    assert_eq!(yaml["enabled"].as_bool(), Some(false));
+    assert_eq!(read("dream/mission.md.prev"), old);
+    assert_eq!(read("dream/runs.jsonl"), HISTORY);
+    assert_eq!(read("dream/note.txt"), "keep this");
+    let before_restart = snapshot();
+    w.engine.restart(&w.home).await;
+    assert_eq!(snapshot(), before_restart);
+}
+
+const HISTORY: &str = "{\"run_id\":\"old-run\",\"triggered_at\":1700000000,\"status\":\"completed\",\"skipped\":false}\n";
 
 const MISSION: &str = "beacon:nightly";
 const HER_LINE: &str = "The beacon check stumbled again tonight.";
