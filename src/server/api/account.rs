@@ -116,15 +116,18 @@ pub(crate) async fn post_account_login(State(state): State<Arc<ServerState>>) ->
 pub(crate) async fn get_account_callback(
     Query(params): Query<HashMap<String, String>>,
 ) -> impl IntoResponse {
+    // Only the matching state spends the pending sign-in: a call with
+    // another one changes nothing.
     let state_ok = {
         let mut guard = PENDING_LOGIN.lock_ok();
-        match guard.take() {
-            Some(p) => {
-                p.created.elapsed() < LOGIN_WINDOW
-                    && params.get("state").map(|s| s.as_str()) == Some(p.csrf.as_str())
-            }
-            None => false,
+        let matches = guard.as_ref().is_some_and(|p| {
+            p.created.elapsed() < LOGIN_WINDOW
+                && params.get("state").map(|s| s.as_str()) == Some(p.csrf.as_str())
+        });
+        if matches {
+            guard.take();
         }
+        matches
     };
     if !state_ok {
         return fail_page("Security check failed (state mismatch or expired). Please try again.");
@@ -190,5 +193,24 @@ pub(crate) async fn post_account_checkout(Json(req): Json<CheckoutReq>) -> impl 
             Json(serde_json::json!({ "error": e.to_string() })),
         )
             .into_response(),
+    }
+}
+
+#[cfg(test)]
+mod callback_tests {
+    use super::*;
+
+    /// The sign-in's return is reachable from another site, so a call with
+    /// another state must leave the pending sign-in as it was.
+    #[tokio::test]
+    async fn a_wrong_state_leaves_the_pending_sign_in() {
+        *PENDING_LOGIN.lock_ok() = Some(PendingLogin {
+            csrf: "the-real-state".into(),
+            created: Instant::now(),
+        });
+        let params = HashMap::from([("state".to_string(), "another".to_string())]);
+        let _ = get_account_callback(Query(params)).await;
+        let kept = PENDING_LOGIN.lock_ok().take().map(|p| p.csrf);
+        assert_eq!(kept.as_deref(), Some("the-real-state"));
     }
 }
