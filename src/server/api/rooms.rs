@@ -28,27 +28,12 @@ pub(crate) async fn update_room_config(
 ) -> impl IntoResponse {
     let mut config = crate::server::rtc::room_config::load_room_config();
     let was_enabled = config.room_enabled;
-
-    if let Some(v) = body.get("shared_models") {
-        config.shared_models = serde_json::from_value(v.clone()).unwrap_or_default();
-    }
-    if let Some(v) = body.get("allowed_tools") {
-        config.allowed_tools = serde_json::from_value(v.clone()).unwrap_or_default();
-    }
-    if let Some(v) = body.get("allowed_skills") {
-        config.allowed_skills = serde_json::from_value(v.clone()).unwrap_or_default();
-    }
-    if let Some(v) = body.get("room_enabled") {
-        config.room_enabled = v.as_bool().unwrap_or(true);
-    }
-    if let Some(v) = body.get("auto_connect") {
-        config.auto_connect = v.as_bool().unwrap_or(true);
-    }
-    if let Some(v) = body.get("token_budget_room_daily") {
-        config.token_budget_room_daily = v.as_i64();
-    }
-    if let Some(v) = body.get("token_budget_consumer_daily") {
-        config.token_budget_consumer_daily = v.as_i64();
+    if let Err(e) = apply_update(&mut config, &body) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": e })),
+        )
+            .into_response();
     }
     if let Err(e) = crate::server::rtc::room_config::save_room_config(&config) {
         return (
@@ -57,11 +42,71 @@ pub(crate) async fn update_room_config(
         )
             .into_response();
     }
+    sync_room_status(&state, was_enabled, config.room_enabled).await;
+    Json(serde_json::json!({ "ok": true })).into_response()
+}
 
+/// The fields `body` names, onto `config` — all of them, or none when one is
+/// malformed. Nothing defaults to "on".
+fn apply_update(
+    config: &mut crate::server::rtc::room_config::RoomConfig,
+    body: &serde_json::Value,
+) -> Result<(), String> {
+    let Some(body) = body.as_object() else {
+        return Err("the room config must be an object".into());
+    };
+    let mut next = config.clone();
+    if let Some(v) = body.get("shared_models") {
+        next.shared_models = names(v, "shared_models")?;
+    }
+    if let Some(v) = body.get("allowed_tools") {
+        next.allowed_tools = names(v, "allowed_tools")?;
+    }
+    if let Some(v) = body.get("allowed_skills") {
+        next.allowed_skills = names(v, "allowed_skills")?;
+    }
+    if let Some(v) = body.get("room_enabled") {
+        next.room_enabled = flag(v, "room_enabled")?;
+    }
+    if let Some(v) = body.get("auto_connect") {
+        next.auto_connect = flag(v, "auto_connect")?;
+    }
+    if let Some(v) = body.get("token_budget_room_daily") {
+        next.token_budget_room_daily = budget(v, "token_budget_room_daily")?;
+    }
+    if let Some(v) = body.get("token_budget_consumer_daily") {
+        next.token_budget_consumer_daily = budget(v, "token_budget_consumer_daily")?;
+    }
+    *config = next;
+    Ok(())
+}
+
+fn names(v: &serde_json::Value, field: &str) -> Result<Vec<String>, String> {
+    serde_json::from_value(v.clone()).map_err(|_| format!("{field} must be a list of names"))
+}
+
+fn flag(v: &serde_json::Value, field: &str) -> Result<bool, String> {
+    v.as_bool()
+        .ok_or_else(|| format!("{field} must be true or false"))
+}
+
+/// A whole number of tokens, or `null` for no budget.
+fn budget(v: &serde_json::Value, field: &str) -> Result<Option<i64>, String> {
+    if v.is_null() {
+        return Ok(None);
+    }
+    v.as_i64()
+        .map(Some)
+        .ok_or_else(|| format!("{field} must be a whole number or null"))
+}
+
+/// Tell linggen.dev a switched room's status; a room just switched off
+/// sends its consumers away.
+async fn sync_room_status(state: &Arc<ServerState>, was_enabled: bool, room_enabled: bool) {
     // Sync room status to linggen.dev DB
-    let room_enabled_changed = was_enabled != config.room_enabled;
+    let room_enabled_changed = was_enabled != room_enabled;
     if room_enabled_changed {
-        let status = if config.room_enabled {
+        let status = if room_enabled {
             "available"
         } else {
             "disabled"
@@ -81,14 +126,12 @@ pub(crate) async fn update_room_config(
     }
 
     // If room was just disabled, kick all consumer peers and disconnect proxy rooms.
-    if was_enabled && !config.room_enabled {
+    if was_enabled && !room_enabled {
         let _ = state
             .events_tx
             .send(crate::server::ServerEvent::RoomDisabled);
-        crate::server::rtc::proxy_room::disconnect_all_proxy_rooms(state).await;
+        crate::server::rtc::proxy_room::disconnect_all_proxy_rooms(state.clone()).await;
     }
-
-    Json(serde_json::json!({ "ok": true })).into_response()
 }
 
 /// POST /api/proxy/connect — connect to a proxy room as a linggen consumer.
@@ -260,5 +303,52 @@ pub(crate) async fn proxy_rooms(
             tracing::warn!("rooms proxy {} {} reqwest error: {}", method, url, e);
             (StatusCode::BAD_GATEWAY, format!("Relay error: {}", e)).into_response()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::server::rtc::room_config::RoomConfig;
+    use serde_json::json;
+
+    #[test]
+    fn a_malformed_room_update_is_refused_and_changes_nothing() {
+        for body in [
+            json!({"shared_models": "gpt"}),
+            json!({"allowed_tools": [1, 2]}),
+            json!({"allowed_skills": {"a": 1}}),
+            json!({"room_enabled": "yes"}),
+            json!({"auto_connect": 1}),
+            json!({"token_budget_room_daily": "lots"}),
+            json!({"token_budget_consumer_daily": 1.5}),
+            json!(["room_enabled", true]),
+        ] {
+            let mut config = RoomConfig::default();
+            config.room_enabled = false;
+            config.shared_models = vec!["m".into()];
+            let before = serde_json::to_value(&config).unwrap();
+            assert!(
+                apply_update(&mut config, &body).is_err(),
+                "{body} was taken"
+            );
+            assert_eq!(serde_json::to_value(&config).unwrap(), before, "{body}");
+        }
+    }
+
+    #[test]
+    fn a_well_formed_room_update_is_taken() {
+        let mut config = RoomConfig::default();
+        let body = json!({
+            "shared_models": ["a"], "allowed_tools": ["Read"], "allowed_skills": [],
+            "room_enabled": false, "auto_connect": false,
+            "token_budget_room_daily": 100, "token_budget_consumer_daily": null,
+        });
+        apply_update(&mut config, &body).unwrap();
+        assert_eq!(config.shared_models, vec!["a".to_string()]);
+        assert_eq!(config.allowed_tools, vec!["Read".to_string()]);
+        assert!(!config.room_enabled && !config.auto_connect);
+        assert_eq!(config.token_budget_room_daily, Some(100));
+        assert_eq!(config.token_budget_consumer_daily, None);
     }
 }
