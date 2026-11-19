@@ -508,14 +508,15 @@ pub(crate) async fn run_delegation(
             None,
         ),
         Err(err) => {
-            let msg = err.to_string();
-            let status = if msg.to_lowercase().contains("cancel") {
-                crate::engine::agent::AgentRunStatus::Cancelled
-            } else {
-                crate::engine::agent::AgentRunStatus::Failed
-            };
+            // A failure is a failure: whether the run was cancelled is what
+            // its own status says (`finish_agent_run` reads the cancel set
+            // a Stop fills), never a word in the error.
             let final_status = manager
-                .finish_agent_run(&run_id, status, Some(msg.clone()))
+                .finish_agent_run(
+                    &run_id,
+                    crate::engine::agent::AgentRunStatus::Failed,
+                    Some(err.to_string()),
+                )
                 .await?;
             if final_status == crate::engine::agent::AgentRunStatus::Cancelled {
                 return Err(DelegationCancelled.into());
