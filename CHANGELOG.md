@@ -20,6 +20,99 @@ The one MCP door ships as 2.5, after 2.4.
 - **Built-in missions refresh on startup** without resetting schedules,
   on/off settings, or model choices; their instructions are the engine's,
   so an edit to them is refused with how to copy one instead.
+- **Codex sheds the old memory server.** When Codex starts the plugin, the
+  retired `memory` entry an older plugin wrote is removed, and nothing else.
+
+### Memory
+
+- **An edited row is found by its new meaning at once.**
+- **A row moved between long-term and short-term is never lost on the way.**
+- **A dream marks a day done only for the rows it read.**
+- **Memory mends a cut-off last change** when it opens after a crash.
+- **Only the dated store snapshots count toward the seven kept backups.**
+- **Another machine's queued memory writes are kept** until they land, and a
+  queue that fails says so.
+- **`ling mem --older-than` refuses a duration it cannot read.**
+
+### Working with models
+
+- **A reply cut at the output limit is seen as cut.** Three in a row end the
+  turn as an output-limit failure.
+- **A run that ends on an error keeps its work** for the turn that continues
+  it, and says whether it was kept and why it could not go on.
+- **A long, healthy stream is no longer cut off**; only a stream gone quiet
+  times out.
+- **A model with no key is shown as not ready.**
+- **"Context too long" is recognised** in each provider's own words, and an
+  Ollama error mid-stream shows as Ollama's.
+- **The ChatGPT sign-in refreshes once at a time**, and a failed model-list
+  fetch backs off.
+- **A model server on your LAN counts as local.**
+- **Clear on the default model keeps its fallbacks.**
+- **A summary is applied only to the history it was made from.**
+
+### Tools
+
+- **Bash returns when its shell ends**, and what a call keeps is capped.
+- **Glob lists the newest matches first.**
+- **Read counts a file as read only when the read worked.**
+- **WebFetch reaches public addresses only, and so do answer pictures**; it
+  follows your proxy settings, gives a failed status with its code and reads
+  a page up to a fixed size.
+- **A skill tool's timeout bounds the whole call**, and its output is capped
+  as it is read.
+- **A skill installs whole or not at all**, and a failed install script fails
+  the install.
+- **A plan is approved once**, fails when its run fails, and goes back to
+  planned when you stop the run.
+
+### The web UI
+
+- **A draft belongs to its chat.** Words typed while New chat is being made
+  go to the new chat, and a late answer never lands in another one.
+- **A stopped run shows as interrupted**, with no error line.
+- **Nothing inside a code fence is rewritten.**
+- **Enter presses the focused button** in a confirm dialog.
+- **A refused save says so.** A key or room setting that was not saved shows
+  as failed, and a batch delete removes only what was deleted.
+- **One editor per mission**; deleting the mission closes it.
+- **The day turns at 04:00 local time**, on a clock-change day too.
+
+### Who may reach what
+
+- **Only the companion can pass on your answer to a permission prompt**, and
+  only for the listed tools.
+- **A page from another site needs an allowed origin** to call the engine,
+  except a page load and the sign-in's return.
+- **Pairing codes allow few tries.** Wrong codes are counted per device and
+  overall, with a growing wait.
+- **A run is stopped only by the person whose session it is**, and a
+  person's list holds only the sessions they may enter.
+- **A saved key goes only to the address it was saved for.**
+- **A path stays inside its folder** after it is normalised and its links
+  followed.
+- **Permission changes are saved whole before they apply**, with real paths;
+  declining a home-folder request covers that path only.
+- **Yinyue is handed only what your own sessions hold**, and a device's
+  retained readings follow the same rule as when they were sent.
+- **A sign-in is completed only by the request that started it.**
+- **`agent_session_close` removes only the worktree its run was started
+  with.**
+
+### Under the hood
+
+- An unreadable notes, push or mission-choices file is set aside, never
+  written over; a mission whose choices cannot be read stays off.
+- Files are written whole and swapped in, and every file with several
+  writers has one lock (missions' history, devices, media, memory sidecars,
+  perception).
+- A mission's catch-up cap counts catch-up runs only.
+- A day's telemetry digest is deleted once sent; log clean-up removes only
+  the rolling log's own files.
+- `ling stop` and `ling status` act on the recorded pid only when it is the
+  engine.
+- A bash app started by `RunApp` runs like any other command the engine
+  starts; a line's voice must be one of the listed voices.
 
 ## [2.4.0] - 2026-11-18 — one Ling and one Yinyue
 
