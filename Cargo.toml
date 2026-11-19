@@ -18,7 +18,7 @@ default-members = [".", "crates/linggen-engine"]
 # One version for the binary and the engine crate (scripts/sync-version.sh
 # stamps this line).
 [workspace.package]
-version = "2.3.1"
+version = "2.4.0"
 
 [features]
 # Anonymous usage telemetry (install + command events sent to
