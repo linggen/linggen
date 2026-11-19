@@ -1064,7 +1064,7 @@ impl AgentEngine {
             tool_call_id,
         } = exec;
 
-        self.note_run_fault(&canonical_tool, &result);
+        let failed = self.note_run_fault(&canonical_tool, &result);
         match result {
             Ok(mut result) => {
                 // A Read that succeeded, and only that, counts for the
@@ -1098,7 +1098,7 @@ impl AgentEngine {
                 self.upsert_observation("tool", &canonical_tool, rendered_model.clone());
 
                 let _ = self
-                    .persist_observation(&canonical_tool, &rendered_public, false, session_id)
+                    .persist_observation(&canonical_tool, &rendered_public, failed, session_id)
                     .await;
                 if self.tools.get_manager().is_some() {
                     let agent_id = self
@@ -1136,9 +1136,9 @@ impl AgentEngine {
                     self.emit(crate::engine::agent::AgentEvent::ContentBlockUpdate {
                         agent_id: agent_id.clone(),
                         block_id: block_id.clone(),
-                        status: Some(tool_call_status(false).to_string()),
-                        summary: Some(tool_done_status.clone()),
-                        is_error: Some(false),
+                        status: Some(tool_call_status(failed).to_string()),
+                        summary: Some(if failed { tool_failed_status.clone() } else { tool_done_status.clone() }),
+                        is_error: Some(failed),
                         parent_id: self.parent_agent_id.clone(),
                         extra,
                         run_id: self.run_id.clone(),
@@ -1314,20 +1314,26 @@ impl AgentEngine {
         LoopControl::Continue
     }
 
-    /// Keep a call that ended in failure for whoever records the run
-    /// (`run_faults` says what counts). The model has already been handed the
-    /// result either way; this only keeps the fact.
-    fn note_run_fault(&mut self, tool: &str, result: &anyhow::Result<tools::ToolResult>) {
+    /// The call's one outcome: true when it failed — an error, or a declared
+    /// tool's non-zero exit. Its card, its saved row and the run's fault
+    /// count all read this. A failure is kept for whoever records the run
+    /// (`run_faults` says what counts; a cancel is not kept). The model has
+    /// already been handed the result either way.
+    fn note_run_fault(&mut self, tool: &str, result: &anyhow::Result<tools::ToolResult>) -> bool {
         match result {
-            Err(e) if !is_cancel_error(e) => {
-                self.run_faults.note_error(tool, &format!("{e:#}"));
+            Err(e) => {
+                if !is_cancel_error(e) {
+                    self.run_faults.note_error(tool, &format!("{e:#}"));
+                }
+                true
             }
             Ok(tools::ToolResult::CommandOutput {
                 exit_code, stderr, ..
-            }) if self.tools.has_skill_tool(tool) => {
+            }) if self.tools.has_skill_tool(tool) && *exit_code != Some(0) => {
                 self.run_faults.note_exit(tool, *exit_code, stderr);
+                true
             }
-            _ => {}
+            _ => false,
         }
     }
 
@@ -1982,6 +1988,47 @@ mod run_fault_tests {
         let f = &engine.run_faults.failures[0];
         assert_eq!((f.tool.as_str(), f.kind), ("Write", FailureKind::Refused));
         assert_eq!(f.tail, None, "the engine's refusal text became a tail");
+    }
+
+    /// A declared tool that exits non-zero is one failed call: its card,
+    /// its saved row and the run's fault count say so alike.
+    #[tokio::test]
+    async fn a_non_zero_exit_is_failed_on_the_card_the_row_and_the_count() {
+        let mut engine = engine_with_declared("fetch");
+        engine.agent_id = Some("ling".into());
+        let (manager, mut events) = crate::engine::agent::AgentManager::new(
+            crate::config::Config::default(),
+            None,
+            Arc::new(crate::engine::test_registries::Empty),
+            Arc::new(crate::engine::test_registries::Empty),
+            Arc::new(crate::engine::test_registries::Empty),
+            crate::engine::InterfaceMode::Web,
+        );
+        engine.set_manager_context(manager.clone());
+        let sid = format!("sess-1-exit-{}", uuid::Uuid::new_v4().simple());
+        let exec = ReadyExec {
+            canonical_tool: "fetch".into(),
+            sig: "fetch{}".into(),
+            original_args: serde_json::json!({}),
+            tool_done_status: "Fetched".into(),
+            tool_failed_status: "Fetch failed".into(),
+            block_id: "b1".into(),
+            tool_call_id: Some("c1".into()),
+        };
+        let (mut messages, mut cache, mut streak) = (Vec::new(), HashMap::new(), 0);
+        engine
+            .post_execute_tool(exec, output(Some(3), "host unreachable\n"), &mut messages, &mut cache, &mut HashSet::new(), &mut streak, Some(&sid))
+            .await;
+        assert_eq!(engine.run_faults.count, 1);
+        let card = std::iter::from_fn(|| events.try_recv().ok())
+            .find_map(|(event, _)| match event {
+                crate::engine::agent::AgentEvent::ContentBlockUpdate { block_id, is_error, .. } if block_id == "b1" => is_error,
+                _ => None,
+            });
+        assert_eq!(card, Some(true), "the card");
+        let rows = manager.global_sessions.get_chat_history(&sid).unwrap();
+        let row = rows.iter().find(|r| r.content.starts_with("Tool fetch:")).expect("saved");
+        assert!(row.failed, "the saved row");
     }
 
     #[test]
