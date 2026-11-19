@@ -348,11 +348,11 @@ async fn perform_restart(
                 .into_response();
         }
     }
-    let config = state.manager.get_config_snapshot().await;
+    // The address this engine is bound to (`--port` and `LINGGEN_PORT` included).
     let spawned = if current {
         crate::cli::restart::spawn_current_helper(&state.bound_host, state.port)
     } else {
-        crate::cli::restart::spawn_helper(&binary, &config.server.host(), config.server.port())
+        crate::cli::restart::spawn_helper(&binary, &state.bound_host, state.port)
     };
     if let Err(error) = spawned {
         let _ = std::fs::remove_file(&path);
@@ -1067,6 +1067,26 @@ async fn wait_until_shown(state: &ServerState, session: &str, message: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Both restart routes give the helper the address this engine is bound
+    /// to — `--port` and `LINGGEN_PORT` included — never the config file's.
+    #[test]
+    fn the_helper_is_given_the_bound_address() {
+        let text = include_str!("restart.rs");
+        let code = text.split("#[cfg(test)]").next().unwrap_or("");
+        let spawns: Vec<&str> = code
+            .split("crate::cli::restart::spawn_")
+            .skip(1)
+            .map(|rest| rest.split(')').next().unwrap_or(rest))
+            .collect();
+        assert!(!spawns.is_empty(), "the helper is spawned here");
+        for call in spawns {
+            assert!(
+                call.contains("state.bound_host") && call.contains("state.port"),
+                "spawn_{call}) is not given the bound address"
+            );
+        }
+    }
 
     #[test]
     fn recovered_tasks_are_interrupted_and_keep_their_owner() {
