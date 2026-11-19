@@ -64,16 +64,35 @@ pub fn wire_tool_def(canonical: &serde_json::Value) -> Option<serde_json::Value>
     }))
 }
 
-/// Fix malformed JSON from some providers (e.g. Gemini sends `"function":,` instead of `"function":null,`).
-pub(super) fn sanitize_json(data: &str) -> std::borrow::Cow<'_, str> {
-    // Match `":,` or `":}` patterns (value missing after colon)
-    if data.contains(":,") || data.contains(":}") {
-        let mut out = data.replace(":,", ":null,");
-        out = out.replace(":}", ":null}");
-        std::borrow::Cow::Owned(out)
-    } else {
-        std::borrow::Cow::Borrowed(data)
+/// One SSE payload read as `T`. A payload that parses is taken as sent; only
+/// one that does not is repaired — some providers send a key with no value
+/// (Gemini's `"function":,`) — and read again.
+pub(super) fn parse_payload<T: serde::de::DeserializeOwned>(data: &str) -> serde_json::Result<T> {
+    serde_json::from_str(data).or_else(|first| {
+        let repaired = fill_missing_values(data);
+        serde_json::from_str(&repaired).map_err(|_| first)
+    })
+}
+
+/// `null` written where a key has no value (`:` then `,` or `}`), outside
+/// strings only: the model's own text and tool arguments are never touched.
+fn fill_missing_values(data: &str) -> String {
+    let mut out = String::with_capacity(data.len() + 8);
+    let (mut in_string, mut escaped, mut after_colon) = (false, false, false);
+    for c in data.chars() {
+        if in_string {
+            in_string = !(c == '"' && !escaped);
+            escaped = c == '\\' && !escaped;
+        } else if after_colon && (c == ',' || c == '}') {
+            out.push_str("null");
+            after_colon = false;
+        } else if !c.is_whitespace() {
+            after_colon = c == ':';
+            in_string = c == '"';
+        }
+        out.push(c);
     }
+    out
 }
 
 /// Pull the `error.message` out of an OpenAI-shaped error body, if present.

@@ -2,7 +2,7 @@
 //! non-ChatGPT client speaks (OpenAI API keys, Gemini, DeepSeek, Groq, the
 //! Linggen Cloud proxy…): the request body and the SSE chunks it streams.
 
-use super::wire::{sanitize_json, OaiMessage, OaiMessageWithTools, OaiStreamChunk, OaiUsage};
+use super::wire::{parse_payload, OaiMessage, OaiMessageWithTools, OaiStreamChunk, OaiUsage};
 use super::OpenAiClient;
 use crate::message::ChatMessage;
 use crate::provider::models::{StreamChunk, TokenUsage, ToolCallChunk};
@@ -89,8 +89,7 @@ fn usage_chunk(usage: OaiUsage) -> StreamChunk {
 
 /// One SSE `data:` payload of a text turn → at most one chunk.
 pub(super) fn parse_text_chunk(data: &str) -> Option<Result<StreamChunk>> {
-    let sanitized = sanitize_json(data);
-    let chunk: OaiStreamChunk = match serde_json::from_str(&sanitized) {
+    let chunk: OaiStreamChunk = match parse_payload(data) {
         Ok(c) => c,
         Err(e) => {
             let truncated = if data.len() > 300 {
@@ -129,8 +128,7 @@ pub(super) fn parse_text_chunk(data: &str) -> Option<Result<StreamChunk>> {
 
 /// One SSE `data:` payload of a tool turn → the chunks it carries.
 pub(super) fn parse_tool_chunk(data: &str) -> Vec<Result<StreamChunk>> {
-    let sanitized = sanitize_json(data);
-    let mut chunk: OaiStreamChunk = match serde_json::from_str(&sanitized) {
+    let mut chunk: OaiStreamChunk = match parse_payload(data) {
         Ok(c) => c,
         Err(e) => {
             return vec![Err(anyhow::anyhow!(
@@ -155,7 +153,7 @@ pub(super) fn parse_tool_chunk(data: &str) -> Vec<Result<StreamChunk>> {
             .and_then(|g| g.thought_signature.clone());
 
         let Some(choice) = chunk.choices.into_iter().next() else {
-            tracing::trace!("SSE chunk with no choices: {}", &sanitized);
+            tracing::trace!("SSE chunk with no choices: {}", data);
             return vec![];
         };
 
@@ -206,4 +204,41 @@ pub(super) fn parse_tool_chunk(data: &str) -> Vec<Result<StreamChunk>> {
         }
     })();
     usage.into_iter().chain(deltas).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tool_args(chunks: Vec<Result<StreamChunk>>) -> String {
+        chunks
+            .into_iter()
+            .filter_map(|c| match c.expect("parses") {
+                StreamChunk::ToolCall(tc) => tc.arguments_delta,
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_numpy_slice_in_text_is_left_as_written() {
+        let data = r#"{"choices":[{"index":0,"delta":{"content":"y = x[:, 0] and d = {a:}"}}]}"#;
+        match parse_text_chunk(data) {
+            Some(Ok(StreamChunk::Token(t))) => assert_eq!(t, "y = x[:, 0] and d = {a:}"),
+            other => panic!("expected a token, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_numpy_slice_in_tool_arguments_is_left_as_written() {
+        let data = r#"{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"c1","type":"function","function":{"name":"Write","arguments":"{\"content\":\"y = x[:, 0]\"}"}}]}}]}"#;
+        assert_eq!(tool_args(parse_tool_chunk(data)), r#"{"content":"y = x[:, 0]"}"#);
+    }
+
+    #[test]
+    fn a_missing_value_outside_strings_is_repaired_and_strings_kept() {
+        // Gemini's malformed shape: `"function":,` — a key with no value.
+        let data = r#"{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"c1","type":"function","extra":,"function":{"name":"Write","arguments":"{\"content\":\"x[:, 0]\"}","more":}}]}}]}"#;
+        assert_eq!(tool_args(parse_tool_chunk(data)), r#"{"content":"x[:, 0]"}"#);
+    }
 }
