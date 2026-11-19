@@ -373,7 +373,7 @@ impl AgentEngine {
         // out across the blocking pool. WebSearch/WebFetch/AskUser run on
         // the runtime directly. The staleness check is CPU-bound — moved
         // off the runtime via `spawn_blocking`.
-        let cached_hash = self.cached_system_prompt.as_ref().map(|c| c.input_hash);
+        let cached_hash = self.cached_system_prompt.as_ref().map(|c| c.files_hash);
         let staleness_ws_root = self.cfg.ws_root.clone();
         let staleness_task = tokio::task::spawn_blocking(move || {
             check_context_staleness(cached_hash, &staleness_ws_root)
@@ -391,22 +391,15 @@ impl AgentEngine {
             futures_util::future::join_all(tool_futures).await;
         let prompt_stale = staleness_task.await.unwrap_or(false);
 
-        // If context files changed, rebuild the system prompt cache.
-        if prompt_stale {
+        // If context files changed, build the system message again, the one
+        // way it is built.
+        if prompt_stale && !state.messages.is_empty() {
             debug!("Context files changed; rebuilding system prompt");
-            let (new_stable, new_hash) = self.build_stable_system_content();
-            self.cached_system_prompt = Some(CachedSystemPrompt {
-                input_hash: new_hash,
-                content: new_stable.clone(),
-            });
-            if !state.messages.is_empty() {
-                let mut sys = new_stable;
-                if let Some(dyn_start) = state.messages[0].content.find("\n\nYou are in PLAN MODE")
-                {
-                    sys.push_str(&state.messages[0].content[dyn_start..]);
-                }
-                state.messages[0] = ChatMessage::new("system", sys);
-            }
+            self.cached_system_prompt = None;
+            let task = self.task.clone().unwrap_or_default();
+            let native = self.native_tool_mode;
+            let system = self.system_message(&task, native, state.allowed_tools.as_ref());
+            state.messages[0] = ChatMessage::new("system", system);
         }
 
         // Phase 3: post-execute each result sequentially, checking cancellation.

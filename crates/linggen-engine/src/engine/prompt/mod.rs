@@ -742,17 +742,17 @@ impl AgentEngine {
         (stable, hash)
     }
 
-    /// Build the initial message list and read-paths set for the structured agent loop.
-    /// When `native_tools` is true, uses the native tool calling response format
-    /// (no JSON action format instructions) instead of the legacy format.
-    ///
-    /// Building a prompt is not always having a turn — see [`PromptPurpose`].
-    pub fn prepare_loop_messages(
+    /// The turn's system message: the cached stable prefix, then every part
+    /// built per turn — the language line, the response format, the MCP
+    /// servers' instructions, plan mode, delegation, an approved plan. The
+    /// one place it is built: a turn's first request and a rebuild after the
+    /// project files changed mid-turn both call this.
+    pub(crate) fn system_message(
         &mut self,
         task: &str,
         native_tools: bool,
-        purpose: PromptPurpose,
-    ) -> (Vec<ChatMessage>, Option<HashSet<String>>, HashSet<String>) {
+        allowed_tools: Option<&HashSet<String>>,
+    ) -> String {
         // Build stable system content with caching.
         let (stable_content, hash) = self.build_stable_system_content();
         let cache_hit = self
@@ -762,44 +762,11 @@ impl AgentEngine {
         if !cache_hit {
             self.cached_system_prompt = Some(CachedSystemPrompt {
                 input_hash: hash,
+                files_hash: crate::engine::streaming::context_files_hash(&self.cfg.ws_root),
                 content: stable_content.clone(),
             });
         }
         let mut system = self.cached_system_prompt.as_ref().unwrap().content.clone();
-
-        // Compute allowed tools early — needed for the response format schema.
-        let mut allowed_tools = self.allowed_tool_names();
-        if self.plan_mode {
-            let read_only: HashSet<String> = [
-                "Read",
-                "Glob",
-                "Grep",
-                "WebSearch",
-                "ImageSearch",
-                "VideoSearch",
-                "WebFetch",
-                "AskUser",
-                "ExitPlanMode",
-                "Task",
-            ]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-            allowed_tools = Some(match allowed_tools {
-                Some(existing) => existing.intersection(&read_only).cloned().collect(),
-                None => read_only,
-            });
-        }
-
-        // Apply config-level tool restrictions (mission tiers + consumer room settings).
-        // Uses a single helper that computes the cascading intersection.
-        if let Some(restrictions) = self.cfg.effective_tool_restrictions() {
-            allowed_tools = Some(match allowed_tools {
-                Some(existing) => existing.intersection(&restrictions).cloned().collect(),
-                None => restrictions,
-            });
-        }
-        self.drop_withheld(&mut allowed_tools);
 
         // A conversational companion (e.g. Yinyue) declares none of the "doing"
         // tools — no files, code, shell, delegation, or planning. It gets the
@@ -823,7 +790,7 @@ impl AgentEngine {
                 "UpdatePlan",
             ]
             .iter()
-            .any(|t| allowed_tools.as_ref().is_none_or(|s| s.contains(*t)));
+            .any(|t| allowed_tools.is_none_or(|s| s.contains(*t)));
 
         // Dynamic content appended after cached stable prefix.
 
@@ -843,7 +810,7 @@ impl AgentEngine {
         }
 
         // Check if tools are available — skip all tool-related prompt sections when empty.
-        let has_tools = allowed_tools.as_ref().is_none_or(|s| !s.is_empty());
+        let has_tools = allowed_tools.is_none_or(|s| !s.is_empty());
 
         // --- Response Format ---
         if has_tools {
@@ -855,7 +822,7 @@ impl AgentEngine {
                 // are actually in `allowed_tools`. Advertising a tool the session can't
                 // call wastes tokens and invites failed calls.
                 let tool_allowed = |name: &str| -> bool {
-                    allowed_tools.as_ref().is_none_or(|s| s.contains(name))
+                    allowed_tools.is_none_or(|s| s.contains(name))
                 };
                 if conversational {
                     if let Some(lean) = self
@@ -927,7 +894,7 @@ impl AgentEngine {
             } else {
                 // Legacy mode: inject JSON action format + inline tool schemas.
                 let own: Vec<&str> = self.own_note_tools().collect();
-                let tools_json = self.tools.tool_schema_json(allowed_tools.as_ref(), &own, |t| {
+                let tools_json = self.tools.tool_schema_json(allowed_tools, &own, |t| {
                     self.is_withheld(t)
                 });
                 if let Some(rendered) = self
@@ -950,7 +917,6 @@ impl AgentEngine {
             for (server, text) in crate::mcp_client::registry().instructions() {
                 let prefix = format!("mcp__{server}__");
                 let advertised = allowed_tools
-                    .as_ref()
                     .is_none_or(|s| s.iter().any(|t| t.starts_with(&prefix)));
                 if advertised && !text.trim().is_empty() {
                     system.push_str(&format!(
@@ -974,7 +940,7 @@ impl AgentEngine {
             && self.prompt_profile.include_delegation
             && !self.available_agents_metadata.is_empty()
         {
-            let task_available = allowed_tools.as_ref().is_none_or(|s| s.contains("Task"));
+            let task_available = allowed_tools.is_none_or(|s| s.contains("Task"));
             if task_available {
                 system.push_str(
                     &self
@@ -1009,6 +975,56 @@ impl AgentEngine {
                 }
             }
         }
+
+        system
+    }
+
+    /// Build the initial message list and read-paths set for the structured agent loop.
+    /// When `native_tools` is true, uses the native tool calling response format
+    /// (no JSON action format instructions) instead of the legacy format.
+    ///
+    /// Building a prompt is not always having a turn — see [`PromptPurpose`].
+    pub fn prepare_loop_messages(
+        &mut self,
+        task: &str,
+        native_tools: bool,
+        purpose: PromptPurpose,
+    ) -> (Vec<ChatMessage>, Option<HashSet<String>>, HashSet<String>) {
+        // Compute allowed tools early — needed for the response format schema.
+        let mut allowed_tools = self.allowed_tool_names();
+        if self.plan_mode {
+            let read_only: HashSet<String> = [
+                "Read",
+                "Glob",
+                "Grep",
+                "WebSearch",
+                "ImageSearch",
+                "VideoSearch",
+                "WebFetch",
+                "AskUser",
+                "ExitPlanMode",
+                "Task",
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+            allowed_tools = Some(match allowed_tools {
+                Some(existing) => existing.intersection(&read_only).cloned().collect(),
+                None => read_only,
+            });
+        }
+
+        // Apply config-level tool restrictions (mission tiers + consumer room settings).
+        // Uses a single helper that computes the cascading intersection.
+        if let Some(restrictions) = self.cfg.effective_tool_restrictions() {
+            allowed_tools = Some(match allowed_tools {
+                Some(existing) => existing.intersection(&restrictions).cloned().collect(),
+                None => restrictions,
+            });
+        }
+        self.drop_withheld(&mut allowed_tools);
+
+        let system = self.system_message(task, native_tools, allowed_tools.as_ref());
 
         let mut messages = vec![ChatMessage::new("system", system)];
         self.push_context_record(

@@ -1451,6 +1451,69 @@ mod member_tests {
         assert_eq!(AgentEngine::recorded_calls(&done).len(), 1);
     }
 
+    /// The project-file check after parallel tools compares like with like:
+    /// with nothing changed it finds nothing changed.
+    #[test]
+    fn unchanged_project_files_are_not_stale() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("CLAUDE.md"), "the rules").unwrap();
+        let mut engine = engine_at(root.path());
+        engine.prepare_loop_messages("hi", true, crate::engine::prompt::PromptPurpose::Turn);
+        let cached = engine.cached_system_prompt.as_ref().map(|c| c.files_hash);
+        assert!(!super::streaming::check_context_staleness(cached, root.path()));
+        std::fs::write(root.path().join("CLAUDE.md"), "new rules").unwrap();
+        assert!(super::streaming::check_context_staleness(cached, root.path()));
+    }
+
+    /// After parallel tools find the project files changed, the system
+    /// message is built again the one way it is built: the turn's language
+    /// line and every other dynamic part stay, the new rules come in.
+    #[tokio::test]
+    async fn a_rebuilt_system_message_keeps_the_turns_dynamic_parts() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("CLAUDE.md"), "the old rules").unwrap();
+        std::fs::write(root.path().join("a.txt"), "a").unwrap();
+        let mut engine = engine_at(root.path());
+        let task = "[HIDDEN] the page says hello (lang en)";
+        engine.task = Some(task.into());
+        engine.native_tool_mode = true;
+        let (messages, allowed_tools, read_paths) =
+            engine.prepare_loop_messages(task, true, crate::engine::prompt::PromptPurpose::Turn);
+        let opened = messages[0].content.clone();
+        assert!(opened.contains("the old rules"));
+        let (_tx, progress_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut state = super::LoopState {
+            messages,
+            allowed_tools,
+            read_paths,
+            tool_cache: Default::default(),
+            empty_search_streak: 0,
+            redundant_tool_streak: 0,
+            last_tool_sig: String::new(),
+            invalid_json_streak: 0,
+            last_assistant_response: String::new(),
+            identical_response_streak: 0,
+            loop_nudge_count: 0,
+            empty_response_streak: 0,
+            progress_rx,
+        };
+        std::fs::write(root.path().join("CLAUDE.md"), "the new rules").unwrap();
+        let glob = |pattern: &str| super::ToolUse {
+            action: super::ModelAction {
+                tool: "Glob".into(),
+                args: serde_json::json!({ "pattern": pattern }),
+            },
+            id: None,
+        };
+        let before = state.messages.len();
+        engine
+            .handle_parallel_batch(vec![glob("*.txt"), glob("a*")], &mut state, None)
+            .await;
+        let results: Vec<&str> = state.messages[before..].iter().map(|m| m.content.as_str()).collect();
+        assert!(results.iter().all(|r| r.contains("a.txt")), "{results:?}");
+        assert_eq!(state.messages[0].content, opened.replace("the old rules", "the new rules"));
+    }
+
     /// What the person sent during the turn joins it as user messages, with
     /// their pictures, in order — the turn goes on rather than ending.
     #[tokio::test]

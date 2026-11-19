@@ -168,14 +168,6 @@ pub(crate) fn check_context_staleness(prev_hash: Option<u64>, ws_root: &Path) ->
     let Some(prev_hash) = prev_hash else {
         return false;
     };
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    let mut hasher = DefaultHasher::new();
-    for name in &["CLAUDE.md", "AGENTS.md", ".cursorrules"] {
-        if let Ok(content) = std::fs::read_to_string(ws_root.join(name)) {
-            content.hash(&mut hasher);
-        }
-    }
     // Core memory (`tier=core` rows from the store) is reloaded by
     // `core_block::load_core` whenever the stable-prompt cache is
     // rebuilt; nothing under `~/.linggen/memory/` is hashed here. Known
@@ -184,7 +176,21 @@ pub(crate) fn check_context_staleness(prev_hash: Option<u64>, ws_root: &Path) ->
     // session — the new row surfaces on the next rebuild trigger
     // (project file edit, new session, etc.). Event-driven invalidation
     // on a core write is future work.
-    hasher.finish() != prev_hash
+    context_files_hash(ws_root) != prev_hash
+}
+
+/// The hash of the workspace's project instruction files, as the cached
+/// system prompt keeps it (`CachedSystemPrompt::files_hash`).
+pub(crate) fn context_files_hash(ws_root: &Path) -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    for name in &["CLAUDE.md", "AGENTS.md", ".cursorrules"] {
+        if let Ok(content) = std::fs::read_to_string(ws_root.join(name)) {
+            content.hash(&mut hasher);
+        }
+    }
+    hasher.finish()
 }
 
 // ---------------------------------------------------------------------------

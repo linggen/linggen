@@ -400,6 +400,7 @@ fn taking_up_a_mission_drops_the_cached_prompt() {
     let mut engine = engine();
     engine.cached_system_prompt = Some(crate::engine::types::CachedSystemPrompt {
         input_hash: 1,
+        files_hash: 1,
         content: "before".into(),
     });
     let frame = crate::engine::ActiveMission {
@@ -418,6 +419,7 @@ fn a_new_creator_drops_the_cached_prompt() {
     let mut engine = engine_for(&meta("sess-1-m", "mission", None));
     engine.cached_system_prompt = Some(crate::engine::types::CachedSystemPrompt {
         input_hash: 1,
+        files_hash: 1,
         content: "before".into(),
     });
     engine.respec(|spec| spec.creator = Some("mission".into()));
