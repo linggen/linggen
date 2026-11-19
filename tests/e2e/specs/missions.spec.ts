@@ -23,15 +23,24 @@ const navRow = (page: Page, name: string) =>
 
 test('saving a mission picked after another writes only the one picked', async ({ page, world, httpRequests }) => {
   const file = (id: string) => path.join(world.linggenHome, 'missions', id, 'mission.md');
+  const read = (id: string) => { try { return readFileSync(file(id), 'utf8'); } catch { return ''; } };
   const before = readFileSync(file('table-check'), 'utf8');
   await openMissions(page, world.url, httpRequests);
+
+  // A second mission of the person's own (a built-in's instructions are
+  // not theirs to save).
+  await page.getByRole('button', { name: 'New Mission' }).click();
+  await page.getByRole('textbox').fill('ferry-check');
+  await page.keyboard.press('Enter');
+  await page.getByRole('button', { name: 'Create', exact: true }).click();
+  await expect.poll(() => read('ferry-check')).toContain('name: ferry-check');
 
   await page.getByRole('button', { name: /^table-check/ }).click();
   await expect(page.getByText('~/.linggen/missions/table-check/mission.md')).toBeVisible();
   await expect(page.locator('.cm-content')).toContainText('Read the dice table');
 
-  await page.getByRole('button', { name: /^Memory scan/ }).click();
-  await expect(page.getByText('~/.linggen/missions/memory-scan/mission.md')).toBeVisible();
+  await page.getByRole('button', { name: /^ferry-check/ }).click();
+  await expect(page.getByText('~/.linggen/missions/ferry-check/mission.md')).toBeVisible();
   await expect(page.locator('.cm-content')).not.toContainText('Read the dice table');
 
   await page.locator('.cm-content').click();
@@ -40,7 +49,7 @@ test('saving a mission picked after another writes only the one picked', async (
   await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page.getByText('Unsaved')).toHaveCount(0);
 
-  await expect.poll(() => readFileSync(file('memory-scan'), 'utf8')).toContain('ZEBRA-MARK');
+  await expect.poll(() => read('ferry-check')).toContain('ZEBRA-MARK');
   expect(readFileSync(file('table-check'), 'utf8')).toBe(before);
 });
 
