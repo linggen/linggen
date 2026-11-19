@@ -36,6 +36,15 @@ fn hold_permit(stream: ChunkStream, permit: tokio::sync::OwnedSemaphorePermit) -
     ))
 }
 
+/// Whether a model runs on the ChatGPT sign-in: `auth_mode = "chatgpt_oauth"`,
+/// or a `chatgpt` provider whatever else its auth mode says (but Linggen
+/// Cloud's). The one answer for the client the manager builds, the
+/// pre-flight, and readiness.
+pub(crate) fn signs_in_with_chatgpt(cfg: &ModelConfig) -> bool {
+    let mode = cfg.auth_mode.as_deref();
+    mode != Some("linggen_account") && (mode == Some("chatgpt_oauth") || cfg.provider == "chatgpt")
+}
+
 pub struct ModelManager {
     models: HashMap<String, ModelInstance>,
     /// Registered for exact pins only (older ChatGPT models the backend still
@@ -64,7 +73,7 @@ impl ModelManager {
     /// signed in" (file absent) and "expired" the same way.
     fn check_provider_auth(cfg: &ModelConfig) -> Result<()> {
         match cfg.auth_mode.as_deref() {
-            Some("chatgpt_oauth") => {
+            _ if signs_in_with_chatgpt(cfg) => {
                 let tokens = codex_auth::CodexAuthTokens::load(&codex_auth::codex_auth_file());
                 if !tokens.is_valid() {
                     let reason = if tokens.access_token.is_none() {
@@ -156,8 +165,7 @@ impl ModelManager {
         let all_configs = configs.clone();
         for mut cfg in configs {
             // Check if this model uses ChatGPT OAuth
-            let is_chatgpt_oauth =
-                cfg.auth_mode.as_deref() == Some("chatgpt_oauth") || cfg.provider == "chatgpt";
+            let is_chatgpt_oauth = signs_in_with_chatgpt(&cfg);
             // Anthropic with Claude Code OAuth (CC Max subscription).
             let is_claude_oauth =
                 cfg.provider == "anthropic" && cfg.auth_mode.as_deref() == Some("claude_oauth");
@@ -408,7 +416,7 @@ impl ModelManager {
         // would 401 and look like a network hang. Prefer the name-based
         // guess in that case so engine startup keeps moving.
         if Self::check_provider_auth(&instance.config).is_err() {
-            if instance.config.auth_mode.as_deref() == Some("chatgpt_oauth") {
+            if signs_in_with_chatgpt(&instance.config) {
                 return Ok(None);
             }
             let guess = Self::guess_context_window(&instance.config.model);
