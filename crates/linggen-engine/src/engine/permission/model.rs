@@ -1026,11 +1026,11 @@ fn needs_prompt(
     reason: Option<BashReason>,
 ) -> PermissionCheckResult {
     let target = PathBuf::from(normalize_path(&target.to_string_lossy()));
-    let path = display_path(&target);
-    let reason = reason.map(|why| why.sentence(mode, &path));
+    let reason = reason.map(|why| why.sentence(mode, &display_path(&target)));
+    let path = target.to_string_lossy().into_owned();
     let directories = grant_directories(&target, session_cwd)
         .iter()
-        .map(|dir| display_path(dir))
+        .map(|dir| dir.to_string_lossy().into_owned())
         .collect();
     PermissionCheckResult::NeedsPrompt(PromptKind::ExceedsCeiling {
         target_mode: mode,
@@ -1696,13 +1696,25 @@ fn thin_directories(leaf_to_root: Vec<PathBuf>) -> Vec<PathBuf> {
 
 pub fn display_path(path: &Path) -> String {
     if let Some(home) = dirs::home_dir() {
-        let s = path.to_string_lossy();
-        let h = home.to_string_lossy();
-        if s.starts_with(h.as_ref()) {
-            return format!("~{}", &s[h.len()..]);
+        if let Ok(relative) = path.strip_prefix(&home) {
+            return if relative.as_os_str().is_empty() {
+                "~".into()
+            } else {
+                Path::new("~").join(relative).to_string_lossy().into_owned()
+            };
         }
     }
     path.to_string_lossy().to_string()
+}
+
+#[cfg(test)]
+#[test]
+fn display_does_not_abbreviate_a_sibling_of_home() {
+    let home = dirs::home_dir().unwrap();
+    let sibling = format!("{}-work/project", home.display());
+    assert_eq!(display_path(Path::new(&sibling)), sibling);
+    assert_eq!(display_path(&home), "~");
+    assert_eq!(display_path(&home.join("project")), "~/project");
 }
 
 #[cfg(test)]

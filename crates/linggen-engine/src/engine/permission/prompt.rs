@@ -84,7 +84,7 @@ pub fn build_exceeds_ceiling_question(
         question: tool_summary.to_string(),
         header: "Permission".to_string(),
         permission: Some(DirectoryPermissionMetadata {
-            path: path.to_string(),
+            path: super::model::display_path(std::path::Path::new(path)),
             mode: *target_mode,
         }),
         options: {
@@ -96,7 +96,8 @@ pub fn build_exceeds_ceiling_question(
                 options.push(AskUserOption {
                     label: format!("grant:at:{target_mode}:{dir}"),
                     description: Some(format!(
-                        "{dir} and its children — {target_mode} for this session"
+                        "{} and its children — {target_mode} for this session",
+                        super::model::display_path(std::path::Path::new(dir))
                     )),
                     preview: None,
                 });
@@ -171,7 +172,7 @@ pub fn build_caller_question(
         question: tool_summary.to_string(),
         header: "Permission".to_string(),
         permission: Some(DirectoryPermissionMetadata {
-            path: path.to_string(),
+            path: super::model::display_path(std::path::Path::new(path)),
             mode: *target_mode,
         }),
         options,
@@ -196,7 +197,7 @@ pub fn build_outward_question(
         question: tool_summary.to_string(),
         header: "Permission".to_string(),
         permission: Some(DirectoryPermissionMetadata {
-            path: path.to_string(),
+            path: super::model::display_path(std::path::Path::new(path)),
             mode: *target_mode,
         }),
         options: vec![
