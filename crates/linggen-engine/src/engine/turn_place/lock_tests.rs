@@ -80,8 +80,8 @@ const LISTED: &[(&str, usize, &str)] = &[
     // The loop itself: what it observes, its last words, the kickoff it drains.
     (
         "crates/linggen-engine/src/engine/mod.rs",
-        22,
-        "the loop drains a mission's kickoff and keeps its last words; tests",
+        23,
+        "the loop drains a mission's kickoff and keeps its last words (a held turn's plain reply too); tests",
     ),
     (
         "crates/linggen-engine/src/engine/context.rs",
@@ -166,6 +166,11 @@ const LISTED: &[(&str, usize, &str)] = &[
         1,
         "a test",
     ),
+    (
+        "crates/linggen-engine/src/engine/held_loop_tests.rs",
+        1,
+        "a test",
+    ),
 ];
 
 /// Callers of the agent loop (`run_agent_loop`, and the chat's wrapper of
@@ -211,6 +216,11 @@ const LOOP_CALLERS: &[(&str, usize, &str)] = &[
     ),
     (
         "crates/linggen-engine/src/engine/cut_loop_tests.rs",
+        1,
+        "a test",
+    ),
+    (
+        "crates/linggen-engine/src/engine/held_loop_tests.rs",
         1,
         "a test",
     ),
