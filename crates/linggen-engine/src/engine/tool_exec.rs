@@ -1402,16 +1402,7 @@ impl AgentEngine {
                     .unwrap_or_else(|| path.to_string());
                 let line_count = content.lines().count();
 
-                // Truncate content for diff display (avoid huge payloads)
-                let preview = if content.len() > 10_000 {
-                    format!(
-                        "{}…\n(truncated, {} total chars)",
-                        &content[..10_000],
-                        content.len()
-                    )
-                } else {
-                    content.to_string()
-                };
+                let preview = write_preview(content);
                 Some(serde_json::json!({
                     "diff_type": "write",
                     "path": rel,
@@ -1962,5 +1953,38 @@ mod run_fault_tests {
         );
         assert_eq!(engine.run_faults.failures[0].kind, FailureKind::Error);
         assert_eq!(engine.run_faults.count, 1);
+    }
+}
+
+/// A written file's text as the chat's diff shows it: the first 10,000 bytes,
+/// cut at a character boundary — a fixed byte index can fall inside a
+/// multi-byte character (any CJK text), and slicing there stops the turn.
+fn write_preview(content: &str) -> String {
+    const SHOWN: usize = 10_000;
+    if content.len() <= SHOWN {
+        return content.to_string();
+    }
+    let cut = content.floor_char_boundary(SHOWN);
+    format!("{}…\n(truncated, {} total chars)", &content[..cut], content.len())
+}
+
+#[cfg(test)]
+mod write_preview_tests {
+    use super::write_preview;
+
+    #[test]
+    fn a_long_cjk_file_is_cut_between_characters() {
+        // 9,999 ASCII bytes, then three-byte characters: byte 10,000 falls
+        // inside the first of them.
+        let content = format!("{}{}", "a".repeat(9_999), "、".repeat(50));
+        let preview = write_preview(&content);
+        assert!(preview.starts_with(&"a".repeat(9_999)));
+        assert!(preview.contains("(truncated, 10149 total chars)"));
+        assert!(!preview[..preview.find('…').unwrap()].contains('、'), "cut before the character it would split");
+    }
+
+    #[test]
+    fn a_short_file_is_shown_whole() {
+        assert_eq!(write_preview("你好"), "你好");
     }
 }

@@ -125,7 +125,7 @@ fn unnarrow_ttl_sweep(obj: &mut serde_json::Map<String, Value>) {
 fn log_call(verb: &str, args: &Value) {
     let preview = serde_json::to_string(args).unwrap_or_else(|_| "<unserializable>".into());
     let preview = if preview.len() > 200 {
-        format!("{}…", &preview[..199])
+        format!("{}…", &preview[..preview.floor_char_boundary(199)])
     } else {
         preview
     };

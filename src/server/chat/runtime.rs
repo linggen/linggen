@@ -378,7 +378,7 @@ async fn auto_recall_memory(
         let date = row
             .get("created_at")
             .and_then(|v| v.as_str())
-            .map(|s| if s.len() >= 10 { &s[..10] } else { s })
+            .map(|s| s.get(..10).unwrap_or(s))
             .unwrap_or("")
             .to_string();
         let content = row

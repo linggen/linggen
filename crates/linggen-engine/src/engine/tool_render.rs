@@ -76,7 +76,7 @@ fn first_string_arg(args: Option<&serde_json::Value>, keys: &[&str]) -> Option<S
 
 fn parse_read_result_path_from_tool_header(line: &str) -> Option<String> {
     let trimmed = line.trim();
-    if trimmed.len() < 10 || !trimmed[..10].eq_ignore_ascii_case("tool read:") {
+    if !trimmed.get(..10).is_some_and(|head| head.eq_ignore_ascii_case("tool read:")) {
         return None;
     }
     let mut rest = trimmed[10..].trim();
