@@ -1173,9 +1173,9 @@ pub(crate) async fn start_turn(
     let sid = req.session_id.clone().unwrap_or_else(new_session_id);
     // Not there yet in this skill's world, or not one who can come here: no
     // turn and nothing kept — no session made or retitled. The page says its
-    // own line.
-    let gate_place = meta.as_ref().map(|_| &turn_place);
-    if let Some(status) = refusal(&state, &target_id, (&sid, gate_place), &req.user_type).await {
+    // own line. The place is the request's (`turn_place`) for a first message
+    // too: one check, whether or not the session is kept yet.
+    if let Some(status) = refusal(&state, &target_id, (&sid, Some(&turn_place)), &req.user_type).await {
         return refused_reply(status, req.session_id.as_deref(), &target_id);
     }
     if !state.manager.agent_exists(&root, &target_id).await {
