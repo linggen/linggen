@@ -28,26 +28,34 @@ pub struct MeterReading {
 /// Every report refreshes it, so a session in play rarely asks.
 const READING_TTL: Duration = Duration::from_secs(30);
 
-static READINGS: Mutex<Option<HashMap<String, (MeterReading, Instant)>>> = Mutex::new(None);
+/// Readings by account ([`super::account_key`]) and meter: one account's
+/// window is never read for another.
+static READINGS: Mutex<Option<HashMap<(String, String), (MeterReading, Instant)>>> = Mutex::new(None);
 
 fn token() -> Result<String> {
     resolve_token().map(|(t, _)| t).context("signed out")
 }
 
-fn remember(r: &MeterReading) {
+fn remember(account: &str, r: &MeterReading) {
     let mut guard = READINGS.lock_ok();
     guard
         .get_or_insert_with(HashMap::new)
-        .insert(r.meter.clone(), (r.clone(), Instant::now()));
+        .insert((account.to_string(), r.meter.clone()), (r.clone(), Instant::now()));
 }
 
-fn cached(meter: &str) -> Option<(MeterReading, Instant)> {
-    READINGS.lock_ok().as_ref()?.get(meter).cloned()
+fn cached(account: &str, meter: &str) -> Option<(MeterReading, Instant)> {
+    READINGS.lock_ok().as_ref()?.get(&(account.to_string(), meter.to_string())).cloned()
 }
 
-/// The last reading of `meter` this machine holds, however old.
+/// Every reading goes, on sign-out.
+pub(crate) fn forget_readings() {
+    *READINGS.lock_ok() = None;
+}
+
+/// The last reading of `meter` the signed-in account holds here, however old.
 pub fn last_reading(meter: &str) -> Option<MeterReading> {
-    cached(meter).map(|(r, _)| r)
+    let account = super::account_key(&token().ok()?);
+    cached(&account, meter).map(|(r, _)| r)
 }
 
 /// A name the site takes for a save or a meter — and the only kind the engine
@@ -73,38 +81,43 @@ fn meter_url(meter: &str) -> Result<String> {
 
 /// The window's state, from the cache while it is fresh.
 pub async fn meter_reading(meter: &str) -> Result<MeterReading> {
-    if let Some((r, at)) = cached(meter) {
+    let token = token()?;
+    let account = super::account_key(&token);
+    if let Some((r, at)) = cached(&account, meter) {
         if at.elapsed() < READING_TTL {
             return Ok(r);
         }
     }
     let resp = http()
         .get(meter_url(meter)?)
-        .bearer_auth(token()?)
+        .bearer_auth(&token)
         .send()
         .await
         .context("connect to linggen.dev")?;
-    parse_reading(resp).await
+    parse_reading(&account, resp).await
 }
 
 /// Report a turn's tokens; the answer is the window after it.
 pub async fn meter_report(meter: &str, tokens: u64) -> Result<MeterReading> {
+    let token = token()?;
     let resp = http()
         .post(meter_url(meter)?)
-        .bearer_auth(token()?)
+        .bearer_auth(&token)
         .json(&serde_json::json!({ "tokens": tokens }))
         .send()
         .await
         .context("connect to linggen.dev")?;
-    parse_reading(resp).await
+    parse_reading(&super::account_key(&token), resp).await
 }
 
-async fn parse_reading(resp: reqwest::Response) -> Result<MeterReading> {
+/// The reading in `resp`, kept for `account`: the one the request was made
+/// for, whichever is signed in by the time it answers.
+async fn parse_reading(account: &str, resp: reqwest::Response) -> Result<MeterReading> {
     if !resp.status().is_success() {
         bail!("meter: {}", resp.status());
     }
     let reading: MeterReading = resp.json().await.context("meter reading")?;
-    remember(&reading);
+    remember(account, &reading);
     Ok(reading)
 }
 
@@ -197,6 +210,32 @@ pub async fn save_put(
     match refusal(status, &body) {
         Some(r) => Ok(PutOutcome::Refused(r)),
         None => bail!("save: {status}"),
+    }
+}
+
+/// Tests that touch the account caches run one at a time.
+#[cfg(test)]
+pub(crate) static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+#[cfg(test)]
+mod reading_tests {
+    use super::*;
+
+    fn reading(meter: &str, left: u64) -> MeterReading {
+        MeterReading { meter: meter.into(), size: 10, used: 10 - left, left, window_hours: 5.0, refill_at: None }
+    }
+
+    /// A meter's reading is kept for the account it was read for: another
+    /// account never reads it, and sign-out drops every one.
+    #[test]
+    fn a_reading_is_kept_for_its_account_and_dropped_on_sign_out() {
+        let _guard = TEST_LOCK.lock_ok();
+        let (a, b) = (super::super::account_key("usr_meter_a"), super::super::account_key("usr_meter_b"));
+        remember(&a, &reading("zz-play", 3));
+        assert_eq!(cached(&a, "zz-play").map(|(r, _)| r.left), Some(3));
+        assert!(cached(&b, "zz-play").is_none(), "another account's window was read");
+        forget_readings();
+        assert!(cached(&a, "zz-play").is_none(), "a reading outlived sign-out");
     }
 }
 
