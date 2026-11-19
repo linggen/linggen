@@ -704,7 +704,9 @@ mod tests {
     /// is no folded tool) is left in them for a model to call into nothing.
     /// The names the engine's side of the door retired (the dream's two
     /// among them) are the door's catalogue's, checked over the same files
-    /// by the door's repo check — no list of them is kept here.
+    /// by the door's repo check (`repo_check::
+    /// no_live_file_names_a_retired_tool_address_or_namespace`) — no list of
+    /// them is kept here.
     #[test]
     fn the_engines_own_prompts_name_only_the_folded_tools() {
         let cat = catalog();
