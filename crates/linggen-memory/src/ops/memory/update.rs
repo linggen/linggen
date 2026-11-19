@@ -109,8 +109,9 @@ pub(in crate::ops) async fn update(state: &Memory, req: UpdateRequest) -> Result
         return Ok(fact_public(&updated));
     }
 
-    // Cross-table move: apply patch in memory, delete from source, insert
-    // into target. Preserves the id and the existing embedding vector.
+    // Cross-table move: apply patch in memory, insert into the target, then
+    // delete from the source — a failure between leaves two copies, never
+    // none. Preserves the id and the existing embedding vector.
     let target_store = if target_is_episodic {
         Arc::clone(&state.episodic)
     } else {
@@ -120,7 +121,62 @@ pub(in crate::ops) async fn update(state: &Memory, req: UpdateRequest) -> Result
     patch.apply(&mut moved);
     moved.tier = target_tier;
     moved.updated_at = Some(Utc::now().trunc_subsecs(6));
-    current_store.delete(&req.id).await?;
     target_store.insert(std::slice::from_ref(&moved)).await?;
+    current_store.delete(&req.id).await?;
     Ok(fact_public(&moved))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::memory::{MemoryType, Origin};
+    use std::path::Path;
+
+    #[cfg(unix)]
+    fn set_mode(dir: &Path, mode: u32) {
+        use std::os::unix::fs::PermissionsExt;
+        for entry in walkdir(dir) {
+            std::fs::set_permissions(&entry, std::fs::Permissions::from_mode(mode)).unwrap();
+        }
+    }
+
+    /// Every directory under `dir`, `dir` itself last.
+    #[cfg(unix)]
+    fn walkdir(dir: &Path) -> Vec<std::path::PathBuf> {
+        let mut out = Vec::new();
+        for entry in std::fs::read_dir(dir).unwrap().flatten() {
+            if entry.file_type().unwrap().is_dir() {
+                out.extend(walkdir(&entry.path()));
+            }
+        }
+        out.push(dir.to_path_buf());
+        out
+    }
+
+    /// A move between tables writes the target before it deletes the
+    /// source: when the target cannot be written, the row stays where it was.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_move_whose_target_write_fails_keeps_the_source_row() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let state = crate::handle::scratch_state(
+            dir.path(),
+            std::net::SocketAddr::from(([127, 0, 0, 1], 0)),
+        )
+        .await;
+        let mut staged = Row::new("Alex keeps bees", MemoryType::Fact, Origin::Derived);
+        staged.tier = Tier::Episodic;
+        state.episodic.insert(&[staged.clone()]).await.unwrap();
+
+        let target = crate::memory::maintenance::db_dir(dir.path()).join("semantic.lance");
+        set_mode(&target, 0o555);
+        let req: UpdateRequest =
+            serde_json::from_value(serde_json::json!({"id": staged.id, "tier": "semantic"}))
+                .unwrap();
+        let moved = update(&state, req).await;
+        set_mode(&target, 0o755);
+
+        assert!(moved.is_err(), "the target write was refused: {moved:?}");
+        assert!(state.episodic.get(&staged.id).await.unwrap().is_some());
+    }
 }
