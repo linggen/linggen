@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   ArrowLeft,
   ChevronDown,
@@ -116,7 +116,7 @@ export const StoragePage: React.FC<{
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   // A file read answers the file picked last (lib/latest.mts).
-  const reads = useRef(latestOnly()).current;
+  const reads = useState(latestOnly)[0];
 
   const isDirty = fileContent !== savedContent;
   const isMarkdown = selectedFile?.endsWith('.md') ?? false;

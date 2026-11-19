@@ -91,7 +91,7 @@ export const SkillsTab: React.FC<{
   const mpUninstalling = useNameSet();
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // The results shown are the last query's (lib/latest.mts).
-  const searches = useRef(latestOnly()).current;
+  const searches = useState(latestOnly)[0];
 
   // Trending community skills (auto-loaded)
   const [trendingSkills, setTrendingSkills] = useState<MarketplaceSkill[]>([]);

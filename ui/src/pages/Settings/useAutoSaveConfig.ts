@@ -41,7 +41,7 @@ export function useAutoSaveConfig(enabled = true) {
   const configDirty = config !== null && saved !== null && JSON.stringify(config) !== JSON.stringify(saved);
 
   // One pending write; leaving Settings writes it at once (lib/settleWrites).
-  const writes = useRef(settleWrites(SETTLE_MS)).current;
+  const writes = useState(() => settleWrites(SETTLE_MS))[0];
   useEffect(() => () => writes.flush(), [writes]);
 
   useEffect(() => {

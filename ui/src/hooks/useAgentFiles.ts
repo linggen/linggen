@@ -1,6 +1,6 @@
 // The agent-spec editor's data: list agents/*.md, load one, save, create,
 // delete. Shared by the Settings tab and the modal editor.
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { latestOnly } from '../lib/latest.mts';
 import type { AgentFileInfo } from '../types';
 import { apiErrorMessage } from '../lib/api';
@@ -48,7 +48,7 @@ export function useAgentFiles(projectRoot: string, enabled: boolean, onChanged?:
   }, [projectRoot]);
 
   // A file read answers the file picked last (lib/latest.mts).
-  const reads = useRef(latestOnly()).current;
+  const reads = useState(latestOnly)[0];
   const loadFile = useCallback(async (path: string) => {
     if (!projectRoot || !path) return;
     const current = reads.begin();
