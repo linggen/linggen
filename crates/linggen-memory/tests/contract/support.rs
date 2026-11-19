@@ -226,6 +226,7 @@ fn scrub_field(key: &str, v: &Value) -> Value {
         "harvested_at",
         "remembered_at",
         "expires_at",
+        "acquired_at",
         "applied_at",
         "last_sync",
     ];

@@ -339,13 +339,20 @@ pub(in crate::ops) async fn remember_day(state: &Memory, req: RememberDayRequest
     }
 
     let holder = req.holder.as_deref().unwrap_or("");
-    if let Some(l) = crate::ops::lease::held_by_other(&state.data_dir, &key, holder, Utc::now()) {
+    let now = Utc::now();
+    if let Some(l) = crate::ops::lease::held_by_other(&state.data_dir, &key, holder, now) {
         return Err(crate::ops::lease::busy(&key, &l));
     }
+    // The mark covers what the caller read: rows from before its lease on
+    // the day (taken before the worklist read), so a row filed meanwhile
+    // stays unjudged. Without a lease the caller's read is unknown and the
+    // mark is the stamp's own time. It never moves back.
+    let boundary = crate::ops::lease::read_boundary(&state.data_dir, &key, holder, now)
+        .map_or(now, |b| b.min(now));
 
     modify(&state.data_dir, |days_state| {
         let rec = days_state.days.entry(key.clone()).or_default();
-        rec.remembered_at = Some(Utc::now());
+        rec.remembered_at = Some(rec.remembered_at.map_or(boundary, |prev| prev.max(boundary)));
         rec.judged = rec.judged.saturating_add(req.judged);
         rec.promoted = rec.promoted.saturating_add(req.promoted);
         if req.harvested {
