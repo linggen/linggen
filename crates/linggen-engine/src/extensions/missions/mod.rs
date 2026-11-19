@@ -371,10 +371,12 @@ impl MissionLoader {
         if draft.touches_definition() {
             self.ensure_user_owned(id, "only on/off and the schedule can change here")?;
         }
+        if let Some(schedule) = &draft.schedule {
+            validate_cron(schedule)?;
+        }
         let state_dir = self.state_dir(id);
         let mut choice = UserChoice::load_for_new_choice(&state_dir)?;
         if let Some(schedule) = draft.schedule {
-            validate_cron(&schedule)?;
             choice.schedule = Some(schedule);
         }
         if let Some(enabled) = draft.enabled {
@@ -1345,6 +1347,23 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&aside[0]).unwrap(), "{\"enabled\": fal");
         let on = MissionDraft { enabled: Some(true), ..Default::default() };
         assert!(store.update_mission("cfo:reports", on).unwrap().enabled);
+    }
+
+    /// A new choice that is refused (a bad schedule) leaves the unreadable
+    /// choices file where it was: the mission stays off.
+    #[test]
+    fn a_refused_new_choice_keeps_the_unreadable_choice_and_the_mission_off() {
+        let (store, dir) = skill_store();
+        let file = dir.path().join("skills/cfo/missions/reports/mission.md");
+        std::fs::write(&file, "---\nname: Reports\nschedule: \"0 9 * * 1-5\"\nenabled: true\n---\nCheck.\n").unwrap();
+        let state = dir.path().join("missions/cfo:reports");
+        std::fs::create_dir_all(&state).unwrap();
+        std::fs::write(state.join("user.json"), "{\"enabled\": fal").unwrap();
+        let draft = MissionDraft { schedule: Some("not a schedule".into()), ..Default::default() };
+        assert!(store.update_mission("cfo:reports", draft).is_err());
+        store.reload();
+        assert!(!store.get_mission("cfo:reports").unwrap().unwrap().enabled, "a refused choice turned it on");
+        assert_eq!(std::fs::read_to_string(state.join("user.json")).unwrap(), "{\"enabled\": fal");
     }
 
     #[test]
