@@ -99,8 +99,12 @@ fn migration_kind(name: &str) -> Option<&'static str> {
     })
 }
 
+/// `store-YYYY-MM-DD.ndjson` with a real date: only these are counted
+/// against [`DAILY_KEEP`] or removed, so a hand-made export stays.
 fn is_daily(name: &str) -> bool {
-    name.starts_with("store-") && name.ends_with(".ndjson")
+    name.strip_prefix("store-")
+        .and_then(|rest| rest.strip_suffix(".ndjson"))
+        .is_some_and(|day| day.len() == 10 && NaiveDate::parse_from_str(day, "%Y-%m-%d").is_ok())
 }
 
 /// Migration backups older than the keep window.
@@ -253,6 +257,22 @@ mod tests {
         assert_eq!(left.len(), 7);
         assert_eq!(left[0], "store-2026-10-12.ndjson");
         assert_eq!(left[6], "store-2026-10-18.ndjson");
+    }
+
+    /// A hand-made `store-*.ndjson` without a date neither takes one of the
+    /// seven slots nor is deleted.
+    #[test]
+    fn an_undated_store_export_is_not_a_daily_snapshot() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        for day in 12..=18 {
+            touch(dir, &format!("store-2026-10-{day}.ndjson"));
+        }
+        let manual = touch(dir, "store-manual.ndjson");
+        let odd = touch(dir, "store-2026-13-40.ndjson");
+        assert!(prune(dir, now()).is_empty());
+        assert!(manual.exists() && odd.exists());
+        assert_eq!(names(dir).len(), 9);
     }
 
     #[test]
