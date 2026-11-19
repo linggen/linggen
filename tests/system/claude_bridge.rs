@@ -398,7 +398,7 @@ async fn a_claude_turn_carries_the_owner_memory_block_and_capture_nudge() {
 #[tokio::test]
 async fn a_claude_session_sees_core_index_and_recall_like_a_native_one() {
     if !crate::support::memory::embedder_available() {
-        eprintln!("SKIPPED (passes on nothing): no embedding model in ~/.cache/huggingface");
+        crate::support::skipped("a_claude_session_sees_core_index_and_recall_like_a_native_one", "no embedding model in ~/.cache/huggingface");
         return;
     }
     let w = world_with(Setup {

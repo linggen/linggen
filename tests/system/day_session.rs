@@ -798,7 +798,10 @@ async fn herald_while_away(app: &str, private: bool, question: &str) -> String {
                 text("Red it is."),
             ],
         )
-        .script(Agent::Yinyue, vec![text("I'm here."), text("They need you back.")]);
+        // A reply for each call she may get: the greeting, the question's
+        // notice, and the "reply ready" one when the first reply finishes
+        // while the person is already away (before or after the question's).
+        .script(Agent::Yinyue, vec![text("I'm here."), text("They need you back."), text("Your reply is ready.")]);
     let (w, _) = day_world_at(12, setup).await;
     install_app(&w, app, "Bash, AskUser", private).await;
     let mark = w.mark();
@@ -820,11 +823,18 @@ async fn herald_while_away(app: &str, private: bool, question: &str) -> String {
         }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     };
-    while w.model.calls_of(Agent::Yinyue).len() < 2 {
+    // The question's notice among her calls, in whatever order they came.
+    let told = loop {
+        let calls = w.model.calls_of(Agent::Yinyue);
+        let notice = calls.iter().skip(1).find(|c| {
+            c.thread().last().is_some_and(|(_, said)| said.contains("the user to answer"))
+        });
+        if let Some(call) = notice {
+            break call.text();
+        }
         assert!(std::time::Instant::now() < deadline, "she never heralded; log:\n{}", w.engine.log());
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    }
-    let told = w.model.calls_of(Agent::Yinyue)[1].text();
+    };
     let spoke = w.events_when(|e| e.iter().any(|x| x["kind"] == "pet_speak")).await;
     assert!(spoke.iter().any(|x| x["kind"] == "pet_speak"), "her line was not spoken");
     w.api.answer(&asked, "Red").await;

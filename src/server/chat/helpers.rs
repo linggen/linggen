@@ -49,6 +49,7 @@ pub(crate) fn format_turn_error(msg: &str) -> String {
         "quota" => "The model has hit its limit for now — try again in a minute, or switch models.",
         "network" => "Couldn't reach the model — check the connection and try again.",
         "model_not_found" => "That model isn't available here — pick another in Settings → Models.",
+        "output_cut" => "The model's output limit keeps cutting its answer — ask for less at once, or switch models.",
         _ => "The model didn't answer this turn — try again.",
     };
     format!("Error: {line}")
@@ -123,6 +124,7 @@ pub(crate) fn model_error_code(msg: &str) -> &'static str {
     match kind_of_message(msg) {
         RateLimit | QuotaExhausted => "quota",
         Network | Server5xx | Stalled => "network",
+        OutputCut => "output_cut",
         Auth | BadRequest | ContextTooLong => "provider_http",
         EmptyResponse | Other if lower.contains("http") => "provider_http",
         EmptyResponse | Other => "other",
@@ -478,6 +480,8 @@ mod turn_error_tests {
         );
         assert!(shown.contains("limit"));
         assert!(format_turn_error("connection timed out").contains("reach the model"));
+        let cut = "model 'm': its output limit keeps cutting its answer (3 replies in a row were cut)";
+        assert!(format_turn_error(cut).contains("output limit keeps cutting"));
     }
 
     #[test]

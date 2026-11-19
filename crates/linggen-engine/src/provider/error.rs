@@ -39,6 +39,9 @@ pub enum ProviderErrorKind {
     /// first stream event — for the whole first-event window. The call can
     /// be tried again: it changed nothing.
     Stalled,
+    /// Reply after reply was cut at the model's output limit: the answer
+    /// never fits in one reply.
+    OutputCut,
     Other,
 }
 
@@ -87,6 +90,10 @@ pub fn no_fallback_error(model_id: &str, cause: &anyhow::Error) -> anyhow::Error
     err.into()
 }
 
+/// The words a turn ended on [`ProviderErrorKind::OutputCut`] carries, so
+/// the failure is still that kind when it survives only as text.
+pub const OUTPUT_CUT_WORDS: &str = "output limit keeps cutting";
+
 /// Leads the message of a call that failed with model switching off; the chat
 /// shows what follows it.
 pub const NO_FALLBACK_MARK: &str = "MODEL_FAILED:";
@@ -105,6 +112,7 @@ impl ProviderErrorKind {
             Self::Network => "timeout or network",
             Self::EmptyResponse => "empty answer",
             Self::Stalled => "no answer in time",
+            Self::OutputCut => "output limit keeps cutting its answer",
             Self::Other => "error",
         }
     }
@@ -293,6 +301,8 @@ fn classify_message(msg: &str) -> ProviderErrorKind {
         Network
     } else if lower.contains("empty response") {
         EmptyResponse
+    } else if lower.contains(OUTPUT_CUT_WORDS) {
+        OutputCut
     } else {
         Other
     }

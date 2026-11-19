@@ -85,11 +85,14 @@ own world and throws it away:
 - **ling-mem** as a scratch daemon over the world's home, the same `serve`.
   It has no stub embedder: by default its model load is refused offline, so
   `session_start`, `list` and MCP work and an add or search fails fast. The
-  one test that needs rows clones the model from the person's Hugging Face
+  few tests that need rows clone the model from the person's Hugging Face
   cache (copy-on-write, never a link — the real cache is never written) and
-  seeds invented rows (~2 s). It is `#[ignore]`d: `check.sh system` runs it
-  when the model is present; `LINGGEN_SYSTEM_REQUIRE_EMBED=1` fails without
-  it. The suite prints the ling-mem path and version it runs.
+  seed invented rows (~2 s). None is `#[ignore]`d: they run when the model is
+  present (`scripts/scratch-test.sh system` links the machine's cache into
+  its scratch home for them, as the release gate does); without it each
+  names itself (`support::skipped`) and the script lists them as SKIPPED at
+  the end; `LINGGEN_SYSTEM_REQUIRE_EMBED=1` fails the prompt test without it.
+  The suite prints the ling-mem path and version it runs.
 - **Fake model: llmposter** as a dev-dependency running inside the test
   process (AGPL is fine for a tool we never ship; it never reaches the
   shipped binary). In-process rather than its CLI: each test gets its own

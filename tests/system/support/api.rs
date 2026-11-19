@@ -51,6 +51,20 @@ impl Api {
             .as_u16()
     }
 
+    /// POST that may fail: the status and the JSON body (`null` if none).
+    pub async fn post_with_status(&self, path: &str, payload: Value) -> (u16, Value) {
+        let resp = self
+            .client
+            .post(format!("{}{path}", self.base))
+            .json(&payload)
+            .send()
+            .await
+            .unwrap_or_else(|e| panic!("POST {path}: {e}"));
+        let status = resp.status().as_u16();
+        let text = resp.text().await.unwrap_or_default();
+        (status, serde_json::from_str(&text).unwrap_or(Value::Null))
+    }
+
     /// Any method on `path`: the status and the JSON body (`null` if none).
     pub async fn call(&self, method: &str, path: &str) -> (u16, Value) {
         let method = reqwest::Method::from_bytes(method.as_bytes()).expect("method");

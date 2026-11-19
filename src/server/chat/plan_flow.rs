@@ -107,12 +107,12 @@ pub(super) async fn run_plan_dispatch(ctx: &ChatRunCtx, engine: &mut crate::engi
 /// Run the execution loop for an approved plan on `task`. Wires
 /// thinking/interrupt channels, runs the loop, and emits outcome events.
 /// Engine must already have the plan set.
-/// False when the run failed.
+/// How the run ended.
 pub(super) async fn run_plan_execution(
     ctx: &ChatRunCtx,
     engine: &mut crate::engine::AgentEngine,
     task: String,
-) -> bool {
+) -> RunEnd {
     let (thinking_tx, thinking_rx) = tokio::sync::mpsc::unbounded_channel();
     engine.begin_run(crate::engine::turn_place::RunSetup::task(task).thinking(Some(thinking_tx)));
     wire_inbox(ctx, engine);
@@ -140,7 +140,7 @@ pub(super) async fn run_plan_execution(
 
     unwire_inbox(ctx, engine);
 
-    let ran = exec_outcome.is_ok();
+    let ended = run_end(&exec_outcome);
     match exec_outcome {
         Ok(ref out) => {
             emit_outcome_event(ctx, out, engine.last_run_id.as_deref()).await;
@@ -170,7 +170,25 @@ pub(super) async fn run_plan_execution(
         }
     }
     let _ = ctx.events_tx.send(ServerEvent::StateUpdated);
-    ran
+    ended
+}
+
+/// How a plan's run ended: it ran, the person stopped it, or it failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum RunEnd {
+    Ran,
+    Stopped,
+    Failed,
+}
+
+/// How the run that came back as `outcome` ended (`engine::is_stopped` is
+/// the one check for a stop).
+fn run_end<T>(outcome: &anyhow::Result<T>) -> RunEnd {
+    match outcome {
+        Ok(_) => RunEnd::Ran,
+        Err(err) if crate::engine::is_stopped(err) => RunEnd::Stopped,
+        Err(_) => RunEnd::Failed,
+    }
 }
 
 /// The place a plan was made in (`TurnPlace::key`), as its row names it.
@@ -445,8 +463,8 @@ async fn run_approved_plan_task(
         place,
         turn: Default::default(),
     };
-    let ran = run_plan_in_place(&ctx, &mut engine, task).await;
-    complete_plan(&mut engine, &manager, &root, (&sid_default, &agent_id, &stamp), ran).await;
+    let ended = run_plan_in_place(&ctx, &mut engine, task).await;
+    complete_plan(&mut engine, &manager, &root, (&sid_default, &agent_id, &stamp), ended).await;
     engine.end_turn();
 
     let run_id = engine.last_run_id.clone();
@@ -459,23 +477,23 @@ async fn run_approved_plan_task(
 /// engine's cached thread may have been read for another place.
 /// Only a day's session is read again: elsewhere every turn of a session
 /// stands in one place, and the plan runs on the thread it was made on.
-/// False when the run failed.
-async fn run_plan_in_place(ctx: &ChatRunCtx, engine: &mut AgentEngine, task: String) -> bool {
+/// How the run ended.
+async fn run_plan_in_place(ctx: &ChatRunCtx, engine: &mut AgentEngine, task: String) -> RunEnd {
     let day = ctx.session_id.as_deref().is_some_and(crate::state_fs::day_session::is_day_session);
     if day {
         super::thread::sync(engine, ctx).await;
     }
     super::turn_place::bind_turn_place(engine, ctx).await;
-    let ran = run_plan_execution(ctx, engine, task).await;
+    let ended = run_plan_execution(ctx, engine, task).await;
     if day {
         super::thread::mark(engine, ctx);
     }
     super::turn_place::leave_turn_place(engine);
-    ran
+    ended
 }
 
-/// Mark the plan as completed — or failed, when its run failed (`ran`) —
-/// and rewrite the persisted plan message. The run's end may already have
+/// Mark the plan as completed — failed when its run failed, planned again
+/// when the person stopped it — and rewrite the persisted plan message. The run's end may already have
 /// settled a done checklist to Completed (`settle_finished_plan`); the saved
 /// message still needs the update.
 async fn complete_plan(
@@ -483,12 +501,12 @@ async fn complete_plan(
     manager: &Arc<AgentManager>,
     root: &Path,
     (sid, agent_id, stamp): (&str, &str, &Stamp),
-    ran: bool,
+    ended: RunEnd,
 ) {
     let Some(mut finished) = engine.plan().cloned() else {
         return;
     };
-    let Some(status) = finished_status(&finished.status, ran) else {
+    let Some(status) = finished_status(&finished.status, ended) else {
         return;
     };
     finished.status = status;
@@ -496,13 +514,20 @@ async fn complete_plan(
     persist_plan_message(manager, root, (sid, stamp), agent_id, &finished).await;
 }
 
-/// The state a plan in `status` ends its run in: Completed, or Failed when
-/// the run failed. `None` for a plan its run does not settle.
-fn finished_status(status: &PlanStatus, ran: bool) -> Option<PlanStatus> {
+/// The state a plan in `status` ends its run in: Completed; Failed when the
+/// run failed; Planned again when the person stopped it, so it can be
+/// approved again (a checklist already settled done stays Completed).
+/// `None` for a plan its run does not settle.
+fn finished_status(status: &PlanStatus, ended: RunEnd) -> Option<PlanStatus> {
     if !matches!(status, PlanStatus::Executing | PlanStatus::Approved | PlanStatus::Completed) {
         return None;
     }
-    Some(if ran { PlanStatus::Completed } else { PlanStatus::Failed })
+    Some(match ended {
+        RunEnd::Ran => PlanStatus::Completed,
+        RunEnd::Stopped if *status == PlanStatus::Completed => PlanStatus::Completed,
+        RunEnd::Stopped => PlanStatus::Planned,
+        RunEnd::Failed => PlanStatus::Failed,
+    })
 }
 
 /// Keep a plan's new state as the latest `{type:"plan", plan:...}` row of
@@ -673,9 +698,22 @@ mod tests {
     /// A run that failed leaves its plan failed, never completed.
     #[test]
     fn a_failed_run_leaves_its_plan_failed() {
-        assert_eq!(finished_status(&PlanStatus::Executing, true), Some(PlanStatus::Completed));
-        assert_eq!(finished_status(&PlanStatus::Approved, false), Some(PlanStatus::Failed));
-        assert_eq!(finished_status(&PlanStatus::Executing, false), Some(PlanStatus::Failed));
-        assert_eq!(finished_status(&PlanStatus::Rejected, false), None);
+        assert_eq!(finished_status(&PlanStatus::Executing, RunEnd::Ran), Some(PlanStatus::Completed));
+        assert_eq!(finished_status(&PlanStatus::Approved, RunEnd::Failed), Some(PlanStatus::Failed));
+        assert_eq!(finished_status(&PlanStatus::Executing, RunEnd::Failed), Some(PlanStatus::Failed));
+        assert_eq!(finished_status(&PlanStatus::Rejected, RunEnd::Failed), None);
+    }
+
+    /// A run the person stopped puts its plan back to planned, to be
+    /// approved again; a run that failed leaves it failed.
+    #[test]
+    fn a_stopped_run_puts_its_plan_back_to_planned() {
+        let stopped = anyhow::anyhow!("run cancelled");
+        let broke = anyhow::anyhow!("provider error");
+        assert_eq!(run_end::<()>(&Err(stopped)), RunEnd::Stopped);
+        assert_eq!(run_end::<()>(&Err(broke)), RunEnd::Failed);
+        assert_eq!(finished_status(&PlanStatus::Executing, RunEnd::Stopped), Some(PlanStatus::Planned));
+        assert_eq!(finished_status(&PlanStatus::Approved, RunEnd::Stopped), Some(PlanStatus::Planned));
+        assert_eq!(finished_status(&PlanStatus::Completed, RunEnd::Stopped), Some(PlanStatus::Completed));
     }
 }

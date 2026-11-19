@@ -511,6 +511,27 @@ async fn a_picture_sent_as_bare_base64_reaches_the_sdk_as_a_data_url() {
     assert_eq!(starts(&w)[0]["images"], json!([format!("data:image/png;base64,{PNG}")]));
 }
 
+/// A message that cannot be saved to the session's history is refused to
+/// its sender with the reason, and no turn runs on it.
+#[tokio::test]
+async fn a_message_that_cannot_be_saved_is_refused_and_runs_nothing() {
+    let (w, sid) = world().await;
+    trust_folder(&w);
+    let mark = w.mark();
+    let history = w.home.linggen_home().join("sessions").join(&sid).join("messages.jsonl");
+    let _ = std::fs::remove_file(&history);
+    std::fs::create_dir_all(&history).unwrap();
+    let (status, body) = w
+        .api
+        .post_with_status("/api/chat", json!({"session_id": sid, "project_root": w.work(), "message": "hello"}))
+        .await;
+    assert_eq!(status, 500, "a message that could not be saved was taken: {body}");
+    assert!(body.to_string().contains("could not be saved"), "{body}");
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    assert!(starts(&w).is_empty(), "a turn ran on a message that was not saved");
+    assert!(finished_with(&w, mark, &sid).is_empty());
+}
+
 #[tokio::test]
 async fn a_background_task_is_listed_and_the_person_stops_it() {
     let (w, sid) = world().await;

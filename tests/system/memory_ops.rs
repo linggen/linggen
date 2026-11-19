@@ -137,7 +137,7 @@ fn candidates(home: &Path) -> Vec<Value> {
 #[test]
 fn ling_mem_scan_writes_one_days_candidates() {
     if !scan_tools() {
-        eprintln!("SKIPPED (passes on nothing): no jq or perl in /usr/bin");
+        crate::support::skipped("ling_mem_scan_writes_one_days_candidates", "no jq or perl in /usr/bin");
         return;
     }
     let home = crate::support::home::Home::new();
@@ -219,7 +219,7 @@ fn ling_mem_scan_writes_one_days_candidates() {
 #[test]
 fn ling_mem_scan_sessions_lists_one_day_without_candidates() {
     if !scan_tools() {
-        eprintln!("SKIPPED (passes on nothing): no jq or perl in /usr/bin");
+        crate::support::skipped("ling_mem_scan_sessions_lists_one_day_without_candidates", "no jq or perl in /usr/bin");
         return;
     }
     let home = crate::support::home::Home::new();
@@ -243,7 +243,7 @@ fn ling_mem_scan_sessions_lists_one_day_without_candidates() {
 #[test]
 fn ling_mem_scan_resolves_the_owner_without_a_running_engine() {
     if !scan_tools() {
-        eprintln!("skipped: jq or perl missing");
+        crate::support::skipped("ling_mem_scan_resolves_the_owner_without_a_running_engine", "jq or perl missing");
         return;
     }
     let home = crate::support::home::Home::new();
@@ -298,7 +298,7 @@ fn ling_mem_scan_sessions_requires_a_day() {
 #[test]
 fn ling_mem_scan_extract_reads_one_session_without_candidates() {
     if !scan_tools() {
-        eprintln!("SKIPPED (passes on nothing): no jq or perl in /usr/bin");
+        crate::support::skipped("ling_mem_scan_extract_reads_one_session_without_candidates", "no jq or perl in /usr/bin");
         return;
     }
     let home = crate::support::home::Home::new();
@@ -444,7 +444,7 @@ async fn until_running(w: &World, mission: &str) {
 #[tokio::test]
 async fn a_scan_run_stages_the_days_sessions_and_stamps_the_day() {
     if !crate::support::memory::embedder_available() || !scan_tools() {
-        eprintln!("SKIPPED (passes on nothing): no embedding model, or no jq/perl");
+        crate::support::skipped("a_scan_run_stages_the_days_sessions_and_stamps_the_day", "no embedding model, or no jq/perl");
         return;
     }
     // The first run plans from the header and the day's rows alone (the
@@ -713,7 +713,7 @@ async fn a_solve_run_asks_once_refuses_a_second_start_and_closes_the_item() {
 #[test]
 fn the_scan_reads_a_session_the_person_spoke_in() {
     if !scan_tools() {
-        eprintln!("skipped: jq or perl missing");
+        crate::support::skipped("the_scan_reads_a_session_the_person_spoke_in", "jq or perl missing");
         return;
     }
     let script = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/system/memory_scan_day.sh");
