@@ -78,6 +78,84 @@ pub(crate) fn is_memory_tool(qualified: &str) -> bool {
     crate::mcp_client::is_mcp_tool(qualified) && memory_tool(qualified).is_some()
 }
 
+/// Whether a private app's memory write can affect rows recalled outside it.
+/// Missing or unreadable scope information is not proof a write stays here.
+pub(super) async fn write_leaves_app(tools: &Tools, app: &str, qualified: &str, args: &Value) -> bool {
+    let Some(tool) = memory_tool(qualified) else { return true };
+    let Some(branch) = catalog().branch_of(View::Local, &tool.original, args) else { return true };
+    let verb = branch.dispatch;
+    if widens_memory(verb, tools.session_id.as_deref(), args) {
+        return true;
+    }
+    let app_dir = crate::paths::global_skills_dir().join(app);
+    if verb == "add" {
+        let Some(place) = memory_place(tools).await else { return true };
+        if !Takes::of(&tool, args).stamps("cwd", args) || !scope_inside_app(&place.cwd, &app_dir) {
+            return true;
+        }
+    }
+    let ids: Vec<&str> = match verb {
+        "update" | "delete" => match args.get("id").and_then(Value::as_str) {
+            Some(id) => vec![id],
+            None => return true,
+        },
+        "add" => match args.get("replace_ids") {
+            None | Some(Value::Null) => Vec::new(),
+            Some(Value::Array(ids)) => {
+                let Some(ids) = ids.iter().map(Value::as_str).collect::<Option<Vec<_>>>() else { return true };
+                ids
+            }
+            _ => return true,
+        },
+        _ => return true,
+    };
+    let search = qualify(&tool.server, "memory_search");
+    for id in ids {
+        let mut get = serde_json::json!({"op": "get", "id": id});
+        if verb != "add" {
+            for field in ["episodic", "account", "all_accounts"] {
+                if let Some(value) = args.get(field) {
+                    get[field] = value.clone();
+                }
+            }
+        }
+        let Ok(text) = registry().call(&search, get).await else { return true };
+        let Ok(row) = serde_json::from_str::<Value>(&text) else { return true };
+        if row.get("id").and_then(Value::as_str) != Some(id)
+            || !matches!(row.get("tier").and_then(Value::as_str), Some("semantic" | "episodic"))
+            || !row.get("scope").and_then(Value::as_str).is_some_and(|scope| scope_inside_app(scope, &app_dir))
+        {
+            return true;
+        }
+    }
+    false
+}
+
+pub(super) fn widens_memory(verb: &str, session_id: Option<&str>, args: &Value) -> bool {
+    if verb == "delete" {
+        return false;
+    }
+    args.get("tier").and_then(Value::as_str) == Some("core")
+        || ["global", "clear_scope", "clear_cwd"].iter().any(|key| args.get(key).and_then(Value::as_bool) == Some(true))
+        || ["cwd", "scope", "root", "scope_root", "cwd_scope"].iter().any(|key| has(args, key))
+        || (verb == "add" && foreign_source(session_id, args))
+}
+
+fn scope_inside_app(scope: &str, app_dir: &std::path::Path) -> bool {
+    use std::path::{Component, Path};
+    let scope = Path::new(scope);
+    // Require both lexical and resolved membership: the former controls
+    // recall, and the latter excludes paths pointing outside the app.
+    scope.starts_with(app_dir)
+        && !scope.components().any(|part| part == Component::ParentDir)
+        && app_dir.canonicalize().ok().zip(scope.canonicalize().ok())
+            .is_some_and(|(app, scope)| scope.starts_with(app))
+}
+
+fn foreign_source(session_id: Option<&str>, args: &Value) -> bool {
+    args.get("source_session").and_then(Value::as_str).is_some_and(|sid| session_id != Some(sid))
+}
+
 /// Fill in what the model could not know, and refuse what it may not do.
 ///
 /// Returns the arguments to put on the wire. Non-memory tools pass through
@@ -123,10 +201,7 @@ pub(crate) async fn augment(tools: &Tools, qualified: &str, mut args: Value) -> 
     // run. And a session that stands in no project (see [`memory_place`]) is
     // stamped nothing — the dream mission runs at `~/.linggen`, and its own
     // searches must see the whole store.
-    let foreign_row = args
-        .get("source_session")
-        .and_then(Value::as_str)
-        .is_some_and(|s| tools.session_id.as_deref() != Some(s));
+    let foreign_row = foreign_source(tools.session_id.as_deref(), &args);
     if !foreign_row {
         if let Some(place) = memory_place(tools).await {
             let stamps = [

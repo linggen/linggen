@@ -699,7 +699,7 @@ impl Tools {
             call.tool,
             summarize_tool_args(&call.tool, &call.args)
         );
-        if let Some(why) = self.exit_refusal(&call) {
+        if let Some(why) = self.exit_refusal(&call).await {
             return Ok(ToolResult::Success(why));
         }
         if let Some(tool) = builtin::lookup(&call.tool) {

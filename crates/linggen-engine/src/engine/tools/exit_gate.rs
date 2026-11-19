@@ -25,15 +25,11 @@ pub enum PlaceReach {
     /// out when it asks for a wider one (`global`, a folder or scope of its
     /// own choosing).
     ScopedWrite,
-    /// It reaches the app its call names in this field (`AppTool`'s `app`,
-    /// `RunApp`'s `skill`): it stays when that is the turn's own app, and
-    /// carries words out into any other.
-    IntoApp(&'static str),
+    /// AppTool reaches the app it names.
+    IntoApp,
+    /// RunApp reaches the app its launcher arguments select.
+    RunApp,
 }
-
-/// The fields of a memory write that move a row out of the scope the
-/// engine stamps for the app (`memory_mcp::augment`).
-const WIDER_SCOPE: &[&str] = &["cwd", "scope", "root", "scope_root"];
 
 /// Memory's operations, each classed once by the verb its branch runs
 /// (`ling_mem::catalog::memory`): a call by the branch its `op` names. An
@@ -48,7 +44,7 @@ const MEMORY_REACH: &[(&str, PlaceReach)] = &[
     ("issues", PlaceReach::Stays),
     ("chains", PlaceReach::Stays),
     ("role", PlaceReach::Stays),
-    ("delete", PlaceReach::Stays),
+    ("delete", PlaceReach::ScopedWrite),
     ("add", PlaceReach::ScopedWrite),
     ("update", PlaceReach::ScopedWrite),
     ("issue_add", PlaceReach::CarriesOut),
@@ -90,9 +86,15 @@ fn verb_reach(verb: &str) -> PlaceReach {
 impl Tools {
     /// Why `call` may not run here, when it would carry a private app's
     /// words out of it.
-    pub(crate) fn exit_refusal(&self, call: &ToolCall) -> Option<String> {
+    pub(crate) async fn exit_refusal(&self, call: &ToolCall) -> Option<String> {
         let app = self.private_app.as_deref()?;
-        leaves(reach_of(&call.tool, &call.args), &call.args, app).then(|| refusal(app, &call.tool))
+        let reach = reach_of(&call.tool, &call.args);
+        let outside = if reach == PlaceReach::ScopedWrite {
+            memory_mcp::write_leaves_app(self, app, &call.tool, &call.args).await
+        } else {
+            leaves(reach, &call.args, app)
+        };
+        outside.then(|| refusal(app, &call.tool))
     }
 }
 
@@ -114,18 +116,16 @@ fn leaves(reach: PlaceReach, args: &Value, own: &str) -> bool {
     match reach {
         PlaceReach::Stays => false,
         PlaceReach::CarriesOut => true,
-        PlaceReach::ScopedWrite => widens_memory(args),
-        PlaceReach::IntoApp(field) => args.get(field).and_then(Value::as_str).is_some_and(|app| app != own),
+        PlaceReach::ScopedWrite => unreachable!("memory writes need the stored scope"),
+        PlaceReach::IntoApp => {
+            let app = args.get("app").and_then(Value::as_str);
+            let names_tool = args.get("tool").and_then(Value::as_str)
+                .is_some_and(|tool| !tool.trim().is_empty());
+            app.map_or(names_tool, |app| app != own)
+        }
+        PlaceReach::RunApp => serde_json::from_value::<super::delegation::RunAppArgs>(args.clone())
+            .is_ok_and(|args| args.skill != own),
     }
-}
-
-/// A memory write that asks to be kept somewhere else than the app's scope.
-fn widens_memory(args: &Value) -> bool {
-    let global = args.get("global").and_then(Value::as_bool) == Some(true);
-    let elsewhere = WIDER_SCOPE
-        .iter()
-        .any(|f| args.get(*f).is_some_and(|v| !v.is_null()));
-    global || elsewhere
 }
 
 fn refusal(app: &str, tool: &str) -> String {
@@ -186,9 +186,16 @@ mod tests {
         for tool in ["Read", "Bash", "WebSearch", "WebFetch", crate::notes::DONE_TOOL] {
             assert!(!leaves(reach_of(tool, &json!({})), &json!({})), "{tool}");
         }
-        let mem = |tool: &str, args: Value| leaves(memory_reach(tool, &args), &args);
+        let mem = |tool: &str, args: Value| match memory_reach(tool, &args) {
+            PlaceReach::ScopedWrite => memory_mcp::widens_memory("add", Some("current"), &args),
+            reach => leaves(reach, &args),
+        };
         assert!(mem("memory_upkeep", json!({"op": "issue_add", "kind": "chain", "note": "x"})));
         assert!(mem("memory_add", json!({"content": "x", "global": true})));
+        assert!(mem("memory_add", json!({"content": "x", "tier": "core"})));
+        assert!(mem("memory_add", json!({"content": "x", "source_session": "other"})));
+        assert!(!mem("memory_add", json!({"content": "x", "source_session": "current"})));
+        assert!(memory_mcp::widens_memory("update", None, &json!({"clear_scope": true})));
         assert!(mem("memory_add", json!({"content": "x", "cwd": "/elsewhere"})));
         assert!(!mem("memory_add", json!({"content": "x"})));
         assert!(!mem("memory_search", json!({"query": "x", "scope": "/elsewhere"})));
@@ -204,6 +211,8 @@ mod tests {
         assert!(!into("AppTool", json!({"app": "ledger", "tool": "read"})));
         assert!(!into("AppTool", json!({})), "the listing names no app");
         assert!(into("RunApp", json!({"skill": "dice"})));
+        assert!(into("RunApp", json!({"name": "dice"})));
+        assert!(!into("RunApp", json!({"name": "ledger"})));
         assert!(!into("RunApp", json!({"skill": "ledger"})));
     }
 }
