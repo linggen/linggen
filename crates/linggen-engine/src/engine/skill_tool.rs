@@ -250,8 +250,8 @@ impl SkillToolDef {
 
         // A tool's arguments can be a person's own data (a phone's sync
         // payload: health samples, ledger rows). The log names the tool and
-        // the command's size; its text is shown only at debug, and only its
-        // head — the script and verb, not the payload.
+        // the command's size; at debug it shows the head of the command as
+        // declared — the script and verb, never a value put into it.
         info!(
             "Skill tool '{}' runs ({} bytes of command)",
             self.name,
@@ -260,7 +260,7 @@ impl SkillToolDef {
         tracing::debug!(
             "Skill tool '{}' command starts: {}",
             self.name,
-            rendered.chars().take(160).collect::<String>()
+            self.cmd.chars().take(160).collect::<String>()
         );
 
         // Execute via sh -c. Own the process group so a timeout kills the
@@ -663,6 +663,28 @@ mod tests {
         );
     }
 
+    /// A child left running in the background with the output pipe open
+    /// does not hold the call past its timeout; what was written is kept.
+    #[test]
+    fn the_timeout_bounds_a_call_whose_child_keeps_the_pipe() {
+        let mut tool = shell_tool("echo started; sleep 30 &", 64 * 1024);
+        tool.timeout_ms = 300;
+        let start = Instant::now();
+        let result = tool
+            .execute(&serde_json::json!({}), Path::new("."), &[])
+            .expect("tool returns");
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "returned in {:?}, not after the background sleep",
+            start.elapsed()
+        );
+        let ToolResult::CommandOutput { stdout, stderr, .. } = result else {
+            panic!("expected CommandOutput");
+        };
+        assert_eq!(stdout, "started\n");
+        assert!(stderr.contains("timed out after 300ms"), "stderr: {stderr}");
+    }
+
     #[test]
     fn an_argv_argument_is_one_shell_word_per_item() {
         let mut tool = shell_tool("printf '%s|' {{verb}} {{flags}}", 64 * 1024);
@@ -725,6 +747,37 @@ mod tests {
             panic!("expected CommandOutput");
         };
         stdout
+    }
+
+    /// What the debug log says of a run: the command as declared, never the
+    /// values put into it.
+    #[test]
+    fn the_debug_log_shows_the_command_as_declared() {
+        #[derive(Clone, Default)]
+        struct Log(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+        impl std::io::Write for Log {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let log = Log::default();
+        let writer = log.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_ansi(false)
+            .with_max_level(tracing::Level::DEBUG)
+            .with_writer(move || writer.clone())
+            .finish();
+        let tool = positional_tool(&[("a", None), ("b", None), ("c", None)]);
+        tracing::subscriber::with_default(subscriber, || {
+            stdout_of(&tool, serde_json::json!({ "a": "PRIVATE-HEART-RATE" }));
+        });
+        let text = String::from_utf8(log.0.lock().unwrap().clone()).unwrap();
+        assert!(text.contains("printf '<%s>' {{a}}"), "{text}");
+        assert!(!text.contains("PRIVATE-HEART-RATE"), "{text}");
     }
 
     #[test]
