@@ -72,6 +72,8 @@ pub enum PlanStatus {
     Executing,
     Completed,
     Rejected,
+    /// Its run failed: the plan did not complete.
+    Failed,
 }
 
 #[derive(Debug, Clone)]

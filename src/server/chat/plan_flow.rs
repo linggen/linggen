@@ -121,11 +121,12 @@ pub(super) async fn run_plan_dispatch(ctx: &ChatRunCtx, engine: &mut crate::engi
 /// Run the execution loop for an approved plan on `task`. Wires
 /// thinking/interrupt channels, runs the loop, and emits outcome events.
 /// Engine must already have the plan set.
+/// False when the run failed.
 pub(super) async fn run_plan_execution(
     ctx: &ChatRunCtx,
     engine: &mut crate::engine::AgentEngine,
     task: String,
-) {
+) -> bool {
     let (thinking_tx, thinking_rx) = tokio::sync::mpsc::unbounded_channel();
     engine.begin_run(crate::engine::turn_place::RunSetup::task(task).thinking(Some(thinking_tx)));
     wire_inbox(ctx, engine);
@@ -153,6 +154,7 @@ pub(super) async fn run_plan_execution(
 
     unwire_inbox(ctx, engine);
 
+    let ran = exec_outcome.is_ok();
     match exec_outcome {
         Ok(ref out) => {
             emit_outcome_event(ctx, out, engine.last_run_id.as_deref()).await;
@@ -196,6 +198,7 @@ pub(super) async fn run_plan_execution(
         }
     }
     let _ = ctx.events_tx.send(ServerEvent::StateUpdated);
+    ran
 }
 
 /// The place a plan was made in (`TurnPlace::key`), as its row names it.
@@ -289,17 +292,17 @@ fn send_plan_update(state: &Arc<ServerState>, agent_id: String, plan: Plan, sess
 }
 
 /// Recover a pending plan from persisted session messages after server restart.
-/// Scans the session history backwards for the last plan message — the most
-/// recent plan's status decides whether there is a pending plan.
+/// Scans the session history backwards for the last plan message `agent_id`
+/// issued — the most recent of its plans decides whether it has one pending;
+/// another member's plans in a shared session are not its.
 async fn recover_plan_from_session(
-    state: &Arc<ServerState>,
-    _root: &std::path::Path,
+    manager: &AgentManager,
     agent_id: &str,
     session_id: Option<&str>,
 ) -> Option<crate::engine::Plan> {
     let sid = session_id.unwrap_or("default");
-    let messages = state.manager.global_sessions.get_chat_history(sid).ok()?;
-    for msg in messages.iter().rev() {
+    let messages = manager.global_sessions.get_chat_history(sid).ok()?;
+    for msg in messages.iter().rev().filter(|m| m.from_id == agent_id) {
         // Plain-text messages sit between the plan and the tail of the
         // history — skip them. Bailing out here (`.ok()?`) made recovery dead
         // for every plan that wasn't the very last message in the session.
@@ -325,6 +328,10 @@ async fn recover_plan_from_session(
     None
 }
 
+/// Every decision on a plan — approve, reject, edit — reads and writes its
+/// saved state under this lock, so each is made once, on the state as kept.
+static PLAN_DECISIONS: Mutex<()> = Mutex::const_new(());
+
 pub(crate) async fn approve_plan_handler(
     State(state): State<Arc<ServerState>>,
     Json(req): Json<PlanActionRequest>,
@@ -332,35 +339,29 @@ pub(crate) async fn approve_plan_handler(
     let root = resolve_request_root(&req.project_root);
     let session_id = req.session_id.clone();
     let sid = session_id.as_deref().unwrap_or("default").to_string();
-    let Some((mut plan, held)) = take_plan(&state, &root, &req.agent_id, session_id.as_deref()).await else {
+    let Ok(agent) = state
+        .manager
+        .get_or_create_session_agent(&sid, &root, &req.agent_id)
+        .await
+    else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "Agent not found" })),
+        )
+            .into_response();
+    };
+    let Some((plan, held, stamp)) = approve_plan(&state.manager, &root, &req.agent_id, session_id.as_deref()).await
+    else {
         return (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "No pending plan" })),
         )
             .into_response();
     };
-    plan.status = PlanStatus::Approved;
-
-    let agent = match state
-        .manager
-        .get_or_create_session_agent(&sid, &root, &req.agent_id)
-        .await
-    {
-        Ok(a) => a,
-        Err(_) => {
-            crate::server::tasks::tell_all(&state, &sid, &req.agent_id, held);
-            return (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({ "error": "Agent not found" })),
-            )
-                .into_response();
-        }
-    };
 
     // The plan's run takes its place in the turn line now, ahead of the
     // background-task ends held while the plan waited and any told later.
     let (_, place) = super::helpers::take_turn_place(state.manager.session_turn(&sid));
-    let stamp = plan_stamp(&state.manager, &sid, &req.agent_id);
     say_of_plan(
         &state,
         (&req.agent_id, "user", &req.agent_id),
@@ -384,22 +385,40 @@ pub(crate) async fn approve_plan_handler(
     Json(serde_json::json!({ "status": "approved" })).into_response()
 }
 
+/// Approve the plan `agent_id` waits on: its saved state becomes Approved
+/// before anything is queued, under the decisions' lock — a second approval
+/// finds no plan waiting. The plan, the ends held behind it, and its place.
+async fn approve_plan(
+    manager: &Arc<AgentManager>,
+    root: &Path,
+    agent_id: &str,
+    session_id: Option<&str>,
+) -> Option<(Plan, Vec<String>, Stamp)> {
+    let _decision = PLAN_DECISIONS.lock().await;
+    let sid = session_id.unwrap_or("default");
+    let (mut plan, held) = take_plan(manager, root, agent_id, session_id).await?;
+    let stamp = plan_stamp(manager, sid, agent_id);
+    plan.status = PlanStatus::Approved;
+    persist_plan_message(manager, root, (sid, &stamp), agent_id, &plan).await;
+    Some((plan, held, stamp))
+}
+
 /// The plan for the person's decision and the ends held behind it. After a
 /// restart, once the person moved on, or when the plan was kept under
 /// another root, the plan comes from the session's history; whatever the
 /// agent's plans in the session still held is let go with it.
 async fn take_plan(
-    state: &Arc<ServerState>,
+    manager: &AgentManager,
     root: &Path,
     agent_id: &str,
     session_id: Option<&str>,
 ) -> Option<(Plan, Vec<String>)> {
     let root_str = root.to_string_lossy();
-    if let Some(pending) = state.manager.take_pending_plan(&root_str, agent_id, session_id).await {
+    if let Some(pending) = manager.take_pending_plan(&root_str, agent_id, session_id).await {
         return Some((pending.plan, pending.held));
     }
-    let plan = recover_plan_from_session(state, root, agent_id, session_id).await?;
-    let held = state.manager.drop_pending_plans(session_id.unwrap_or("default"), agent_id).await;
+    let plan = recover_plan_from_session(manager, agent_id, session_id).await?;
+    let held = manager.drop_pending_plans(session_id.unwrap_or("default"), agent_id).await;
     Some((plan, held))
 }
 
@@ -430,12 +449,9 @@ async fn run_approved_plan_task(
     // session its rows are the place it was made in (`turn_place::keep_in_day`).
     let place = plan_place(&manager, &sid_default, &stamp);
     let _place = super::turn_place::keep_in_day(&manager, &sid_default, &place);
-    // Emit PlanUpdate SSE and rewrite the persisted plan message in-place.
+    // The approved state was kept when it was approved; the page hears it now.
     let approved_snapshot = engine.plan().cloned().unwrap();
-    engine
-        .persist_and_emit_plan(approved_snapshot.clone())
-        .await;
-    persist_plan_message(&manager, &root, (&sid_default, &stamp), &agent_id, &approved_snapshot).await;
+    engine.persist_and_emit_plan(approved_snapshot).await;
 
     // Plan execution only calls run_agent_loop (no skill dispatch); ctx.policy
     // is consulted only for the place's skill. Engine-level restrictions
@@ -457,8 +473,8 @@ async fn run_approved_plan_task(
         place,
         turn: Default::default(),
     };
-    run_plan_in_place(&ctx, &mut engine, task).await;
-    complete_plan(&mut engine, &manager, &root, (&sid_default, &agent_id, &stamp)).await;
+    let ran = run_plan_in_place(&ctx, &mut engine, task).await;
+    complete_plan(&mut engine, &manager, &root, (&sid_default, &agent_id, &stamp), ran).await;
     engine.end_turn();
 
     let run_id = engine.last_run_id.clone();
@@ -471,42 +487,50 @@ async fn run_approved_plan_task(
 /// engine's cached thread may have been read for another place.
 /// Only a day's session is read again: elsewhere every turn of a session
 /// stands in one place, and the plan runs on the thread it was made on.
-async fn run_plan_in_place(ctx: &ChatRunCtx, engine: &mut AgentEngine, task: String) {
+/// False when the run failed.
+async fn run_plan_in_place(ctx: &ChatRunCtx, engine: &mut AgentEngine, task: String) -> bool {
     let day = ctx.session_id.as_deref().is_some_and(crate::state_fs::day_session::is_day_session);
     if day {
         super::thread::sync(engine, ctx).await;
     }
     super::turn_place::bind_turn_place(engine, ctx).await;
-    run_plan_execution(ctx, engine, task).await;
+    let ran = run_plan_execution(ctx, engine, task).await;
     if day {
         super::thread::mark(engine, ctx);
     }
     super::turn_place::leave_turn_place(engine);
+    ran
 }
 
-/// Mark plan as completed and rewrite the persisted plan message. The run's
-/// end may already have settled a done checklist to Completed
-/// (`settle_finished_plan`); the saved message still needs the update.
+/// Mark the plan as completed — or failed, when its run failed (`ran`) —
+/// and rewrite the persisted plan message. The run's end may already have
+/// settled a done checklist to Completed (`settle_finished_plan`); the saved
+/// message still needs the update.
 async fn complete_plan(
     engine: &mut AgentEngine,
     manager: &Arc<AgentManager>,
     root: &Path,
     (sid, agent_id, stamp): (&str, &str, &Stamp),
+    ran: bool,
 ) {
-    let Some(mut completed_snapshot) = engine.plan().cloned() else {
+    let Some(mut finished) = engine.plan().cloned() else {
         return;
     };
-    if !matches!(
-        completed_snapshot.status,
-        PlanStatus::Executing | PlanStatus::Approved | PlanStatus::Completed
-    ) {
+    let Some(status) = finished_status(&finished.status, ran) else {
         return;
+    };
+    finished.status = status;
+    engine.persist_and_emit_plan(finished.clone()).await;
+    persist_plan_message(manager, root, (sid, stamp), agent_id, &finished).await;
+}
+
+/// The state a plan in `status` ends its run in: Completed, or Failed when
+/// the run failed. `None` for a plan its run does not settle.
+fn finished_status(status: &PlanStatus, ran: bool) -> Option<PlanStatus> {
+    if !matches!(status, PlanStatus::Executing | PlanStatus::Approved | PlanStatus::Completed) {
+        return None;
     }
-    completed_snapshot.status = PlanStatus::Completed;
-    engine
-        .persist_and_emit_plan(completed_snapshot.clone())
-        .await;
-    persist_plan_message(manager, root, (sid, stamp), agent_id, &completed_snapshot).await;
+    Some(if ran { PlanStatus::Completed } else { PlanStatus::Failed })
 }
 
 /// Keep a plan's new state as the latest `{type:"plan", plan:...}` row of
@@ -514,7 +538,7 @@ async fn complete_plan(
 /// so the plan stays aligned with the in-memory state across restarts.
 /// Written in the plan's own place (`plan_stamp`).
 async fn persist_plan_message(
-    manager: &Arc<AgentManager>,
+    manager: &AgentManager,
     root: &Path,
     (session_id, stamp): (&str, &Stamp),
     agent_id: &str,
@@ -545,8 +569,9 @@ pub(crate) async fn reject_plan_handler(
     Json(req): Json<PlanActionRequest>,
 ) -> impl IntoResponse {
     let root = resolve_request_root(&req.project_root);
+    let _decision = PLAN_DECISIONS.lock().await;
     let Some((mut rejected_plan, held)) =
-        take_plan(&state, &root, &req.agent_id, req.session_id.as_deref()).await
+        take_plan(&state.manager, &root, &req.agent_id, req.session_id.as_deref()).await
     else {
         return (
             StatusCode::NOT_FOUND,
@@ -586,6 +611,7 @@ pub(crate) async fn edit_plan_handler(
     let root_str = root.to_string_lossy().to_string();
     let session_id = req.session_id.clone();
     let agent_id = req.agent_id.clone();
+    let _decision = PLAN_DECISIONS.lock().await;
 
     // Resolve the plan: in-memory first, then session-history fallback.
     // After daemon restart the in-memory map is empty — recover from disk,
@@ -599,7 +625,7 @@ pub(crate) async fn edit_plan_handler(
         Some(p) => p,
         None => {
             let Some(mut plan) =
-                recover_plan_from_session(&state, &root, &agent_id, session_id.as_deref()).await
+                recover_plan_from_session(&state.manager, &agent_id, session_id.as_deref()).await
             else {
                 return (
                     StatusCode::NOT_FOUND,
@@ -625,4 +651,59 @@ pub(crate) async fn edit_plan_handler(
     send_plan_update(&state, agent_id, plan, session_id);
 
     (StatusCode::OK, Json(serde_json::json!({"ok": true}))).into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn manager() -> Arc<AgentManager> {
+        let empty = || Arc::new(crate::engine::test_registries::Empty);
+        AgentManager::new(crate::config::Config::default(), None, empty(), empty(), empty(), crate::engine::InterfaceMode::Web).0
+    }
+
+    fn plan(summary: &str, status: PlanStatus) -> Plan {
+        Plan { summary: summary.into(), status, plan_text: String::new(), items: Vec::new() }
+    }
+
+    async fn keep(manager: &AgentManager, sid: &str, agent: &str, plan: &Plan) {
+        persist_plan_message(manager, Path::new("/p"), (sid, &None), agent, plan).await;
+    }
+
+    /// A plan is found by its issuer: in a shared session one member's
+    /// action never lands on another member's plan.
+    #[tokio::test]
+    async fn a_plan_is_found_by_the_member_that_issued_it() {
+        let manager = manager();
+        let sid = "sess-1790000301-91a40001";
+        keep(&manager, sid, "ling", &plan("Ling's", PlanStatus::Planned)).await;
+        keep(&manager, sid, "coder", &plan("Coder's", PlanStatus::Completed)).await;
+        let found = recover_plan_from_session(&manager, "ling", Some(sid)).await;
+        assert_eq!(found.map(|p| p.summary).as_deref(), Some("Ling's"));
+        assert!(recover_plan_from_session(&manager, "coder", Some(sid)).await.is_none());
+    }
+
+    /// Approval is once-only: the saved state is Approved as soon as it is
+    /// approved, before its run gets the turn, so a second approval finds no
+    /// plan waiting — in memory or on disk.
+    #[tokio::test]
+    async fn a_plan_is_approved_once() {
+        let manager = manager();
+        let sid = "sess-1790000302-91a40002";
+        let waiting = plan("Build it", PlanStatus::Planned);
+        keep(&manager, sid, "ling", &waiting).await;
+        manager.set_pending_plan("/p", "ling", Some(sid), waiting).await;
+        let first = approve_plan(&manager, Path::new("/p"), "ling", Some(sid)).await;
+        assert_eq!(first.map(|(p, _, _)| p.status), Some(PlanStatus::Approved));
+        assert!(approve_plan(&manager, Path::new("/p"), "ling", Some(sid)).await.is_none(), "approved twice");
+    }
+
+    /// A run that failed leaves its plan failed, never completed.
+    #[test]
+    fn a_failed_run_leaves_its_plan_failed() {
+        assert_eq!(finished_status(&PlanStatus::Executing, true), Some(PlanStatus::Completed));
+        assert_eq!(finished_status(&PlanStatus::Approved, false), Some(PlanStatus::Failed));
+        assert_eq!(finished_status(&PlanStatus::Executing, false), Some(PlanStatus::Failed));
+        assert_eq!(finished_status(&PlanStatus::Rejected, false), None);
+    }
 }

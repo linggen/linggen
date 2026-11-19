@@ -4,4 +4,5 @@ export const PLAN_STATUS_COLOR: Record<string, string> = {
   executing: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
   completed: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
   rejected: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
+  failed: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
 };
