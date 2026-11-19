@@ -141,47 +141,9 @@ pub(crate) fn normalize_tool_args(tool: &str, args: Value) -> Value {
             }
         }
 
-        if matches!(tool, "Read" | "Write" | "Edit") && !obj.contains_key("path") {
-            if let Some(fp) = obj.get("filepath").cloned() {
-                obj.insert("path".to_string(), fp);
-            } else if let Some(file) = obj.get("file").cloned() {
-                obj.insert("path".to_string(), file);
-            }
-        }
-
-        if matches!(tool, "Edit") {
-            if !obj.contains_key("old_string") {
-                if let Some(v) = obj.get("old").cloned() {
-                    obj.insert("old_string".to_string(), v);
-                } else if let Some(v) = obj.get("old_text").cloned() {
-                    obj.insert("old_string".to_string(), v);
-                } else if let Some(v) = obj.get("oldText").cloned() {
-                    obj.insert("old_string".to_string(), v);
-                } else if let Some(v) = obj.get("search").cloned() {
-                    obj.insert("old_string".to_string(), v);
-                } else if let Some(v) = obj.get("from").cloned() {
-                    obj.insert("old_string".to_string(), v);
-                }
-            }
-            if !obj.contains_key("new_string") {
-                if let Some(v) = obj.get("new").cloned() {
-                    obj.insert("new_string".to_string(), v);
-                } else if let Some(v) = obj.get("new_text").cloned() {
-                    obj.insert("new_string".to_string(), v);
-                } else if let Some(v) = obj.get("newText").cloned() {
-                    obj.insert("new_string".to_string(), v);
-                } else if let Some(v) = obj.get("replace").cloned() {
-                    obj.insert("new_string".to_string(), v);
-                } else if let Some(v) = obj.get("to").cloned() {
-                    obj.insert("new_string".to_string(), v);
-                }
-            }
-            if !obj.contains_key("replace_all") {
-                if let Some(v) = obj.get("all").cloned() {
-                    obj.insert("replace_all".to_string(), v);
-                }
-            }
-        }
+        // Read/Write/Edit aliases (`file`, `old`, …) are decided by their
+        // arg structs' serde aliases alone: a copy made here as well would
+        // reach serde as the same field twice and fail the call.
 
         // Normalize query aliases for Grep. Note: "path" is intentionally excluded
         // because it's the directory/file scope argument, not a search pattern.

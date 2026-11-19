@@ -170,6 +170,7 @@ impl Tools {
 
         match skill {
             Some(skill) => {
+                self.model_may_start(&skill).await?;
                 let app = skill.app.as_ref().ok_or_else(|| {
                     anyhow::anyhow!(
                         "Skill '{}' does not have an app configuration. Only skills with 'app.launcher' can be run as apps.",
@@ -228,24 +229,23 @@ impl Tools {
                         if !script.exists() {
                             anyhow::bail!("App script not found: {}", script.display());
                         }
-                        let mut cmd = std::process::Command::new("sh");
-                        cmd.arg(script.as_os_str());
-                        if let Some(extra) = &args.args {
-                            for arg in extra.split_whitespace() {
-                                cmd.arg(arg);
-                            }
+                        // It runs as Bash does (`run_command`): off the
+                        // runtime's workers, in the session's folder, under
+                        // the foreground limit, killed when the call is
+                        // dropped.
+                        let quote = crate::engine::skill_tool::shell_escape_arg;
+                        let mut cmd = format!("sh {}", quote(&script.to_string_lossy()));
+                        for arg in args.args.iter().flat_map(|a| a.split_whitespace()) {
+                            cmd.push(' ');
+                            cmd.push_str(&quote(arg));
                         }
-                        cmd.current_dir(&self.root);
-                        cmd.env("PATH", crate::util::shell_path());
-                        let output = cmd
-                            .output()
-                            .map_err(|e| anyhow::anyhow!("Failed to run app script: {}", e))?;
-                        Ok(ToolResult::command_output(
-                            output.status.code(),
-                            &String::from_utf8_lossy(&output.stdout),
-                            &String::from_utf8_lossy(&output.stderr),
-                            super::DEFAULT_MAX_TOOL_OUTPUT_BYTES,
-                        ))
+                        self.run_command(super::search_exec::RunCommandArgs {
+                            cmd,
+                            timeout_ms: None,
+                            run_in_background: false,
+                            cancel_flag: None,
+                        })
+                        .await
                     }
                     other => {
                         anyhow::bail!(
@@ -261,6 +261,25 @@ impl Tools {
         }
     }
 
+    /// Whether the model may start `skill` — by Skill or by RunApp alike:
+    /// never a user-only skill, nor one that keeps a session of its own out
+    /// of the day's.
+    async fn model_may_start(&self, skill: &crate::engine::skill::Skill) -> Result<()> {
+        if skill.disable_model_invocation {
+            anyhow::bail!(
+                "Skill '{}' is user-only (disable_model_invocation). It can only be invoked by the user via /{}.",
+                skill.name, skill.name
+            );
+        }
+        if self.kept_out_of_day(skill).await {
+            anyhow::bail!(
+                "refused: {} keeps a session of its own; it is not taken up in the day's session.",
+                skill.name
+            );
+        }
+        Ok(())
+    }
+
     pub(super) async fn invoke_skill(&self, args: SkillArgs) -> Result<ToolResult> {
         let manager = self
             .manager
@@ -271,18 +290,7 @@ impl Tools {
 
         match skill {
             Some(skill) => {
-                if skill.disable_model_invocation {
-                    anyhow::bail!(
-                        "Skill '{}' is user-only (disable_model_invocation). It can only be invoked by the user via /{}.",
-                        args.skill, args.skill
-                    );
-                }
-                if self.kept_out_of_day(&skill).await {
-                    anyhow::bail!(
-                        "refused: {} keeps a session of its own; it is not taken up in the day's session.",
-                        skill.name
-                    );
-                }
+                self.model_may_start(&skill).await?;
                 // Replace $SKILL_DIR in content so the model sees the actual path.
                 let resolved_content = if let Some(ref dir) = skill.skill_dir {
                     skill.content.replace("$SKILL_DIR", &dir.to_string_lossy())
@@ -508,14 +516,15 @@ pub(crate) async fn run_delegation(
             None,
         ),
         Err(err) => {
-            let msg = err.to_string();
-            let status = if msg.to_lowercase().contains("cancel") {
-                crate::engine::agent::AgentRunStatus::Cancelled
-            } else {
-                crate::engine::agent::AgentRunStatus::Failed
-            };
+            // A failure is a failure: whether the run was cancelled is what
+            // its own status says (`finish_agent_run` reads the cancel set
+            // a Stop fills), never a word in the error.
             let final_status = manager
-                .finish_agent_run(&run_id, status, Some(msg.clone()))
+                .finish_agent_run(
+                    &run_id,
+                    crate::engine::agent::AgentRunStatus::Failed,
+                    Some(err.to_string()),
+                )
                 .await?;
             if final_status == crate::engine::agent::AgentRunStatus::Cancelled {
                 return Err(DelegationCancelled.into());
@@ -551,5 +560,113 @@ pub(crate) async fn run_delegation(
             Ok(ToolResult::Success(text))
         }
         other => Ok(ToolResult::AgentOutcome(other)),
+    }
+}
+
+#[cfg(test)]
+mod run_app_tests {
+    use super::*;
+    use crate::engine::skill::{Skill, SkillRegistry, SkillSource};
+    use crate::engine::tools::ToolCall;
+    use std::time::{Duration, Instant};
+
+    /// A registry holding the given skills only.
+    struct Installed(Vec<Skill>);
+
+    #[async_trait::async_trait]
+    impl SkillRegistry for Installed {
+        async fn get_skill(&self, name: &str) -> Option<Skill> {
+            self.0.iter().find(|s| s.name == name).cloned()
+        }
+        async fn reload_one(&self, name: &str) -> Option<Skill> {
+            self.get_skill(name).await
+        }
+        async fn list_skills(&self) -> Vec<Skill> {
+            self.0.clone()
+        }
+        async fn match_trigger(&self, _: &str) -> Option<(String, String)> {
+            None
+        }
+        async fn list_metadata(&self) -> Vec<(String, String, bool)> {
+            Vec::new()
+        }
+    }
+
+    /// A skill whose `bash` app runs `script` (written to `run.sh` in `dir`).
+    fn bash_app(dir: &std::path::Path, name: &str, extra: &str, script: &str) -> Skill {
+        std::fs::write(dir.join("run.sh"), script).unwrap();
+        let text = format!(
+            "---\nname: {name}\ndescription: A test app.\n{extra}app:\n  launcher: bash\n  entry: run.sh\n---\nbody\n"
+        );
+        let mut skill =
+            crate::extensions::skills::parse_skill_text(&text, SkillSource::Project).unwrap();
+        skill.skill_dir = Some(dir.to_path_buf());
+        skill
+    }
+
+    fn tools_with(dir: &std::path::Path, skills: Vec<Skill>) -> Tools {
+        let (manager, _events) = AgentManager::new(
+            crate::config::Config::default(),
+            None,
+            Arc::new(Installed(skills)),
+            Arc::new(crate::engine::test_registries::Empty),
+            Arc::new(crate::engine::test_registries::Empty),
+            crate::engine::InterfaceMode::Web,
+        );
+        let mut tools = Tools::new(dir.to_path_buf()).unwrap();
+        tools.set_context(manager, "ling".into());
+        tools
+    }
+
+    fn run_app(skill: &str) -> ToolCall {
+        ToolCall {
+            tool: "RunApp".into(),
+            args: serde_json::json!({ "skill": skill }),
+            block_id: None,
+        }
+    }
+
+    fn alive(pid: i32) -> bool {
+        pid > 0 && unsafe { libc::kill(pid, 0) } == 0
+    }
+
+    /// A `bash` app runs like any other command the engine starts: off the
+    /// runtime's workers, and killed when its call is dropped (Stop).
+    #[tokio::test]
+    async fn a_bash_app_is_killed_when_its_call_is_dropped() {
+        let dir = tempfile::tempdir().unwrap();
+        let pid_file = dir.path().join("app.pid");
+        let script = format!("echo $$ > '{}'\nexec sleep 5\n", pid_file.display());
+        let tools = tools_with(dir.path(), vec![bash_app(dir.path(), "waiter", "", &script)]);
+        let ran = tokio::time::timeout(Duration::from_millis(800), tools.execute(run_app("waiter"))).await;
+        assert!(ran.is_err(), "the call held the runtime until its script ended: {ran:?}");
+        let pid: i32 = std::fs::read_to_string(&pid_file)
+            .ok()
+            .and_then(|s| s.trim().parse().ok())
+            .unwrap_or(0);
+        assert!(pid > 0, "the script never started");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while alive(pid) && Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        let survived = alive(pid);
+        if survived {
+            unsafe { libc::kill(pid, libc::SIGKILL) };
+        }
+        assert!(!survived, "the app's script outlived its call");
+    }
+
+    /// A user-only skill is refused to the model through RunApp as through
+    /// Skill: one rule decides whether a model may start a skill.
+    #[tokio::test]
+    async fn a_user_only_app_is_refused_to_the_model() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("ran");
+        let script = format!("touch '{}'\n", marker.display());
+        let skill = bash_app(dir.path(), "private", "disable-model-invocation: true\n", &script);
+        let tools = tools_with(dir.path(), vec![skill]);
+        let err = tools.execute(run_app("private")).await.unwrap_err().to_string();
+        assert!(err.contains("user-only"), "{err}");
+        assert!(!marker.exists(), "the user-only app's script ran");
     }
 }

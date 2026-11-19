@@ -597,7 +597,7 @@ impl Tools {
         env.extend(restricted);
         if let Some(manager) = self.get_manager() {
             if let Ok(history) = manager.global_sessions.get_chat_history(sid) {
-                let turns = history.iter().filter(|m| m.from_id == "user").count();
+                let turns = history.iter().filter(|m| said_by_person(m)).count();
                 env.push(("LINGGEN_USER_TURNS".to_string(), turns.to_string()));
                 if senses.iter().any(|s| s == crate::senses::USER_WORDS) {
                     env.push(("LINGGEN_USER_WORDS".to_string(), user_words(&history)));
@@ -816,13 +816,21 @@ impl Tools {
 const USER_WORDS_KEEP: usize = 8;
 const USER_WORDS_CHARS: usize = 500;
 
-/// The person's last messages as they typed them, a JSON array, newest last:
-/// no hidden rows (a page's report, a nudge), no observations.
+/// A row the person said: from "user", and neither a tool observation nor
+/// a hidden row (a page's report, a nudge) nor empty. `LINGGEN_USER_TURNS`
+/// counts these and `LINGGEN_USER_WORDS` quotes them.
+fn said_by_person(m: &crate::state_fs::sessions::ChatMsg) -> bool {
+    m.from_id == "user"
+        && !m.is_observation
+        && !m.content.contains("[HIDDEN]")
+        && !m.content.trim().is_empty()
+}
+
+/// The person's last messages as they typed them, a JSON array, newest last.
 fn user_words(history: &[crate::state_fs::sessions::ChatMsg]) -> String {
     let said: Vec<String> = history
         .iter()
-        .filter(|m| m.from_id == "user" && !m.is_observation)
-        .filter(|m| !m.content.contains("[HIDDEN]") && !m.content.trim().is_empty())
+        .filter(|m| said_by_person(m))
         .map(|m| m.content.chars().take(USER_WORDS_CHARS).collect())
         .collect();
     let recent = &said[said.len().saturating_sub(USER_WORDS_KEEP)..];
@@ -871,6 +879,53 @@ mod tests {
         let long = vec![msg("user", &"字".repeat(900), false)];
         let cut: Vec<String> = serde_json::from_str(&user_words(&long)).unwrap();
         assert_eq!(cut[0].chars().count(), USER_WORDS_CHARS);
+    }
+
+    /// `LINGGEN_USER_TURNS` counts what the person said, as `user_words`
+    /// reads it: no tool observations, no hidden rows.
+    #[test]
+    fn user_turns_count_only_what_the_person_said() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut manager, _events) = crate::engine::agent::AgentManager::new(
+            crate::config::Config::default(),
+            None,
+            Arc::new(crate::engine::test_registries::Empty),
+            Arc::new(crate::engine::test_registries::Empty),
+            Arc::new(crate::engine::test_registries::Empty),
+            crate::engine::InterfaceMode::Web,
+        );
+        Arc::get_mut(&mut manager).expect("a fresh manager").global_sessions =
+            crate::state_fs::SessionStore::with_sessions_dir(dir.path().join("sessions"));
+        let row = |from: &str, content: &str, obs: bool| crate::state_fs::sessions::ChatMsg {
+            run_id: None,
+            via: None,
+            via_note: None,
+            agent_id: "ling".into(),
+            from_id: from.into(),
+            to_id: "ling".into(),
+            content: content.into(),
+            timestamp: 0,
+            is_observation: obs,
+            client_id: None,
+            failed: false,
+            images: Vec::new(),
+            place: None,
+        };
+        for msg in [
+            row("user", "hello", false),
+            row("ling", "hi", false),
+            row("user", "Tool Read: ok", true),
+            row("user", "[HIDDEN] [scene] opened", false),
+            row("user", "again", false),
+        ] {
+            manager.global_sessions.add_chat_message("s", &msg).unwrap();
+        }
+        let mut tools = Tools::new(dir.path().to_path_buf()).unwrap();
+        tools.set_context(manager, "ling".into());
+        tools.set_session_id(Some("s".into()));
+        let env = tools.tool_env(&[]);
+        let turns = env.iter().find(|(k, _)| k == "LINGGEN_USER_TURNS").map(|(_, v)| v.as_str());
+        assert_eq!(turns, Some("2"));
     }
 
     #[test]

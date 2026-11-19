@@ -22,6 +22,24 @@ const STEER_GRACE: Duration = Duration::from_secs(1);
 #[cfg(test)]
 const STEER_GRACE: Duration = Duration::from_millis(100);
 
+/// Once the shell has ended, how long its pipes may stay open before the
+/// call returns without them: a process the command put in the background
+/// (`server &`) holds them for as long as it runs. Only such a call waits
+/// it out; any other's readers end at once.
+const EXIT_DRAIN: Duration = Duration::from_millis(1500);
+
+/// Of each stream, what is kept while it is read: its first and its last
+/// this many bytes — all the result can show (`cap_parts`), never more.
+const KEEP: usize = super::DEFAULT_MAX_TOOL_OUTPUT_BYTES;
+
+/// The longest piece of one line read at a time: a line longer than this
+/// comes in pieces, so one endless line is never held whole either.
+const LINE_MAX: u64 = KEEP as u64;
+
+const LEFT_RUNNING: &str = "linggen: the shell ended, but a process it started in the \
+background still holds its output and was left running; this is the output so far. \
+Redirect its output (`cmd > file 2>&1 &`) or use run_in_background.";
+
 /// How the wait for the command ended.
 enum Waited {
     Exited,
@@ -52,21 +70,74 @@ enum Stream {
     Stderr,
 }
 
+/// One stream as it is read: its first [`KEEP`] bytes, the last [`KEEP`]
+/// after those (up to twice that between trims), and how many came in all.
+#[derive(Default)]
+struct Kept {
+    head: String,
+    tail: String,
+    total: usize,
+}
+
+impl Kept {
+    fn push(&mut self, mut text: &str) {
+        self.total += text.len();
+        if self.tail.is_empty() {
+            let cut = super::floor_char_boundary(text, KEEP.saturating_sub(self.head.len()));
+            self.head.push_str(&text[..cut]);
+            text = &text[cut..];
+        }
+        self.tail.push_str(text);
+        if self.tail.len() > 2 * KEEP {
+            let start = super::ceil_char_boundary(&self.tail, self.tail.len() - KEEP);
+            self.tail.drain(..start);
+        }
+    }
+
+    fn whole(&self) -> bool {
+        self.total == self.head.len() + self.tail.len()
+    }
+
+    /// What the result shows of it, `strip` applied to its end first.
+    fn shown(self, strip: impl FnOnce(String) -> String) -> String {
+        let max = super::DEFAULT_MAX_TOOL_OUTPUT_BYTES;
+        if self.whole() {
+            return super::cap_stream(&strip(self.head + &self.tail), max);
+        }
+        let kept_tail = self.tail.len();
+        let tail = strip(self.tail);
+        let total = self.total - kept_tail + tail.len();
+        super::cap_parts(&self.head, &tail, total, max)
+    }
+}
+
 /// What the command printed. Until it moves, lines are kept for the result
 /// and streamed to the chat; once moved, they go to the task's file.
 #[derive(Default)]
 struct Capture {
-    stdout: String,
-    stderr: String,
+    stdout: Kept,
+    stderr: Kept,
     log: Option<std::fs::File>,
     /// The cwd sentinel came: what follows is the shell's `pwd`, not output.
     sentinel_seen: bool,
+    /// The call has returned: a reader still open drops what comes.
+    closed: bool,
 }
 
 impl Capture {
-    fn take_line(&mut self, stream: Stream, line: String, progress: Option<&ToolProgressSender>) {
+    /// One line, or (`ended` false) a piece of a line too long to read whole.
+    fn take_line(
+        &mut self,
+        stream: Stream,
+        line: String,
+        ended: bool,
+        progress: Option<&ToolProgressSender>,
+    ) {
+        if self.closed {
+            return;
+        }
         if self.log.is_some() {
-            return self.log_line(stream, &line);
+            return self.log_line(stream, &line, ended);
         }
         if let Some(tx) = progress {
             let name = if stream == Stream::Stdout {
@@ -81,12 +152,14 @@ impl Capture {
         } else {
             &mut self.stderr
         };
-        acc.push_str(&line);
-        acc.push('\n');
+        acc.push(&line);
+        if ended {
+            acc.push("\n");
+        }
     }
 
     /// A moved command's line, without the cwd sentinel and its `pwd`.
-    fn log_line(&mut self, stream: Stream, line: &str) {
+    fn log_line(&mut self, stream: Stream, line: &str, ended: bool) {
         let mut text = line;
         if stream == Stream::Stdout {
             if self.sentinel_seen {
@@ -101,16 +174,25 @@ impl Capture {
             }
         }
         if let Some(log) = self.log.as_mut() {
-            let _ = writeln!(log, "{text}");
+            let _ = log.write_all(text.as_bytes());
+            if ended {
+                let _ = log.write_all(b"\n");
+            }
         }
     }
 
     /// From now on lines go to `log`, which starts with what came so far.
     fn move_to(&mut self, mut log: std::fs::File) -> std::io::Result<()> {
-        log.write_all(self.stdout.as_bytes())?;
-        log.write_all(self.stderr.as_bytes())?;
-        self.stdout.clear();
-        self.stderr.clear();
+        for kept in [&self.stdout, &self.stderr] {
+            log.write_all(kept.head.as_bytes())?;
+            if !kept.whole() {
+                let dropped = kept.total - kept.head.len() - kept.tail.len();
+                writeln!(log, "\n[linggen: {dropped} bytes omitted]")?;
+            }
+            log.write_all(kept.tail.as_bytes())?;
+        }
+        self.stdout = Kept::default();
+        self.stderr = Kept::default();
         self.log = Some(log);
         Ok(())
     }
@@ -124,11 +206,40 @@ fn read_lines(
 ) -> JoinHandle<()> {
     std::thread::spawn(move || {
         let Some(pipe) = pipe else { return };
-        for line in std::io::BufReader::new(pipe).lines() {
-            let Ok(line) = line else { break };
-            capture.lock_ok().take_line(stream, line, progress.as_ref());
+        let mut reader = std::io::BufReader::new(pipe);
+        let mut buf = Vec::new();
+        loop {
+            buf.clear();
+            match (&mut reader).take(LINE_MAX).read_until(b'\n', &mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {}
+            }
+            // A piece cut at LINE_MAX goes on in the next read; anything
+            // else (a newline, the end of the stream) ends the line.
+            let ended = buf.last() == Some(&b'\n') || (buf.len() as u64) < LINE_MAX;
+            if buf.last() == Some(&b'\n') {
+                buf.pop();
+                if buf.last() == Some(&b'\r') {
+                    buf.pop();
+                }
+            }
+            let line = String::from_utf8_lossy(&buf).into_owned();
+            capture.lock_ok().take_line(stream, line, ended, progress.as_ref());
         }
     })
+}
+
+/// Wait up to [`EXIT_DRAIN`] for every reader to reach its pipe's end;
+/// false when one is still held open.
+fn pipes_drained(readers: &[JoinHandle<()>]) -> bool {
+    let until = Instant::now() + EXIT_DRAIN;
+    while !readers.iter().all(JoinHandle::is_finished) {
+        if Instant::now() >= until {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    true
 }
 
 fn foreground_limit(timeout_ms: Option<u64>) -> Duration {
@@ -206,13 +317,21 @@ impl Tools {
             let _ = child.kill();
         }
         let exit_status = child.wait()?;
-        for reader in readers {
-            let _ = reader.join();
-        }
-        let Capture {
-            stdout, mut stderr, ..
-        } = std::mem::take(&mut *capture.lock_ok());
-        let stdout = self.strip_cwd_sentinel(stdout);
+        // The call returns when the shell has ended, not when every process
+        // holding its pipes has: one left in the background keeps running,
+        // and its readers drop what it prints from now on.
+        let held = !pipes_drained(&readers);
+        let note = note.or_else(|| held.then(|| LEFT_RUNNING.to_string()));
+        let (stdout, stderr) = {
+            let mut capture = capture.lock_ok();
+            capture.closed = true;
+            (
+                std::mem::take(&mut capture.stdout),
+                std::mem::take(&mut capture.stderr),
+            )
+        };
+        let stdout = stdout.shown(|s| self.strip_cwd_sentinel(s));
+        let mut stderr = stderr.shown(|s| s);
         if let Some(note) = note {
             if !stderr.is_empty() && !stderr.ends_with('\n') {
                 stderr.push('\n');
@@ -220,12 +339,11 @@ impl Tools {
             stderr.push_str(&note);
             stderr.push('\n');
         }
-        Ok(Ran::Done(ToolResult::command_output(
-            exit_status.code(),
-            &stdout,
-            &stderr,
-            super::DEFAULT_MAX_TOOL_OUTPUT_BYTES,
-        )))
+        Ok(Ran::Done(ToolResult::CommandOutput {
+            exit_code: exit_status.code(),
+            stdout,
+            stderr,
+        }))
     }
 
     fn shell_cwd(&self) -> PathBuf {
@@ -607,6 +725,67 @@ mod tests {
         assert_eq!(stdout.trim(), "hi");
         assert_eq!(stderr.trim(), "oops");
         assert!(manager.background.list_owned("s", Some("ling")).is_empty());
+    }
+
+    /// A shell that ends while a process it put in the background still
+    /// holds its pipes returns at its end, with what it printed and a note;
+    /// the background process is left running.
+    #[tokio::test]
+    async fn a_shell_returns_when_it_ends_though_its_background_child_holds_the_pipes() {
+        let dir = tempfile::tempdir().unwrap();
+        let tools = Tools::new(dir.path().to_path_buf()).unwrap();
+        let call = tools.run_command(bash("echo before; sleep 30 & echo $! > child.pid"));
+        let result = tokio::time::timeout(Duration::from_secs(8), call).await;
+        let pid: i32 = std::fs::read_to_string(dir.path().join("child.pid"))
+            .ok()
+            .and_then(|s| s.trim().parse().ok())
+            .unwrap_or(0);
+        let alive = pid > 0 && unsafe { libc::kill(pid, 0) } == 0;
+        if pid > 0 {
+            unsafe { libc::kill(pid, libc::SIGKILL) };
+        }
+        let result = result.expect("the call waited on the background child").unwrap();
+        let ToolResult::CommandOutput { stdout, stderr, exit_code } = result else {
+            panic!("expected command output");
+        };
+        assert_eq!(stdout.trim(), "before");
+        assert_eq!(exit_code, Some(0));
+        assert!(stderr.contains("left running"), "{stderr}");
+        assert!(alive, "the background child was killed");
+    }
+
+    /// What is kept of a stream while it is read is its head and its tail,
+    /// however much comes: the result is the same head-and-tail cap.
+    #[test]
+    fn a_stream_is_kept_as_head_and_tail_while_read() {
+        let mut kept = Kept::default();
+        let line = "x".repeat(1000) + "\n";
+        for _ in 0..10_000 {
+            kept.push(&line);
+        }
+        kept.push("the end\n");
+        assert!(kept.head.len() + kept.tail.len() <= 3 * KEEP);
+        let shown = kept.shown(|s| s);
+        assert!(shown.starts_with("xxx"), "{}", &shown[..20]);
+        assert!(shown.ends_with("the end\n"));
+        assert!(shown.contains(&format!("output was {} bytes", 10_000 * 1001 + 8)), "{shown:.200}");
+    }
+
+    /// One endless line is read in pieces, never held whole.
+    #[tokio::test]
+    async fn one_huge_line_comes_back_capped() {
+        let dir = tempfile::tempdir().unwrap();
+        let tools = Tools::new(dir.path().to_path_buf()).unwrap();
+        let result = tools
+            .run_command(bash("head -c 3000000 /dev/zero | tr '\\0' a; echo; echo tail-end"))
+            .await
+            .unwrap();
+        let ToolResult::CommandOutput { stdout, .. } = result else {
+            panic!("expected command output");
+        };
+        assert!(stdout.starts_with("aaa"));
+        assert!(stdout.trim_end().ends_with("tail-end"), "{}", &stdout[stdout.len() - 50..]);
+        assert!(stdout.contains("bytes omitted — output was 3000"), "{stdout:.300}");
     }
 
     /// A subagent's own Bash never moves on its parent's Steer.

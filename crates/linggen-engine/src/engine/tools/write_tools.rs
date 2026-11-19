@@ -272,6 +272,7 @@ impl Tools {
 #[cfg(test)]
 mod tests {
     use super::super::file_tools::ReadFileArgs;
+    use super::super::ToolCall;
     use super::*;
 
     fn write(path: &str, content: &str) -> WriteFileArgs {
@@ -360,6 +361,58 @@ mod tests {
             std::fs::read_to_string(&path).unwrap(),
             "external change after Edit"
         );
+    }
+
+    async fn call(tools: &Tools, tool: &str, args: serde_json::Value) -> Result<ToolResult> {
+        tools
+            .execute(ToolCall {
+                tool: tool.into(),
+                args,
+                block_id: None,
+            })
+            .await
+    }
+
+    /// Argument aliases are decided in one layer (the arg structs), so a
+    /// call that names a field by its alias works through `execute`.
+    #[tokio::test]
+    async fn read_takes_a_path_alias() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "hello").unwrap();
+        let tools = Tools::new(dir.path().to_path_buf()).unwrap();
+        for key in ["file", "filepath"] {
+            let res = call(&tools, "Read", serde_json::json!({ key: "a.txt" })).await;
+            assert!(res.is_ok(), "Read with `{key}`: {:?}", res.err());
+        }
+    }
+
+    #[tokio::test]
+    async fn write_takes_a_path_alias() {
+        let dir = tempfile::tempdir().unwrap();
+        let tools = Tools::new(dir.path().to_path_buf()).unwrap();
+        for (key, name) in [("file", "a.txt"), ("filepath", "b.txt")] {
+            let args = serde_json::json!({ key: name, "content": "body" });
+            let res = call(&tools, "Write", args).await;
+            assert!(res.is_ok(), "Write with `{key}`: {:?}", res.err());
+            let written = std::fs::read_to_string(dir.path().join(name)).unwrap();
+            assert_eq!(written, "body");
+        }
+    }
+
+    #[tokio::test]
+    async fn edit_takes_its_aliases() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.txt");
+        std::fs::write(&path, "x").unwrap();
+        let tools = Tools::new(dir.path().to_path_buf()).unwrap();
+        read(&tools, "a.txt").await;
+        let args = serde_json::json!({ "path": "a.txt", "old": "x", "new": "y" });
+        let res = call(&tools, "Edit", args).await;
+        assert!(res.is_ok(), "Edit with old/new: {:?}", res.err());
+        let args = serde_json::json!({ "file": "a.txt", "old_text": "y", "new_text": "z", "all": true });
+        let res = call(&tools, "Edit", args).await;
+        assert!(res.is_ok(), "Edit with file/old_text/new_text/all: {:?}", res.err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "z");
     }
 
     #[tokio::test]

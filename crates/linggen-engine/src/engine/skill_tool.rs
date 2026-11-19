@@ -610,7 +610,7 @@ fn scalar_text(val: &Value) -> String {
     }
 }
 
-fn shell_escape_arg(s: &str) -> String {
+pub(crate) fn shell_escape_arg(s: &str) -> String {
     if s.contains('\'') {
         format!("'{}'", s.replace('\'', "'\\''"))
     } else {

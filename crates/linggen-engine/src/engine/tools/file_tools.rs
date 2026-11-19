@@ -60,9 +60,18 @@ impl Tools {
             .await
     }
 
+    /// Every match, sorted newest first (then by path), cut to
+    /// `max_results` — as the tool's description says, so the first path
+    /// is the one most recently changed, not the first the walk reached.
     fn list_files_inner(&self, args: ListFilesArgs) -> Result<ToolResult> {
         let max_results = args.max_results.unwrap_or(200);
-        let mut out = Vec::new();
+        let mut found: Vec<(std::time::SystemTime, String)> = Vec::new();
+        let mut keep = |path: &Path, shown: String| {
+            let modified = fs::metadata(path)
+                .and_then(|m| m.modified())
+                .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+            found.push((modified, shown));
+        };
 
         // Expand tilde and partition into absolute vs relative globs.
         let all_globs: Vec<String> = args
@@ -110,19 +119,13 @@ impl Tools {
                         continue;
                     }
                 }
-                out.push(rel);
-                if out.len() >= max_results {
-                    break;
-                }
+                keep(path, rel);
             }
         }
 
         // Walk absolute directories for tilde-expanded absolute globs
         // (e.g. ~/.linggen/skills/*/SKILL.md).
         for abs_glob in &abs_globs {
-            if out.len() >= max_results {
-                break;
-            }
             let base_dir = abs_glob_base_dir(abs_glob);
             let walk_root = Path::new(&base_dir);
             if !walk_root.is_dir() {
@@ -144,15 +147,14 @@ impl Tools {
                 }
                 let path_str = entry.path().to_string_lossy().to_string();
                 if gs.is_match(Path::new(&path_str)) {
-                    out.push(path_str);
-                    if out.len() >= max_results {
-                        break;
-                    }
+                    keep(entry.path(), path_str);
                 }
             }
         }
 
-        Ok(ToolResult::FileList(out))
+        found.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+        found.truncate(max_results);
+        Ok(ToolResult::FileList(found.into_iter().map(|(_, p)| p).collect()))
     }
 
     fn read_file_inner(&self, args: ReadFileArgs) -> Result<ToolResult> {
@@ -420,6 +422,28 @@ mod tests {
                 assert_eq!(content.len(), 99);
             }
             other => panic!("expected file content, got {other:?}"),
+        }
+    }
+
+    /// Glob does what it says: every match sorted newest first, then cut
+    /// to `max_results` — never the first matches the walk came to.
+    #[tokio::test]
+    async fn glob_returns_the_newest_matches_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+        for (name, age) in [("a.txt", 30), ("b.txt", 0), ("c.txt", 10), ("d.txt", 20)] {
+            let file = fs::File::create(dir.path().join(name)).unwrap();
+            file.set_modified(base - std::time::Duration::from_secs(age)).unwrap();
+        }
+        let tools = Tools::new(dir.path().to_path_buf()).unwrap();
+        let call = super::super::ToolCall {
+            tool: "Glob".into(),
+            args: serde_json::json!({"globs": ["*.txt"], "max_results": 3}),
+            block_id: None,
+        };
+        match tools.execute(call).await.unwrap() {
+            ToolResult::FileList(paths) => assert_eq!(paths, ["b.txt", "c.txt", "d.txt"]),
+            other => panic!("expected a file list, got {other:?}"),
         }
     }
 }

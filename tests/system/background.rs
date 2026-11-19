@@ -4,7 +4,7 @@
 
 use crate::support::engine::RunEnd;
 use crate::support::model::Agent;
-use crate::support::{text, tool, Setup, World};
+use crate::support::{error, text, tool, Setup, World};
 use serde_json::json;
 use std::time::{Duration, Instant};
 
@@ -187,6 +187,31 @@ async fn a_subagent_waits_for_its_background_shell_and_its_caller_gets_the_infor
     w.finish_run(&sid, Agent::Ling, mark).await;
     tokio::time::sleep(Duration::from_millis(500)).await;
     assert_eq!(w.model.calls_of(Agent::Ling).len(), 5, "a notice came back as an extra turn");
+    w.assert_all_scripted();
+}
+
+/// A subagent whose model fails with words that say "cancel" failed: its
+/// caller is told the real error, not that it was cancelled — cancelled is
+/// what the run's own status says, never a word in a message.
+#[tokio::test]
+async fn a_subagent_failure_that_says_cancel_is_told_as_the_failure() {
+    let w = World::start(Setup::default().script(
+        Agent::Ling,
+        vec![
+            tool("Task", json!({"target_agent_id": "ling", "task": "Fetch the report"})),
+            error(418, "the request was cancelled upstream"),
+            text("The helper failed."),
+        ],
+    ))
+    .await;
+    let sid = w.api.create_session(json!({"title": "Chat"})).await;
+    let mark = w.mark();
+    w.api.chat(&sid, &w.work(), "Have a helper fetch the report").await;
+    until_calls_granting(&w, &sid, 3).await;
+    let told = last_said(&w, 2);
+    assert!(told.contains("cancelled upstream"), "the caller was not told the error: {told}");
+    assert!(!told.contains("Subagent cancelled"), "a failure was told as a cancel: {told}");
+    w.finish_run(&sid, Agent::Ling, mark).await;
     w.assert_all_scripted();
 }
 
