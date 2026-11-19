@@ -106,11 +106,14 @@ fn legacy_named_refusal(text: &str) -> bool {
 }
 
 /// Did the call this result row answers fail? The row's flag; on a row saved
-/// before the flag, its text in the engine's error or refusal form.
+/// before the flag, its text in the engine's error or refusal form. A row of
+/// a run (`run_id`, on every row since 2026-10-22) was written with the flag,
+/// so its flag is the whole answer: an unset one means it succeeded.
 fn result_failed(m: &ChatMsg, text: &str) -> bool {
-    m.failed
-        || LEGACY_FAILED_OPENINGS.iter().any(|o| text.starts_with(o))
-        || legacy_named_refusal(text)
+    if m.failed || m.run_id.is_some() {
+        return m.failed;
+    }
+    LEGACY_FAILED_OPENINGS.iter().any(|o| text.starts_with(o)) || legacy_named_refusal(text)
 }
 
 /// A run's calls with no reply after them.
@@ -526,6 +529,25 @@ mod tests {
             let runs = unanswered_runs(&h, false);
             assert_eq!(runs[0].meta()["tools"][0]["status"], status, "{text}");
         }
+    }
+
+    /// A row of a run (`run_id`, written since the flag) carries its own
+    /// mark: a success whose text happens to open like an old refusal stays
+    /// done; the text test is only for rows from before the flag.
+    #[test]
+    fn a_marked_row_is_read_by_its_mark_not_its_text() {
+        let ok = |text: &str| of_run(row("system", "ling", &format!("Tool Bash: {text}"), true, 3), "r1");
+        for text in ["Permission denied by user", "tool_error: in the file it read"] {
+            let h = vec![user("q", 1), of_run(call("Bash", 2), "r1"), ok(text)];
+            let runs = unanswered_runs(&h, false);
+            assert_eq!(runs[0].meta()["tools"][0]["status"], "done", "{text}");
+        }
+        let refused = ChatMsg {
+            failed: true,
+            ..ok("Permission denied by user")
+        };
+        let h = vec![user("q", 1), of_run(call("Bash", 2), "r1"), refused];
+        assert_eq!(unanswered_runs(&h, false)[0].meta()["tools"][0]["status"], "failed");
     }
 
     #[test]
