@@ -12,6 +12,7 @@ import { listedAsk } from '../lib/askQueue.mts';
 import { sessionApi } from '../lib/endpoints';
 import { newChatRequest } from '../lib/sessionBinding.mts';
 import { afterNewChat } from '../lib/sessionRoot.mts';
+import { removedIds } from '../lib/removedIds.mts';
 
 const ACTIVE_SESSION_STORAGE_KEY = 'linggen:active-session';
 
@@ -148,9 +149,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const { allSessions } = get();
     const msg = ids.length === 1 ? 'Remove this session?' : `Remove ${ids.length} sessions?`;
     if (!(await confirmRemove(ids, msg))) return;
-    const idSet = new Set(ids);
-    const targets = allSessions.filter(s => idSet.has(s.id));
-    await Promise.allSettled(targets.map(session =>
+    const asked = new Set(ids);
+    const targets = allSessions.filter(s => asked.has(s.id));
+    const results = await Promise.allSettled(targets.map(session =>
       sessionsApi.remove({
         session_id: session.id,
         project: session.project || null,
@@ -158,6 +159,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         skill: session.skill || null,
       }),
     ));
+    // Only what the engine deleted leaves the list.
+    const idSet = removedIds(targets.map((t) => t.id), results);
+    results.forEach((r, i) => { if (r.status === 'rejected') console.error(`Error removing session ${targets[i].id}:`, r.reason); });
     set((s) => {
       const newAll = s.allSessions.filter(sess => !idSet.has(sess.id));
       const newSessions = s.sessions.filter(sess => !idSet.has(sess.id));
