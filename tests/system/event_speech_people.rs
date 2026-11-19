@@ -204,8 +204,32 @@ async fn a_question_waits_while_away(
     w
 }
 
+/// Every file under `dir`, read as text, with its path.
+fn files_under(dir: &std::path::Path, out: &mut Vec<(std::path::PathBuf, String)>) {
+    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            files_under(&path, out);
+        } else if let Ok(text) = std::fs::read_to_string(&path) {
+            out.push((path, text));
+        }
+    }
+}
+
+/// Her dropped words are nowhere in the home — no row, no memory (episodic
+/// or otherwise), no note, no activity record: the memory scan reads stored
+/// rows only, so what no row holds it cannot capture.
+fn nowhere_in_the_home(w: &World, why: &str, m: &str) {
+    let mut files = Vec::new();
+    files_under(&w.home.linggen_home(), &mut files);
+    for (path, text) in files {
+        assert!(!text.contains(m), "{why}: {m} reached {}", path.display());
+    }
+}
+
 fn nothing_of(w: &World, why: &str, reply: &str) {
     let m = marker(reply);
+    nowhere_in_the_home(w, why, m);
     assert!(!every_row(w).contains(m), "{why}: reached a thread");
     let events = serde_json::to_string(&w.events()).unwrap();
     assert!(!events.contains(m), "{why}: reached a live event");
