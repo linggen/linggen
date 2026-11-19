@@ -713,6 +713,41 @@ mod tests {
         assert!(finalize_event(None, "t").is_none());
     }
 
+    /// Nothing before the envelope is read for anything: a label there was
+    /// dropped with the rest of the thinking. Labels count inside the envelope
+    /// or directly after it.
+    #[test]
+    fn a_label_before_the_envelope_is_not_read() {
+        use super::finalize_event;
+        let e = finalize_event(Some("Thinking [offer 1: Sneaky] now. <say>Full.</say>"), "t").unwrap();
+        assert_eq!(e.line.text(), "Full.");
+        assert!(e.labels.is_empty(), "{:?}", e.labels);
+        // Only labels may follow the envelope; any other text rejects it.
+        assert!(finalize_event(Some("<say>Full.</say> [offer 1: Open] and more"), "t").is_none());
+    }
+
+    /// Where a turn comes from is one typed fact: what is held, which contract
+    /// it reads and which finalizer reads its reply all follow from it.
+    #[test]
+    fn the_origin_alone_decides_held_contract_and_finalizer() {
+        use super::Origin::*;
+        for held in [Herald, AgentChat, Fault, Moment, InUse, Glance, Note, TaskEnd] {
+            assert!(held.held(), "{held:?}");
+            assert_eq!(held.contract(), Some(super::SAY_CONTRACT), "{held:?}");
+            assert!(held.finalize(Some("plain prose")).is_none(), "{held:?}");
+            assert!(held.finalize(Some("<say>Hi.</say>")).is_some(), "{held:?}");
+        }
+        for open in [Person, Asked] {
+            assert!(!open.held(), "{open:?}");
+            assert!(open.finalize(Some("plain prose")).is_some(), "{open:?}");
+        }
+        assert_eq!(Person.contract(), None);
+        assert_eq!(Asked.contract(), Some(super::SPOKEN_CONTRACT));
+        // Any other agent's turn is a person's, whatever told it.
+        assert_eq!(super::Origin::for_agent("ling", TaskEnd), Person);
+        assert_eq!(super::Origin::for_agent("yinyue", TaskEnd), TaskEnd);
+    }
+
     #[test]
     fn the_language_comes_from_what_the_person_wrote_never_from_the_kickoff() {
         use super::language_of_sample;

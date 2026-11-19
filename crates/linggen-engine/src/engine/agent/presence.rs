@@ -380,6 +380,26 @@ mod tests {
         assert_eq!(b.snapshot(now).state(now), "typing", "yet they are present");
     }
 
+    /// Her line shows on any focused Linggen page — the main one or an app's —
+    /// so either counts as "a page in front"; a typed turn, a blurred tab and a
+    /// long quiet read do not.
+    #[test]
+    fn an_app_page_in_front_counts_as_a_page_that_shows_her_line() {
+        let now = 1_000;
+        let mut b = PresenceBoard::default();
+        assert_eq!(b.pages_present(now), PagesPresent::default());
+        b.record(page("dj", Some("dj"), true, 30), now);
+        assert_eq!(b.pages_present(now), PagesPresent { main: false, app: true });
+        b.record(page("main", None, true, 30), now);
+        assert_eq!(b.pages_present(now), PagesPresent { main: true, app: true });
+        // A typed turn names no page; a page long quiet reads away.
+        let mut b = PresenceBoard::default();
+        b.record(page(USER_TURN_SURFACE, None, true, 0), now);
+        b.record(page("dj", Some("dj"), true, 30), now);
+        assert_eq!(b.pages_present(now + 200), PagesPresent::default());
+        assert_eq!(b.pages_present(now), PagesPresent { main: false, app: true });
+    }
+
     #[test]
     fn the_present_surface_names_the_app() {
         let now = 1_000;
