@@ -606,3 +606,77 @@ mod tests {
         );
     }
 }
+
+/// One place decides what she says. A publisher takes only a [`Line`] (it
+/// does not compile with a string), and a `Line` is made in two places: the
+/// event finalizer, and the answer path for a reply to a person. A second
+/// maker, or a second reader of the envelope, fails here until it is looked
+/// at and listed.
+#[cfg(test)]
+mod one_decision {
+    fn rust_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                rust_files(&path, out);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                out.push(path);
+            }
+        }
+    }
+
+    /// Each file's count of `needle` (test modules excluded by the split on
+    /// `#[cfg(test)]`), against the files it may be in.
+    fn check(needle: &str, listed: &[(&str, usize)]) {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut files = Vec::new();
+        for dir in ["src", "crates/linggen-engine/src"] {
+            rust_files(&root.join(dir), &mut files);
+        }
+        for file in files {
+            let rel = file.strip_prefix(root).unwrap().to_string_lossy().to_string();
+            let text = std::fs::read_to_string(&file).unwrap();
+            let code = text.split("#[cfg(test)]").next().unwrap_or("");
+            let found = code.matches(needle).count();
+            let want = listed.iter().find(|(f, _)| *f == rel).map_or(0, |e| e.1);
+            assert_eq!(found, want, "{rel}: `{needle}` — what she says is decided in one place; look at it, then list it");
+        }
+    }
+
+    #[test]
+    fn a_line_of_hers_is_made_only_by_the_finalizer_or_the_answer_path() {
+        // Built from parts, so this test's own text is no match.
+        let make = format!("{}{}", "Line::", "answer(");
+        check(&make, &[("src/server/resident/spoken.rs", 2), ("src/server/api/yinyue.rs", 1)]);
+        let literal = format!("{}{}", "Line { ", "text");
+        check(&literal, &[("src/server/resident/spoken.rs", 1)]);
+    }
+
+    #[test]
+    fn the_envelope_is_read_in_one_place() {
+        let open = format!("{}{}", "\"<", "say>\"");
+        check(&open, &[("src/server/resident/spoken.rs", 1)]);
+        let fin = format!("{}{}", "finalize_", "event(");
+        check(
+            &fin,
+            &[
+                ("src/server/resident/spoken.rs", 3),
+                ("src/server/resident/triggers.rs", 3),
+                ("src/server/resident/turn.rs", 1),
+            ],
+        );
+    }
+
+    #[test]
+    fn nothing_but_the_finalizers_output_is_published_as_a_row_of_hers() {
+        // The row, the live event and the voice are written from `publish`;
+        // `keep_row` is private to this file.
+        let row = format!("{}{}", "fn keep_", "row(");
+        check(&row, &[("src/server/resident/spoken.rs", 1)]);
+        let publish = format!("{}{}", "spoken::", "publish(");
+        check(
+            &publish,
+            &[("src/server/resident/triggers.rs", 4), ("src/server/resident/turn.rs", 1)],
+        );
+    }
+}
