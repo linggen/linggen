@@ -137,15 +137,25 @@ fn locale_tag() -> String {
 /// pushes the person's message labeled (`[Name]: text`), so the check is
 /// "last message is theirs and ends with the turn text".
 fn turn_already_delivered(messages: &[ChatMessage], task: &str) -> bool {
-    messages
-        .iter()
-        .rev()
-        .find(|m| !world::is_world_note(m))
+    turn_message_index(messages)
+        .map(|i| &messages[i])
         .map(|m| {
             m.role == "user"
                 && crate::engine::shown_images::without_notes(&m.content).ends_with(task.trim())
         })
         .unwrap_or(false)
+}
+
+/// The last message before the world block a turn kept after itself.
+fn turn_message_index(messages: &[ChatMessage]) -> Option<usize> {
+    messages.iter().rposition(|m| !world::is_world_note(m))
+}
+
+/// The pictures ride on the turn's own message, never on a kept world note.
+fn attach_images_to_turn(messages: &mut [ChatMessage], images: Vec<String>) {
+    if let Some(i) = turn_message_index(messages) {
+        messages[i].images = images;
+    }
 }
 
 /// Put a per-turn note just before the turn's own message, where a turn's
@@ -1114,9 +1124,7 @@ impl AgentEngine {
                 // a note per picture, so no later turn re-sends them
                 // (`shown_images`).
                 let count = images.len();
-                if let Some(last) = messages.pop() {
-                    messages.push(last.with_images(images));
-                }
+                attach_images_to_turn(&mut messages, images);
                 crate::engine::shown_images::mark_sent(&mut self.chat_history, count);
             }
             None => {}
@@ -1491,6 +1499,20 @@ mod right_now_tests {
 #[cfg(test)]
 mod tests {
     use super::insert_before_turn;
+
+    /// A turn's pictures go on the person's message, not on the world block
+    /// the turn kept after it.
+    #[test]
+    fn pictures_ride_on_the_turn_not_the_world_note() {
+        let mut m = vec![
+            ChatMessage::new("user", "[Alex]: look"),
+            ChatMessage::new("system", format!("{}- now", super::world::WORLD_HEADING)),
+        ];
+        assert!(super::turn_already_delivered(&m, "look"));
+        super::attach_images_to_turn(&mut m, vec!["data:image/png;base64,AA".into()]);
+        assert_eq!(m[0].images.len(), 1, "on the person's message");
+        assert!(m[1].images.is_empty(), "never on the world note");
+    }
 
     /// `TZ` names the zone when it names a known one; otherwise the system
     /// zone stands (`None` here).
