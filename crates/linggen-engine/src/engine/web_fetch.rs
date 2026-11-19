@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::sync::LazyLock;
+use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 
 const DEFAULT_MAX_BYTES: usize = 100 * 1024; // 100 KB
@@ -11,15 +11,58 @@ const DEFAULT_MAX_BYTES: usize = 100 * 1024; // 100 KB
 /// head alone can outweigh a small text limit many times over.
 const HTML_READ_CEILING: usize = 2 * 1024 * 1024;
 
-static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
+fn http_client() -> reqwest::ClientBuilder {
     reqwest::Client::builder()
         .timeout(Duration::from_secs(15))
-        .redirect(reqwest::redirect::Policy::limited(10))
-        .pool_max_idle_per_host(2)
+        .redirect(reqwest::redirect::Policy::none())
+        .no_proxy()
         .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-        .build()
-        .expect("failed to build shared HTTP client")
-});
+}
+
+fn public_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(ip) => {
+            let [a, b, _, _] = ip.octets();
+            !(ip.is_private() || ip.is_loopback() || ip.is_link_local()
+                || a == 0 || a >= 224 || (a == 100 && (64..128).contains(&b)))
+        }
+        IpAddr::V6(ip) => ip.to_ipv4_mapped().map_or_else(
+            || ip.segments()[0] & 0xe000 == 0x2000,
+            |ip| public_ip(ip.into()),
+        ),
+    }
+}
+
+async fn public_response(mut url: reqwest::Url) -> Result<reqwest::Response> {
+    for hop in 0..=10 {
+        let host = url.host().context("WebFetch needs an HTTP(S) host")?;
+        let port = url.port_or_known_default().context("WebFetch needs an HTTP(S) URL")?;
+        anyhow::ensure!(matches!(url.scheme(), "http" | "https"), "WebFetch needs an HTTP(S) URL");
+        let (domain, addresses): (Option<&str>, Vec<SocketAddr>) = match host {
+            url::Host::Domain(name) => (Some(name), tokio::net::lookup_host((name, port))
+                .await.context("WebFetch could not resolve host")?.collect()),
+            url::Host::Ipv4(ip) => (None, vec![SocketAddr::new(ip.into(), port)]),
+            url::Host::Ipv6(ip) => (None, vec![SocketAddr::new(ip.into(), port)]),
+        };
+        anyhow::ensure!(!addresses.is_empty() && addresses.iter().all(|a| public_ip(a.ip())),
+            "WebFetch only connects to public addresses; use Bash curl for a local URL.");
+        let mut builder = http_client();
+        if let Some(domain) = domain {
+            // Use precisely the addresses checked above, not a second DNS lookup.
+            builder = builder.resolve_to_addrs(domain, &addresses);
+        }
+        let response = builder.build()?.get(url.clone()).send().await.context("failed to fetch URL")?;
+        if !matches!(response.status().as_u16(), 301 | 302 | 303 | 307 | 308) {
+            return Ok(response);
+        }
+        let Some(location) = response.headers().get(reqwest::header::LOCATION) else {
+            return Ok(response);
+        };
+        anyhow::ensure!(hop < 10, "WebFetch redirect limit reached");
+        url = url.join(location.to_str()?).context("invalid WebFetch redirect")?;
+    }
+    unreachable!()
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct WebFetchResult {
@@ -40,13 +83,14 @@ pub struct WebFetchResult {
 /// - The body is read only up to the limit: `max_bytes` of a text body,
 ///   [`HTML_READ_CEILING`] of an HTML page's markup.
 pub async fn fetch_url(url: &str, max_bytes: Option<usize>) -> Result<WebFetchResult> {
-    let limit = max_bytes.unwrap_or(DEFAULT_MAX_BYTES);
+    let parsed = reqwest::Url::parse(url).context("invalid WebFetch URL")?;
+    let resp = tokio::time::timeout(Duration::from_secs(15), public_response(parsed))
+        .await.context("WebFetch timed out")??;
+    read_response(url, max_bytes, resp).await
+}
 
-    let resp = HTTP_CLIENT
-        .get(url)
-        .send()
-        .await
-        .context("failed to fetch URL")?;
+async fn read_response(url: &str, max_bytes: Option<usize>, resp: reqwest::Response) -> Result<WebFetchResult> {
+    let limit = max_bytes.unwrap_or(DEFAULT_MAX_BYTES);
     let status = resp.status();
     if !status.is_success() {
         anyhow::bail!("HTTP {status} from {}", resp.url());
@@ -261,13 +305,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn fetch_refuses_local_destinations() {
+        let url = serve_once(
+            "HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\n",
+            "test",
+            1,
+        );
+        let err = fetch_url(&url, None).await.expect_err("WebFetch is for public addresses");
+        assert!(format!("{err:#}").contains("public"), "{err:#}");
+    }
+
+    async fn read_fixture(url: &str, max_bytes: Option<usize>) -> Result<WebFetchResult> {
+        let response = http_client().build()?.get(url).send().await?;
+        read_response(url, max_bytes, response).await
+    }
+
+    #[tokio::test]
     async fn a_failed_status_is_told_with_its_code() {
         let url = serve_once(
             "HTTP/1.1 404 Not Found\r\nContent-Type: text/html\r\nContent-Length: 22\r\nConnection: close\r\n\r\n",
             "<p>no such page</p>\n\n\n",
             1,
         );
-        let err = fetch_url(&url, None).await.expect_err("a 404 is no page");
+        let err = read_fixture(&url, None).await.expect_err("a 404 is no page");
         assert!(format!("{err:#}").contains("404"), "{err:#}");
     }
 
@@ -279,7 +339,7 @@ mod tests {
             usize::MAX,
         );
         let started = std::time::Instant::now();
-        let page = fetch_url(&url, Some(1000)).await.expect("the head of the body");
+        let page = read_fixture(&url, Some(1000)).await.expect("the head of the body");
         assert!(started.elapsed() < Duration::from_secs(5), "read on: {:?}", started.elapsed());
         assert!(page.truncated);
         assert_eq!(page.content.len(), 1000);
@@ -299,7 +359,7 @@ mod tests {
             page,
             1,
         );
-        let fetched = fetch_url(&url, Some(1000)).await.unwrap();
+        let fetched = read_fixture(&url, Some(1000)).await.unwrap();
         assert!(fetched.content.contains("THE PAGE TEXT"), "{}", fetched.content);
         assert!(!fetched.content.contains("var x"), "{}", fetched.content);
     }
