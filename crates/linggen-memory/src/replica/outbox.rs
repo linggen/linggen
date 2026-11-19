@@ -130,7 +130,11 @@ async fn replay_one(state: &SharedState, base: &str, token: &str, e: &Queued) ->
         drop_local(state, &e.local_ids).await;
         return Ok(());
     }
-    let why = body["error"].as_str().unwrap_or("refused").to_string();
+    let why = body["error"].as_str().unwrap_or("refused");
+    if body["code"].as_str() == Some(crate::ErrorCode::WarmingUp.code()) {
+        // Temporary refusal: keep the queued write and its local row.
+        anyhow::bail!("{why}");
+    }
     let note = format!("the primary refused a write queued offline: {why}");
     settle_refused(state, base, token, e, &targets, &note).await
 }
