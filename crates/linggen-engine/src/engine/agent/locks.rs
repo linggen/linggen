@@ -66,9 +66,11 @@ impl LockManager {
             .retain(|_, info| !(info.owner_id == agent_id && tokens.contains(&info.token)));
     }
 
+    /// An expired lock is no lock, whether or not `acquire` has swept it yet.
     pub fn is_locked_by_other(&self, agent_id: &str, path: &str) -> bool {
+        let now = Instant::now();
         for (glob_str, info) in &self.locks {
-            if info.owner_id != agent_id {
+            if info.owner_id != agent_id && info.expires_at > now {
                 if let Ok(glob) = Glob::new(glob_str) {
                     if glob.compile_matcher().is_match(path) {
                         return true;
@@ -87,4 +89,20 @@ impl LockManager {
 pub struct LockResult {
     pub acquired: Vec<(String, String)>,
     pub denied: Vec<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_expired_lock_refuses_no_one() {
+        let mut locks = LockManager::new();
+        let got = locks.acquire("a", vec!["src/**".into()], Duration::from_secs(60));
+        assert_eq!(got.acquired.len(), 1);
+        assert!(locks.is_locked_by_other("b", "src/x.rs"), "a live lock refuses others");
+        assert!(!locks.is_locked_by_other("a", "src/x.rs"), "never its owner");
+        locks.locks.get_mut("src/**").unwrap().expires_at = Instant::now() - Duration::from_secs(1);
+        assert!(!locks.is_locked_by_other("b", "src/x.rs"), "an expired lock is no lock");
+    }
 }
