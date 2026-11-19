@@ -320,12 +320,12 @@ export const ModelsTab: React.FC<{
         body[model.id] = { api_key: val || null, provider: model.provider, url: model.url };
       }
     }
-    try {
-      await modelsApi.saveCredentials(body);
-      setCredsDirty(false);
-      onCredsDirtyChange?.(false);
-      fetchCredentials();
-    } catch { /* ignore */ }
+    // A refused save throws to the auto-save, which shows it failed and
+    // keeps the keys dirty for the next try.
+    await modelsApi.saveCredentials(body);
+    setCredsDirty(false);
+    onCredsDirtyChange?.(false);
+    fetchCredentials();
   }, [config.models, localKeys, fetchCredentials, onCredsDirtyChange]);
 
   // Expose saveCredentials to parent via ref

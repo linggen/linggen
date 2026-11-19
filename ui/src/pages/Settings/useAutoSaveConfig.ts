@@ -10,6 +10,7 @@ import { appConfig } from '../../lib/endpoints';
 import { apiErrorMessage } from '../../lib/api';
 import { rememberLanguage } from '../../lib/i18n';
 import { useServerStore } from '../../stores/serverStore';
+import { settleWrites } from '../../lib/settleWrites.mts';
 
 /** Quiet time after the last edit before it is written. */
 const SETTLE_MS = 700;
@@ -39,9 +40,18 @@ export function useAutoSaveConfig(enabled = true) {
 
   const configDirty = config !== null && saved !== null && JSON.stringify(config) !== JSON.stringify(saved);
 
+  // One pending write; leaving Settings writes it at once (lib/settleWrites).
+  const writes = useRef(settleWrites(SETTLE_MS)).current;
+  useEffect(() => () => writes.flush(), [writes]);
+
   useEffect(() => {
-    if (!config || !saved || (!configDirty && !credsDirty)) return;
-    const timer = setTimeout(async () => {
+    if (!config || !saved || (!configDirty && !credsDirty)) {
+      writes.cancel();
+      return;
+    }
+    // Taken when the edit is made: leaving the Models tab drops its saver.
+    const saveCreds = saveCredsRef.current;
+    writes.later(async () => {
       setState('saving');
       setError(null);
       try {
@@ -60,15 +70,14 @@ export function useAutoSaveConfig(enabled = true) {
             return;
           }
         }
-        if (credsDirty && saveCredsRef.current) await saveCredsRef.current();
+        if (credsDirty && saveCreds) await saveCreds();
         setState('saved');
       } catch (e) {
         setError(apiErrorMessage(e) || `Save failed: ${e}`);
         setState('error');
       }
-    }, SETTLE_MS);
-    return () => clearTimeout(timer);
-  }, [config, saved, configDirty, credsDirty]);
+    });
+  }, [config, saved, configDirty, credsDirty, writes]);
 
   // "Saved" fades after a moment; an error stays until the next save.
   useEffect(() => {
