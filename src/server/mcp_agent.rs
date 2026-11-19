@@ -293,6 +293,9 @@ pub async fn run(
         crate::engine::session_spec::ask_work(&mut meta, word).map_err(str::to_string)?;
     }
     meta.set_cwd(&root_str);
+    if write.is_some() {
+        record_write_dir(&mut meta, &root_str);
+    }
     // The caller's preset, kept to what its own level allows; what was
     // granted and refused is kept for `agent_status`.
     let sifted =
@@ -1625,6 +1628,23 @@ pub async fn readiness(state: &Arc<ServerState>) -> String {
     models.readiness_list(default.as_deref()).to_string()
 }
 
+/// The session param holding the folder a write run was given at its start.
+const WRITE_DIR_PARAM: &str = "write_dir";
+
+/// Keep the folder `meta`'s run was given to write, at its start.
+fn record_write_dir(meta: &mut crate::state_fs::sessions::SessionMeta, dir: &str) {
+    meta.params.insert(WRITE_DIR_PARAM.into(), dir.into());
+}
+
+/// The worktree a close may remove: the one the session was given at its
+/// start, wherever its folder has moved since.
+fn given_worktree(meta: &crate::state_fs::sessions::SessionMeta) -> Result<String, String> {
+    meta.params
+        .get(WRITE_DIR_PARAM)
+        .cloned()
+        .ok_or_else(|| "worktree check failed: this session was given no folder to write".into())
+}
+
 fn worktree_decision(linked: bool, clean: bool, merged: bool) -> Result<(), String> {
     if !linked {
         return Err("worktree check failed: not a linked worktree root".into());
@@ -1668,7 +1688,8 @@ pub async fn close(
     if work.turn || work.tasks > 0 || work.subagents > 0 {
         return Err("running check failed: work is still stopping; retry".into());
     }
-    let cwd = std::path::Path::new(&meta.cwd);
+    let given = given_worktree(&meta)?;
+    let cwd = std::path::Path::new(&given);
     let root = git(cwd, &["rev-parse", "--show-toplevel"])?;
     let root_path = std::fs::canonicalize(&root).map_err(|e| e.to_string())?;
     let cwd_path = std::fs::canonicalize(cwd).map_err(|e| e.to_string())?;
@@ -1714,6 +1735,22 @@ mod tests {
             assert!(!busy.get());
         }
     }
+    /// A delegate that `cd`s elsewhere moves its session's folder; a close
+    /// with remove still names only the worktree it was given, and a session
+    /// given none has none to remove.
+    #[test]
+    fn only_the_worktree_given_at_the_start_is_removed() {
+        let mut meta = delegate_meta("s", "t", "ling", None, "claude-code", true, None);
+        meta.set_cwd("/work/given");
+        record_write_dir(&mut meta, "/work/given");
+        meta.set_cwd("/work/sibling");
+        assert_eq!(given_worktree(&meta).unwrap(), "/work/given");
+
+        let mut read_run = delegate_meta("r", "t", "ling", None, "claude-code", false, None);
+        read_run.set_cwd("/work/somewhere");
+        assert!(given_worktree(&read_run).is_err());
+    }
+
     #[test]
     fn mcp_agent_permission_mapping() {
         for (mode, expected) in [
