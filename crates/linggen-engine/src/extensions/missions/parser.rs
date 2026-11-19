@@ -123,12 +123,17 @@ struct LegacyFrontmatter {
     created_at: u64,
 }
 
-/// True if the YAML has legacy markers: a `permission_tier:` field,
-/// or a top-level `mode:` line. `starts_with("mode:")` only matches
-/// at column zero, so the new format's nested `permission.mode:`
-/// does not trigger a false positive.
-fn yaml_looks_legacy(yaml: &str) -> bool {
-    yaml.contains("permission_tier:") || yaml.lines().any(|line| line.starts_with("mode:"))
+/// True if the YAML has legacy markers: a top-level `permission_tier` or
+/// `mode` key — decided by the parsed keys, so a description or comment
+/// that only mentions one, or the new format's nested `permission.mode`,
+/// is not one.
+pub(super) fn yaml_looks_legacy(yaml: &str) -> bool {
+    let Ok(serde_norway::Value::Mapping(top)) = serde_norway::from_str(yaml) else {
+        return false;
+    };
+    ["permission_tier", "mode"]
+        .iter()
+        .any(|key| top.contains_key(*key))
 }
 
 /// Parse a mission `.md` file. Tries the new format first; on

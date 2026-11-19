@@ -301,11 +301,12 @@ impl ActivityLog {
     pub fn add(&self, a: Activity) {
         // In memory first, so this process sees it even when the disk can't
         // take it. Deliberately does not reload: a load replaces the window
-        // and would drop the entry just made.
+        // and would drop the entry just made. The window's lock is held
+        // through the disk append, so a re-read ([`restore`]) sees both or
+        // neither.
+        let mut guard = self.recent.lock().unwrap_or_else(|e| e.into_inner());
         if a.is_change() {
-            let mut guard = self.recent.lock().unwrap_or_else(|e| e.into_inner());
             guard.push(a.clone());
-            drop(guard);
             self.revision.fetch_add(1, Ordering::Relaxed);
         }
 
@@ -315,6 +316,7 @@ impl ActivityLog {
         if let Err(e) = self.append_line(&day, &a) {
             tracing::debug!("[perception] activity not recorded: {e}");
         }
+        drop(guard);
     }
 
     fn append_line(&self, day: &str, a: &Activity) -> std::io::Result<()> {
@@ -364,7 +366,12 @@ impl ActivityLog {
     ///
     /// Sweeping is not a side effect of reading (§7): rotation is the only
     /// sweeper, so what a reader sees never depends on who read first.
+    ///
+    /// The disk is read and the window replaced under the window's one lock,
+    /// which [`add`](Self::add) holds through its append: an entry is in both
+    /// or, until its append, in neither.
     pub fn restore(&self) {
+        let mut guard = self.recent.lock().unwrap_or_else(|e| e.into_inner());
         let keep = recent_days();
         let mut fresh: Vec<Activity> = Vec::new();
         for (day, path) in self.day_files() {
@@ -381,7 +388,6 @@ impl ActivityLog {
         // hides everything between where it was and where it went.
         self.revision
             .fetch_max(fresh.len() as u64, Ordering::Relaxed);
-        let mut guard = self.recent.lock().unwrap_or_else(|e| e.into_inner());
         *guard = fresh;
     }
 
@@ -506,6 +512,34 @@ mod tests {
         assert_eq!(lines.len(), 1);
         assert!(lines[0].contains("you deleted 三天三夜"), "{lines:?}");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The hourly re-read and an append at the same moment: whatever reached
+    /// the disk is in the window too — the snapshot and the swap are one step.
+    #[test]
+    fn a_reread_during_appends_keeps_every_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let rows: Vec<Activity> = (0..3000)
+            .map(|i| activity(at(0), "delete", &format!("old {i}")))
+            .collect();
+        write_day(dir.path(), 0, &rows);
+        let log = std::sync::Arc::new(ActivityLog::new(dir.path().to_path_buf()));
+        log.restore();
+        for round in 0..150 {
+            let gate = std::sync::Arc::new(std::sync::Barrier::new(2));
+            let reader = {
+                let (log, gate) = (log.clone(), gate.clone());
+                std::thread::spawn(move || {
+                    gate.wait();
+                    log.restore();
+                })
+            };
+            gate.wait();
+            log.add(activity(at(0), "delete", &format!("song {round}")));
+            reader.join().unwrap();
+            let on_disk: usize = log.day_files().iter().map(|(_, p)| read_day(p).len()).sum();
+            assert_eq!(log.recent().len(), on_disk, "round {round}: an entry on disk is in the window");
+        }
     }
 
     fn write_day(dir: &std::path::Path, days_ago: i64, rows: &[Activity]) -> PathBuf {

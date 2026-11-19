@@ -10,6 +10,10 @@ use std::sync::Arc;
 /// What this engine tells a server about itself.
 const CLIENT_NAME: &str = "linggen";
 
+/// A bound on `tools/list` pages, so a server repeating its cursor cannot
+/// hold discovery forever.
+const MAX_TOOL_PAGES: usize = 50;
+
 /// One tool a server offers.
 #[derive(Debug, Clone, PartialEq)]
 pub struct McpTool {
@@ -89,19 +93,29 @@ impl McpClient {
         self.instructions.as_deref()
     }
 
-    /// What this server offers. An empty list is a legal answer.
+    /// What this server offers, every page of it (`nextCursor`). An empty
+    /// list is a legal answer.
     pub async fn list_tools(&self) -> Result<Vec<McpTool>> {
-        let result = self
-            .transport
-            .request(json!({ "jsonrpc": "2.0", "id": self.id(), "method": "tools/list" }))
-            .await
-            .context("MCP tools/list")?;
-
-        let tools = result
-            .get("tools")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
+        let mut tools = Vec::new();
+        let mut cursor: Option<String> = None;
+        for _ in 0..MAX_TOOL_PAGES {
+            let mut req = json!({ "jsonrpc": "2.0", "id": self.id(), "method": "tools/list" });
+            if let Some(c) = cursor.take() {
+                req["params"] = json!({ "cursor": c });
+            }
+            let result = self.transport.request(req).await.context("MCP tools/list")?;
+            if let Some(page) = result.get("tools").and_then(Value::as_array) {
+                tools.extend(page.iter().cloned());
+            }
+            cursor = result
+                .get("nextCursor")
+                .and_then(Value::as_str)
+                .filter(|c| !c.is_empty())
+                .map(str::to_string);
+            if cursor.is_none() {
+                break;
+            }
+        }
         Ok(tools
             .into_iter()
             .filter_map(|t| {
@@ -197,6 +211,35 @@ mod tests {
     fn structured_content_survives_when_there_are_no_blocks() {
         let r = json!({"structuredContent":{"rows":2}});
         assert_eq!(content_text(&r), r#"{"rows":2}"#);
+    }
+
+    /// A server that answers `tools/list` in pages: three tools over two.
+    struct Paged;
+
+    #[async_trait::async_trait]
+    impl Transport for Paged {
+        async fn request(&self, body: Value) -> Result<Value> {
+            let tool = |n: &str| json!({"name": n, "inputSchema": {"type": "object"}});
+            Ok(match body.pointer("/params/cursor").and_then(Value::as_str) {
+                None => json!({"tools": [tool("a"), tool("b")], "nextCursor": "p2"}),
+                Some("p2") => json!({"tools": [tool("c")]}),
+                Some(other) => anyhow::bail!("unknown cursor {other}"),
+            })
+        }
+        async fn notify(&self, _body: Value) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn discovery_reads_every_page() {
+        let client = McpClient {
+            transport: Arc::new(Paged),
+            next_id: AtomicI64::new(1),
+            instructions: None,
+        };
+        let names: Vec<String> = client.list_tools().await.unwrap().into_iter().map(|t| t.name).collect();
+        assert_eq!(names, ["a", "b", "c"]);
     }
 
     #[test]

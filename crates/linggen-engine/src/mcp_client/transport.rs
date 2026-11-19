@@ -107,8 +107,10 @@ impl Transport for HttpTransport {
 }
 
 /// A streamable-HTTP server may answer a single request as plain JSON or as
-/// one `text/event-stream` frame. Accept both rather than making the caller
-/// care which a given server chose.
+/// a `text/event-stream`. Accept both rather than making the caller care
+/// which a given server chose. In a stream the answer is the response frame
+/// — the one with no `method` — not whatever came first: a server may send
+/// progress notices (or its own requests) before it.
 fn parse_maybe_sse(text: &str) -> Result<Value> {
     let trimmed = text.trim_start();
     if trimmed.starts_with('{') {
@@ -120,7 +122,10 @@ fn parse_maybe_sse(text: &str) -> Result<Value> {
             if data.is_empty() {
                 continue;
             }
-            return serde_json::from_str(data).context("parsing the MCP SSE frame");
+            let frame: Value = serde_json::from_str(data).context("parsing the MCP SSE frame")?;
+            if frame.get("method").is_none() {
+                return Ok(frame);
+            }
         }
     }
     bail!(
@@ -199,12 +204,31 @@ impl StdioTransport {
 impl Transport for StdioTransport {
     async fn request(&self, body: Value) -> Result<Value> {
         let mut pipes = self.io.lock().await;
-        Self::write_line(&mut pipes, &body).await?;
+        let deadline = tokio::time::Instant::now() + REQUEST_TIMEOUT;
+        Self::exchange(&mut pipes, &body, deadline).await
+    }
+
+    async fn notify(&self, body: Value) -> Result<()> {
+        let mut pipes = self.io.lock().await;
+        Self::write_line(&mut pipes, &body).await
+    }
+}
+
+impl StdioTransport {
+    /// One request and its answer, by `deadline` — the write included: a
+    /// child that stops reading its input cannot hold the pipes past it.
+    async fn exchange(
+        pipes: &mut StdioPipes,
+        body: &Value,
+        deadline: tokio::time::Instant,
+    ) -> Result<Value> {
+        tokio::time::timeout_at(deadline, Self::write_line(pipes, body))
+            .await
+            .map_err(|_| anyhow!("MCP server did not answer in {REQUEST_TIMEOUT:?}: it is not reading"))??;
 
         // Skip anything that isn't our answer: servers emit notifications and
         // the occasional stray line, and neither should be mistaken for one.
         let want = body.get("id").cloned();
-        let deadline = tokio::time::Instant::now() + REQUEST_TIMEOUT;
         loop {
             let mut line = String::new();
             let read = tokio::time::timeout_at(deadline, pipes.stdout.read_line(&mut line))
@@ -225,11 +249,6 @@ impl Transport for StdioTransport {
                 return unwrap_result(msg);
             }
         }
-    }
-
-    async fn notify(&self, body: Value) -> Result<()> {
-        let mut pipes = self.io.lock().await;
-        Self::write_line(&mut pipes, &body).await
     }
 }
 
@@ -285,6 +304,36 @@ mod tests {
             .unwrap(),
             want
         );
+    }
+
+    /// A progress notice before the answer is not the answer.
+    #[test]
+    fn the_answer_is_the_response_frame_not_the_first() {
+        let text = "event: message\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\",\"params\":{\"progress\":1}}\n\n\
+                    event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{\"ok\":true}}\n\n";
+        let got = parse_maybe_sse(text).unwrap();
+        assert_eq!(unwrap_result(got).unwrap(), json!({"ok": true}));
+    }
+
+    /// A child that stops reading its input cannot hold a request past its
+    /// deadline: the write is inside the time limit too.
+    #[tokio::test]
+    async fn a_child_that_stops_reading_times_out() {
+        let t = StdioTransport::spawn("sleep", &["30".to_string()], &BTreeMap::new())
+            .await
+            .unwrap();
+        let big = json!({"jsonrpc":"2.0","id":1,"method":"x","params":{"pad":"x".repeat(1 << 20)}});
+        let mut pipes = t.io.lock().await;
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(300);
+        let answer = tokio::time::timeout(
+            Duration::from_secs(5),
+            StdioTransport::exchange(&mut pipes, &big, deadline),
+        )
+        .await;
+        let Ok(answer) = answer else {
+            panic!("the request outlived its deadline");
+        };
+        assert!(answer.unwrap_err().to_string().contains("did not answer"));
     }
 
     #[test]

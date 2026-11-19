@@ -143,3 +143,31 @@ fn control_characters_become_spaces_and_lines_stay() {
     let n = b.write("one\ttwo\nthree", None, "m", NOW).unwrap();
     assert_eq!(n.text, "one two\nthree");
 }
+
+/// A notes file that cannot be read is set aside, never written over by the
+/// next note.
+#[test]
+fn an_unreadable_book_is_set_aside_not_overwritten() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("yinyue.json");
+    std::fs::write(&file, "{\"next\": 4, \"notes\": [{\"id\": \"n4\", \"te").unwrap();
+    let mut b = book(&dir);
+    assert!(b.notes().is_empty());
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1, "reading moves nothing");
+    b.write("a new note", None, "test-mac", NOW).unwrap();
+    b.save().unwrap();
+    b.save().unwrap();
+    let aside: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p != &file)
+        .collect();
+    assert_eq!(aside.len(), 1, "{aside:?}");
+    assert!(aside[0].file_name().unwrap().to_string_lossy().starts_with("yinyue.json.unreadable-"));
+    assert_eq!(
+        std::fs::read_to_string(&aside[0]).unwrap(),
+        "{\"next\": 4, \"notes\": [{\"id\": \"n4\", \"te"
+    );
+    assert_eq!(book(&dir).notes().len(), 1);
+}

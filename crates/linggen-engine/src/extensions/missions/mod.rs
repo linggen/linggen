@@ -158,7 +158,14 @@ impl MissionLoader {
         let mut mission = parse_mission_md(id, content)?;
         if let Some((skill, _)) = skill_missions::split_id(id) {
             mission.skill = Some(skill.to_string());
-            UserChoice::load(&self.state_dir(id)).apply(&mut mission);
+            match UserChoice::load(&self.state_dir(id)) {
+                Ok(choice) => choice.apply(&mut mission),
+                Err(e) => {
+                    // Off until the choices can be read again, and said.
+                    tracing::warn!("mission '{id}' kept off: its saved choices {e:#}");
+                    mission.enabled = false;
+                }
+            }
         }
         Ok(mission)
     }
@@ -365,7 +372,7 @@ impl MissionLoader {
             self.ensure_user_owned(id, "only on/off and the schedule can change here")?;
         }
         let state_dir = self.state_dir(id);
-        let mut choice = UserChoice::load(&state_dir);
+        let mut choice = UserChoice::load(&state_dir)?;
         if let Some(schedule) = draft.schedule {
             validate_cron(&schedule)?;
             choice.schedule = Some(schedule);
@@ -477,6 +484,7 @@ impl MissionLoader {
     }
 
     pub fn append_mission_run(&self, mission_id: &str, entry: &MissionRunEntry) -> Result<()> {
+        let _held = runs_file_lock();
         fs::create_dir_all(self.state_dir(mission_id))?;
         let path = self.runs_path(mission_id);
         let mut file = fs::OpenOptions::new()
@@ -570,6 +578,7 @@ impl MissionLoader {
         run_id: &str,
         change: impl FnOnce(&mut MissionRunEntry),
     ) -> Result<()> {
+        let _held = runs_file_lock();
         let path = self.runs_path(mission_id);
         if !path.exists() {
             return Ok(());
@@ -634,6 +643,14 @@ impl MissionLoader {
             }
         }
     }
+}
+
+/// The one lock over every mission's run history: an append and a rewrite
+/// never interleave, so a line appended while a run's end is rewritten is
+/// kept.
+fn runs_file_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock_ok()
 }
 
 impl MissionRegistry for MissionLoader {
@@ -866,6 +883,33 @@ mod tests {
         assert!(runs[0].skipped);
     }
 
+    /// A run's end rewritten while the scheduler appends a skip line: the
+    /// appended line is kept.
+    #[test]
+    fn ending_a_run_while_another_line_is_appended_keeps_both() {
+        let (store, _dir) = temp_store();
+        let m = store
+            .create_mission(draft_min("Test", "0 * * * *", "Test"))
+            .unwrap();
+        let run = |id: String| MissionRunEntry { run_id: id, status: "running".into(), ..Default::default() };
+        store.append_mission_run(&m.id, &run("long".into())).unwrap();
+        let store = std::sync::Arc::new(store);
+        let ender = {
+            let (store, id) = (store.clone(), m.id.clone());
+            std::thread::spawn(move || {
+                for i in 0..300 {
+                    let status = if i % 2 == 0 { "completed" } else { "running" };
+                    store.update_mission_run_status(&id, "long", status).unwrap();
+                }
+            })
+        };
+        for i in 0..300 {
+            store.append_mission_run(&m.id, &run(format!("skip-{i}"))).unwrap();
+        }
+        ender.join().unwrap();
+        assert_eq!(store.list_mission_runs(&m.id).unwrap().len(), 301);
+    }
+
     #[test]
     fn a_run_with_a_failed_tool_keeps_it_and_old_lines_still_read() {
         use crate::engine::run_faults::RunFaults;
@@ -975,6 +1019,25 @@ mod tests {
         let runs = store.list_mission_runs(&m.id).unwrap();
         assert_eq!(by_id(&runs, "run-1"), "completed");
         assert_eq!(by_id(&runs, "run-2"), "interrupted");
+    }
+
+    /// A new-format file that only mentions the old key — in a description,
+    /// in a comment — keeps its tools.
+    #[test]
+    fn mentioning_the_old_key_does_not_make_a_file_old() {
+        let content = "---\n\
+            description: \"replaces the old permission_tier: field\"\n\
+            # permission_tier: was here once\n\
+            schedule: 0 23 * * *\n\
+            allowed-tools: [Read, Bash]\n\
+            ---\n\
+            Do it.\n";
+        let m = parse_mission_md("mentions", content).unwrap();
+        assert_eq!(m.allowed_tools, vec!["Read".to_string(), "Bash".to_string()]);
+        let legacy = "---\nschedule: 0 23 * * *\npermission_tier: standard\n---\nx\n";
+        assert!(parser::yaml_looks_legacy(legacy.split("---").nth(1).unwrap()));
+        assert!(parser::yaml_looks_legacy("mode: agent\nschedule: x\n"));
+        assert!(!parser::yaml_looks_legacy("permission:\n  mode: read\n"));
     }
 
     #[test]
@@ -1252,6 +1315,25 @@ mod tests {
             .path()
             .join("skills/cfo/missions/reports/runs.jsonl")
             .exists());
+    }
+
+    /// A choices file cut short is not "use the defaults": the mission the
+    /// person switched off stays off, and a new choice is refused rather
+    /// than written over what could not be read.
+    #[test]
+    fn an_unreadable_choice_keeps_the_mission_off() {
+        let (store, dir) = skill_store();
+        let file = dir.path().join("skills/cfo/missions/reports/mission.md");
+        std::fs::write(&file, "---\nname: Reports\nschedule: \"0 9 * * 1-5\"\nenabled: true\n---\nCheck.\n").unwrap();
+        let state = dir.path().join("missions/cfo:reports");
+        std::fs::create_dir_all(&state).unwrap();
+        std::fs::write(state.join("user.json"), "{\"enabled\": fal").unwrap();
+        store.reload();
+        assert!(!store.get_mission("cfo:reports").unwrap().unwrap().enabled);
+        assert!(store.list_enabled_missions().unwrap().is_empty());
+        let draft = MissionDraft { schedule: Some("0 10 * * *".into()), ..Default::default() };
+        assert!(store.update_mission("cfo:reports", draft).is_err());
+        assert_eq!(std::fs::read_to_string(state.join("user.json")).unwrap(), "{\"enabled\": fal");
     }
 
     #[test]

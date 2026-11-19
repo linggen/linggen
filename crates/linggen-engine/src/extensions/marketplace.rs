@@ -89,9 +89,31 @@ pub fn http_client() -> Result<reqwest::Client> {
 pub async fn search_community(query: &str) -> Result<Vec<MarketplaceSkill>> {
     let (sh_result, ch_result) =
         tokio::join!(search_skills_sh_community(query), search_clawhub(query),);
+    merge_sources(sh_result, ch_result)
+}
 
-    let sh_skills = sh_result.unwrap_or_default();
-    let ch_skills = ch_result.unwrap_or_default();
+/// Both sources' answers as one list. A source that could not be reached is
+/// not an empty answer: with both down the search fails and names them; with
+/// one down the other's results stand and the outage is logged.
+fn merge_sources(
+    sh_result: Result<Vec<MarketplaceSkill>>,
+    ch_result: Result<Vec<MarketplaceSkill>>,
+) -> Result<Vec<MarketplaceSkill>> {
+    let (sh_skills, ch_skills) = match (sh_result, ch_result) {
+        (Err(sh), Err(ch)) => {
+            anyhow::bail!("No skill source could be reached — skills.sh: {sh:#}; ClawHub: {ch:#}")
+        }
+        (sh, ch) => (
+            sh.unwrap_or_else(|e| {
+                tracing::warn!("skills.sh could not be reached: {e:#}");
+                Vec::new()
+            }),
+            ch.unwrap_or_else(|e| {
+                tracing::warn!("ClawHub could not be reached: {e:#}");
+                Vec::new()
+            }),
+        ),
+    };
 
     // Interleave results from both sources, deduplicating by skill_id.
     let mut results = Vec::with_capacity(sh_skills.len() + ch_skills.len());
@@ -123,7 +145,7 @@ async fn search_skills_sh_community(query: &str) -> Result<Vec<MarketplaceSkill>
 
     let resp = client.get(&url).send().await?;
     if !resp.status().is_success() {
-        return Ok(vec![]);
+        anyhow::bail!("skills.sh answered HTTP {}", resp.status());
     }
 
     let payload: SkillsShResponse = resp.json().await?;
@@ -169,7 +191,7 @@ pub async fn search_clawhub(query: &str) -> Result<Vec<MarketplaceSkill>> {
 
     let resp = client.get(&url).send().await?;
     if !resp.status().is_success() {
-        return Ok(vec![]);
+        anyhow::bail!("ClawHub answered HTTP {}", resp.status());
     }
 
     let payload: ClawHubSearchResponse = resp.json().await?;
@@ -251,10 +273,6 @@ pub async fn install_skill(
 
     match result {
         Ok(_) => {
-            // Run install script if declared in frontmatter.
-            if let Err(e) = super::skills::run_install_script(target_dir) {
-                tracing::warn!(skill = %name, err = %e, "Install script failed");
-            }
             Ok(format!(
                 "Skill '{}' installed to {}",
                 name,
@@ -305,10 +323,6 @@ async fn install_skill_inner(
     let _ = fs::remove_file(&temp_zip);
 
     result?;
-    // Run install script if declared in frontmatter.
-    if let Err(e) = super::skills::run_install_script(target_dir) {
-        tracing::warn!(skill = %name, err = %e, "Install script failed");
-    }
     Ok(format!(
         "Skill '{}' installed to {}",
         name,
@@ -340,10 +354,6 @@ pub async fn install_from_clawhub(
     let _ = fs::remove_file(&temp_zip);
     result?;
 
-    // Run install script if declared in frontmatter.
-    if let Err(e) = super::skills::run_install_script(target_dir) {
-        tracing::warn!(skill = %slug, err = %e, "Install script failed");
-    }
     Ok(format!(
         "Skill '{}' installed from ClawHub to {}",
         slug,
@@ -401,27 +411,49 @@ fn staging_beside(target_dir: &Path) -> Result<tempfile::TempDir> {
 /// installed skill's state over ([`state_paths`]). A failure leaves the
 /// installed skill as it was; if even putting it back fails, the staging
 /// folder holding it is kept and named in the error.
+///
+/// The skill's install script (`install:` in its manifest) runs in place,
+/// as the last step of the swap: a script that fails fails the install, and
+/// the new copy goes back out — nothing half-installed is left.
 fn swap_in(staging: tempfile::TempDir, new: &Path, target_dir: &Path) -> Result<()> {
     if !target_dir.exists() {
-        return fs::rename(new, target_dir).context("Failed to put the skill in place");
+        fs::rename(new, target_dir).context("Failed to put the skill in place")?;
+        let Err(error) = install_script(target_dir) else {
+            return Ok(());
+        };
+        let _ = fs::remove_dir_all(target_dir);
+        return Err(error);
     }
     let old = staging.path().join("old");
     let mut carried = Vec::new();
-    let swapped = carry_state(target_dir, new, &mut carried).and_then(|()| {
-        fs::rename(target_dir, &old)?;
-        fs::rename(new, target_dir)
-    });
-    let Err(error) = swapped else {
+    let swapped = carry_state(target_dir, new, &mut carried)
+        .and_then(|()| {
+            fs::rename(target_dir, &old)?;
+            fs::rename(new, target_dir)
+        })
+        .map_err(|e| anyhow::Error::from(e).context("Failed to replace the skill"));
+    let Err(error) = swapped.and_then(|()| install_script(target_dir)) else {
         return Ok(());
     };
-    if let Err(back) = put_back(target_dir, new, &old, &carried) {
+    // The new copy, if it went in, goes back where it came from first.
+    let new_out = if old.exists() && target_dir.exists() && !new.exists() {
+        fs::rename(target_dir, new)
+    } else {
+        Ok(())
+    };
+    if let Err(back) = new_out.and_then(|()| put_back(target_dir, new, &old, &carried)) {
         let kept = staging.keep();
         anyhow::bail!(
-            "Failed to replace the skill ({error}), and putting it back failed too ({back}): it is kept at {}",
+            "Failed to replace the skill ({error:#}), and putting it back failed too ({back}): it is kept at {}",
             kept.display()
         );
     }
-    Err(anyhow::Error::from(error).context("Failed to replace the skill"))
+    Err(error)
+}
+
+/// The skill's install script, if its manifest names one.
+fn install_script(skill_dir: &Path) -> Result<()> {
+    super::skills::run_install_script(skill_dir).map(|_| ())
 }
 
 /// What of an installed skill is the person's, kept across an update: its
@@ -1051,6 +1083,90 @@ mod tests {
         let got = extract_skills_from_zip(&zip, &out, SkillPick::All).unwrap();
         assert_eq!(got, vec!["_root".to_string()]);
         assert!(out.join("_root/lib/x.py").is_file());
+    }
+
+    // ---- searching ----
+
+    fn found(id: &str) -> MarketplaceSkill {
+        MarketplaceSkill {
+            skill_id: id.into(),
+            name: id.into(),
+            url: String::new(),
+            description: None,
+            install_count: 0,
+            git_ref: None,
+            content: None,
+            updated_at: None,
+            source_registry: None,
+        }
+    }
+
+    #[test]
+    fn sources_that_could_not_be_reached_are_not_an_empty_answer() {
+        let down = || Err(anyhow::anyhow!("connection refused"));
+        let err = merge_sources(down(), down()).unwrap_err().to_string();
+        assert!(err.contains("skills.sh") && err.contains("ClawHub"), "{err}");
+        let one = merge_sources(down(), Ok(vec![found("a")])).unwrap();
+        assert_eq!(one.len(), 1, "the other source's results stand");
+        assert!(merge_sources(Ok(vec![]), Ok(vec![])).unwrap().is_empty(), "no match is empty");
+    }
+
+    // ---- install scripts ----
+
+    fn write_zip_with(dir: &Path, files: &[(&str, &str)]) -> PathBuf {
+        use std::io::Write;
+        let path = dir.join("scripted.zip");
+        let mut zip = zip::ZipWriter::new(fs::File::create(&path).unwrap());
+        for (name, body) in files {
+            zip.start_file(*name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(body.as_bytes()).unwrap();
+        }
+        zip.finish().unwrap();
+        path
+    }
+
+    const FAILING_SCRIPT: &[(&str, &str)] = &[
+        ("skills-main/foo/SKILL.md", "---\nname: foo\ndescription: d\ninstall: install.sh\n---\nBody"),
+        ("skills-main/foo/install.sh", "echo half >> \"$SKILL_DIR/half.txt\"\nexit 3\n"),
+    ];
+
+    #[test]
+    fn a_failed_install_script_fails_a_first_install_and_leaves_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let zip = write_zip_with(tmp.path(), FAILING_SCRIPT);
+        let skills = tmp.path().join("skills");
+        let dir = skills.join("foo");
+        let err = install_named_from_zip(&zip, "foo", "skills", &dir).unwrap_err();
+        assert!(format!("{err:#}").contains("Install script failed"), "{err:#}");
+        assert!(!dir.exists(), "no half-installed skill");
+        assert_eq!(fs::read_dir(&skills).unwrap().count(), 0, "nothing left beside it");
+    }
+
+    #[test]
+    fn a_failed_install_script_leaves_an_update_as_it_was() {
+        let tmp = tempfile::tempdir().unwrap();
+        let zip = write_zip_with(tmp.path(), FAILING_SCRIPT);
+        let skills = tmp.path().join("skills");
+        let dir = installed_foo(&skills);
+        assert!(install_named_from_zip(&zip, "foo", "skills", &dir).is_err());
+        assert_eq!(fs::read_to_string(dir.join("SKILL.md")).unwrap(), "old");
+        assert_eq!(fs::read_to_string(dir.join("data/state.json")).unwrap(), "{\"mine\":1}");
+        assert!(!dir.join("half.txt").exists());
+        let names: Vec<_> = fs::read_dir(&skills).unwrap().flatten().map(|e| e.file_name()).collect();
+        assert_eq!(names, vec![std::ffi::OsString::from("foo")]);
+    }
+
+    #[test]
+    fn a_passing_install_script_runs_in_the_installed_folder() {
+        let tmp = tempfile::tempdir().unwrap();
+        let zip = write_zip_with(tmp.path(), &[
+            ("skills-main/foo/SKILL.md", "---\nname: foo\ndescription: d\ninstall: install.sh\n---\nBody"),
+            ("skills-main/foo/install.sh", "echo ok > \"$SKILL_DIR/ran.txt\"\n"),
+        ]);
+        let dir = tmp.path().join("skills/foo");
+        install_named_from_zip(&zip, "foo", "skills", &dir).unwrap();
+        assert!(dir.join("ran.txt").is_file());
     }
 
     // ---- replacing an installed skill ----

@@ -9,7 +9,7 @@
 //! does: a full thread compacts, as every shared session's does.
 
 use super::sessions::{SessionMember, SessionMeta};
-use chrono::{DateTime, Duration, Local, NaiveDate, TimeZone};
+use chrono::{DateTime, Local, NaiveDate, TimeZone, Timelike};
 
 /// The hour, local, a new day begins.
 pub const DAY_STARTS_AT_HOUR: i64 = 4;
@@ -19,9 +19,17 @@ const PREFIX: &str = "sess-day-";
 /// another person's day on this engine is their own session.
 const PERSON: &str = "-p-";
 
-/// The day `now` belongs to: the calendar date of `now` four hours earlier.
+/// The day `now` belongs to, by its local clock's date and hour: before
+/// 04:00 it is still the day before. Never by subtracting real hours — on a
+/// day the clock jumps, four hours back is not 04:00.
 pub fn day_of<Tz: TimeZone>(now: &DateTime<Tz>) -> NaiveDate {
-    (now.clone() - Duration::hours(DAY_STARTS_AT_HOUR)).date_naive()
+    let local = now.naive_local();
+    let date = local.date();
+    if i64::from(local.hour()) < DAY_STARTS_AT_HOUR {
+        date.pred_opt().unwrap_or(date)
+    } else {
+        date
+    }
 }
 
 /// The day it is now, on this machine's clock.
@@ -112,6 +120,19 @@ mod tests {
         assert_eq!(day_of(&at("2026-11-17T00:30:00+08:00")), date("2026-11-16"));
         // Local, not UTC: the same instant is another day elsewhere.
         assert_eq!(day_of(&at("2026-11-16T03:00:00-05:00")), date("2026-11-15"));
+    }
+
+    /// 04:00 on the local clock, on the days the clock jumps too.
+    #[test]
+    fn a_day_begins_at_four_across_a_daylight_saving_change() {
+        let tz = chrono_tz::America::Halifax;
+        let local = |y, mo, d, h, mi| tz.with_ymd_and_hms(y, mo, d, h, mi, 0).earliest().unwrap();
+        // Spring forward, 2026-03-08 02:00 → 03:00.
+        assert_eq!(day_of(&local(2026, 3, 8, 3, 30)), date("2026-03-07"));
+        assert_eq!(day_of(&local(2026, 3, 8, 4, 30)), date("2026-03-08"));
+        // Fall back, 2026-11-01 02:00 → 01:00.
+        assert_eq!(day_of(&local(2026, 11, 1, 3, 30)), date("2026-10-31"));
+        assert_eq!(day_of(&local(2026, 11, 1, 4, 0)), date("2026-11-01"));
     }
 
     #[test]

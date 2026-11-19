@@ -173,6 +173,38 @@ fn one_file_holds_what_was_told() {
 
 const T0: i64 = 1_800_000_000;
 
+/// Writers at once each keep their change: none puts back an older copy over
+/// another's (a "not now" lost to the publish loop's stale ledger).
+#[test]
+fn writers_at_once_each_keep_their_change() {
+    let threads: Vec<_> = (0..24)
+        .map(|i| {
+            std::thread::spawn(move || {
+                update(|l| {
+                    std::thread::sleep(std::time::Duration::from_millis(2));
+                    l.answered(&format!("race-{i}"), Answer::NotNow, 1, T0);
+                })
+            })
+        })
+        .collect();
+    for t in threads {
+        t.join().unwrap();
+    }
+    let ledger = load();
+    let missing: Vec<usize> = (0..24)
+        .filter(|i| ledger.get(&format!("race-{i}")).is_none())
+        .collect();
+    assert!(missing.is_empty(), "lost: {missing:?}");
+}
+
+/// Exactly one function writes the ledger's file.
+#[test]
+fn the_ledger_has_one_writer() {
+    let src = include_str!("../told.rs");
+    assert_eq!(src.matches("fn store(").count(), 1);
+    assert!(!src.contains("pub fn store("), "writers go through update");
+}
+
 #[test]
 fn not_now_keeps_a_problem_quiet_a_week_then_it_is_due_again_at_the_same_level() {
     let mut l = Ledger::default();

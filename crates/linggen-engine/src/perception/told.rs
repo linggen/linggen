@@ -373,23 +373,34 @@ pub fn load() -> Ledger {
 /// recovery would be filed there on the next connect and make a return read as
 /// told on both devices.
 pub fn reports_to_publish(owner: &str) -> Vec<serde_json::Value> {
+    update(|ledger| {
+        let peer = super::state::peer_problems();
+        ledger.prune_reports(owner, peer.and_then(|(_, p)| p).as_deref());
+        ledger.reports(owner)
+    })
+}
+
+/// The ledger's one way to change: read, change and write under one lock, so
+/// no writer puts back an older copy over another's change. The writers are
+/// the glance's sweep, a notice spoken, the publish loop's prune and the
+/// person's answer — each through here.
+pub fn update<R>(change: impl FnOnce(&mut Ledger) -> R) -> R {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _held = LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut ledger = load();
     let before = ledger.clone();
-    let peer = super::state::peer_problems();
-    ledger.prune_reports(owner, peer.and_then(|(_, p)| p).as_deref());
+    let out = change(&mut ledger);
     if ledger != before {
         store(&ledger);
     }
-    ledger.reports(owner)
+    out
 }
 
-pub fn store(ledger: &Ledger) {
-    let dir = super::activity::activity_dir();
-    if std::fs::create_dir_all(&dir).is_err() {
-        return;
-    }
+/// Written whole: a reader sees the old ledger or the new one, never a cut
+/// one that would read as empty.
+fn store(ledger: &Ledger) {
     if let Some(body) = ledger.body() {
-        let _ = std::fs::write(path(), body);
+        let _ = crate::state_fs::devices::write_atomic(&path(), &body);
     }
 }
 

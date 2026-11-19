@@ -293,7 +293,7 @@ A run is appended as `running` and rewritten once when it ends: its status, and 
   "usage": { "calls": 3, "prompt": 21000, "cached": 9000, "output": 700, "models": ["deepseek-flash"] } }
 ```
 
-`cached` is a part of `prompt`. `unreported` (omitted when 0) counts calls whose provider sent no usage — the sums miss those. More than one model means a fallback answered. Skipped triggers (agent busy / daily cap) are logged with `"skipped": true`, no `session_id` and no `usage`. A finished run may also keep what went wrong in it — `failures`, `failure_count`, `hit_limit`, `error` — and `attended`; all omitted when empty (`doc/mission-spec.md` § What went wrong in a run).
+`cached` is a part of `prompt`. `unreported` (omitted when 0) counts calls whose provider sent no usage — the sums miss those. More than one model means a fallback answered. Skipped triggers (agent busy / daily cap) are logged with `"skipped": true`, no `session_id` and no `usage`. A finished run may also keep what went wrong in it — `failures`, `failure_count`, `hit_limit`, `error` — `attended`, and `catchup` (started by the catch-up sweep); all omitted when empty (`doc/mission-spec.md` § What went wrong in a run).
 
 ### Real-life quests (`quests/{app}.json`)
 

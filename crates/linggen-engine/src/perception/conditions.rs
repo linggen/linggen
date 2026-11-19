@@ -77,15 +77,12 @@ pub const STORAGE_FILLING: &str = "storage-filling";
 /// either way.
 pub fn sweep() -> Option<Notice> {
     let now = crate::util::now_ts_secs() as i64;
-    let mut ledger = super::told::load();
     let own: Vec<(&'static str, Option<Finding>)> = conditions()
         .into_iter()
         .map(|(t, check)| (t, check()))
         .collect();
     let peer = super::state::peer_problems();
-    let notice = choose(&mut ledger, own, peer, now);
-    super::told::store(&ledger);
-    notice
+    super::told::update(|ledger| choose(ledger, own, peer, now))
 }
 
 /// The decision, without the disk: readings in, the due notice out, the
@@ -154,9 +151,7 @@ fn own_notice(topic: &str, f: Finding, standing: &Standing, now: i64) -> Notice 
 /// at — rule 1 is about what the user heard, not about what was noticed.
 pub fn spoken(notice: &Notice) {
     let now = crate::util::now_ts_secs() as i64;
-    let mut ledger = super::told::load();
-    record(&mut ledger, notice, now);
-    super::told::store(&ledger);
+    super::told::update(|ledger| record(ledger, notice, now));
 }
 
 fn record(ledger: &mut Ledger, notice: &Notice, now: i64) {

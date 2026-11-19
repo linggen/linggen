@@ -74,16 +74,24 @@ impl UserChoice {
         state_dir.join("user.json")
     }
 
-    pub(super) fn load(state_dir: &Path) -> Self {
-        fs::read_to_string(Self::path(state_dir))
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default()
+    /// The person's choices. No file is no choice yet (the defaults); a file
+    /// that cannot be read or parsed is an error, never the defaults — a
+    /// mission they switched off must not come back on.
+    pub(super) fn load(state_dir: &Path) -> Result<Self> {
+        let path = Self::path(state_dir);
+        let text = match fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Self::default()),
+            Err(e) => anyhow::bail!("{} cannot be read: {e}", path.display()),
+        };
+        serde_json::from_str(&text)
+            .map_err(|e| anyhow::anyhow!("{} cannot be read: {e}", path.display()))
     }
 
+    /// Written whole (temp file, then rename), so it is never seen cut short.
     pub(super) fn save(&self, state_dir: &Path) -> Result<()> {
-        fs::create_dir_all(state_dir)?;
-        fs::write(Self::path(state_dir), serde_json::to_string_pretty(self)?)?;
+        let body = serde_json::to_string_pretty(self)?;
+        crate::state_fs::devices::write_atomic(&Self::path(state_dir), body.as_bytes())?;
         Ok(())
     }
 
@@ -129,9 +137,9 @@ mod tests {
             schedule: None,
         };
         choice.save(dir.path()).unwrap();
-        assert_eq!(UserChoice::load(dir.path()), choice);
+        assert_eq!(UserChoice::load(dir.path()).unwrap(), choice);
         assert_eq!(
-            UserChoice::load(&dir.path().join("missing")),
+            UserChoice::load(&dir.path().join("missing")).unwrap(),
             UserChoice::default()
         );
     }
