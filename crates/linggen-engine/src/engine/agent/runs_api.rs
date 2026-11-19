@@ -43,16 +43,22 @@ impl AgentManager {
     }
 
     /// Close `Running` rows nothing runs any more, with their mailboxes and
-    /// lives; lives nothing holds are pruned. Returns the closed ids.
-    pub fn reap_runs(&self, ids: &[String], now_secs: u64) -> Vec<String> {
+    /// lives and working paths; lives nothing holds are pruned. Returns the
+    /// closed ids.
+    pub async fn reap_runs(&self, ids: &[String], now_secs: u64) -> Vec<String> {
         let reaped = self.run_store.reap(ids, now_secs);
-        let mut queues = self.run_messages.lock().unwrap_or_else(|e| e.into_inner());
-        let mut lives = self.run_lives.lock().unwrap_or_else(|e| e.into_inner());
-        for id in &reaped {
-            queues.remove(id);
-            lives.remove(id);
+        {
+            let mut queues = self.run_messages.lock().unwrap_or_else(|e| e.into_inner());
+            let mut lives = self.run_lives.lock().unwrap_or_else(|e| e.into_inner());
+            for id in &reaped {
+                queues.remove(id);
+                lives.remove(id);
+            }
+            lives.retain(|_, life| life.strong_count() > 0);
         }
-        lives.retain(|_, life| life.strong_count() > 0);
+        for id in &reaped {
+            self.clear_working_place_for_run(id).await;
+        }
         reaped
     }
 
@@ -383,7 +389,7 @@ mod message_tests {
         assert!(manager.run_lives_on(&run));
         drop(life);
         assert!(!manager.run_lives_on(&run));
-        assert_eq!(manager.reap_runs(&[run.clone()], 0), [run.clone()]);
+        assert_eq!(manager.reap_runs(&[run.clone()], 0).await, [run.clone()]);
         assert!(!manager.run_messages.lock().unwrap().contains_key(&run));
         assert!(manager.run_lives.lock().unwrap().is_empty());
     }
@@ -409,5 +415,23 @@ mod message_tests {
         manager.finish_agent_run(&first, AgentRunStatus::Completed, None).await.unwrap();
         assert!(manager.list_working_places_for_repo(&repo).await.is_empty());
         manager.finish_agent_run(&second, AgentRunStatus::Completed, None).await.unwrap();
+    }
+
+    /// A run that ends by being reaped — nothing ran it any more — takes its
+    /// working paths with it, as a finished one does.
+    #[tokio::test]
+    async fn a_reaped_run_takes_its_working_paths() {
+        let manager = AgentManager::new(
+            crate::config::Config::default(), None,
+            Arc::new(crate::engine::test_registries::Empty),
+            Arc::new(crate::engine::test_registries::Empty),
+            Arc::new(crate::engine::test_registries::Empty),
+            crate::engine::InterfaceMode::Web,
+        ).0;
+        let repo = Path::new(".").canonicalize().unwrap().to_string_lossy().to_string();
+        let run = manager.begin_agent_run(Path::new("."), Some("s"), "ling", None, None).await.unwrap();
+        manager.upsert_working_place(&repo, "ling", "a.txt", Some(run.clone())).await;
+        assert_eq!(manager.reap_runs(&[run.clone()], 0).await, [run.clone()]);
+        assert!(manager.list_working_places_for_repo(&repo).await.is_empty());
     }
 }

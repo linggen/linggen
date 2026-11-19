@@ -403,7 +403,7 @@ fn sweep_stale_runs(state: &Arc<ServerState>) {
             let due: Vec<String> = orphans.intersection(&suspects).cloned().collect();
             suspects = orphans;
             let now = crate::util::now_ts_secs();
-            let reaped = sweep_state.manager.reap_runs(&due, now);
+            let reaped = sweep_state.manager.reap_runs(&due, now).await;
             if !reaped.is_empty() {
                 tracing::warn!(
                     count = reaped.len(),
