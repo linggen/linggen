@@ -640,7 +640,7 @@ async fn memory_runs_through_the_engines_door_without_an_account_or_a_model() {
         })
         .await;
     assert_eq!(absent["isError"], true);
-    let reason = crate::cannot_run::CannotRun::of_message(text(&absent), None);
+    let reason = crate::cannot_run::CannotRun::of_memory_error(text(&absent));
     assert!(
         matches!(
             reason,

@@ -8,9 +8,7 @@
 //! that is no reason to give up (the user declined a browser prompt, a
 //! request the store refused as bad) is not one of these.
 
-use crate::provider::error::{
-    kind_of, kind_of_message, named_reset, retry_after_of, ProviderErrorKind,
-};
+use crate::provider::error::{kind_of, retry_after_of, ProviderErrorKind};
 use crate::provider::models::{
     cloud_sign_in, rfc3339, usage_limit_line, usage_limit_until, NotReady,
 };
@@ -82,26 +80,6 @@ impl CannotRun {
         from_provider
             .then(|| Self::of_model_error(err, None, None))
             .flatten()
-    }
-
-    /// A failure that survived only as text — a finished run's error, a
-    /// dream run's `last_run_error`. Linggen Cloud is recognised by the
-    /// sign-in line the engine itself writes for it.
-    pub fn of_message(msg: &str, model: Option<&str>) -> Option<Self> {
-        if msg.contains(NO_MODELS_CONFIGURED) {
-            return Some(Self::NoModel);
-        }
-        if let Some(store) = Self::of_memory_error(msg) {
-            return Some(store);
-        }
-        // A memory call's own refusal or timeout is the store's answer to
-        // one call, not a provider's: its "timed out" is no network failure.
-        if is_memory_call_error(msg) {
-            return None;
-        }
-        let kind = kind_of_message(msg);
-        let cloud = msg.contains("AUTH_REQUIRED") && msg.contains("linggen.dev");
-        provider(kind, named_reset(msg), model, cloud)
     }
 
     /// A browser bridge refusal: only a missing connection is a reason
@@ -206,13 +184,6 @@ fn secs_until(at: &str) -> u64 {
         .unwrap_or(0)
 }
 
-/// A memory tool call's error as the engine reports it: the store's answer
-/// to one call (`MCP tools/call memory_…`, a timeout whose write may have
-/// landed).
-fn is_memory_call_error(msg: &str) -> bool {
-    msg.contains("MCP tools/call memory_") || msg.contains("a write may still have landed")
-}
-
 fn provider(
     kind: ProviderErrorKind,
     reset: Option<Duration>,
@@ -271,11 +242,6 @@ mod tests {
             .unwrap()
             .contains("never retry before"));
 
-        // The same run's failure, as the text a finished frame carries.
-        let text = format!("MODEL_FAILED: model 'gpt-x' failed (rate limit): openai error (429 Too Many Requests): {USAGE}");
-        let again = CannotRun::of_message(&text, Some("gpt-x")).unwrap();
-        assert!(again.is_usage_limit(), "{again:?}");
-
         // A rate limit with no named reset is a provider refusal, not a limit.
         let blind = CannotRun::of_model_error(&http(429, "{}"), Some("m"), None).unwrap();
         assert_eq!(
@@ -299,11 +265,6 @@ mod tests {
             CannotRun::of_model_error(&refused, Some("cloud"), Some("linggen_account")).unwrap();
         assert!(matches!(cloud, CannotRun::CloudSignIn { .. }), "{cloud:?}");
         assert!(cloud.line().contains("Linggen account"));
-        let by_text = CannotRun::of_message(&refused.to_string(), Some("cloud")).unwrap();
-        assert!(
-            matches!(by_text, CannotRun::CloudSignIn { .. }),
-            "{by_text:?}"
-        );
 
         let chatgpt = anyhow::anyhow!("AUTH_REQUIRED: ChatGPT not signed in for model 'g'. Open Settings → Models → Sign in with ChatGPT.");
         let other = CannotRun::of_model_error(&chatgpt, Some("g"), Some("chatgpt_oauth")).unwrap();
@@ -318,11 +279,6 @@ mod tests {
             !other.line().contains("Linggen account"),
             "{}",
             other.line()
-        );
-        let by_text = CannotRun::of_message(&chatgpt.to_string(), Some("g")).unwrap();
-        assert!(
-            !matches!(by_text, CannotRun::CloudSignIn { .. }),
-            "{by_text:?}"
         );
     }
 
@@ -345,12 +301,9 @@ mod tests {
         assert_eq!(why.run_fact(true)["work_kept"], true);
     }
 
-    /// A memory call that timed out is the store's answer to one call,
-    /// never a provider's network failure; a model stream that timed out is.
+    /// A model stream that timed out is a provider's network failure.
     #[test]
-    fn a_memory_timeout_is_no_provider_failure() {
-        let memory = "tool_error: tool=mcp__memory__memory_add error=MCP tools/call memory_add: MCP error -32603: add timed out after 25s — a write may still have landed; search before retrying";
-        assert_eq!(CannotRun::of_message(memory, None), None);
+    fn a_model_stream_that_timed_out_is_a_network_failure() {
         let stream = anyhow::Error::from(ProviderError::new(
             ProviderErrorKind::Network,
             "stream timed out".into(),
@@ -390,9 +343,8 @@ mod tests {
         ));
     }
 
-    /// No model at all — from the engine's own error or a dream run's
-    /// recorded failure — says to add one, and for the dream that the host
-    /// can run it with its own model.
+    /// No model at all says to add one, and for the dream that the host can
+    /// run it with its own model.
     #[test]
     fn no_model_is_named_wherever_it_surfaces() {
         let err = anyhow::anyhow!(NO_MODELS_CONFIGURED);
@@ -400,9 +352,7 @@ mod tests {
             CannotRun::of_model_error(&err, None, None),
             Some(CannotRun::NoModel)
         );
-        let recorded = format!("failed to create agent 'ling': {NO_MODELS_CONFIGURED}");
-        let why = CannotRun::of_message(&recorded, None).unwrap();
-        assert_eq!(why, CannotRun::NoModel);
+        let why = CannotRun::NoModel;
         assert!(why.dream_line().contains("/linggen:dream"));
         assert!(why.line().contains("Settings → Models"));
     }
@@ -436,10 +386,6 @@ mod tests {
         // unavailable store.
         assert_eq!(
             CannotRun::of_memory_error("memory is not reachable — check `ling status`"),
-            None
-        );
-        assert_eq!(
-            CannotRun::of_message("invalid JSON in response", None),
             None
         );
     }
