@@ -243,6 +243,33 @@ async fn leaving_puts_back_a_tool_the_place_replaced() {
     assert_eq!(engine.tools.skill_tools["XLook"].cmd, "echo earlier");
 }
 
+/// Another skill's tool of the same name and the same command is still
+/// another tool: leaving gives it back, owner and all.
+#[tokio::test]
+async fn leaving_puts_back_another_skills_tool_of_the_same_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let other = dir.path().join("other");
+    let text = "---\nname: zz-other\ndescription: Another app.\n\
+         tools:\n  - name: XLook\n    description: Look at x.\n    cmd: \"echo x\"\n\
+         ---\nOTHER RULES.";
+    let other_app = in_folder(
+        crate::extensions::skills::parse_skill_text(text, SkillSource::Global).unwrap(),
+        &other,
+    );
+    let mut engine = engine();
+    engine.enter_place(TurnPlace::home(), None, ActivationMode::SessionBound).await;
+    engine.activate_skill(other_app, ActivationMode::ToolInvocation).await;
+    engine.leave_place();
+    engine
+        .enter_place(place("zz-x", true), Some(x_app(&dir.path().join("x"))), ActivationMode::SessionBound)
+        .await;
+    assert_eq!(engine.tools.skill_tools["XLook"].skill_name.as_deref(), Some("zz-x"));
+    engine.leave_place();
+    let back = &engine.tools.skill_tools["XLook"];
+    assert_eq!(back.skill_name.as_deref(), Some("zz-other"));
+    assert_eq!(back.skill_dir.as_deref(), Some(other.as_path()));
+}
+
 /// In a day's session a private app (`private-talk: true`) never becomes a
 /// turn's place nor its active skill, whoever takes it up — a page, a
 /// slash command, a trigger, the Skill tool. A shared app still does, and

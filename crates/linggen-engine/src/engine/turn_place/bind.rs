@@ -229,9 +229,12 @@ impl AgentEngine {
     }
 }
 
-/// Whether two declarations of a skill tool are the same one.
+/// Whether two declarations of a skill tool are the same one: the same
+/// owner and folder (not serialized), and the same declaration.
 fn same_tool(a: &SkillToolDef, b: &SkillToolDef) -> bool {
-    serde_json::to_value(a).ok() == serde_json::to_value(b).ok()
+    a.skill_name == b.skill_name
+        && a.skill_dir == b.skill_dir
+        && serde_json::to_value(a).ok() == serde_json::to_value(b).ok()
 }
 
 #[cfg(test)]
