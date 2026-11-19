@@ -38,6 +38,8 @@ pub mod steer;
 mod steer_loop_tests;
 #[cfg(test)]
 mod cut_loop_tests;
+#[cfg(test)]
+mod held_loop_tests;
 mod streaming;
 pub mod suggestion;
 #[cfg(any(test, feature = "test-support"))]
@@ -875,10 +877,16 @@ impl AgentEngine {
             let actions = match actions {
                 Ok(v) if !v.is_empty() => v,
                 Ok(_) | Err(_) => {
-                    if !raw.contains('{') && looks_like_final_answer(&raw) {
+                    // A held turn's plain-text reply is its answer however short:
+                    // the envelope (`<say>…</say>`) is a line, not a long text.
+                    if !raw.contains('{') && (self.reply_held || looks_like_final_answer(&raw)) {
                         // Plain text that looks like a substantive answer (long enough,
                         // not "thinking out loud") — treat as an implicit done.
                         let _ = self.persist_assistant_message(&raw, session_id).await;
+                        // The caller of a held turn reads the reply from here.
+                        if self.reply_held {
+                            self.last_assistant_text = Some(raw.clone());
+                        }
                         match self
                             .try_closing_ask(
                                 state,
