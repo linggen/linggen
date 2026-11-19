@@ -44,10 +44,7 @@ async fn a_cut_tool_call_is_not_run_and_the_model_is_told() {
     let fake = Fake::default();
     let (mut engine, root) = engine_on(fake.clone(), post(chat)).await;
 
-    tokio::time::timeout(Duration::from_secs(20), engine.run_agent_loop(None))
-        .await
-        .expect("the turn ended")
-        .unwrap();
+    run(&mut engine).await.unwrap();
 
     let requests = fake.requests.lock().unwrap().clone();
     assert_eq!(requests.len(), 2, "the turn went on after the cut");
@@ -88,9 +85,7 @@ async fn three_cut_replies_in_a_row_end_the_turn_as_a_failure() {
     let fake = Fake::default();
     let (mut engine, _root) = engine_on(fake.clone(), post(always_cut)).await;
 
-    let ended = tokio::time::timeout(Duration::from_secs(20), engine.run_agent_loop(None))
-        .await
-        .expect("the turn ended");
+    let ended = run(&mut engine).await;
 
     assert_eq!(fake.requests.lock().unwrap().len(), 3, "the turn stopped after three cut replies");
     let err = ended.expect_err("a turn cut every time is a failure");
@@ -105,6 +100,13 @@ async fn three_cut_replies_in_a_row_end_the_turn_as_a_failure() {
         crate::provider::error::ProviderErrorKind::OutputCut,
         "and stays that kind as text"
     );
+}
+
+/// The engine's turn, which must end within 20 s.
+async fn run(engine: &mut AgentEngine) -> anyhow::Result<crate::engine::AgentOutcome> {
+    tokio::time::timeout(Duration::from_secs(20), engine.run_agent_loop(None))
+        .await
+        .expect("the turn ended")
 }
 
 /// An engine on a fake OpenAI-style server answering with `route`.
