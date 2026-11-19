@@ -99,12 +99,23 @@ commit_version_stamp() {
 
   if git diff --cached --quiet; then
     echo "✅ Version stamp already committed"
+    push_head
     return 0
   fi
 
   git commit -m "chore: release ${VERSION_NUM}"
   git push origin "HEAD:$(git symbolic-ref --short HEAD)"
   echo "✅ Committed and pushed the version stamp"
+}
+
+# The draft targets HEAD by sha, which GitHub accepts only once the commit
+# is on the remote: push the branch being released when it is not there yet.
+push_head() {
+  local head; head="$(git -C "$ROOT_DIR" rev-parse HEAD)"
+  git -C "$ROOT_DIR" fetch -q origin
+  if git -C "$ROOT_DIR" branch -r --contains "$head" 2>/dev/null | grep -q .; then return 0; fi
+  git -C "$ROOT_DIR" push origin "HEAD:$(git -C "$ROOT_DIR" symbolic-ref --short HEAD)"
+  echo "✅ Pushed ${head:0:12} to $(git -C "$ROOT_DIR" symbolic-ref --short HEAD)"
 }
 
 ensure_release() {
