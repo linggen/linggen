@@ -26,8 +26,15 @@ use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-/// Serializes ledger/manifest mutations across concurrent ingests.
-static MEDIA_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+/// The one lock every write of the media files in this process holds while it
+/// reads, changes and saves them: the manifest, the archive ledger and the
+/// phone-delete queue. A sync lock, taken inside each writer, so a writer run
+/// on a blocking thread holds it as well as a handler does.
+static MEDIA_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn media_lock() -> std::sync::MutexGuard<'static, ()> {
+    MEDIA_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 /// Bumped on every ingest; a scheduled scan only fires if it is still the
 /// newest generation after the quiesce window (i.e. uploads went quiet).
@@ -487,7 +494,23 @@ pub(crate) struct RequestDeleteBody {
 /// PhotoKit dialog; cache rows stay until reconcile sees the photo gone.
 /// `cancel: true` withdraws ids — queued intent stays reversible.
 pub(crate) async fn request_delete_handler(Json(body): Json<RequestDeleteBody>) -> Response {
-    let _guard = MEDIA_LOCK.lock().await;
+    match tokio::task::spawn_blocking(move || queue_deletes(body)).await {
+        Ok(Ok(answer)) => Json(answer).into_response(),
+        Ok(Err(e)) => err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("queue write: {e}"),
+        ),
+        Err(e) => err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("queue task: {e}"),
+        ),
+    }
+}
+
+/// Change the phone-delete queue as `body` asks; how many are queued and how
+/// many of those wait for a backup.
+fn queue_deletes(body: RequestDeleteBody) -> std::io::Result<Value> {
+    let _one = media_lock();
     let mut queue = load_delete_queue();
     if body.cancel {
         queue.retain(|e| !body.local_ids.contains(&e.local_id));
@@ -507,12 +530,7 @@ pub(crate) async fn request_delete_handler(Json(body): Json<RequestDeleteBody>) 
         }
     }
     let n = queue.len();
-    if let Err(e) = save_delete_queue(&queue) {
-        return err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("queue write: {e}"),
-        );
-    }
+    save_delete_queue(&queue)?;
     // Queued is not offered. A photo the Mac holds only in staging cannot be
     // handed to a phone to delete — reconcile would then remove the staged copy
     // and both would be gone — so it waits here until a backup archives it.
@@ -526,7 +544,7 @@ pub(crate) async fn request_delete_handler(Json(body): Json<RequestDeleteBody>) 
         .filter(|e| !restorable.contains(e.local_id.as_str()))
         .count();
     tracing::info!("[media] phone-delete queue now {n} ids ({blocked} awaiting backup)");
-    Json(json!({"queued": n, "blocked": blocked})).into_response()
+    Ok(json!({"queued": n, "blocked": blocked}))
 }
 
 /// The queue as the caller may see it. A phone reads it whenever a route to
@@ -621,7 +639,6 @@ pub(crate) async fn reconcile_handler(
     if body.all_local_ids.is_empty() {
         return Json(json!({"pruned": 0})).into_response();
     }
-    let _guard = MEDIA_LOCK.lock().await;
     let pruned = tokio::task::spawn_blocking(move || {
         reconcile_wireless(&body.all_local_ids, asking.as_deref())
     })
@@ -643,6 +660,7 @@ pub(crate) async fn reconcile_handler(
 }
 
 fn reconcile_wireless(all: &[String], asking: Option<&str>) -> anyhow::Result<usize> {
+    let _one = media_lock();
     let on_phone: HashSet<&str> = all.iter().map(String::as_str).collect();
     let mut rows = load_jsonl(&manifest_path());
     // A roll speaks only for its own phone. What makes a row nobody claims
@@ -719,7 +737,6 @@ fn reconcile_wireless(all: &[String], asking: Option<&str>) -> anyhow::Result<us
 /// original into `~/Pictures/iPhone Backup` with a re-hash verify and append
 /// the ledger — the same gate the USB flow's Back up all writes. Idempotent.
 pub(crate) async fn backup_handler() -> Response {
-    let _guard = MEDIA_LOCK.lock().await;
     let done = tokio::task::spawn_blocking(backup_wireless).await;
     match done {
         Ok(Ok((archived, failed))) => {
@@ -737,6 +754,7 @@ pub(crate) async fn backup_handler() -> Response {
 }
 
 fn backup_wireless() -> anyhow::Result<(usize, usize)> {
+    let _one = media_lock();
     let rows = load_jsonl(&manifest_path());
     let archived_shas = sha_set(&load_jsonl(&ledger_path()));
     // One stamp for the whole run. Reading the clock per file split a long
@@ -864,7 +882,7 @@ pub(crate) fn sanitize_filename(name: &str) -> String {
     }
 }
 
-/// Stage + manifest row, under MEDIA_LOCK. Each step no-ops if a previous
+/// Stage + manifest row, under [`media_lock`]. Each step no-ops if a previous
 /// (possibly partial) run already did it, keyed by content hash.
 ///
 /// Sync is a MIRROR, not a backup: ingest deliberately does NOT archive.
@@ -879,6 +897,7 @@ pub(crate) fn finalize_ingest(
     size: u64,
     by: Option<crate::server::api::pair::Actor>,
 ) -> anyhow::Result<()> {
+    let _one = media_lock();
     let rows = load_jsonl(&manifest_path());
     let staged_rel = ensure_staged(&rows, sha, filename, tmp)?;
     ensure_wireless_row(&rows, local_id, sha, created_ms, &staged_rel, size, by)?;
@@ -1183,5 +1202,70 @@ mod tests {
         };
         assert!(!mine.concerns(&o));
         assert!(nobodys.concerns(&o));
+    }
+}
+
+#[cfg(test)]
+mod lock_tests {
+    /// The media files (manifest, archive ledger, phone-delete queue) have one
+    /// lock in this process, [`super::media_lock`]. A function that writes one
+    /// of them holds it, or is a step called only by functions that hold it.
+    /// A writer that does neither fails here.
+    #[test]
+    fn every_write_of_the_media_files_holds_the_one_lock() {
+        let text = include_str!("media.rs");
+        let code = text.split("#[cfg(test)]").next().unwrap_or("");
+        let fns: Vec<(&str, &str)> = code
+            .split("\nfn ")
+            .flat_map(|chunk| chunk.split("\npub(crate) fn "))
+            .flat_map(|chunk| chunk.split("\npub(crate) async fn "))
+            .skip(1)
+            .map(|body| (body.split(['(', '<']).next().unwrap_or(body), body))
+            .collect();
+        const WRITES: &[&str] = &[
+            "rewrite_jsonl(&manifest_path()",
+            "append_jsonl(&manifest_path()",
+            "append_jsonl(&ledger",
+            "save_delete_queue(&",
+            "std::fs::rename(tmp",
+            "remove_file(staging_dir()",
+        ];
+        let holds = |body: &str| body.contains("media_lock()");
+        let writers: Vec<&(&str, &str)> = fns
+            .iter()
+            .filter(|(_, body)| WRITES.iter().any(|w| body.contains(w)))
+            .collect();
+        let names: Vec<&str> = writers.iter().map(|w| w.0).collect();
+        assert_eq!(
+            names,
+            [
+                "queue_deletes",
+                "reconcile_wireless",
+                "ensure_staged",
+                "ensure_archived",
+                "ensure_wireless_row"
+            ],
+            "the writers of the media files"
+        );
+        for (name, body) in &writers {
+            if holds(body) {
+                continue;
+            }
+            let call = format!("{name}(");
+            let callers: Vec<&(&str, &str)> = fns
+                .iter()
+                .filter(|(n, b)| n != name && b.contains(&call))
+                .collect();
+            assert!(
+                !callers.is_empty(),
+                "{name} writes a media file and nothing calls it"
+            );
+            for (caller, body) in callers {
+                assert!(
+                    holds(body),
+                    "{name} writes a media file without the lock, called by {caller} which does not hold it"
+                );
+            }
+        }
     }
 }

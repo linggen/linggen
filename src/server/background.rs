@@ -427,6 +427,8 @@ fn sweep_stale_runs(state: &Arc<ServerState>) {
             for session in changed {
                 crate::server::tasks::emit(&sweep_state, &session);
             }
+            // A task whose end the bus dropped is settled from the engine's list.
+            crate::server::tasks::settle_missed(&sweep_state).await;
         }
     });
 }

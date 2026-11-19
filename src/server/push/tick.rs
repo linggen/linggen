@@ -86,16 +86,50 @@ async fn tick(state: &Arc<ServerState>) {
         s.phones.retain(|id, _| paired.contains(id));
         s.clone()
     });
+    send_due(&snapshot, now, |p, device, phone| async move {
+        ring(state, &p, &device, &phone, now).await
+    })
+    .await;
+}
+
+/// Ring each line due in `snapshot` to each phone it should reach; `ring`
+/// answers whether that line was delivered. A delivered line is counted on
+/// the phone at once, so the next line in the same tick sees the day's
+/// budget as it now stands.
+async fn send_due<F, Fut>(snapshot: &store::PushState, now: u64, mut ring: F)
+where
+    F: FnMut(Pending, String, Phone) -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
+    let mut phones = snapshot.phones.clone();
     for p in &snapshot.queue {
-        for (device, phone) in &snapshot.phones {
-            if step(p, phone, device, now) == Step::Go {
-                ring(state, p, device, phone, now).await;
+        for (device, phone) in phones.iter_mut() {
+            if step(p, phone, device, now) != Step::Go {
+                continue;
+            }
+            if ring(p.clone(), device.clone(), phone.clone()).await {
+                count_sent(phone, &p.told_key(), p.tier, now);
             }
         }
     }
 }
 
-async fn ring(state: &Arc<ServerState>, p: &Pending, device: &str, phone: &Phone, now: u64) {
+/// A line delivered to `phone`: told, and counted against the day's budget.
+fn count_sent(phone: &mut Phone, told: &str, tier: NoticeTier, now: u64) {
+    phone.told.insert(told.to_string(), now);
+    if tier != NoticeTier::Warning {
+        *phone.spent.entry(timing::day_of(now)).or_default() += 1;
+    }
+}
+
+/// Whether the line was delivered.
+async fn ring(
+    state: &Arc<ServerState>,
+    p: &Pending,
+    device: &str,
+    phone: &Phone,
+    now: u64,
+) -> bool {
     let told = p.told_key();
     let (title, text) = match her_words(state, p, &phone.language).await {
         Ok(w) => w,
@@ -104,18 +138,21 @@ async fn ring(state: &Arc<ServerState>, p: &Pending, device: &str, phone: &Phone
                 "[push] {told}: no words yet ({e}); next try in {} min",
                 timing::RETRY_SECS / 60
             );
-            return wait(&told, device, now, "no_words");
+            wait(&told, device, now, "no_words");
+            return false;
         }
     };
     let Some(key) = seal::key_of(&phone.key) else {
-        return wait(&told, device, now, "bad_key");
+        wait(&told, device, now, "bad_key");
+        return false;
     };
     let note = plaintext(p, &title, &text, now).to_string();
     let sealed = match seal::seal(&key, note.as_bytes()) {
         Ok(s) => s,
         Err(e) => {
             tracing::warn!("[push] {told}: {e}");
-            return wait(&told, device, now, "too_long");
+            wait(&told, device, now, "too_long");
+            return false;
         }
     };
     let sent = relay::send(&Ring {
@@ -129,12 +166,16 @@ async fn ring(state: &Arc<ServerState>, p: &Pending, device: &str, phone: &Phone
     .await;
     tracing::info!("[push] {told} → {device}: {sent:?}");
     match sent {
-        Sent::Delivered => delivered(&told, p.tier, device, now),
+        Sent::Delivered => {
+            delivered(&told, p.tier, device, now);
+            return true;
+        }
         Sent::Gone => {
             store::modify(|s| s.phones.remove(device));
         }
         Sent::Later(code) => wait(&told, device, now, &code),
     }
+    false
 }
 
 /// Her words in [language], written once and kept on the line.
@@ -174,10 +215,7 @@ fn delivered(told: &str, tier: NoticeTier, device: &str, now: u64) {
         let Some(phone) = s.phones.get_mut(device) else {
             return;
         };
-        phone.told.insert(told.to_string(), now);
-        if tier != NoticeTier::Warning {
-            *phone.spent.entry(timing::day_of(now)).or_default() += 1;
-        }
+        count_sent(phone, told, tier, now);
         phone.last = Some(LastPush {
             at: now,
             told: told.to_string(),
@@ -316,5 +354,28 @@ mod tests {
         assert_eq!(n["title"], "早");
         assert_eq!(n["route"], "cfo/invest");
         assert_eq!(n["v"], 1);
+    }
+
+    /// Two lines due for one phone in the same tick, one push left in the
+    /// day: the first goes, the second waits for tomorrow.
+    #[tokio::test]
+    async fn the_day_budget_is_counted_as_each_line_is_sent() {
+        let now = RAISED + 121;
+        let mut first = pending(NoticeTier::Hand, RAISED);
+        first.key = "one".into();
+        let mut second = pending(NoticeTier::Hand, RAISED);
+        second.key = "two".into();
+        let mut p = phone();
+        p.spent.insert(timing::day_of(now), timing::DAY_BUDGET - 1);
+        let mut snapshot = store::PushState::default();
+        snapshot.queue = vec![first, second];
+        snapshot.phones.insert("d".into(), p);
+        let rung = std::cell::RefCell::new(Vec::new());
+        send_due(&snapshot, now, |line, _, _| {
+            rung.borrow_mut().push(line.key.clone());
+            async { true }
+        })
+        .await;
+        assert_eq!(rung.into_inner(), vec!["one".to_string()]);
     }
 }

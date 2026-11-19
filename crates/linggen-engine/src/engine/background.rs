@@ -28,6 +28,8 @@ struct Entry {
     stop: Option<oneshot::Sender<()>>,
     /// Its session is ending (Clear, delete): its end is told to no one.
     silent: bool,
+    /// Once ended: the agent to tell and what, until the server takes it.
+    end_notice: Option<(String, String)>,
 }
 
 #[derive(Default)]
@@ -185,8 +187,32 @@ impl Background {
                 result: None,
                 stop,
                 silent: false,
+                end_notice: None,
             },
         );
+    }
+
+    /// End task `id` by `f`, keeping `told` — the agent to tell and what —
+    /// for the server to take, once ([`Self::take_end_notice`]).
+    fn finish(
+        &self,
+        id: &str,
+        told: Option<(String, String)>,
+        f: impl FnOnce(&mut BackgroundTask),
+    ) -> Option<BackgroundTask> {
+        if let Some(entry) = locked(&self.entries).get_mut(id) {
+            entry.end_notice = told;
+        }
+        self.update(id, f)
+    }
+
+    /// The end notice of a task of this session, once: whoever takes it
+    /// tells the agent; a second take gets nothing.
+    pub fn take_end_notice(&self, session: &str, id: &str) -> Option<(String, String)> {
+        locked(&self.entries)
+            .get_mut(id)
+            .filter(|e| e.session == session)
+            .and_then(|e| e.end_notice.take())
     }
 
     fn update(&self, id: &str, f: impl FnOnce(&mut BackgroundTask)) -> Option<BackgroundTask> {
@@ -420,7 +446,8 @@ pub async fn watch_shell(
             output.display()
         );
         let notice = manager.background.notice(&manager, &id, notice);
-        if let Some(task) = manager.background.update(&id, |t| {
+        let told = notice.clone().map(|n| (agent.clone(), n));
+        if let Some(task) = manager.background.finish(&id, told, |t| {
             t.end(state);
             t.summary = Some(summary);
         }) {
@@ -562,7 +589,8 @@ pub async fn track_subagent(
         let clipped: String = text.chars().take(4000).collect();
         let notice = format!("Background subagent {target} ({id2}) ended: {state}.\n{clipped}");
         let notice = manager.background.notice(&manager, &id2, notice);
-        if let Some(task) = manager.background.update(&id2, |t| {
+        let told = notice.clone().map(|n| (agent.clone(), n));
+        if let Some(task) = manager.background.finish(&id2, told, |t| {
             t.end(state);
             t.summary = Some(clipped.chars().take(200).collect());
         }) {
@@ -983,5 +1011,21 @@ mod tests {
         bg.update("sh-1", |t| t.end("stopped"));
         bg.update("ag-1", |t| t.end("stopped"));
         assert!(!bg.running(&ids));
+    }
+
+    #[test]
+    fn a_tasks_end_notice_is_taken_once_and_only_by_its_session() {
+        let bg = Background::default();
+        let task = BackgroundTask::running("sh-1", "shell", "make");
+        bg.put("s", None, false, task, None);
+        let told = Some(("ling".to_string(), "ended".to_string()));
+        let ended = bg.finish("sh-1", told, |t| t.end("completed")).unwrap();
+        assert!(!ended.is_running());
+        assert!(bg.take_end_notice("other", "sh-1").is_none());
+        assert_eq!(
+            bg.take_end_notice("s", "sh-1"),
+            Some(("ling".to_string(), "ended".to_string()))
+        );
+        assert!(bg.take_end_notice("s", "sh-1").is_none(), "told once");
     }
 }
