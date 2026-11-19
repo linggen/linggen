@@ -394,7 +394,7 @@ async fn handle_tools_call(state: &SharedState, params: Value) -> Result<Value, 
             apply_response_fixes(verb, &mut data);
             Ok(mcp_text_content(&data))
         }
-        Err(err) => Err(rpc_error(-32603, err.message)),
+        Err(err) => Err(rpc_error(err.code.mcp_status(), err.message)),
     }
 }
 
@@ -630,13 +630,32 @@ async fn read_answer(verb: &str, response: Response) -> Result<Value, ApiError> 
             .and_then(|v| v.as_str())
             .unwrap_or("upstream error")
             .to_string();
-        Err(ApiError::internal(anyhow::anyhow!(msg)))
+        Err(ApiError {
+            code: crate::ErrorCode::from_wire(value["code"].as_str(), status.as_u16()),
+            message: msg,
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_warmup_refusal_keeps_its_code_and_elapsed_time() {
+        use axum::response::IntoResponse;
+
+        let message = "Memory is warming up (2.4s elapsed).";
+        let response = ApiError {
+            code: crate::ErrorCode::WarmingUp,
+            message: message.into(),
+        }
+        .into_response();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let error = read_answer("add", response).await.unwrap_err();
+        assert_eq!(error.code.mcp_status(), -32001);
+        assert_eq!(error.message, message);
+    }
 
     /// A verb that outlives the wait: the caller is told its write may
     /// have landed.
