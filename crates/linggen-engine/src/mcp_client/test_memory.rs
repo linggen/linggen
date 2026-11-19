@@ -10,7 +10,7 @@ pub(crate) async fn mcp_url() -> (String, tempfile::TempDir) {
         .await
         .expect("a free port");
     let port = listener.local_addr().expect("its port").port();
-    let state = ling_mem::hosted::open(dir.path(), format!("http://127.0.0.1:{port}"))
+    let state = ling_mem::hosted::open_quiet_fake(dir.path(), format!("http://127.0.0.1:{port}"))
         .await
         .expect("open the temp store");
     let app = ling_mem::hosted::router(state);

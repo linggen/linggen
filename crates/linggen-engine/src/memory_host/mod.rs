@@ -12,7 +12,7 @@
 //!   the engine down — is refused with the holder named.
 //! - A failed open does not stop the engine: memory answers 503 with the
 //!   reason, everything else serves.
-//! - The embedding model loads on the first call that embeds, not at start.
+//! - The embedding model warms up in the background without delaying health.
 //! - Before opening: an old `ling-mem` daemon still serving the store is
 //!   stopped (`takeover`), and each engine version copies the store once
 //!   (`memory/backups/takeover-<stamp>/`, marker `takeover-<version>.done`).

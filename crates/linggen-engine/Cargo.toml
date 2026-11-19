@@ -65,4 +65,5 @@ linggen-memory = { path = "../linggen-memory", default-features = false }
 ts-rs = { version = "12", features = ["serde-json-impl", "no-serde-warnings"], optional = true }
 
 [dev-dependencies]
+linggen-memory = { path = "../linggen-memory", default-features = false, features = ["test-support"] }
 ts-rs = { version = "12", features = ["serde-json-impl", "no-serde-warnings"] }

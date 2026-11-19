@@ -5,8 +5,8 @@
 //! The start-up steps the old daemon took — open both tables, attach the
 //! change log, start upkeep and the replica loop — without the listener, the
 //! pidfile, the LAN gate, the console UI or telemetry, which are the host's
-//! business. The embedding model is not warmed: it loads on the first
-//! call that embeds.
+//! business. The host loads the embedding model and runs one throw-away
+//! inference in the background.
 
 use crate::embed::{Embedder, LoadOnce};
 use crate::handle::Memory;
@@ -134,9 +134,16 @@ async fn attach_change_log(
 /// store reports as its own. The caller holds the [`StoreLock`].
 pub async fn open(data_dir: &Path, self_base: String) -> Result<SharedState> {
     let state = open_quiet(data_dir, self_base).await?;
+    let _warmup = start_embedding_warmup(&state);
     crate::ops::upkeep::spawn(Arc::clone(&state));
     crate::replica::spawn(Arc::clone(&state));
     Ok(state)
+}
+
+fn start_embedding_warmup(state: &Memory) -> Option<tokio::task::JoinHandle<()>> {
+    state
+        .embedder
+        .start_warmup(|model| model.embed_query("memory warm-up").map(drop))
 }
 
 /// [`open`] without the background work: for a short-lived caller (a
@@ -310,6 +317,97 @@ pub async fn export(store: &MemoryStore, path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn background_warmup_runs_once_and_stores_no_rows() {
+        use crate::Who;
+        use serde_json::json;
+
+        let dir = tempfile::tempdir().unwrap();
+        let state = open_quiet_fake(dir.path(), String::new()).await.unwrap();
+        let warmup = start_embedding_warmup(&state).unwrap();
+        assert!(start_embedding_warmup(&state).is_none());
+        warmup.await.unwrap();
+        assert!(state.embedder.is_ready());
+        let count = state.call(&Who::Owner, "count", json!({})).await.unwrap();
+        assert_eq!(count.into_result().unwrap()["count"], 0);
+    }
+
+    #[tokio::test]
+    async fn embedding_calls_during_warmup_are_refused_without_writing() {
+        use crate::Who;
+        use serde_json::json;
+        use tower::ServiceExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let state = open_quiet_fake(dir.path(), String::new()).await.unwrap();
+        let (entered, running) = tokio::sync::oneshot::channel();
+        let (release, wait) = tokio::sync::oneshot::channel();
+        let warmup = state
+            .embedder
+            .start_warmup(move |model| {
+                entered.send(()).unwrap();
+                // Dropping `release` also unblocks the worker if an assertion fails.
+                let _ = wait.blocking_recv();
+                model.embed_query("memory warm-up").map(drop)
+            })
+            .unwrap();
+        running.await.unwrap();
+        assert!(!state.embedder.is_ready());
+        let request = axum::http::Request::get("/api/health")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        assert_eq!(
+            router(state.clone())
+                .oneshot(request)
+                .await
+                .unwrap()
+                .status(),
+            200
+        );
+        let args = json!({"content": "a row to retry", "tier": "semantic"});
+        for (verb, args) in [
+            ("add", args.clone()),
+            (
+                "add_batch",
+                json!({"facts": [{"content": "a batch to retry"}]}),
+            ),
+            ("search", json!({"query": "a row to retry"})),
+        ] {
+            let error = tokio::time::timeout(
+                std::time::Duration::from_secs(1),
+                state.call(&Who::Owner, verb, args),
+            )
+            .await
+            .expect("the call must answer while the probe is still blocked")
+            .unwrap_err();
+            assert_eq!(error.code.code(), "WARMING_UP");
+            assert!(
+                error.message.starts_with("Memory is warming up ("),
+                "{error:?}"
+            );
+            assert!(error.message.ends_with("s elapsed)."), "{error:?}");
+        }
+        let count = state.call(&Who::Owner, "count", json!({})).await.unwrap();
+        assert_eq!(count.into_result().unwrap()["count"], 0);
+        release.send(()).unwrap();
+        warmup.await.unwrap();
+        let count = state.call(&Who::Owner, "count", json!({})).await.unwrap();
+        assert_eq!(count.into_result().unwrap()["count"], 0);
+        let added = state
+            .call(&Who::Owner, "add", args)
+            .await
+            .unwrap()
+            .into_result()
+            .unwrap();
+        let hits = state
+            .call(&Who::Owner, "search", json!({"query": "a row to retry"}))
+            .await
+            .unwrap()
+            .into_result()
+            .unwrap();
+        assert_eq!(hits[0]["id"], added["fact"]["id"]);
+    }
 
     #[test]
     fn the_store_is_backed_up_once_per_version() {
