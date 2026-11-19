@@ -80,9 +80,6 @@ fn herald_ask(
     questions: Vec<crate::engine::tools::AskUserQuestion>,
     session_id: Option<String>,
 ) {
-    if delegated_session(state, session_id.as_deref()) {
-        return; // the external host answers its own prompts
-    }
     if agent_id == YINYUE_AGENT {
         return; // she's the one asking — not a herald
     }
@@ -95,8 +92,8 @@ fn herald_ask(
     let (summary, options) = ask_summary(&questions);
     let state = state.clone();
     tokio::spawn(async move {
-        if !crate::server::day_session::is_builders(&state.manager, session_id.as_deref()).await {
-            return; // another person's question: never in the builder's thread or voice
+        if !heralds_to_builder(&state.manager, session_id.as_deref()).await {
+            return;
         }
         let opts = if options.is_empty() {
             String::new()
@@ -146,7 +143,7 @@ fn herald_ask(
 /// that app, told only that it waits for an answer — never the question,
 /// its options or anything said there; her line is made of that alone.
 fn herald_kept_ask(state: &Arc<ServerState>, app: String, question_id: String, session_id: Option<String>) {
-    if delegated_session(state, session_id.as_deref()) || !state.manager.agent_present(YINYUE_AGENT) {
+    if !state.manager.agent_present(YINYUE_AGENT) {
         return;
     }
     if user_sees(state, Sight::Screen) {
@@ -154,7 +151,7 @@ fn herald_kept_ask(state: &Arc<ServerState>, app: String, question_id: String, s
     }
     let state = state.clone();
     tokio::spawn(async move {
-        if !crate::server::day_session::is_builders(&state.manager, session_id.as_deref()).await {
+        if !heralds_to_builder(&state.manager, session_id.as_deref()).await {
             return;
         }
         if !ask_still_pending(&state, &question_id).await {
@@ -362,9 +359,6 @@ pub(super) fn handle_notification(state: &Arc<ServerState>, payload: Notificatio
             agent_id,
             session_id,
         } => {
-            if delegated_session(state, session_id.as_deref()) {
-                return; // the external host receives its own result
-            }
             if agent_id == YINYUE_AGENT {
                 return; // never herald her own turns
             }
@@ -373,6 +367,9 @@ pub(super) fn handle_notification(state: &Arc<ServerState>, payload: Notificatio
             }
             let state = state.clone();
             tokio::spawn(async move {
+                if !heralds_to_builder(&state.manager, session_id.as_deref()).await {
+                    return;
+                }
                 // A notification, not a summary: she has NOT read the reply.
                 // The kickoff carries the user's own request (for the topic)
                 // and says so, so all she can announce is that a reply is
@@ -406,17 +403,14 @@ pub(super) fn handle_notification(state: &Arc<ServerState>, payload: Notificatio
     }
 }
 
-/// External delegation sessions belong to the calling host, not the person.
-fn delegated_session(state: &Arc<ServerState>, session_id: Option<&str>) -> bool {
-    let meta = session_id.and_then(|id| {
-        state
-            .manager
-            .global_sessions
-            .get_session_meta(id)
-            .ok()
-            .flatten()
-    });
-    is_delegated(meta.as_ref())
+/// Whether what happens in session `session_id` — a finished reply, a
+/// question — may be handed to the builder's companion: the one gate of every
+/// herald. The session is the builder's own (`day_session::is_builders`, so
+/// never another person's words in the builder's thread or voice), and not an
+/// external host's (it receives its own results and answers its own prompts).
+async fn heralds_to_builder(manager: &crate::engine::agent::AgentManager, session_id: Option<&str>) -> bool {
+    let meta = session_id.and_then(|id| manager.global_sessions.get_session_meta(id).ok().flatten());
+    !is_delegated(meta.as_ref()) && crate::server::day_session::is_builders(manager, session_id).await
 }
 
 fn is_delegated(meta: Option<&crate::state_fs::sessions::SessionMeta>) -> bool {
@@ -1095,6 +1089,30 @@ mod native_target_tests {
         };
         assert!(is_delegated(Some(&meta)));
         assert!(!is_delegated(None));
+    }
+}
+
+#[cfg(test)]
+mod herald_gate_tests {
+    /// What reaches the builder's companion — a finished reply's topic, a
+    /// question — comes only from the builder's own sessions.
+    #[tokio::test]
+    async fn only_the_builders_sessions_reach_the_companion() {
+        let empty = || std::sync::Arc::new(crate::engine::test_registries::Empty);
+        let mut config = crate::config::Config::default();
+        config.agent.daily_session = Some(true);
+        let manager = crate::engine::agent::AgentManager::new(config, None, empty(), empty(), empty(), crate::engine::InterfaceMode::Web).0;
+        let made_for = |id: &str, user: Option<&str>| {
+            let mut meta = crate::server::claude::new_meta("t".into(), "/p".into(), None);
+            meta.id = id.into();
+            meta.user_id = user.map(str::to_string);
+            manager.global_sessions.add_session(&meta).unwrap();
+        };
+        made_for("sess-1790000201-4e4a1d01", None);
+        made_for("sess-1790000202-4e4a1d02", Some("u-friend"));
+        assert!(super::heralds_to_builder(&manager, Some("sess-1790000201-4e4a1d01")).await);
+        assert!(super::heralds_to_builder(&manager, None).await);
+        assert!(!super::heralds_to_builder(&manager, Some("sess-1790000202-4e4a1d02")).await);
     }
 }
 
