@@ -30,6 +30,15 @@ pub(crate) fn origin_allowed(origin: Option<&str>) -> bool {
     origin_is_loopback_page(origin) || matches!(origin, "tauri://localhost")
 }
 
+/// What a browser may reach from another site with no Origin to vouch for
+/// it: a page (a link opens it), and the sign-in's return
+/// (`/api/account/callback`, single-use state of its own). Everything else a
+/// cross-site request reaches could be made to act without being asked.
+pub(crate) fn lands_from_elsewhere(method: &str, path: &str) -> bool {
+    method == "GET"
+        && (path == "/api/account/callback" || crate::server::routes::classes::is_page_load(path))
+}
+
 /// `http(s)://<loopback host>[:port]` — an exact host match, so
 /// `http://localhost.evil.example` does not pass.
 pub(crate) fn origin_is_loopback_page(origin: &str) -> bool {

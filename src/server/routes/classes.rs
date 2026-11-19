@@ -264,10 +264,16 @@ const WAY_IN: &[(&str, &str)] = &[
 /// page file the fallback serves).
 pub(crate) fn is_way_in(method: &str, path: &str) -> bool {
     let path = path.split('?').next().unwrap_or(path);
-    if method == "GET" && is_page_file(path) && class_of(method, path) == STATIC_PAGE {
+    if method == "GET" && is_page_load(path) {
         return true;
     }
     WAY_IN.iter().any(|(m, pattern)| *m == method && matches(pattern, path))
+}
+
+/// Whether a GET of `path` (no query) loads a page file the fallback serves
+/// ([`STATIC_PAGE`]), no route of its own.
+pub(crate) fn is_page_load(path: &str) -> bool {
+    is_page_file(path) && class_of("GET", path) == STATIC_PAGE
 }
 
 /// What a page loads that no route serves (the fallback: the shell, its

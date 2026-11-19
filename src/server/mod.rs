@@ -167,19 +167,27 @@ async fn prepare_server(
 }
 
 /// Why a loopback request is refused, if it is: a Host that isn't this machine
-/// (DNS rebinding) or a browser Origin from another site. See `loopback_guard`.
-/// `authority` is the request URI's (HTTP/2 `:authority`, absolute-form).
+/// (DNS rebinding), a browser Origin from another site, or a browser request
+/// another site made that no allowed Origin vouches for (a cross-site GET
+/// sends none). See `loopback_guard`. `authority` is the request URI's
+/// (HTTP/2 `:authority`, absolute-form); `route` its method and path.
 fn loopback_rejection(
     headers: &axum::http::HeaderMap,
     authority: Option<&str>,
+    (method, path): (&str, &str),
 ) -> Option<&'static str> {
     let header = |name| headers.get(name).and_then(|v| v.to_str().ok());
     let bad_host = |h: &str| !loopback_guard::host_is_loopback(h);
     if header(axum::http::header::HOST).is_some_and(bad_host) || authority.is_some_and(bad_host) {
         return Some("host_not_allowed");
     }
-    if !loopback_guard::origin_allowed(header(axum::http::header::ORIGIN)) {
+    let origin = header(axum::http::header::ORIGIN);
+    if !loopback_guard::origin_allowed(origin) {
         return Some("origin_not_allowed");
+    }
+    let from_another_site = matches!(header(axum::http::HeaderName::from_static("sec-fetch-site")), Some("cross-site" | "same-site"));
+    if from_another_site && origin.is_none() && !loopback_guard::lands_from_elsewhere(method, path) {
+        return Some("fetch_site_not_allowed");
     }
     None
 }
@@ -200,7 +208,8 @@ async fn lan_gate(
     use axum::response::IntoResponse;
     if addr.ip().is_loopback() {
         let authority = req.uri().authority().map(|a| a.as_str().to_string());
-        return match loopback_rejection(req.headers(), authority.as_deref()) {
+        let route = (req.method().as_str(), req.uri().path());
+        return match loopback_rejection(req.headers(), authority.as_deref(), route) {
             None => next.run(req).await,
             Some(why) => {
                 tracing::warn!(
@@ -280,6 +289,11 @@ pub(crate) fn unix_secs_now() -> u64 {
 mod tests {
     use super::*;
 
+    /// The gate's answer for an API call (`GET /api/status`).
+    fn reject(headers: &axum::http::HeaderMap, authority: Option<&str>) -> Option<&'static str> {
+        loopback_rejection(headers, authority, ("GET", "/api/status"))
+    }
+
     #[test]
     fn loopback_gate_refuses_rebound_hosts_and_foreign_origins() {
         use axum::http::{header, HeaderMap, HeaderValue};
@@ -291,9 +305,9 @@ mod tests {
             h
         };
         // Local UI, curl, app shells, the extension.
-        assert_eq!(loopback_rejection(&with(&[]), None), None);
+        assert_eq!(reject(&with(&[]), None), None);
         assert_eq!(
-            loopback_rejection(
+            reject(
                 &with(&[
                     (header::HOST, "127.0.0.1:9527"),
                     (header::ORIGIN, "http://127.0.0.1:9527")
@@ -303,11 +317,11 @@ mod tests {
             None
         );
         assert_eq!(
-            loopback_rejection(&with(&[(header::HOST, "localhost:9527")]), None),
+            reject(&with(&[(header::HOST, "localhost:9527")]), None),
             None
         );
         assert_eq!(
-            loopback_rejection(
+            reject(
                 &with(&[
                     (header::HOST, "127.0.0.1:9527"),
                     (header::ORIGIN, "chrome-extension://abc")
@@ -318,16 +332,16 @@ mod tests {
         );
         // DNS rebinding: the browser says the page's own name.
         assert_eq!(
-            loopback_rejection(&with(&[(header::HOST, "evil.example:9527")]), None),
+            reject(&with(&[(header::HOST, "evil.example:9527")]), None),
             Some("host_not_allowed")
         );
         assert_eq!(
-            loopback_rejection(&with(&[]), Some("evil.example:9527")),
+            reject(&with(&[]), Some("evil.example:9527")),
             Some("host_not_allowed")
         );
         // Another site's page posting to 127.0.0.1.
         assert_eq!(
-            loopback_rejection(
+            reject(
                 &with(&[
                     (header::HOST, "127.0.0.1:9527"),
                     (header::ORIGIN, "https://evil.example")
@@ -336,6 +350,35 @@ mod tests {
             ),
             Some("origin_not_allowed")
         );
+    }
+
+    #[test]
+    fn a_browser_request_from_another_site_with_no_allowed_origin_is_refused() {
+        use axum::http::{header, HeaderMap, HeaderValue};
+        let mut headers = HeaderMap::new();
+        headers.insert(header::HOST, HeaderValue::from_static("127.0.0.1:9527"));
+        for site in ["cross-site", "same-site"] {
+            headers.insert("sec-fetch-site", HeaderValue::from_static(site));
+            assert_eq!(reject(&headers, None), Some("fetch_site_not_allowed"), "{site}");
+        }
+        for site in ["same-origin", "none"] {
+            headers.insert("sec-fetch-site", HeaderValue::from_static(site));
+            assert_eq!(reject(&headers, None), None, "{site}");
+        }
+        // A link from another site may open a page, and the sign-in returns
+        // through its callback; nothing else is reached that way.
+        headers.insert("sec-fetch-site", HeaderValue::from_static("cross-site"));
+        let at = |route| loopback_rejection(&headers, None, route);
+        assert_eq!(at(("GET", "/")), None);
+        assert_eq!(at(("GET", "/settings")), None);
+        assert_eq!(at(("GET", "/api/account/callback")), None);
+        assert_eq!(at(("GET", "/pair")), Some("fetch_site_not_allowed"));
+        assert_eq!(at(("POST", "/api/pair/request")), Some("fetch_site_not_allowed"));
+        assert_eq!(at(("POST", "/api/account/callback")), Some("fetch_site_not_allowed"));
+        // An allowed Origin still decides: an app shell's page is cross-site.
+        headers.insert("sec-fetch-site", HeaderValue::from_static("cross-site"));
+        headers.insert(header::ORIGIN, HeaderValue::from_static("tauri://localhost"));
+        assert_eq!(reject(&headers, None), None);
     }
 
     /// Ensure every ServerEvent variant maps without panicking.
