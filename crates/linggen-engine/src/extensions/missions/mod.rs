@@ -1014,6 +1014,25 @@ mod tests {
         assert_eq!(by_id(&runs, "run-2"), "interrupted");
     }
 
+    /// A new-format file that only mentions the old key — in a description,
+    /// in a comment — keeps its tools.
+    #[test]
+    fn mentioning_the_old_key_does_not_make_a_file_old() {
+        let content = "---\n\
+            description: \"replaces the old permission_tier: field\"\n\
+            # permission_tier: was here once\n\
+            schedule: 0 23 * * *\n\
+            allowed-tools: [Read, Bash]\n\
+            ---\n\
+            Do it.\n";
+        let m = parse_mission_md("mentions", content).unwrap();
+        assert_eq!(m.allowed_tools, vec!["Read".to_string(), "Bash".to_string()]);
+        let legacy = "---\nschedule: 0 23 * * *\npermission_tier: standard\n---\nx\n";
+        assert!(parser::yaml_looks_legacy(legacy.split("---").nth(1).unwrap()));
+        assert!(parser::yaml_looks_legacy("mode: agent\nschedule: x\n"));
+        assert!(!parser::yaml_looks_legacy("permission:\n  mode: read\n"));
+    }
+
     #[test]
     fn test_legacy_frontmatter_parses() {
         // Legacy mission file — permission_tier + mode + top-level policy.
