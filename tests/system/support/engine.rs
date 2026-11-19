@@ -15,6 +15,7 @@ pub struct Engine {
     has_config: bool,
     extra_env: Vec<(String, String)>,
     host: Option<String>,
+    fetch_fixture: Option<std::net::SocketAddr>,
 }
 
 /// How a run the test waited on ended.
@@ -42,6 +43,7 @@ impl Engine {
         has_config: bool,
         extra_env: &[(String, String)],
         host: Option<&str>,
+        fetch_fixture: Option<std::net::SocketAddr>,
     ) -> Self {
         let mut env = hermetic_env(home);
         env.extend_from_slice(extra_env);
@@ -54,6 +56,9 @@ impl Engine {
                 .arg(home.work());
             if let Some(host) = host {
                 cmd.args(["--host", host]);
+            }
+            if let Some(fixture) = fetch_fixture {
+                cmd.args(["--test-fetch-fixture", &fixture.to_string()]);
             }
             Owned::spawn(cmd, &env, &home.work(), home.root.join("engine.log"))
         };
@@ -70,6 +75,7 @@ impl Engine {
             has_config,
             extra_env: extra_env.to_vec(),
             host: host.map(str::to_string),
+            fetch_fixture,
         }
     }
 
@@ -79,7 +85,7 @@ impl Engine {
         self.proc.stop();
         let (port, has_config, env) = (self.port, self.has_config, self.extra_env.clone());
         let host = self.host.clone();
-        *self = Engine::start(home, port, has_config, &env, host.as_deref()).await;
+        *self = Engine::start(home, port, has_config, &env, host.as_deref(), self.fetch_fixture).await;
     }
 
     pub fn new_port() -> u16 {

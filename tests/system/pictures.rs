@@ -24,6 +24,7 @@ use serde_json::{json, Value};
 /// watch page and stills.
 struct Site {
     url: String,
+    addr: std::net::SocketAddr,
 }
 
 fn png(w: u32, h: u32, shade: u8) -> Vec<u8> {
@@ -61,7 +62,8 @@ impl Site {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind site");
-        let url = format!("http://{}", listener.local_addr().expect("site addr"));
+        let addr = listener.local_addr().expect("site addr");
+        let url = format!("http://{addr}");
         let site = url.clone();
         let search = move |Json(body): Json<Value>| {
             let site = site.clone();
@@ -91,7 +93,11 @@ impl Site {
                 get(picture(png(480, 360, 60))),
             );
         tokio::spawn(async move { axum::serve(listener, app).await });
-        Self { url }
+        Self { url, addr }
+    }
+
+    fn setup(&self) -> Setup {
+        Setup { fetch_fixture: Some(self.addr), ..Setup::default() }
     }
 }
 
@@ -141,7 +147,7 @@ fn session_dir(w: &World, sid: &str) -> std::path::PathBuf {
 async fn an_answer_shows_the_pictures_it_names_and_nothing_else() {
     let site = Site::start().await;
     let page = format!("{}/kettle", site.url);
-    let w = World::start(Setup::default().script(
+    let w = World::start(site.setup().script(
         Agent::Ling,
         vec![
             tool("WebFetch", json!({"url": page})),
@@ -255,7 +261,7 @@ async fn gpt_citation_markers_resolve_like_plain_numbers() {
     let page = format!("{}/kettle", site.url);
     let marked = "Pick this one.\u{e200}i\u{e202}turn1image1\u{e201} \
         \u{e200}cite\u{e202}turn1search1\u{e201}";
-    let w = World::start(Setup::default().script(
+    let w = World::start(site.setup().script(
         Agent::Ling,
         vec![tool("WebFetch", json!({"url": page})), text(marked)],
     ))
@@ -304,7 +310,7 @@ const QUERY: &str = "fill a gooseneck kettle step by step";
 async fn found_pictures_and_videos_show_with_where_they_came_from() {
     let site = Site::start().await;
     let answer = "The Gooseneck [turn1image1].\n\nHow to fill it: [turn2video1]";
-    let mut setup = Setup::default().script(
+    let mut setup = site.setup().script(
         Agent::Ling,
         vec![
             tool("ImageSearch", json!({"query": QUERY})),
@@ -401,7 +407,7 @@ async fn found_pictures_and_videos_show_with_where_they_came_from() {
 #[tokio::test]
 async fn a_seeing_model_gets_one_contact_sheet_of_the_found_pictures() {
     let site = Site::start().await;
-    let mut setup = Setup::default().script(
+    let mut setup = site.setup().script(
         Agent::Ling,
         vec![
             tool("ImageSearch", json!({"query": QUERY})),

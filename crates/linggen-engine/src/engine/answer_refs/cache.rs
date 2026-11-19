@@ -11,7 +11,6 @@ use super::{table, Ref};
 use crate::state_fs::sessions::SessionStore;
 use sha2::{Digest, Sha256};
 use std::path::Path;
-use std::sync::LazyLock;
 use std::time::Duration;
 
 /// The longest side a kept picture is scaled to.
@@ -25,15 +24,6 @@ const MAX_DOWNLOAD: usize = 12 * 1024 * 1024;
 const ANSWER_BUDGET: Duration = Duration::from_secs(10);
 /// Downloads at once.
 const PARALLEL: usize = 6;
-
-static HTTP: LazyLock<reqwest::Client> = LazyLock::new(|| {
-    reqwest::Client::builder()
-        .timeout(Duration::from_secs(8))
-        .redirect(reqwest::redirect::Policy::limited(5))
-        .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-        .build()
-        .expect("failed to build the picture client")
-});
 
 fn cap() -> u64 {
     std::env::var("LINGGEN_PICTURE_CACHE_CAP")
@@ -137,10 +127,10 @@ async fn download_by(url: String, deadline: tokio::time::Instant) -> Option<Vec<
 }
 
 async fn download(url: &str) -> Option<Vec<u8>> {
-    if !(url.starts_with("https://") || url.starts_with("http://")) {
-        return None;
-    }
-    let resp = HTTP.get(url).send().await.ok()?;
+    let url = reqwest::Url::parse(url).ok()?;
+    let resp = crate::engine::web_fetch::public_response(url, 5, Duration::from_secs(8))
+        .await
+        .ok()?;
     if !resp.status().is_success() {
         return None;
     }

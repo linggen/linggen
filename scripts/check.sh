@@ -68,13 +68,13 @@ if [ "$what" = all ] || [ "$what" = system ]; then
   fi
   if cargo nextest --version >/dev/null 2>&1; then
     # On CI every failure is worth one run: do not stop at the first.
-    step cargo nextest run --test system --run-ignored "$ignored" ${CI:+--no-fail-fast}
+    step cargo nextest run --features test-support --test system --run-ignored "$ignored" ${CI:+--no-fail-fast}
   else
     echo "(cargo-nextest not installed — cargo install cargo-nextest --locked; using cargo test)"
     if [ "$ignored" = all ]; then
-      step cargo test --test system -- --include-ignored
+      step cargo test --features test-support --test system -- --include-ignored
     else
-      step cargo test --test system
+      step cargo test --features test-support --test system
     fi
   fi
 fi

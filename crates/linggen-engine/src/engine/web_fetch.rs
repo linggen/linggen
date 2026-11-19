@@ -38,6 +38,10 @@ const PUBLIC_ONLY: &str = "WebFetch only connects to public addresses; use Bash 
 
 /// Validate the destination and bind the client to the route just checked.
 async fn public_destination(url: &reqwest::Url, proxies: &Matcher) -> Result<reqwest::ClientBuilder> {
+    #[cfg(feature = "test-support")]
+    if fixture_matches(url) {
+        return Ok(http_client());
+    }
     anyhow::ensure!(matches!(url.scheme(), "http" | "https"), "WebFetch needs an HTTP(S) URL");
     let host = url.host().context("WebFetch needs an HTTP(S) host")?;
     let port = url.port_or_known_default().context("WebFetch needs an HTTP(S) URL")?;
@@ -81,10 +85,35 @@ fn explicit_proxy(proxy: Intercept) -> Result<reqwest::Proxy> {
     })
 }
 
-async fn public_response(mut url: reqwest::Url) -> Result<reqwest::Response> {
+#[cfg(feature = "test-support")]
+static FIXTURE: std::sync::OnceLock<SocketAddr> = std::sync::OnceLock::new();
+
+/// Allow only the loopback host and port named by this system test.
+#[cfg(feature = "test-support")]
+pub fn allow_fixture_host(addr: SocketAddr) -> Result<()> {
+    anyhow::ensure!(addr.ip().is_loopback() && addr.port() != 0, "expected a loopback fixture socket");
+    FIXTURE.set(addr).map_err(|_| anyhow::anyhow!("fixture host already set"))
+}
+
+#[cfg(feature = "test-support")]
+fn fixture_matches(url: &reqwest::Url) -> bool {
+    let ip: IpAddr = match url.host() {
+        Some(url::Host::Ipv4(ip)) => ip.into(),
+        Some(url::Host::Ipv6(ip)) => ip.into(),
+        _ => return false,
+    };
+    matches!(url.scheme(), "http" | "https")
+        && url.port().is_some_and(|port| FIXTURE.get() == Some(&SocketAddr::new(ip, port)))
+}
+
+pub(super) async fn public_response(
+    mut url: reqwest::Url,
+    max_redirects: usize,
+    timeout: Duration,
+) -> Result<reqwest::Response> {
     let proxies = Matcher::from_env();
-    for hop in 0..=10 {
-        let response = public_destination(&url, &proxies).await?.build()?
+    for hop in 0..=max_redirects {
+        let response = public_destination(&url, &proxies).await?.timeout(timeout).build()?
             .get(url.clone()).send().await.context("failed to fetch URL")?;
         if !matches!(response.status().as_u16(), 301 | 302 | 303 | 307 | 308) {
             return Ok(response);
@@ -92,7 +121,7 @@ async fn public_response(mut url: reqwest::Url) -> Result<reqwest::Response> {
         let Some(location) = response.headers().get(reqwest::header::LOCATION) else {
             return Ok(response);
         };
-        anyhow::ensure!(hop < 10, "WebFetch redirect limit reached");
+        anyhow::ensure!(hop < max_redirects, "WebFetch redirect limit reached");
         url = url.join(location.to_str()?).context("invalid WebFetch redirect")?;
     }
     unreachable!()
@@ -118,7 +147,8 @@ pub struct WebFetchResult {
 ///   [`HTML_READ_CEILING`] of an HTML page's markup.
 pub async fn fetch_url(url: &str, max_bytes: Option<usize>) -> Result<WebFetchResult> {
     let parsed = reqwest::Url::parse(url).context("invalid WebFetch URL")?;
-    let resp = tokio::time::timeout(Duration::from_secs(15), public_response(parsed))
+    let timeout = Duration::from_secs(15);
+    let resp = tokio::time::timeout(timeout, public_response(parsed, 10, timeout))
         .await.context("WebFetch timed out")??;
     read_response(url, max_bytes, resp).await
 }
