@@ -133,15 +133,12 @@ fn save(file: &Path, state: &PushState) -> std::io::Result<()> {
     if let Some(dir) = file.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    let tmp = file.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_vec_pretty(state).unwrap_or_default())?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        // It holds every phone's push key.
-        let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
-    }
-    std::fs::rename(tmp, file)
+    // It holds every phone's push key: a new file, made private as it is
+    // created (owner read/write only), beside the one it replaces.
+    let dir = file.parent().unwrap_or(Path::new("."));
+    let mut tmp = tempfile::NamedTempFile::new_in(dir)?;
+    std::io::Write::write_all(&mut tmp, &serde_json::to_vec_pretty(state).unwrap_or_default())?;
+    tmp.persist(file).map(|_| ()).map_err(|e| e.error)
 }
 
 /// Read, change, write — under the lock, so the tick and the API never lose
@@ -198,6 +195,25 @@ mod tests {
             told_key("cfo", "watch", "watch|2026-10-27"),
             "cfo.watch:watch|2026-10-27"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_keys_file_is_written_only_through_a_fresh_private_file() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir_in(".").unwrap();
+        let file = dir.path().join("state.json");
+        // A file already lying where a temp file could be made — readable by
+        // anyone, or a link out — never receives the keys.
+        let elsewhere = dir.path().join("elsewhere");
+        std::fs::write(&elsewhere, b"stale").unwrap();
+        std::fs::set_permissions(&elsewhere, std::fs::Permissions::from_mode(0o644)).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, file.with_extension("json.tmp")).unwrap();
+        save(&file, &PushState::default()).unwrap();
+        assert_eq!(std::fs::read(&elsewhere).unwrap(), b"stale");
+        assert!(!std::fs::symlink_metadata(&file).unwrap().file_type().is_symlink());
+        assert_eq!(std::fs::metadata(&file).unwrap().permissions().mode() & 0o777, 0o600);
     }
 
     /// A state file this build cannot read (torn, or written by a build with
