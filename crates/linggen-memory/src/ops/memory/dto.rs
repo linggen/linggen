@@ -395,6 +395,12 @@ pub struct SearchRequest {
     /// BOTH tables (the flag landed as an ignored unknown field).
     #[serde(default)]
     pub episodic: Option<bool>,
+    /// A programmatic caller that must never hold a turn (the automatic
+    /// recall) sets this: while memory warms, the search is refused at once
+    /// instead of waiting for the warm-up. Not in the advertised MCP schema,
+    /// like `min_score`.
+    #[serde(default)]
+    pub skip_if_warming: bool,
 }
 
 #[derive(Debug, Default, Deserialize)]

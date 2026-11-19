@@ -1,13 +1,32 @@
 # Changelog
 
-## [Unreleased]
+## [Unreleased] — 2.5
 
-Ships as 2.4, on the Mac and the iPhone together. The MCP entries ship as 2.5.
+The one MCP door ships as 2.5, after 2.4.
 
-- **2.5: Built-in missions refresh on startup** without resetting schedules, on/off settings, or model choices.
+- **One MCP door at /mcp with twelve tools** (memory 5, agents 4, browser 3),
+  in place of two servers with 41 tools. A tool with several jobs takes an
+  `op`.
+- **The X tools left the door.** The browser bridge's X module stays for
+  Linggen's own apps.
+- **`agent_status op=models` says which model can be used now** and, for one
+  that cannot, why and what to do.
+- **A run that stops on a usage limit says so**, with its reset time
+  (`cannot_run`); the server text tells a caller not to retry before it.
+- **An old plugin is told to update.** `/mcp/memory` answers 410
+  `UPGRADE_PLUGIN`; nothing is forwarded. The engine remembers which host
+  called, and `ling status` and Yinyue tell the person how to update it.
+- **An approved computer sees the five memory tools only.**
+- **Built-in missions refresh on startup** without resetting schedules,
+  on/off settings, or model choices; their instructions are the engine's,
+  so an edit to them is refused with how to copy one instead.
 
-- **Memory warms up in the background.** Until then, searches report warm-up and new embedding writes are refused, not queued.
+## [2.4.0] - 2026-11-18 — one Ling and one Yinyue
 
+On the Mac now; the iPhone's 2.4 follows.
+
+- **Memory warms up in the background.** A write or search in the first
+  seconds waits for it (up to 20 s); automatic recall skips the turn instead.
 - **One Ling and one Yinyue across apps.** App chats, Yinyue's moments and
   the phone's hand-offs share one conversation a day — Linggen's daily
   session. It is on; Settings → Session turns it off.
@@ -29,6 +48,10 @@ Ships as 2.4, on the Mac and the iPhone together. The MCP entries ship as 2.5.
   app adds a line of its own.
 - **Yinyue and Ling keep notes.** Notes ride beside their next turn, and she
   can ask to look again at a set time.
+- **Yinyue speaks aloud only where you cannot see her.** On the page where
+  her line shows it is text only; anywhere else she is heard.
+- **Rooms are off.** Nothing about rooms shows and every way in says so;
+  `rooms_on = true` in `room_config.toml` brings them back.
 - **What Yinyue says unprompted has limits.** At most 6 lines an hour and none
   from 23:00 to 07:00 by default, both set in Settings → Agents.
 - **A failed mission waits for the morning.** Yinyue is told once, and the
@@ -98,22 +121,11 @@ Ships as 2.4, on the Mac and the iPhone together. The MCP entries ship as 2.5.
 - **Write no longer overwrites a file** that changed since the session last
   saw it; it asks for a fresh read first.
 - **Stopping a background task** right after its turn ended no longer fails.
+- **A long file with non-Latin text** no longer stops the turn that writes it.
 - **An agent set to a retired model** now runs on its successor.
 - **A long name on a crowded 灵境 field card** no longer runs into its status.
 - **灵境: a won story fight shows one 所得 card** with everything it paid, and
   啸月 is greyed while none of his bodies stands.
-- **One MCP door at /mcp with twelve tools** (memory 5, agents 4, browser 3),
-  in place of two servers with 41 tools. A tool with several jobs takes an
-  `op`.
-- **The X tools left the door.** The browser bridge's X module stays for
-  Linggen's own apps.
-- **`agent_status op=models` says which model can be used now** and, for one
-  that cannot, why and what to do.
-- **A run that stops on a usage limit says so**, with its reset time
-  (`cannot_run`); the server text tells a caller not to retry before it.
-- **An old plugin is told to update.** `/mcp/memory` answers 410
-  `UPGRADE_PLUGIN`; nothing is forwarded.
-- **An approved computer sees the five memory tools only.**
 
 ### For developers / under the hood
 

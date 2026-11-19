@@ -43,10 +43,13 @@ impl Memory {
     pub(crate) async fn run(self: &Arc<Self>, verb: &str, args: Value) -> Result<Reply, MemError> {
         self.mark_request();
         let verb = find(verb)?;
-        // Check before forwarding or applying a write, including updates
-        // that only patch metadata. This does not load a quiet CLI store.
+        // Before forwarding or applying a write, including updates that
+        // only patch metadata: a call waits for the warm-up up to its bound
+        // (the automatic recall, `skip_if_warming`, is answered at once);
+        // past it, refused — nothing applied or queued. This does not load
+        // a quiet CLI store.
         if matches!(verb.name, "search" | "add" | "add_batch" | "update") {
-            if let Some(error) = self.warming() {
+            if let Some(error) = self.warming(patience_of(&args)).await {
                 return Err(error);
             }
         }
@@ -55,6 +58,15 @@ impl Memory {
             Route::Refuse => Err(forward::primary_only(self)),
             Route::Forward => forward_or_queue(self, verb, args).await,
         }
+    }
+}
+
+/// How a call waits for the warm-up: the automatic recall says
+/// `skip_if_warming` and is answered at once; every other call waits.
+fn patience_of(args: &Value) -> crate::embed::Patience {
+    match args.get("skip_if_warming").and_then(Value::as_bool) {
+        Some(true) => crate::embed::Patience::AnswerNow,
+        _ => crate::embed::Patience::WaitForWarmup,
     }
 }
 

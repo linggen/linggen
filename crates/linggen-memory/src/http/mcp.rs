@@ -175,6 +175,8 @@ mod tests {
         assert_eq!(error.message, message);
     }
 
+    /// Past the warm-up's bound (a short one here) a call that embeds is
+    /// the RPC error with the warming fact; reads answer as usual.
     #[tokio::test]
     async fn the_internal_door_reports_warmup_without_blocking_reads() {
         use crate::hosted::{hold_embedding_warmup, open_quiet_fake};
@@ -182,7 +184,8 @@ mod tests {
 
         let dir = tempfile::tempdir().unwrap();
         let state = open_quiet_fake(dir.path(), String::new()).await.unwrap();
-        let (release, warmup) = hold_embedding_warmup(&state).await;
+        let bound = std::time::Duration::from_millis(50);
+        let (release, warmup) = hold_embedding_warmup(&state, bound).await;
         let app = router().with_state(state);
         for (name, args, warms) in [
             ("memory_search", json!({"query": "retry"}), true),
@@ -215,6 +218,45 @@ mod tests {
         }
         release.send(()).unwrap();
         warmup.await.unwrap();
+    }
+
+    /// During the warm-up, a search with a query and an add through the
+    /// folded tools wait for it and then run.
+    #[tokio::test]
+    async fn the_internal_door_waits_for_the_warmup_then_runs() {
+        use crate::hosted::{hold_embedding_warmup, open_quiet_fake};
+        use tower::ServiceExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let state = open_quiet_fake(dir.path(), String::new()).await.unwrap();
+        let (release, warmup) = hold_embedding_warmup(&state, crate::embed::WARM_WAIT).await;
+        let app = router().with_state(state.clone());
+        let send = |name: &str, args: Value| {
+            let body = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "params": {"name": name, "arguments": args}});
+            let request = axum::http::Request::post("/mcp")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body.to_string()))
+                .unwrap();
+            let app = app.clone();
+            tokio::spawn(async move {
+                let response = app.oneshot(request).await.unwrap();
+                let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+                serde_json::from_slice::<Value>(&bytes).unwrap()
+            })
+        };
+        let add = send("memory_add", json!({"content": "Alex drinks green tea", "tier": "semantic"}));
+        let search = send("memory_search", json!({"query": "green tea"}));
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        assert!(!add.is_finished(), "the add must wait for the warm-up");
+        assert!(!search.is_finished(), "the search must wait for the warm-up");
+        release.send(()).unwrap();
+        warmup.await.unwrap();
+        let (added, found) = (add.await.unwrap(), search.await.unwrap());
+        assert!(added["result"]["content"].is_array(), "{added}");
+        assert!(found["result"]["content"].is_array(), "{found}");
+        let count = state.call(&crate::Who::Owner, "count", json!({})).await.unwrap();
+        assert_eq!(count.into_result().unwrap()["count"], 1);
     }
 
     fn timed_out(verb: &str) -> ApiError {

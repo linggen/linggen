@@ -29,6 +29,9 @@ async fn call(view: View, name: &str, args: Value) -> Value {
     .await
 }
 
+/// Past the warm-up's bound (a short one here) a call that embeds is
+/// refused with the warming fact as a tool error, and nothing is applied;
+/// a call that does not embed answers as usual.
 #[tokio::test]
 async fn the_host_door_reports_warmup_without_applying_writes() {
     use crate::memory_host::{TestHost, TEST_HOST};
@@ -42,7 +45,7 @@ async fn the_host_door_reports_warmup_without_applying_writes() {
         assert_eq!(added["result"]["isError"], false, "{added}");
         let row: Value = serde_json::from_str(text(&added)).unwrap();
         let id = &row["fact"]["id"];
-        let (release, warmup) = hold_embedding_warmup(&store).await;
+        let (release, warmup) = hold_embedding_warmup(&store, Duration::from_millis(50)).await;
         for view in [View::Local, View::Remote] {
             for (name, args) in [
                 ("memory_search", json!({"query": "original"})),
@@ -74,6 +77,44 @@ async fn the_host_door_reports_warmup_without_applying_writes() {
         assert_eq!(rows.as_array().unwrap().len(), 1, "{rows}");
         assert_eq!(rows[0]["id"], *id);
         assert!(rows[0]["summary"].is_null(), "{rows}");
+    }).await;
+}
+
+/// During the warm-up a search with a query and an add wait for it, then
+/// run; the automatic recall (`skip_if_warming`) is answered at once.
+#[tokio::test]
+async fn the_host_door_waits_for_the_warmup_then_runs() {
+    use crate::memory_host::{TestHost, TEST_HOST};
+    use ling_mem::hosted::{hold_embedding_warmup, open_quiet_fake};
+    use std::time::{Duration, Instant};
+
+    let dir = tempfile::tempdir().unwrap();
+    let store = open_quiet_fake(dir.path(), String::new()).await.unwrap();
+    TEST_HOST.scope(TestHost::Store(store.clone()), async {
+        let (release, warmup) = hold_embedding_warmup(&store, ling_mem::embed::WARM_WAIT).await;
+        let recall = json!({"query": "tea", "skip_if_warming": true});
+        let skipped = tokio::time::timeout(Duration::from_secs(1), call(View::Local, "memory_search", recall))
+            .await
+            .expect("a recall never waits for the warm-up");
+        assert_eq!(skipped["result"]["isError"], true, "{skipped}");
+        assert!(text(&skipped).starts_with("Memory is warming up ("), "{skipped}");
+
+        let started = Instant::now();
+        let held = Duration::from_millis(300);
+        let (added, found, ()) = tokio::join!(
+            call(View::Local, "memory_add", json!({"content": "Alex drinks green tea"})),
+            call(View::Local, "memory_search", json!({"query": "green tea"})),
+            async {
+                tokio::time::sleep(held).await;
+                release.send(()).unwrap();
+            },
+        );
+        assert!(started.elapsed() >= held, "they answered before the warm-up ended");
+        assert_eq!(added["result"]["isError"], false, "{added}");
+        assert_eq!(found["result"]["isError"], false, "{found}");
+        warmup.await.unwrap();
+        let listed = call(View::Local, "memory_search", json!({"op": "list"})).await;
+        assert!(text(&listed).contains("Alex drinks green tea"), "{listed}");
     }).await;
 }
 

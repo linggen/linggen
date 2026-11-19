@@ -30,7 +30,7 @@
 mod fake;
 mod load_once;
 mod model_fetch;
-pub use load_once::LoadOnce;
+pub use load_once::{LoadOnce, Patience, WARM_WAIT};
 pub(crate) use load_once::WarmingUp;
 pub use model_fetch::ensure_model_cached;
 

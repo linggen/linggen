@@ -6,7 +6,8 @@
 //! change log, start upkeep and the replica loop — without the listener, the
 //! pidfile, the LAN gate, the console UI or telemetry, which are the host's
 //! business. The host loads the embedding model and runs one throw-away
-//! inference in the background.
+//! inference in the background; a call that embeds waits for it up to
+//! [`crate::embed::WARM_WAIT`].
 
 use crate::embed::{Embedder, LoadOnce};
 use crate::handle::Memory;
@@ -159,18 +160,21 @@ pub async fn open_quiet_fake(data_dir: &Path, self_base: String) -> Result<Share
     open_with(data_dir, self_base, Embedder::fake).await
 }
 
-/// Hold the background inference open until the test drops or sends `release`.
+/// Hold the background inference open until the test drops or sends
+/// `release`, with `wait` as the bound a waiting call waits for it.
 #[cfg(any(test, feature = "test-support"))]
 pub async fn hold_embedding_warmup(
     state: &Memory,
+    wait: std::time::Duration,
 ) -> (tokio::sync::oneshot::Sender<()>, tokio::task::JoinHandle<()>) {
     let (entered, running) = tokio::sync::oneshot::channel();
-    let (release, wait) = tokio::sync::oneshot::channel();
+    let (release, held) = tokio::sync::oneshot::channel();
     let warmup = state
         .embedder
-        .start_warmup(move |model| {
+        .start_warmup_waiting(wait, move |model| {
             entered.send(()).unwrap();
-            let _ = wait.blocking_recv();
+            // Dropping `release` also unblocks the worker if an assertion fails.
+            let _ = held.blocking_recv();
             model.embed_query("memory warm-up").map(drop)
         })
         .expect("warm-up not started yet");
@@ -352,15 +356,105 @@ mod tests {
         assert_eq!(count.into_result().unwrap()["count"], 0);
     }
 
+    /// A warm-up held in its first inference until `release` is sent (or
+    /// dropped), with `wait` as the bound a waiting call waits for it.
+    async fn blocked_warmup(
+        state: &SharedState,
+        wait: std::time::Duration,
+    ) -> (
+        tokio::task::JoinHandle<()>,
+        tokio::sync::oneshot::Sender<()>,
+    ) {
+        let (release, warmup) = hold_embedding_warmup(state, wait).await;
+        (warmup, release)
+    }
+
     #[tokio::test]
-    async fn embedding_calls_during_warmup_are_refused_without_writing() {
+    async fn a_write_during_warmup_waits_for_it_and_lands() {
+        use crate::Who;
+        use serde_json::json;
+
+        let dir = tempfile::tempdir().unwrap();
+        let state = open_quiet_fake(dir.path(), String::new()).await.unwrap();
+        let (warmup, release) = blocked_warmup(&state, crate::embed::WARM_WAIT).await;
+        let writer = state.clone();
+        let add = tokio::spawn(async move {
+            let args = json!({"content": "a row written while warming", "tier": "semantic"});
+            writer.call(&Who::Owner, "add", args).await
+        });
+        let batcher = state.clone();
+        let batch = tokio::spawn(async move {
+            let args = json!({"facts": [{"content": "an unrelated note about tea"}]});
+            batcher.call(&Who::Owner, "add_batch", args).await
+        });
+        let searcher = state.clone();
+        let search = tokio::spawn(async move {
+            let args = json!({"query": "a row written while warming"});
+            searcher.call(&Who::Owner, "search", args).await
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        assert!(!add.is_finished(), "the write must wait for the warm-up");
+        assert!(!search.is_finished(), "a search must wait for the warm-up");
+        assert!(!batch.is_finished(), "the batch must wait for the warm-up");
+        release.send(()).unwrap();
+        warmup.await.unwrap();
+        let added = add.await.unwrap().unwrap().into_result().unwrap();
+        batch.await.unwrap().unwrap().into_result().unwrap();
+        search.await.unwrap().unwrap().into_result().unwrap();
+        let count = state.call(&Who::Owner, "count", json!({})).await.unwrap();
+        assert_eq!(count.into_result().unwrap()["count"], 2);
+        let query = json!({"query": "a row written while warming"});
+        let hits = state.call(&Who::Owner, "search", query).await.unwrap();
+        assert_eq!(hits.into_result().unwrap()[0]["id"], added["fact"]["id"]);
+    }
+
+    #[tokio::test]
+    async fn a_recall_during_warmup_answers_at_once_through_the_door() {
+        use serde_json::{json, Value};
+        use tower::ServiceExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let state = open_quiet_fake(dir.path(), String::new()).await.unwrap();
+        let (warmup, release) = blocked_warmup(&state, crate::embed::WARM_WAIT).await;
+        let call = json!({
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": "memory_search", "arguments": {
+                "query": "anything about the person", "skip_if_warming": true,
+            }},
+        });
+        let request = axum::http::Request::post("/mcp")
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(call.to_string()))
+            .unwrap();
+        let response = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            router(state.clone()).oneshot(request),
+        )
+        .await
+        .expect("a recall must not wait for the warm-up")
+        .unwrap();
+        let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        let answer: Value = serde_json::from_slice(&bytes).unwrap();
+        let warming = crate::ErrorCode::WarmingUp.mcp_status();
+        assert_eq!(answer["error"]["code"], warming, "{answer}");
+        let message = answer["error"]["message"].as_str().unwrap();
+        assert!(message.starts_with("Memory is warming up ("), "{message}");
+        release.send(()).unwrap();
+        warmup.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_warmup_longer_than_the_bound_refuses_and_writes_nothing() {
         use crate::Who;
         use serde_json::json;
         use tower::ServiceExt;
 
         let dir = tempfile::tempdir().unwrap();
         let state = open_quiet_fake(dir.path(), String::new()).await.unwrap();
-        let (release, warmup) = hold_embedding_warmup(&state).await;
+        let bound = std::time::Duration::from_millis(50);
+        let (warmup, release) = blocked_warmup(&state, bound).await;
         assert!(!state.embedder.is_ready());
         let request = axum::http::Request::get("/api/health")
             .body(axum::body::Body::empty())
@@ -387,7 +481,7 @@ mod tests {
                 state.call(&Who::Owner, verb, args),
             )
             .await
-            .expect("the call must answer while the probe is still blocked")
+            .expect("past the bound the call must answer while the probe is still blocked")
             .unwrap_err();
             assert_eq!(error.code.code(), "WARMING_UP");
             assert!(
@@ -398,6 +492,7 @@ mod tests {
         }
         let count = state.call(&Who::Owner, "count", json!({})).await.unwrap();
         assert_eq!(count.into_result().unwrap()["count"], 0);
+        assert_eq!(crate::replica::outbox::len(&state.data_dir), 0, "nothing queued");
         release.send(()).unwrap();
         warmup.await.unwrap();
         let count = state.call(&Who::Owner, "count", json!({})).await.unwrap();

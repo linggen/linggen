@@ -138,9 +138,11 @@ pub const BRANCHES: &[Branch<&str>] = &[
         // silently narrows recall to zero rows. Omitted here, the daemon's
         // store-wide `recall_min_score` applies. `type` is the same: an
         // app's auto-recall searches one row type at a time; a model is
-        // told never to pass it.
+        // told never to pass it. `skip_if_warming` too: only the automatic
+        // recall sets it, so it is refused at once while memory warms
+        // instead of waiting for the warm-up.
         extra: None,
-        hidden: &["min_score", "from", "outcome", "type"],
+        hidden: &["min_score", "from", "outcome", "type", "skip_if_warming"],
         stamps: &[Stamp::always("scope_root")],
         fixed: &[],
         check: None,

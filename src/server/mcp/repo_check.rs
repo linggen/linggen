@@ -324,11 +324,11 @@ fn the_plugins_hook_calls_are_calls_the_door_takes() {
     // The literal shapes, tied to the line in each hook that builds them.
     let written = [
         ("autostart.sh", "{op: \"session_start\", cwd: $c}"),
-        ("recall.sh", "{query:$q, limit:$l}"),
+        ("recall.sh", "{query:$q, limit:$l, skip_if_warming:true}"),
         ("recall.sh", "'{\"op\":\"days\",\"undreamed_only\":true}'"),
         (
             "recall-on-delegate.sh",
-            "{query:$q, limit:$l} + (if ($c | length) > 0 then {scope_root:$c} else {} end)",
+            "{query:$q, limit:$l, skip_if_warming:true} + (if ($c | length) > 0 then {scope_root:$c} else {} end)",
         ),
     ];
     for (file, shape) in written {
@@ -344,7 +344,7 @@ fn the_plugins_hook_calls_are_calls_the_door_takes() {
         ),
         (
             "memory_search",
-            serde_json::json!({"query": "what does Alex drink", "limit": 5, "scope_root": "/w"}),
+            serde_json::json!({"query": "what does Alex drink", "limit": 5, "skip_if_warming": true, "scope_root": "/w"}),
         ),
         (
             "memory_upkeep",
@@ -352,7 +352,7 @@ fn the_plugins_hook_calls_are_calls_the_door_takes() {
         ),
         (
             "memory_search",
-            serde_json::json!({"query": "a delegated brief", "limit": 3}),
+            serde_json::json!({"query": "a delegated brief", "limit": 3, "skip_if_warming": true}),
         ),
         // The status command's dream read, this machine's view only below.
         ("memory_upkeep", serde_json::json!({"op": "dream_status"})),

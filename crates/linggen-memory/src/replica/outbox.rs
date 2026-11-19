@@ -129,7 +129,7 @@ async fn replay_one(state: &SharedState, base: &str, token: &str, e: &Queued) ->
             "changed on the primary while this machine was offline; the primary's version stands";
         return settle_refused(state, base, token, e, &targets, note).await;
     }
-    let resp = super::http()
+    let resp = super::write_http()
         .post(format!("{base}{}", e.verb))
         .header(super::DEVICE_HEADER, token)
         .json(&e.args)

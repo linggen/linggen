@@ -32,7 +32,8 @@ use std::time::Duration;
 /// How often a replica pulls when nothing asks sooner.
 pub const PULL_EVERY: Duration = Duration::from_secs(30);
 /// Requests to the primary give up after this — a dead primary must not stall
-/// a client's write for long before it is queued instead.
+/// a client's write for long before it is queued instead. A write's own
+/// client ([`write_http`]) uses it to connect and waits longer for the answer.
 pub const UPSTREAM_TIMEOUT: Duration = Duration::from_secs(5);
 /// A pull page carries vectors (~10 MB per 500 rows), so it gets longer to
 /// arrive; a dead primary is still caught by the connect timeout.
@@ -93,6 +94,18 @@ impl Replica {
 pub fn http() -> reqwest::Client {
     reqwest::Client::builder()
         .timeout(UPSTREAM_TIMEOUT)
+        .build()
+        .unwrap_or_default()
+}
+
+/// A client for a write sent to the primary: quick to notice a dead primary,
+/// and patient while a live one waits for its embedder to warm
+/// ([`crate::embed::WARM_WAIT`]) — giving up sooner would queue a write the
+/// primary then also applies.
+pub fn write_http() -> reqwest::Client {
+    reqwest::Client::builder()
+        .connect_timeout(UPSTREAM_TIMEOUT)
+        .timeout(crate::embed::WARM_WAIT + UPSTREAM_TIMEOUT)
         .build()
         .unwrap_or_default()
 }

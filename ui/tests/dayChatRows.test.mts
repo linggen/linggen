@@ -42,3 +42,10 @@ test('normal and private chat rows have no daily place and keep the existing mem
   const other = row('yinyue', 'user', {});
   assert.deepEqual(selectMainChatRows([own, other], { here: 'private', selected: 'ling' }), [own]);
 });
+
+test('a `!` command and its output are rows of the page, whoever is selected', () => {
+  const command = row('user', 'system', { text: '`$ pwd`' });
+  const output = row('system', 'user', { text: '```\n/skills/dice\n```' });
+  const other = row('yinyue', 'user', {});
+  assert.deepEqual(selectMainChatRows([command, output, other], { here: 'dice', selected: 'ling' }), [command, output]);
+});

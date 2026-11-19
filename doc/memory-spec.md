@@ -227,14 +227,20 @@ at start-up and serves it (`src/memory_host/`, code in `crates/linggen-memory`).
   directly under the lock.
 
 The engine loads the embedding model and runs one throw-away inference in the
-background. Startup and health do not wait. Until that inference finishes,
-semantic search, adds, and updates report how long memory has been warming on
-both MCP doors. `memory_search op=list`, `op=get`, and upkeep that does not
-embed still work. Refused writes were neither applied nor queued; retry once
-memory is warm. The host door (`/mcp`) reports a tool error, and the internal
-door (`/mem/mcp`) uses JSON-RPC error `-32001`. Automatic recall skips quietly.
-Warm-up refuses an individual tool call, not the agent run, so it does not
-set a run's `cannot_run`. The MCP call limit remains 25 seconds after warm-up.
+background. Startup, health, and calls that do not embed (`memory_search
+op=list`, `op=get`, upkeep reads) do not wait. A call that embeds (a search
+with a query, an add, an update) waits for that inference up to 20 seconds
+(`embed::WARM_WAIT`, under the MCP door's 25), then runs as usual; only a
+warm-up that outlasts the bound refuses the call, saying how long memory has
+been warming — on the host door (`/mcp`) as a tool error, on the internal door
+(`/mem/mcp`) as JSON-RPC error `-32001`. A refused write is neither applied
+nor queued; retry once memory is warm. Automatic recall (the engine's and the
+plugin hook's) sends `skip_if_warming` (accepted by `memory_search`, never
+advertised) and skips the turn quietly at once — a recall never holds a
+prompt. A replica sends its writes with a client that waits out the primary's
+bound, so it never queues a write the primary applies. Warm-up refuses an
+individual tool call, not the agent run, so it does not set a run's
+`cannot_run`.
 
 ### Who reaches memory, and whose rows they see
 
