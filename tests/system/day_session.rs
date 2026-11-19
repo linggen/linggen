@@ -742,8 +742,11 @@ async fn each_person_sees_and_writes_only_their_own_day() {
     let text_of = |sid: &str| serde_json::to_string(&w.raw_rows(sid)).unwrap();
     assert!(!text_of(&mine).contains("FRIEND-"), "the friend wrote into the builder's day");
     assert!(!text_of(&theirs).contains("BUILDER-WORDS"));
+    let builders_save = w.api.create_session(json!({"title": "Builder's save", "skill": "dice", "withheld_tools": ["Bash"]})).await;
     let list = w.api.get(&format!("/api/skill-sessions?skill=dice&user_id={friend}")).await;
+    assert!(list["sessions"].as_array().unwrap().iter().all(|row| row["id"] != builders_save.as_str()));
     assert_eq!(list["sessions"][0]["id"], theirs.as_str());
+    assert!(list["sessions"].as_array().unwrap().iter().all(|row| row["id"] != mine.as_str()));
     let page = format!("/api/skill-sessions/state?skill=dice&session_id={mine}&user_id={friend}");
     assert!(!history_text(&w.api.get(&page).await).contains("BUILDER-WORDS"));
     let main = format!(

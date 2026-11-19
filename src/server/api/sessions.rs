@@ -260,10 +260,18 @@ pub(crate) async fn list_skill_sessions(
     State(state): State<Arc<ServerState>>,
     Query(query): Query<SkillSessionQuery>,
 ) -> impl IntoResponse {
-    let day =
-        crate::server::day_session::day_for(&state.manager, &crate::server::person::Person::from_wire(query.user_id.as_deref()), Some(&query.skill)).await;
+    let asker = crate::server::person::Person::from_wire(query.user_id.as_deref());
+    let day = crate::server::day_session::day_for(&state.manager, &asker, Some(&query.skill)).await;
     match state.manager.global_sessions.list_sessions() {
         Ok(sessions) => {
+            // A person is shown the sessions they may enter, no other.
+            let listed = |s: &crate::state_fs::sessions::SessionMeta| {
+                s.skill.as_deref() == Some(&query.skill) || day.as_deref() == Some(s.id.as_str())
+            };
+            let sessions = sessions
+                .into_iter()
+                .filter(|s| listed(s) && crate::server::day_session::may_enter(&s.id, &asker))
+                .collect::<Vec<_>>();
             let api_sessions = match day {
                 Some(day) => with_the_day(sessions, &query.skill, &day),
                 None => sessions
