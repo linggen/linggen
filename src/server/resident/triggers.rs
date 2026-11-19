@@ -89,25 +89,12 @@ fn herald_ask(
     if user_sees(state, Sight::Screen) {
         return; // the question is on the screen they're looking at
     }
-    let (summary, options) = ask_summary(&questions);
     let state = state.clone();
     tokio::spawn(async move {
         if !heralds_to_builder(&state.manager, session_id.as_deref()).await {
             return;
         }
-        let opts = if options.is_empty() {
-            String::new()
-        } else {
-            format!(" The options are: {options}.")
-        };
-        let kickoff = format!(
-            "The agent \"{agent_id}\" is blocked, waiting on the user to answer: \
-             \"{summary}\".{opts} The user has stepped away from the screen. Call them \
-             back in your voice — one brief line, spoken aloud, plain prose. When they give you their answer, relay \
-             it with `answer_prompt` (question_id \"{question_id}\") — only their actual \
-             words, never your own decision. If it truly doesn't warrant interrupting now, \
-             reply with exactly SILENT."
-        );
+        let kickoff = ask_kickoff(&agent_id, &question_id, &questions);
         // Her turn can queue behind other Yinyue runs; if the user
         // answers the prompt meanwhile, announcing it is stale noise.
         // Check before spending a turn and again right before speaking.
@@ -217,6 +204,27 @@ fn keep_when_free(state: Arc<ServerState>, sid: String, line: String) {
         )
         .await;
     });
+}
+
+fn ask_kickoff(
+    agent_id: &str,
+    question_id: &str,
+    questions: &[crate::engine::tools::AskUserQuestion],
+) -> String {
+    let (summary, options) = ask_summary(questions);
+    let opts = if options.is_empty() {
+        String::new()
+    } else {
+        format!(" The options are: {options}.")
+    };
+    format!(
+        "The agent \"{agent_id}\" is blocked, waiting on the user to answer: \
+         \"{summary}\".{opts} The user has stepped away from the screen. Call them \
+         back in your voice — one brief line, spoken aloud, plain prose. When they give you their answer, relay \
+         it with `answer_prompt` (question_id \"{question_id}\") — only their actual \
+         words, never your own decision. If it truly doesn't warrant interrupting now, \
+         reply with exactly SILENT."
+    )
 }
 
 /// The first question and its options, as her kickoff names them.
@@ -1094,6 +1102,22 @@ mod native_target_tests {
 
 #[cfg(test)]
 mod herald_gate_tests {
+    #[test]
+    fn permission_notice_keeps_the_exact_option_labels() {
+        use crate::engine::permission::{build_exceeds_ceiling_question, PermissionMode};
+
+        let question = build_exceeds_ceiling_question(
+            "Edit the notes",
+            &PermissionMode::Edit,
+            "/work/Project Notes/file.md",
+            &["/work/Project Notes".into()],
+        );
+        let notice = super::ask_kickoff("ling", "ask-1", &[question]);
+        assert!(notice.contains(
+            "The options are: grant:at:edit:/work/Project Notes / grant:all:edit / grant:all:admin / Deny."
+        ), "{notice}");
+    }
+
     /// What reaches the builder's companion — a finished reply's topic, a
     /// question — comes only from the builder's own sessions.
     #[tokio::test]
