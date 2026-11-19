@@ -132,6 +132,25 @@ impl Tasks {
         })
     }
 
+    /// Tasks listed as running whose work, as `engine` (the engine's own
+    /// list) has it, has ended: `(session, the ended task)`.
+    pub fn ended_unheard(
+        &self,
+        engine: impl Fn(&str, &str) -> Option<BackgroundTask>,
+    ) -> Vec<(String, BackgroundTask)> {
+        self.with(|all| {
+            let mut found = Vec::new();
+            for (session, tasks) in all.iter() {
+                for task in tasks.iter().filter(|t| t.is_running()) {
+                    if let Some(ended) = engine(session, &task.id).filter(|t| !t.is_running()) {
+                        found.push((session.clone(), ended));
+                    }
+                }
+            }
+            found
+        })
+    }
+
     /// The conversation ended (Clear, delete): its tasks leave the list.
     pub fn forget(&self, session: &str) -> bool {
         self.with(|all| all.remove(session).is_some())
@@ -192,49 +211,75 @@ pub(crate) async fn stop(
 
 /// Native sessions' tasks: each change the engine reports is listed; a
 /// task's end is told to the agent that started it, in a turn of its own.
+/// The bus may drop events: when it does, the ends it dropped are read from
+/// the engine's own list ([`settle_missed`]).
 pub(crate) async fn native_watch(state: std::sync::Arc<super::ServerState>) {
     let mut events = state.events_tx.listen();
     loop {
         let event = match events.recv().await {
             Ok(event) => event,
-            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(missed)) => {
+                tracing::warn!("[tasks] the event bus dropped {missed} events; settling from the engine's list");
+                settle_missed(&state).await;
+                continue;
+            }
             Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
         };
         let ServerEvent::BackgroundTask {
             session_id: Some(session),
-            agent_id,
             task,
-            notice,
+            ..
         } = event
         else {
             continue;
         };
-        // A task's end is told once: on the change from running to ended.
-        let was_running = state
-            .tasks
-            .get(&session, &task.id)
-            .is_none_or(|t| t.is_running());
-        let ended = was_running && !task.is_running();
-        let started_in = task.place.clone();
-        if state.tasks.upsert(&session, task) {
-            emit(&state, &session);
-        }
-        let (true, Some(notice)) = (ended, notice) else {
-            continue;
-        };
-        // While the agent's plan waits for the person, its task ends wait
-        // behind it, as Claude Code holds them behind its plan prompt.
-        let Some(notice) = state
-            .manager
-            .hold_behind_plan(&session, &agent_id, notice)
-            .await
-        else {
-            continue;
-        };
-        let (_, place) = super::chat::helpers::take_turn_place(state.manager.session_turn(&session));
-        let told = (session, agent_id, notice, "system".to_string());
-        tokio::spawn(tell_in_place(state.clone(), told, (place, started_in), None));
+        settle(&state, &session, task).await;
     }
+}
+
+/// Tasks listed as running whose work has ended in the engine, their end
+/// not heard on the bus: each is settled as if it had been. The sweeper runs
+/// this too.
+pub(crate) async fn settle_missed(state: &std::sync::Arc<super::ServerState>) {
+    let missed = state
+        .tasks
+        .ended_unheard(|session, id| state.manager.background.get(session, id));
+    for (session, task) in missed {
+        settle(state, &session, task).await;
+    }
+}
+
+/// List `task`'s change; on its end, tell the agent that started it. The end
+/// notice is taken from the engine, once, so an end heard twice (the bus and
+/// the sweep) is told once.
+async fn settle(state: &std::sync::Arc<super::ServerState>, session: &str, task: BackgroundTask) {
+    let was_running = state
+        .tasks
+        .get(session, &task.id)
+        .is_none_or(|t| t.is_running());
+    let ended = was_running && !task.is_running();
+    let (id, started_in) = (task.id.clone(), task.place.clone());
+    if state.tasks.upsert(session, task) {
+        emit(state, session);
+    }
+    if !ended {
+        return;
+    }
+    let Some((agent_id, notice)) = state.manager.background.take_end_notice(session, &id) else {
+        return;
+    };
+    // While the agent's plan waits for the person, its task ends wait
+    // behind it, as Claude Code holds them behind its plan prompt.
+    let Some(notice) = state
+        .manager
+        .hold_behind_plan(session, &agent_id, notice)
+        .await
+    else {
+        return;
+    };
+    let (_, place) = super::chat::helpers::take_turn_place(state.manager.session_turn(session));
+    let told = (session.to_string(), agent_id, notice, "system".to_string());
+    tokio::spawn(tell_in_place(state.clone(), told, (place, started_in), None));
 }
 
 /// Tell `agent` each of `notices` in a turn of its own, in order: their
@@ -542,6 +587,35 @@ mod tests {
         let list = tasks.list("s");
         assert_eq!(list.len(), KEEP_ENDED + 1);
         assert_eq!(list[0].id, "live");
+    }
+}
+
+#[cfg(test)]
+mod missed_end_tests {
+    use super::*;
+
+    /// The bus dropped a task's end: the engine's own list still has it, and
+    /// that is where the running row learns it ended.
+    #[test]
+    fn a_running_row_whose_work_has_ended_is_found() {
+        let tasks = Tasks::default();
+        tasks.upsert("s", BackgroundTask::running("done", "shell", "make"));
+        tasks.upsert("s", BackgroundTask::running("busy", "shell", "serve"));
+        tasks.upsert("t", BackgroundTask::running("claude", "shell", "x"));
+        let engine = |session: &str, id: &str| {
+            let mut task = BackgroundTask::running(id, "shell", "x");
+            match (session, id) {
+                ("s", "done") => task.end("completed"),
+                ("s", "busy") => {}
+                _ => return None, // not the engine's (another runtime's)
+            }
+            Some(task)
+        };
+        let found = tasks.ended_unheard(engine);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].0, "s");
+        assert_eq!(found[0].1.id, "done");
+        assert_eq!(found[0].1.status, "completed");
     }
 }
 
