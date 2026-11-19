@@ -75,12 +75,26 @@ impl CodexAuthTokens {
             std::fs::create_dir_all(parent)?;
         }
         let json = serde_json::to_string_pretty(self)?;
-        std::fs::write(file, json)?;
-        // Set file permissions to 600 on Unix
+        // A temp file beside it, created owner-only, then renamed over it: a
+        // reader sees the old file or the new one, never a part.
+        static SAVES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = SAVES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let tmp = file.with_extension(format!("json.{}.{n}.tmp", std::process::id()));
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
         #[cfg(unix)]
         {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o600))?;
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let written = options.open(&tmp).and_then(|mut f| {
+            use std::io::Write;
+            f.write_all(json.as_bytes())?;
+            f.sync_all()
+        });
+        if let Err(e) = written.and_then(|_| std::fs::rename(&tmp, file)) {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e.into());
         }
         Ok(())
     }
@@ -269,6 +283,123 @@ pub async fn refresh_tokens(
         account_id,
         last_refresh: Some(chrono::Utc::now().to_rfc3339()),
     })
+}
+
+/// One refresh of the ChatGPT tokens at a time, process-wide.
+static REFRESHING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// After the backend refused `rejected` (the access token a request sent),
+/// bring the tokens in `file` up to date with `refresh` and save them. True
+/// when the file now holds tokens worth retrying with. One refresh runs at a
+/// time: a caller that waited finds the tokens another refresh saved and
+/// uses them, so the refresh token is spent once.
+pub(crate) async fn refresh_after_rejection<F, Fut>(
+    file: &Path,
+    rejected: Option<&str>,
+    refresh: F,
+) -> bool
+where
+    F: FnOnce(CodexAuthTokens) -> Fut,
+    Fut: std::future::Future<Output = Result<CodexAuthTokens>>,
+{
+    let _one = REFRESHING.lock().await;
+    let tokens = CodexAuthTokens::load(file);
+    if tokens.is_valid() && tokens.access_token.as_deref() != rejected {
+        return true;
+    }
+    if tokens.refresh_token.is_none() {
+        return false;
+    }
+    match refresh(tokens).await {
+        Ok(new) => match new.save(file) {
+            Ok(()) => {
+                info!("Refreshed expired ChatGPT OAuth token after 401.");
+                true
+            }
+            Err(e) => {
+                warn!("Failed to save refreshed ChatGPT tokens: {}", e);
+                false
+            }
+        },
+        Err(e) => {
+            warn!("ChatGPT token refresh after 401 failed: {}", e);
+            false
+        }
+    }
+}
+
+#[cfg(test)]
+mod token_file_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    fn signed_in(access: &str, refresh: &str) -> CodexAuthTokens {
+        CodexAuthTokens {
+            access_token: Some(access.into()),
+            refresh_token: Some(refresh.into()),
+            ..Default::default()
+        }
+    }
+
+    /// A token endpoint whose refresh tokens are spent on use: each one
+    /// works once and is replaced.
+    struct Rotating {
+        live_refresh: Mutex<String>,
+        calls: AtomicUsize,
+    }
+
+    impl Rotating {
+        async fn refresh(&self, t: CodexAuthTokens) -> Result<CodexAuthTokens> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            let mut live = self.live_refresh.lock().unwrap();
+            anyhow::ensure!(t.refresh_token.as_deref() == Some(live.as_str()), "refresh token reused");
+            let n = self.calls.load(Ordering::SeqCst);
+            *live = format!("r{}", n + 1);
+            Ok(signed_in(&format!("a{}", n + 1), &live))
+        }
+    }
+
+    #[tokio::test]
+    async fn concurrent_rejections_spend_the_refresh_token_once_and_share_its_result() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("codex_auth.json");
+        signed_in("a1", "r1").save(&file).unwrap();
+        let endpoint = Arc::new(Rotating {
+            live_refresh: Mutex::new("r1".into()),
+            calls: AtomicUsize::new(0),
+        });
+        let ask = |endpoint: Arc<Rotating>, file: std::path::PathBuf| async move {
+            refresh_after_rejection(&file, Some("a1"), |t| async move { endpoint.refresh(t).await })
+                .await
+        };
+        let (one, two) = tokio::join!(
+            ask(endpoint.clone(), file.clone()),
+            ask(endpoint.clone(), file.clone())
+        );
+        assert!(one && two, "both retry with the fresh token");
+        assert_eq!(endpoint.calls.load(Ordering::SeqCst), 1, "one refresh");
+        assert_eq!(CodexAuthTokens::load(&file).access_token.as_deref(), Some("a2"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_token_file_is_replaced_whole_and_private() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("codex_auth.json");
+        std::fs::write(&file, "{}").unwrap();
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let before = std::fs::metadata(&file).unwrap().ino();
+        signed_in("a1", "r1").save(&file).unwrap();
+        let meta = std::fs::metadata(&file).unwrap();
+        assert_ne!(meta.ino(), before, "a new file renamed into place, never written over");
+        assert_eq!(meta.permissions().mode() & 0o777, 0o600);
+        assert_eq!(CodexAuthTokens::load(&file).access_token.as_deref(), Some("a1"));
+        let left: Vec<_> = std::fs::read_dir(dir.path()).unwrap().collect();
+        assert_eq!(left.len(), 1, "no temp file left behind");
+    }
 }
 
 // ---------------------------------------------------------------------------

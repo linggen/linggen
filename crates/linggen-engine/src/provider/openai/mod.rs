@@ -248,6 +248,7 @@ impl OpenAiClient {
         &self,
         rb: reqwest::RequestBuilder,
     ) -> anyhow::Result<reqwest::Response> {
+        let sent = self.codex_auth_live.then(|| self.codex_tokens().access_token).flatten();
         let first = self.apply_auth(
             rb.try_clone()
                 .ok_or_else(|| anyhow::anyhow!("request body not cloneable for auth retry"))?,
@@ -256,7 +257,7 @@ impl OpenAiClient {
         if resp.status() != reqwest::StatusCode::UNAUTHORIZED || !self.codex_auth_live {
             return Ok(resp);
         }
-        if !self.try_refresh_codex_tokens().await {
+        if !self.try_refresh_codex_tokens(sent.as_deref()).await {
             return Ok(resp);
         }
         // apply_auth re-reads codex_auth.json, so the retry uses the fresh token.
@@ -268,30 +269,15 @@ impl OpenAiClient {
         crate::provider::codex_auth::CodexAuthTokens::load(&self.auth_file)
     }
 
-    /// Attempt a one-shot refresh of the on-disk ChatGPT OAuth tokens.
-    /// Returns true if a new token was fetched and saved.
-    async fn try_refresh_codex_tokens(&self) -> bool {
+    /// Bring the on-disk ChatGPT OAuth tokens past `rejected`, the access
+    /// token the backend refused. True when there are tokens to retry with.
+    async fn try_refresh_codex_tokens(&self, rejected: Option<&str>) -> bool {
         use crate::provider::codex_auth;
-        let tokens = codex_auth::CodexAuthTokens::load(&self.auth_file);
-        if tokens.refresh_token.is_none() {
-            return false;
-        }
-        match codex_auth::refresh_tokens(&self.http, &tokens).await {
-            Ok(new) => match new.save(&self.auth_file) {
-                Ok(()) => {
-                    tracing::info!("Refreshed expired ChatGPT OAuth token after 401.");
-                    true
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to save refreshed ChatGPT tokens: {}", e);
-                    false
-                }
-            },
-            Err(e) => {
-                tracing::warn!("ChatGPT token refresh after 401 failed: {}", e);
-                false
-            }
-        }
+        let http = self.http.clone();
+        codex_auth::refresh_after_rejection(&self.auth_file, rejected, |tokens| async move {
+            codex_auth::refresh_tokens(&http, &tokens).await
+        })
+        .await
     }
 
     /// Whether this client uses the ChatGPT Responses API (OAuth mode). A
