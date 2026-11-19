@@ -27,7 +27,7 @@ import { useAgentPresent } from '../../hooks/useAgentPresent';
 import { useAddressable } from '../../hooks/useAddressable';
 import { COMPANION_ID } from '../../lib/agentsMet.mts';
 import { language } from '../../lib/i18n';
-import { keepDraft, openDraft } from '../../lib/chatDrafts.mts';
+import { switchDraft } from '../../lib/chatDrafts.mts';
 import { useUiStore } from '../../stores/uiStore';
 import { replyAddressee } from '../../lib/replyTo.mts';
 import { isRestartCommand, restartSuggestion } from '../../lib/restartCommand.mts';
@@ -120,16 +120,13 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   onSwitchModel,
   mobile,
 }) => {
-  // A draft belongs to its session: this box is made anew per session
-  // (ChatPanel keys it) and opens on what was left in it there.
-  const [draft] = useState(() => openDraft(draftSlot));
-  const [chatInput, setChatInput] = useState(draft?.text ?? '');
+  const [chatInput, setChatInput] = useState('');
   const hintSessionId = useSessionStore((s) => s.activeSessionId);
   const nextPrompt = useSuggestionStore((s) => (hintSessionId ? s.hints[hintSessionId] : undefined));
   // Each attachment keeps an id, so removing one from the middle keeps the
   // other previews' identity (they were keyed by index).
-  const [pendingImages, setPendingImages] = useState<{ id: number; data: string }[]>(draft?.images ?? []);
-  const nextImageId = useRef(draft?.images.length ? Math.max(...draft.images.map((img) => img.id)) + 1 : 0);
+  const [pendingImages, setPendingImages] = useState<{ id: number; data: string }[]>([]);
+  const nextImageId = useRef(0);
   const addImage = (data: string) => setPendingImages((prev) => [...prev, { id: nextImageId.current++, data }]);
   // The grey hint, CC-style: desktop only — a phone keyboard has no Tab, so
   // there the hint stays in the row.
@@ -160,12 +157,18 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const mentionLang = useMemo(() => mentionLanguage(), []);
   // Whom this message goes to, shown as a chip before the words; empty, the
   // chat's default answers (the placeholder names who).
-  const [addressee, setAddressee] = useState(draft?.addressee ?? '');
-  // What the box holds is its slot's draft, kept as it changes: the box made
-  // for the next session (or the one New chat becomes) reads it on opening.
-  useEffect(() => {
-    keepDraft(draftSlot, { text: chatInput, images: pendingImages, addressee });
-  }, [draftSlot, chatInput, pendingImages, addressee]);
+  const [addressee, setAddressee] = useState('');
+  // A draft belongs to its session (lib/chatDrafts): when the chat moves to
+  // another, what the box holds stays there and the next one's shows — in
+  // this same box, during render, so no Enter in between sends it elsewhere.
+  const [heldSlot, setHeldSlot] = useState(draftSlot);
+  if (heldSlot !== draftSlot) {
+    const next = switchDraft(heldSlot, draftSlot, { text: chatInput, images: pendingImages, addressee });
+    setHeldSlot(draftSlot);
+    setChatInput(next.text);
+    setPendingImages(next.images);
+    setAddressee(next.addressee);
+  }
   const labelOf = (id: string) => {
     const agent = mainAgents.find((a) => a.name.toLowerCase() === id);
     return agent ? agentMentionLabel(agent, mentionLang) : id.charAt(0).toUpperCase() + id.slice(1);
