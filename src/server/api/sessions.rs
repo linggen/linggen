@@ -25,8 +25,9 @@ pub(crate) struct CreateSessionRequest {
     title: String,
     #[serde(default)]
     work: Option<String>,
-    #[serde(default)]
-    runtime: crate::state_fs::sessions::SessionRuntime,
+    // No `runtime`: every new session is a Linggen session. A 2.5.1 client
+    // asking for `claude_agent_sdk` gets one too (the key is ignored), so a
+    // Claude model chosen for it runs natively.
     #[serde(default)]
     user_type: String,
     #[serde(default)]
@@ -112,38 +113,6 @@ pub(crate) async fn create_session(
     State(state): State<Arc<ServerState>>,
     Json(req): Json<CreateSessionRequest>,
 ) -> impl IntoResponse {
-    if !req.runtime.is_linggen() {
-        if req.user_type == "consumer" {
-            return StatusCode::FORBIDDEN.into_response();
-        }
-        if req.skill.is_some() || !req.params.is_empty() {
-            return (
-                StatusCode::BAD_REQUEST,
-                "Claude sessions cannot bind a Linggen skill.",
-            )
-                .into_response();
-        }
-        let mut meta = crate::server::claude::new_meta(
-            req.title,
-            session_cwd(None, req.project_root.as_deref()),
-            None,
-        );
-        if let Some(word) = req.work.as_deref() {
-            if let Err(reason) = ask_work(&mut meta, word) {
-                return work_error(reason);
-            }
-        }
-        meta.user_id = req.user_id;
-        meta.withheld_tools = req.withheld_tools;
-        if let Err(error) = state.manager.global_sessions.add_session(&meta) {
-            tracing::error!("Could not create Claude session: {error}");
-            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-        }
-        let _ = state
-            .events_tx
-            .send(crate::server::ServerEvent::StateUpdated);
-        return Json(serde_json::json!({"id": meta.id, "cwd": meta.cwd, "runtime": meta.runtime, "agents": meta.agents})).into_response();
-    }
     // A session made for a kind of work is the person's own: it never joins
     // Linggen's daily session.
     if !asks_for_work(req.work.as_deref()) {
@@ -168,7 +137,6 @@ pub(crate) async fn create_session(
     let mut meta = crate::state_fs::sessions::SessionMeta {
         work: None,
         runtime: Default::default(),
-        claude_permission_mode: Default::default(),
         parent_session_id: None,
         id: id.clone(),
         title: req.title,
@@ -361,7 +329,7 @@ pub(crate) async fn get_skill_session_state(
         .get_session_meta(&session_id)
         .ok()
         .flatten()
-        .is_some_and(|meta| !meta.runtime.is_linggen())
+        .is_some_and(|meta| crate::server::old_claude::is_read_only(&meta))
     {
         return (
             StatusCode::BAD_REQUEST,
@@ -494,32 +462,10 @@ pub(crate) struct RenameSessionRequest {
     /// answers with by default (the one the model picker shows).
     #[serde(default)]
     agent_id: Option<String>,
-    #[serde(default)]
-    claude_permission_mode: Option<crate::state_fs::sessions::ClaudePermissionMode>,
     /// The session's model-fallback switch (`SessionMeta::model_fallback`):
     /// false stops a failed model call from being answered by another model.
     #[serde(default)]
     model_fallback: Option<bool>,
-}
-
-/// The fields a Claude session's rename request sets.
-fn apply_claude_rename(
-    meta: &mut crate::state_fs::sessions::SessionMeta,
-    req: &RenameSessionRequest,
-) {
-    if let Some(model) = &req.model_id {
-        meta.set_member_model(
-            crate::server::claude::AGENT_ID,
-            (!model.is_empty()).then(|| model.clone()),
-        );
-    }
-    if let Some(mode) = req.claude_permission_mode {
-        meta.claude_permission_mode = mode;
-    }
-    if let Some(title) = &req.title {
-        meta.title = title.clone();
-        meta.title_locked = true;
-    }
 }
 
 pub(crate) async fn rename_session_api(
@@ -539,52 +485,10 @@ pub(crate) async fn rename_session_api(
         .global_sessions
         .get_session_meta(&req.session_id)
     {
-        if !meta.runtime.is_linggen() {
-            if req
-                .agent_id
-                .as_deref()
-                .is_some_and(|id| id != crate::server::claude::AGENT_ID)
-            {
-                return StatusCode::BAD_REQUEST.into_response();
-            }
-            if let Some(model) = req.model_id.as_deref().filter(|m| !m.is_empty()) {
-                if crate::server::claude::resolve_model(&state, Some(model))
-                    .await
-                    .is_err()
-                {
-                    return StatusCode::BAD_REQUEST.into_response();
-                }
-            }
-            if let Some(mode) = req.claude_permission_mode {
-                if let Err(error) = crate::server::claude::set_mode(&state, &meta, mode).await {
-                    tracing::warn!("Claude permission mode change failed: {error}");
-                    return (StatusCode::CONFLICT, error.to_string()).into_response();
-                }
-            }
-            // The mode change can wait on the SDK while the running turn
-            // writes this meta; apply the request to what is stored now.
-            let stored = state
-                .manager
-                .global_sessions
-                .get_session_meta(&req.session_id);
-            if !matches!(stored, Ok(Some(_))) {
-                return StatusCode::NOT_FOUND.into_response();
-            }
-            if state
-                .manager
-                .global_sessions
-                .edit(&req.session_id, |meta| apply_claude_rename(meta, &req))
-                .is_err()
-            {
-                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-            }
-            let _ = state
-                .events_tx
-                .send(crate::server::ServerEvent::StateUpdated);
-            return StatusCode::OK.into_response();
-        }
-        if req.claude_permission_mode.is_some() {
-            return StatusCode::BAD_REQUEST.into_response();
+        // An old Claude session is read-only: its title changes, its model
+        // does not (`SessionRuntime::ClaudeAgentSdk`).
+        if crate::server::old_claude::is_read_only(&meta) && req.model_id.is_some() {
+            return (StatusCode::GONE, crate::server::old_claude::READ_ONLY).into_response();
         }
     }
     if let Some(allowed) = req.model_fallback {
@@ -668,25 +572,7 @@ pub(crate) async fn delete_unified_session(
     State(state): State<Arc<ServerState>>,
     Json(req): Json<DeleteUnifiedSessionRequest>,
 ) -> impl IntoResponse {
-    let claude = state
-        .manager
-        .global_sessions
-        .get_session_meta(&req.session_id)
-        .ok()
-        .flatten()
-        .is_some_and(|m| !m.runtime.is_linggen());
-    let _sdk_turn = match claude {
-        true => match crate::server::claude::quiesce(&state, &req.session_id).await {
-            Ok(guard) => Some(guard),
-            Err(error) => return (StatusCode::CONFLICT, error.to_string()).into_response(),
-        },
-        false => None,
-    };
     end_native_work(&state, &req.session_id).await;
-    if claude {
-        crate::server::claude::forget_transcript(&state, &req.session_id);
-    }
-    state.claude.forget_session(&req.session_id);
     state.tasks.forget(&req.session_id);
     state.manager.remove_session_engine(&req.session_id).await;
     match state
@@ -812,29 +698,6 @@ mod tests {
         ];
         let work = running_work(&runs, &tasks);
         assert_eq!(work, RunningWork { turn: true, tasks: 2, subagents: 2 });
-    }
-
-    #[test]
-    fn a_claude_rename_lands_on_the_meta_as_stored_after_the_mode_wait() {
-        // While the mode change waited on the SDK, the running turn titled
-        // the session; the rename sets the model and keeps that title.
-        let mut fresh = crate::server::claude::new_meta("Turn title".into(), "/p".into(), None);
-        fresh.claude_permission_mode = crate::state_fs::sessions::ClaudePermissionMode::Plan;
-        let req: super::RenameSessionRequest = serde_json::from_value(serde_json::json!({
-            "session_id": fresh.id, "model_id": "claude-key",
-            "claude_permission_mode": "acceptEdits"
-        }))
-        .unwrap();
-        super::apply_claude_rename(&mut fresh, &req);
-        assert_eq!(fresh.title, "Turn title");
-        assert_eq!(
-            fresh.claude_permission_mode,
-            crate::state_fs::sessions::ClaudePermissionMode::AcceptEdits
-        );
-        assert_eq!(
-            fresh.member("claude").and_then(|m| m.model.as_deref()),
-            Some("claude-key")
-        );
     }
 
     use super::refuse_params;

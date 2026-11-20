@@ -46,6 +46,11 @@ const CHECK_CALLERS: &[(&str, usize, &str)] = &[
         "agent_run refuses an unknown model; the model list marks the default",
     ),
     (
+        "src/server/old_claude.rs",
+        1,
+        "continuing an old Claude session keeps its pinned model when it is here",
+    ),
+    (
         "src/server/push/compose.rs",
         1,
         "a push line names her model: the Pet setting when here, else her chain",

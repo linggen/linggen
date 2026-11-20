@@ -180,7 +180,7 @@ mod tests {
     #[test]
     fn what_carries_words_out_is_refused_and_the_rest_stays() {
         let leaves = |reach, args: &Value| leaves(reach, args, "ledger");
-        for tool in ["agent_chat", crate::notes::WRITE_TOOL, "answer_prompt", "StartClaudeSession"] {
+        for tool in ["agent_chat", crate::notes::WRITE_TOOL, "answer_prompt"] {
             assert!(leaves(reach_of(tool, &json!({})), &json!({})), "{tool}");
         }
         for tool in ["Read", "Bash", "WebSearch", "WebFetch", crate::notes::DONE_TOOL] {

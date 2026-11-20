@@ -48,6 +48,23 @@
   a preset grant: an existing absolute folder, never `/`, the home folder, or
   Linggen's own folder (or one inside it or holding it).
 
+### Claude sessions are Linggen sessions
+
+- **The Claude Agent SDK session is gone.** A Claude model runs in a Linggen
+  session, with an API key or your Claude sign-in. If the Claude sessions'
+  default was the only default you had set, it becomes your default.
+- **An old Claude session opens read-only.** It keeps its history, renames,
+  clears and deletes. **Continue in Linggen** starts a new Coding session in
+  its folder with its conversation (your messages and Claude's replies; tool
+  calls stay behind), on its own model when it had one, else your default.
+- **No longer supported:**
+  - Claude Code hooks.
+  - A project's `.mcp.json`: add its servers in Settings → Tools and MCP.
+  - A worktree made automatically for each session.
+- The SDK a Claude session downloaded stays in
+  `~/.linggen/runtimes/claude-agent-sdk` (about 280 MB); nothing uses it now,
+  so you can delete it.
+
 ## [2.5.1] - 2026-11-20 — a coding session that asks less and says what it cost
 
 ### Permissions

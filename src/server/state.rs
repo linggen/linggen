@@ -43,7 +43,6 @@ pub struct ServerState {
     /// The mission loader — the same one `manager.missions` looks through,
     /// held concretely for editing, reloads and the scheduler's run history.
     pub missions: Arc<crate::extensions::missions::MissionLoader>,
-    pub prompt_store: Arc<crate::prompts::PromptStore>,
     pub queued_chats: Arc<Mutex<HashMap<String, Vec<QueuedChatItem>>>>,
     /// Who lets a message into a session: the restart snapshot takes it
     /// before the queue, and once the plan is kept new messages go into the
@@ -51,8 +50,6 @@ pub struct ServerState {
     pub(crate) admission: Arc<Mutex<super::admission::Admission>>,
     /// Queued messages waiting for a native turn's next step to take them in.
     pub(crate) fold: Arc<super::chat::fold::Fold>,
-    /// Live Claude sessions' in-memory host state.
-    pub(crate) claude: super::claude::Host,
     /// Every session's background tasks (doc/background-tasks-spec.md).
     pub(crate) tasks: super::tasks::Tasks,
     /// Pending AskUser questions waiting for user responses.

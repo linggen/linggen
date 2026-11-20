@@ -185,10 +185,6 @@ async fn a_priced_models_calls_are_kept_and_cost_what_its_price_says() {
         page["usage"], *usage,
         "the top bar and agent_status tell one story"
     );
-    assert!(
-        page["claude_usage"].is_null(),
-        "an engine session has no SDK figure"
-    );
 }
 
 /// The same model name with no price known (a gateway): tokens, no dollars.

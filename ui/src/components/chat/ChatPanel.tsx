@@ -30,6 +30,8 @@ import { useMessageWindow } from './useMessageWindow';
 import { useRunSpinner } from './useRunSpinner';
 import { useSubagentPane } from './useSubagentPane';
 import { ChatInput } from './ChatInput';
+import { OldClaudeBar } from './OldClaudeBar';
+import { isOldClaude } from '../../lib/oldClaude.mts';
 import { SubagentDrawer } from './SubagentDrawer';
 import { SubagentPane } from './SubagentPane';
 import { statusBadgeClass } from './MessageHelpers';
@@ -48,7 +50,7 @@ import { boxSlot } from '../../lib/chatDrafts.mts';
  * Hidden by default — only visible when the user clicks the session bar open.
  */
 const ChatDebugActions: React.FC<{ projectRoot?: string | null; sessionId?: string | null }> = ({ projectRoot, sessionId }) => {
-  const claude = useSessionStore((s) => s.allSessions.find((session) => session.id === sessionId)?.runtime === 'claude_agent_sdk');
+  const claude = useSessionStore((s) => isOldClaude(s.allSessions.find((session) => session.id === sessionId)));
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'error'>('idle');
   const [spStatus, setSpStatus] = useState<'idle' | 'copied' | 'error'>('idle');
   const { copyChat, clearChat } = useChatActions(() => {}, {}, projectRoot);
@@ -250,6 +252,7 @@ export const ChatPanel: React.FC<{
   showSubagentPane = true,
 }) => {
   const [openSubagentId, setOpenSubagentId] = useState<string | null>(null);
+  const oldClaude = useSessionStore((s) => isOldClaude(s.allSessions.find((item) => item.id === sessionId)));
   const [subagentMessageFilter, setSubagentMessageFilter] = useState('');
 
   // Every surface that renders chat wants the user's core-memory name for
@@ -358,7 +361,7 @@ export const ChatPanel: React.FC<{
                 const sessionMeta = useSessionStore.getState().allSessions.find(s => s.id === sessionId);
                 return (
                   <>
-                    <span className="font-semibold uppercase tracking-wider text-slate-500">{sessionMeta?.runtime === 'claude_agent_sdk' ? 'Claude session' : 'Session'}</span>
+                    <span className="font-semibold uppercase tracking-wider text-slate-500">{isOldClaude(sessionMeta) ? 'Claude session' : 'Session'}</span>
                     <span className="font-mono truncate max-w-[160px]">{sessionId}</span>
                     {/* Paths are hidden from room consumers, not from this
                         machine's own devices — a paired peer is admin. */}
@@ -550,7 +553,7 @@ export const ChatPanel: React.FC<{
         context={agentContext?.[sessionId || '']}
         summary={lastRunSummary}
       />
-      <ChatInput
+      {oldClaude && sessionId ? <OldClaudeBar sessionId={sessionId} /> : <ChatInput
         // A draft belongs to its session (lib/chatDrafts); the box is kept.
         draftSlot={draftSlot}
         projectRoot={projectRoot}
@@ -578,7 +581,7 @@ export const ChatPanel: React.FC<{
         defaultModels={defaultModelsList}
         onSwitchModel={onSwitchModel}
         mobile={mobile}
-      />
+      />}
 
       {selectedSubagent && (
         <SubagentDrawer

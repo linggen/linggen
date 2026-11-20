@@ -244,7 +244,6 @@ export const ChatMessageList = React.memo<{
   const coreName = useUserStore((s) => s.coreName);
   // An app's chat is the app's agent (its skill persona), not "the main agent".
   const skillChat = useSessionStore((s) => s.isSkillSession && !!s.activeSkillName);
-  const claude = useSessionStore((s) => s.allSessions.find((session) => session.id === s.activeSessionId)?.runtime === 'claude_agent_sdk');
   const loading = useChatLoading();
   // The page's place: other places' stretches of a day's session fold.
   const here = useSessionStore((s) => pagePlace(s.isSkillSession ? s.activeSkillName : null));
@@ -295,10 +294,10 @@ export const ChatMessageList = React.memo<{
       {messages.length === 0 && !loading && (
         <div className="self-center mt-12 max-w-md text-center">
           <div className="text-sm font-semibold text-slate-600 dark:text-slate-300">
-            {claude ? 'Claude Agent' : skillChat ? 'No messages yet' : `No messages for ${selectedAgent}`}
+            {skillChat ? 'No messages yet' : `No messages for ${selectedAgent}`}
           </div>
           <div className="mt-2 text-xs text-slate-500">
-            {claude ? 'Describe a coding task to get started.' : skillChat ? 'Ask about this app, or tap a suggestion below.' : 'Send a message to this main agent or switch tabs.'}
+            {skillChat ? 'Ask about this app, or tap a suggestion below.' : 'Send a message to this main agent or switch tabs.'}
           </div>
         </div>
       )}

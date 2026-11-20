@@ -60,8 +60,13 @@ fn default_creator() -> String {
     "user".to_string()
 }
 
-/// A session has one execution owner. Native sessions may seat several agents;
-/// an SDK session keeps its own transcript and permission policy.
+/// Who runs a session's turns. Every session Linggen makes is `Linggen`.
+/// `ClaudeAgentSdk` is a session the Claude Agent SDK hosted up to 2.5.1:
+/// that runtime is gone, so such a session is a read-only record — it opens,
+/// renames, clears and deletes, takes no turn, and offers to continue in a
+/// new Linggen session (`doc/session-spec.md` § Old Claude sessions). The
+/// one check every native turn passes is `refuse_foreign_runtime`
+/// (`engine/agent/mod.rs`); the doors before it refuse early with a reason.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(any(test, feature = "test-support"), derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "snake_case")]
@@ -74,24 +79,6 @@ pub enum SessionRuntime {
 impl SessionRuntime {
     pub fn is_linggen(&self) -> bool {
         *self == Self::Linggen
-    }
-}
-
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(any(test, feature = "test-support"), derive(ts_rs::TS), ts(export))]
-#[serde(rename_all = "camelCase")]
-pub enum ClaudePermissionMode {
-    #[default]
-    Default,
-    AcceptEdits,
-    Auto,
-    DontAsk,
-    Plan,
-}
-
-impl ClaudePermissionMode {
-    pub fn is_default(&self) -> bool {
-        *self == Self::Default
     }
 }
 
@@ -108,8 +95,6 @@ pub struct SessionMeta {
         deserialize_with = "deserialize_work"
     )]
     pub work: Option<Work>,
-    #[serde(default, skip_serializing_if = "ClaudePermissionMode::is_default")]
-    pub claude_permission_mode: ClaudePermissionMode,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_session_id: Option<String>,
     pub title: String,
@@ -1185,7 +1170,6 @@ mod tests {
         let meta = SessionMeta {
             work: None,
             runtime: Default::default(),
-            claude_permission_mode: Default::default(),
             parent_session_id: None,
             id: "sess-1000-abcd1234".into(),
             title: "Test Session".into(),
@@ -1275,7 +1259,6 @@ mod tests {
                 .add_session(&SessionMeta {
                     work: None,
                     runtime: Default::default(),
-                    claude_permission_mode: Default::default(),
                     parent_session_id: None,
                     id: id.into(),
                     title: id.into(),
@@ -1316,7 +1299,6 @@ mod tests {
         let meta = SessionMeta {
             work: None,
             runtime: Default::default(),
-            claude_permission_mode: Default::default(),
             parent_session_id: None,
             id: "s1".into(),
             title: "t".into(),
@@ -1417,7 +1399,6 @@ mod tests {
             .add_session(&SessionMeta {
                 work: None,
                 runtime: Default::default(),
-                claude_permission_mode: Default::default(),
                 parent_session_id: None,
                 id: "s1".into(),
                 title: "t".into(),
@@ -1496,7 +1477,6 @@ mod tests {
             .add_session(&SessionMeta {
                 work: None,
                 runtime: Default::default(),
-                claude_permission_mode: Default::default(),
                 parent_session_id: None,
                 id: "s1".into(),
                 title: "t".into(),
@@ -1552,7 +1532,6 @@ mod tests {
             .add_session(&SessionMeta {
                 work: None,
                 runtime: Default::default(),
-                claude_permission_mode: Default::default(),
                 parent_session_id: None,
                 id: "s1".into(),
                 title: "t".into(),
@@ -1608,7 +1587,6 @@ mod tests {
             .add_session(&SessionMeta {
                 work: None,
                 runtime: Default::default(),
-                claude_permission_mode: Default::default(),
                 parent_session_id: None,
                 id: "../escape".into(),
                 title: "t".into(),
@@ -1635,7 +1613,6 @@ mod tests {
             .add_session(&SessionMeta {
                 work: None,
                 runtime: Default::default(),
-                claude_permission_mode: Default::default(),
                 parent_session_id: None,
                 id: "a/b".into(),
                 title: "t".into(),
@@ -1662,7 +1639,6 @@ mod tests {
             .add_session(&SessionMeta {
                 work: None,
                 runtime: Default::default(),
-                claude_permission_mode: Default::default(),
                 parent_session_id: None,
                 id: "".into(),
                 title: "t".into(),

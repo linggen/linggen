@@ -23,8 +23,9 @@ pub enum Preset {
     Delegate,
     /// An app's one-off job: bound to its own values or with tools withheld.
     OneOff,
-    /// A session the Claude Agent SDK hosts.
-    Claude,
+    /// A Claude session from 2.5.1, which the Claude Agent SDK hosted: a
+    /// read-only record now (`SessionRuntime::ClaudeAgentSdk`).
+    OldClaude,
 }
 
 impl Preset {
@@ -41,7 +42,7 @@ pub const HANDOFF_PREFIX: &str = "sess-handoff-";
 
 /// The first rule that matches names the preset; none is a person's chat.
 const RULES: &[(fn(&SessionMeta) -> bool, Preset)] = &[
-    (runs_elsewhere, Preset::Claude),
+    (old_claude, Preset::OldClaude),
     (mission_run, Preset::Mission),
     (delegated, Preset::Delegate),
     (day, Preset::Daily),
@@ -59,7 +60,7 @@ pub fn preset_of(meta: &SessionMeta) -> Preset {
         .map_or(Preset::Chat, |(_, preset)| *preset)
 }
 
-fn runs_elsewhere(meta: &SessionMeta) -> bool {
+fn old_claude(meta: &SessionMeta) -> bool {
     !meta.runtime.is_linggen()
 }
 

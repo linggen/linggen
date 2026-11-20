@@ -248,7 +248,6 @@ async fn ensure_session(
     let make_meta = |id: String| crate::state_fs::sessions::SessionMeta {
         work: None,
         runtime: Default::default(),
-        claude_permission_mode: Default::default(),
         parent_session_id: None,
         id,
         title: title.clone(),
@@ -1237,12 +1236,9 @@ pub(crate) async fn start_turn(
             .ok()
             .flatten()
     });
-    if let Some(meta) = meta.as_ref().filter(|m| !m.runtime.is_linggen()) {
-        let level = req.level.unwrap_or(crate::engine::permission::PermissionMode::Admin);
-        if let Some(refused) = crate::server::person::owners_only(level) {
-            return refused;
-        }
-        return crate::server::claude::start_turn(state, req, meta.clone()).await;
+    // An old Claude session takes no turn (`server::old_claude`).
+    if meta.as_ref().is_some_and(crate::server::old_claude::is_read_only) {
+        return (StatusCode::GONE, crate::server::old_claude::READ_ONLY).into_response();
     }
     // Where this turn stands: the page's app, else the session's own.
     let turn_place =

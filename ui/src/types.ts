@@ -170,7 +170,6 @@ export interface PersistedMeta {
 }
 
 export interface SessionState {
-  claude_usage?: { estimated_cost_usd: number };
   /** What the session's model calls used and cost (lib/spend.mts). */
   usage?: import('./lib/spend.mts').SessionSpend;
   active_task: [PersistedMeta, string] | null;
@@ -240,7 +239,6 @@ export interface ModelInfo {
   /** Runtime reading from /api/models: credentials present right now.
    *  Absent on older payloads — treat undefined as usable. */
   auth_ok?: boolean;
-  supports_claude_sdk?: boolean;
   /** The engine's answer (`ModelConfig::sign_in`): this model runs on the ChatGPT sign-in. */
   signs_in_with_chatgpt?: boolean;
 }
@@ -293,7 +291,7 @@ export interface AppConfig {
   agent: { max_iters: number; write_safety_mode: string; default_permission_mode?: PermissionMode | null; prompt_loop_breaker?: string | null; compact_threshold?: number | null; memory_inject_min_score?: number; memory_recall_count?: number; suggest_followups?: boolean; daily_session?: boolean };
   logging: { level?: string | null; directory?: string | null; retention_days?: number | null };
   agents: { id: string; spec_path: string; model?: string | null }[];
-  routing?: { default_models?: string[]; claude_default_model?: string | null; auto_fallback?: boolean };
+  routing?: { default_models?: string[]; auto_fallback?: boolean };
   /** Yinyue's settings. The key stays `pet` on disk so old files and phones keep working. */
   pet?: { enabled?: boolean; pet?: string; show_text?: boolean; recall_count?: number; recall_min_score?: number; model?: string; voice?: string; muted?: boolean; unprompted_per_hour?: number; quiet_hours?: string };
 }
@@ -322,8 +320,8 @@ export interface ModelConfigUI {
 }
 
 export interface SessionInfo {
-  runtime?: 'linggen' | 'claude_agent_sdk';
-  claude_permission_mode?: 'default' | 'acceptEdits' | 'plan';
+  /** Absent for a Linggen session; an old Claude session's is read by lib/oldClaude.mts. */
+  runtime?: string;
   parent_session_id?: string | null;
   id: string;
   repo_path: string;

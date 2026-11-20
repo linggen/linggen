@@ -34,8 +34,6 @@ interface ServerState {
   refreshRuntimeModels: () => Promise<void>;
   ollamaStatus: OllamaPsResponse | null;
   defaultModels: string[];
-  /** Default for Claude sessions; '' when none is set. */
-  claudeDefaultModel: string;
   skills: SkillInfo[];
   agentRuns: AgentRunInfo[];
   /** Run id → the place the engine told its turn stands in (a day's
@@ -101,7 +99,6 @@ interface ServerState {
   fetchModels: () => Promise<void>;
   fetchDefaultModels: () => Promise<void>;
   toggleDefaultModel: (modelId: string) => Promise<void>;
-  toggleClaudeDefaultModel: (modelId: string) => Promise<void>;
   setReasoningEffort: (modelId: string, effort: string | null) => Promise<void>;
   fetchOllamaStatus: () => Promise<void>;
   fetchSkills: () => Promise<void>;
@@ -126,7 +123,6 @@ export const useServerStore = create<ServerState>((set, get) => ({
   modelsLoaded: false,
   ollamaStatus: null,
   defaultModels: [],
-  claudeDefaultModel: '',
   skills: [],
   skillsLoaded: false,
   agentRuns: [],
@@ -216,16 +212,6 @@ export const useServerStore = create<ServerState>((set, get) => ({
         return { ...config, routing: { ...config.routing, default_models: next } };
       });
       set({ defaultModels: saved.routing?.default_models ?? [] });
-    } catch { /* ignore */ }
-  },
-
-  toggleClaudeDefaultModel: async (modelId) => {
-    try {
-      const saved = await appConfig.update((config) => {
-        const next = config.routing?.claude_default_model === modelId ? null : modelId;
-        return { ...config, routing: { ...config.routing, claude_default_model: next } };
-      });
-      set({ claudeDefaultModel: saved.routing?.claude_default_model ?? '' });
     } catch { /* ignore */ }
   },
 

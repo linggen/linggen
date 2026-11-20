@@ -19,26 +19,36 @@ A session is the fundamental unit of interaction. Each session holds one context
 - `agentic-loop.md`: how the engine runs inside a context.
 - `shared-session-spec.md`: several agents at one table — members, the thread, who answers.
 
-## Execution runtime
+## Old Claude sessions
 
-The existing New chat button creates a native Linggen session. A second
-**New Claude session** button creates a conversation with one Claude Agent.
-All messages in it go directly to the Claude Agent SDK; no `@` is needed and
-native agents cannot join. The runtime stays fixed for that session.
+Up to 2.5.1 a **New Claude session** button made a conversation the Claude
+Agent SDK ran. That runtime is gone (2.5.2): every session is a Linggen
+session, and a Claude model runs in one natively (`models.md`).
 
-Claude sessions use SDK tools, context and permissions. Linggen's widgets
-render their output and user interactions, but native persona, skill/mission
-injection, compaction and path authorization are not applied. The SDK owns
-its resume state independently of the visible chat log. A linked parent may
-start and track the task without entering its conversation.
+A Claude session kept from before (`runtime: claude_agent_sdk` in its
+`session.yaml`) opens read-only:
 
-A folder's own Claude configuration (`.claude/`, `CLAUDE.md`,
-`CLAUDE.local.md`, `.mcp.json`, in the folder or a parent short of `$HOME`)
-loads only after the person trusted that folder once, as Claude Code asks.
-A folder with none is never asked about: it runs on user settings until some
-appears. A "no" holds for that session and folder — kept in the session's
-directory, so an engine restart does not ask again — until Clear or an SDK
-reset ends the conversation.
+- its history shows as it was; renaming, clearing and deleting work as for
+  any session;
+- it takes no turn and changes no model — every door says why, and the one
+  check every turn passes refuses it (`refuse_foreign_runtime`,
+  `engine/agent/mod.rs`); an engine restart does not continue it;
+- in place of the composer the page says one line and offers **Continue in
+  Linggen**: `POST /api/sessions/continue` makes a new Linggen Coding
+  session (`work: code`) in the same folder — on the model the old session
+  pinned when this engine runs it, else the default chain (not the retired
+  Claude sessions' default). Its first row carries the conversation: the
+  person's messages and Claude's replies, the newest kept, up to 40,000
+  characters; tool calls and their results stay behind (the files they
+  touched are in the folder). The row is a compaction row, so every member
+  reads it as a system note (`shared-session-spec.md` § The thread), and the
+  page shows its first line as a divider. The old session is left as it was.
+  A message queued in it before the upgrade is not sent.
+
+`src/server/old_claude.rs` holds this; `ui/src/lib/oldClaude.mts` is the one
+place the page tells such a session apart. A request that still names the
+runtime when making a session (`POST /api/sessions` `runtime`) gets a Linggen
+session.
 
 ## Core concept
 
@@ -68,7 +78,6 @@ A `session.yaml` written before this rule with no `cwd` is read as its project, 
 2. **Agent or user runs `cd`** — after any bash command, the backend checks the new cwd.
 3. **Git detection** — if `.git/` exists in the cwd or any parent up to `$HOME` (never above it; home itself is never a project), the session enters **project mode** for that git root. The engine uses that root for project agents and git context. Instruction loading does not require Git.
 4. **Leaving a project** — the project is sticky: a `cd` to a folder outside any git repo moves the working folder but keeps the last project (a shell bouncing out of the repo keeps it); a `cd` into another repo switches it. A session that has never been in a repo stays in **home mode**.
-5. **Claude sessions** — the SDK reports its main thread's `cd` (a subagent's is ignored), and the session moves the same way. The SDK conversation still resumes in the folder it started in.
 
 ### Home mode vs project mode
 
@@ -122,7 +131,7 @@ Every session has a creator that determines how it was born and what capabilitie
 Each occasion a session is made for is a **preset**: a person's chat, an
 app's chat, Linggen's daily session, the companion's own thread, a hand-off,
 a mission, an `agent_run` delegate, an app's one-off job (bound values or
-tools withheld), a Claude session. A kept session's preset is read from what
+tools withheld), an old Claude session (read-only). A kept session's preset is read from what
 its `session.yaml` already holds (creator, runtime, id shape, params,
 withheld tools) — nothing new is stored. The preset's row in one table gives
 the session's strategies: who leads, its folder, its tools, which memory,
@@ -348,8 +357,7 @@ Full native turns load `AGENTS.md`, `CLAUDE.md`, `.cursorrules` and
 `CLAUDE.local.md` at the workspace root and its parents, outermost first.
 A workspace under home stops at home (inclusive); one outside home can walk
 up to the filesystem root. Git is not required. Owner chat, delegates,
-missions and skill sessions get this context; consumers do not. Claude SDK
-sessions keep their own loader. Native coding turns load the person's
+missions and skill sessions get this context; consumers do not. Native coding turns load the person's
 `~/.claude/CLAUDE.md` first, labelled with its path. Companion, app and
 consumer turns do not get it. Coding turns also load the project's
 `.claude/rules/**/*.md` that have no `paths:` front matter.

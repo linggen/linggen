@@ -1,7 +1,6 @@
 /**
  * What a session's top bar says about spend — the one place that decides it,
- * for every runtime (SessionSpend.tsx only draws it):
- *  - a Claude SDK session: the SDK's own cost figure;
+ * (SessionSpend.tsx only draws it):
  *  - tokens a pay-per-token model used: an estimate in dollars when the
  *    engine knew a price, else the tokens and no dollars — never a guess;
  *  - a ChatGPT-account model: its allowance (the meter draws itself).
@@ -44,17 +43,12 @@ export interface SessionSpend {
 }
 
 export interface SpendFacts {
-  /** The session runs on the Claude SDK; `claudeCost` is its own figure, absent until it reports one. */
-  claude: boolean;
-  claudeCost?: number;
   /** The chosen model signs in with a ChatGPT account. */
   onChatGpt: boolean;
   usage?: SessionSpend | null;
 }
 
 export type SpendView = {
-  /** The Claude SDK's figure: `null` while it has none yet. */
-  claude?: { cost: number | null };
   /** A priced model's estimate, with the tokens behind it. */
   estimate?: { text: string; title: string };
   /** An unpriced pay-per-token model: tokens, no dollars. */
@@ -109,7 +103,6 @@ function spends(u?: SessionSpend | null): u is SessionSpend {
 }
 
 export function spendView(f: SpendFacts): SpendView {
-  if (f.claude) return { claude: { cost: f.claudeCost ?? null } };
   const view: SpendView = {};
   if (spends(f.usage)) {
     if (f.usage.cost_usd !== undefined) view.estimate = estimateOf(f.usage, f.usage.cost_usd);

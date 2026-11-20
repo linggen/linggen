@@ -457,12 +457,12 @@ pub struct RoutingConfig {
     /// Ordered list of model IDs selected as defaults by the user.
     /// The first model in the list is the primary default; others are fallbacks.
     pub default_models: Vec<String>,
-    /// Model for new Claude sessions (Settings → Models, the moon). Must be an
-    /// Anthropic API-key model; unset or unusable falls back to
-    /// `default_models`, then to the first usable Claude model.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(any(test, feature = "test-support"), ts(optional = nullable))]
-    pub claude_default_model: Option<String>,
+    /// Retired with the Claude Agent SDK session (2.5.2): the 2.5.1 default
+    /// for Claude sessions. Read on load only, by
+    /// [`Config::migrate_retired_claude_default`], never written.
+    #[serde(skip_serializing)]
+    #[cfg_attr(any(test, feature = "test-support"), ts(skip))]
+    claude_default_model: Option<String>,
     /// When true, automatically try the next model on transient errors
     /// (timeout, rate limit, 502/503, connection failures). Default: true.
     pub auto_fallback: bool,
@@ -523,6 +523,7 @@ impl Config {
         config.server.migrated_legacy_addr = config.server.migrate_legacy_fields();
         config.migrate_retired_chatgpt_builtins();
         config.migrate_retired_cloud_ids();
+        config.migrate_retired_claude_default();
         config.drop_bad_prices();
         Ok(config)
     }
@@ -624,6 +625,20 @@ impl Config {
                 self.routing.default_models.clone(),
                 self.pet.model.clone(),
             )
+    }
+
+    /// Upgrade from 2.5.1, kept for safe operation: the retired Claude
+    /// sessions' default becomes the default model when the config named no
+    /// other, so a person who ran only Claude keeps working on it — natively —
+    /// with no step of theirs. Test:
+    /// `a_claude_session_default_is_read_as_the_native_default`.
+    fn migrate_retired_claude_default(&mut self) {
+        let Some(model) = self.routing.claude_default_model.take() else {
+            return;
+        };
+        if self.routing.default_models.is_empty() && !model.is_empty() {
+            self.routing.default_models.push(model);
+        }
     }
 
     /// Re-point persisted references to a retired Linggen Cloud id (routing
@@ -1014,17 +1029,27 @@ mod tests {
         assert!(!cfg.pet.muted);
     }
 
-    /// The Claude sessions' default is its own key: absent until set, and it
-    /// leaves the Linggen default chain alone.
+    /// Upgrade from 2.5.1: the retired Claude-session default
+    /// (`routing.claude_default_model`) becomes the default model when the
+    /// config named no other, so a person who used only Claude keeps it with
+    /// no step of theirs; the key is never written again.
     #[test]
-    fn claude_default_model_is_its_own_key() {
-        let mut cfg = Config::default();
-        let unset = toml::to_string(&cfg).unwrap();
-        assert!(!unset.contains("claude_default_model"));
-        cfg.routing.claude_default_model = Some("claude-sonnet-5-5".into());
-        let back: Config = toml::from_str(&toml::to_string(&cfg).unwrap()).unwrap();
-        assert_eq!(back.routing.claude_default_model.as_deref(), Some("claude-sonnet-5-5"));
-        assert_eq!(back.routing.default_models, cfg.routing.default_models);
+    fn a_claude_session_default_is_read_as_the_native_default() {
+        // A 2.5.1 file: the whole default config, its `[routing]` as given.
+        let file = |routing: &str| {
+            let mut cfg = Config::default();
+            cfg.routing.default_models.clear();
+            let text = toml::to_string(&cfg).unwrap();
+            let (head, tail) = text.split_once("[routing]\n").unwrap();
+            let tail = tail.replacen("default_models = []\n", "", 1);
+            Config::from_toml(&format!("{head}[routing]\n{routing}{tail}")).unwrap()
+        };
+        let only = file("claude_default_model = \"claude-sonnet-5-5\"\n");
+        assert_eq!(only.routing.default_models, vec!["claude-sonnet-5-5".to_string()]);
+        assert!(!toml::to_string(&only).unwrap().contains("claude_default_model"));
+        let both = file("default_models = [\"m1\"]\nclaude_default_model = \"claude-sonnet-5-5\"\n");
+        assert_eq!(both.routing.default_models, vec!["m1".to_string()]);
+        assert!(!toml::to_string(&both).unwrap().contains("claude_default_model"));
     }
 
     /// Settings → Agents writes Ling's pick to the front of the default chain

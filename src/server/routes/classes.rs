@@ -95,7 +95,6 @@ pub(crate) const CLASSES: &[(&str, &str, RouteClass)] = &[
     ("GET", "/api/user/name", At(Read)),
     ("GET", "/api/reach", At(Read)),
     ("GET", "/api/utils/ollama-status", At(Read)),
-    ("GET", "/api/sessions/claude-capabilities", At(Read)),
     ("GET", "/api/sessions/images", At(Read)),
     ("GET", "/api/sessions/permission", At(Read)),
     // -- Edit: what changes something on this Mac for the caller — a turn's
@@ -127,6 +126,7 @@ pub(crate) const CLASSES: &[(&str, &str, RouteClass)] = &[
     // the doors other programs on this Mac use.
     ("DELETE", "/api/sessions/all", At(Admin)),
     ("PATCH", "/api/sessions", At(Admin)),
+    ("POST", "/api/sessions/continue", At(Admin)),
     ("PATCH", "/api/sessions/permission", At(Admin)),
     ("GET", "/api/sessions/running", At(Admin)),
     ("GET", "/api/agent/wait", At(Admin)),

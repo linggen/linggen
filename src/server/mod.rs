@@ -6,7 +6,6 @@ pub(crate) mod background;
 pub(crate) mod bridge;
 mod chat;
 pub(crate) mod day_session;
-pub(crate) mod claude;
 mod event_log;
 mod facts;
 mod loopback_guard;
@@ -19,6 +18,7 @@ mod mcp_grants;
 #[cfg(test)]
 mod model_locks;
 mod met_watch;
+pub(crate) mod old_claude;
 pub(crate) mod milestones;
 pub(crate) mod person;
 mod push;
@@ -67,10 +67,6 @@ async fn prepare_server(
     let events_tx =
         crate::engine::event_bus::EventBus::new(4096);
 
-    let prompt_store = Arc::new(crate::prompts::PromptStore::load(Some(
-        &crate::prompts::PromptStore::default_override_dir(),
-    )));
-
     // Pet/voice settings drive the TTS engine choice + whether to pre-warm it.
     let pet_cfg = manager.get_config_snapshot().await.pet;
 
@@ -92,11 +88,9 @@ async fn prepare_server(
         skills,
         assets,
         missions,
-        prompt_store,
         queued_chats: Arc::new(Mutex::new(HashMap::new())),
         admission: Default::default(),
         fold: Default::default(),
-        claude: Default::default(),
         tasks: Default::default(),
         pending_ask_user: Arc::new(Mutex::new(HashMap::new())),
         status_seq: AtomicU64::new(1),

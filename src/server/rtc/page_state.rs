@@ -85,10 +85,6 @@ pub struct PageState {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_models: Option<Vec<String>>,
 
-    /// The Claude sessions' default; empty when none is set.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub claude_default_model: Option<String>,
-
     #[serde(skip_serializing_if = "Option::is_none")]
     pub skills: Option<Vec<serde_json::Value>>,
 
@@ -280,7 +276,6 @@ pub async fn build_page_state(
         all_sessions: None,
         models: None,
         default_models: None,
-        claude_default_model: None,
         skills: None,
         missions: None,
         pending_ask_user: None,
@@ -382,8 +377,6 @@ pub async fn build_page_state(
         if is_admin {
             if let Ok((config, _)) = crate::config::Config::load_with_path() {
                 ps.default_models = Some(config.routing.default_models.clone());
-                ps.claude_default_model =
-                    Some(config.routing.claude_default_model.clone().unwrap_or_default());
             }
         }
 
@@ -572,7 +565,6 @@ fn model_row(m: &crate::config::ModelConfig, auth_ok: bool) -> serde_json::Value
         "supports_tools": m.supports_tools,
         "provided_by": m.provided_by,
         "auth_ok": auth_ok,
-        "supports_claude_sdk": crate::server::claude::supports_model(m),
         "signs_in_with_chatgpt": m.signs_in_with_chatgpt(),
     })
 }

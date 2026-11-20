@@ -81,7 +81,6 @@ export const apiDelete = <T>(path: string, body?: unknown): Promise<T> =>
 // ---------------------------------------------------------------------------
 
 interface SessionCreateRequest {
-  runtime?: 'claude_agent_sdk';
   title: string;
   /** A skill-bound session (an app page's chat): binds the skill's rules and tools. */
   skill?: string;
@@ -89,7 +88,6 @@ interface SessionCreateRequest {
   params?: Record<string, string>;
 }
 interface SessionCreateResponse {
-  runtime?: 'claude_agent_sdk';
   agents?: import('./sessionMembers.mts').SessionMember[];
   id: string;
   /** The folder the engine started the session in. */
@@ -109,6 +107,9 @@ interface SessionRenameRequest {
 export const sessions = {
   create: (req: SessionCreateRequest) =>
     apiPost<SessionCreateResponse>('/api/sessions', req),
+  /** A new Linggen session that goes on from an old Claude session (lib/oldClaude.mts). */
+  continueOld: (sessionId: string) =>
+    apiPost<{ id: string; cwd?: string }>('/api/sessions/continue', { session_id: sessionId }),
   remove: (req: SessionDeleteRequest) =>
     apiDelete<void>('/api/sessions/all', req),
   rename: (req: SessionRenameRequest) =>

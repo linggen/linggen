@@ -114,7 +114,7 @@ A dollar figure is worked out for each call when it is made, and only for a mode
 - **The built-in table** (`provider/models/pricing.rs`) lists models of Anthropic's own API (provider `anthropic`, `api.anthropic.com`, a key — not a gateway, not a Claude subscription), each with the day the price was checked. USD per million tokens, input / output / cache read / cache write (the 5-minute write, 1.25x input — the engine sets no 1-hour ttl), as of 2026-11-03: claude-opus-5-5 4 / 20 / 0.20 / 5; claude-sonnet-5-5 2 / 10 / 0.10 / 2.50; claude-haiku-5-5 0.10 / 0.50 / 0.01 / 0.125 for a prompt up to 100,000 tokens and 0.50 / 2.50 / 0.05 / 0.625 above it, each request on its own; claude-fable-5-2 8 / 40 / 0.20 / 10.
 - **`price` in the model's config** replaces the table's row, and prices a model the table does not list. A model with a `price` is metered whatever its host (a gateway on the LAN is not "local"). Every number must be finite and not negative, and a model that bills an account cannot have one. Strict when writing, lenient when reading: a save (the Models tab, `POST /api/config`) with a bad price is refused, the error naming the model and the field; a file already holding one loads anyway — that model alone loses its price (tokens, no dollars), the rest of the config is untouched, and the problem is an error line in the log and a `[FAIL] Config` line in `ling status`.
 - **No price, no figure.** The tokens are shown and nothing is guessed. The figure is an estimate at list price; the bill can differ.
-- **An account or local model has no per-token price** (the ChatGPT sign-in, Linggen Cloud, a room's model, a Claude subscription, a model on this machine's network): it shows its allowance meter or nothing, and a session's spend leaves its tokens out. The Claude SDK runtime's own cost figure (`claude_usage`) is the host's and stays as it is.
+- **An account or local model has no per-token price** (the ChatGPT sign-in, Linggen Cloud, a room's model, a Claude subscription, a model on this machine's network): it shows its allowance meter or nothing, and a session's spend leaves its tokens out.
 
 One answer serves both readers (`server/session_cost.rs`): `GET /api/workspace/state` (for the session's top bar — `ui/src/lib/spend.mts` only words it) and `agent_status` (for a caller telling the person what a delegated job cost) both carry `usage`, the engine's ledger, and for a Claude SDK session `claude_usage`, the host's own figure. `usage` lists each model's counts and `cost_usd` (only when priced), the tokens of the models that count as spend (each count block also carries its `prompt`), the part of them that was priced (`priced_tokens`) and the part that was not (`unpriced_tokens`), `spent` (any of them used at all), a total `cost_usd` over the priced ones, and `unpriced`, the models whose tokens are not in that total.
 
@@ -165,10 +165,15 @@ All use their respective `provider` value (or `provider = "openai"` with their e
 
 ## Default model
 
-Settings → Models sets one default per kind of session:
+Settings → Models sets the default:
 
-- **Star** — the default for Linggen sessions (`routing.default_models`).
-- **Moon** — the default for Claude sessions (`routing.claude_default_model`). Only Anthropic API-key models can take it. Unset, or the model no longer usable, Claude sessions fall back to the star, then to the first Claude API-key model in the list.
+- **Star** — the default for new sessions (`routing.default_models`).
+
+A Claude model runs natively, with an API key or the Claude subscription
+sign-in. The 2.5.1 key for the retired Claude sessions' default,
+`routing.claude_default_model`, is read once on load: when the config names
+no other default it becomes the star, so a person who ran only Claude keeps
+it (`Config::migrate_retired_claude_default`); it is never written again.
 
 ## Which model a turn runs on
 

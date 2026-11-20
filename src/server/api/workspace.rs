@@ -276,8 +276,7 @@ pub(crate) async fn read_file_api(
 
 #[derive(Serialize)]
 struct WorkspaceStateResponse {
-    /// What the session cost: `claude_usage` and `usage`, the answer
-    /// `agent_status` gives too.
+    /// What the session cost (`usage`), the answer `agent_status` gives too.
     #[serde(flatten)]
     cost: crate::server::session_cost::SessionCost,
     active_task: Option<(crate::state_fs::StateFile, String)>,
@@ -381,12 +380,6 @@ pub(crate) async fn get_workspace_state(
 
     // A notice said aloud while the person was away marks its run's reply.
     crate::server::resident::mark_rows(sid, mapped_messages.iter_mut().map(|(meta, _)| meta));
-    crate::server::claude::subagents::attach(
-        &state.manager.global_sessions,
-        sid,
-        &state.claude.running_children(sid),
-        &mut mapped_messages,
-    );
     let refs = crate::engine::answer_refs::view::refs_for(
         &state.manager.global_sessions,
         sid,

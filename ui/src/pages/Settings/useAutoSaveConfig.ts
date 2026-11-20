@@ -59,10 +59,7 @@ export function useAutoSaveConfig(enabled = true) {
           await appConfig.save(config);
           setSaved(config);
           // The chat's model pickers read the defaults from here.
-          useServerStore.setState({
-            defaultModels: config.routing?.default_models ?? [],
-            claudeDefaultModel: config.routing?.claude_default_model ?? '',
-          });
+          useServerStore.setState({ defaultModels: config.routing?.default_models ?? [] });
           // A new language is the whole page's: reload it into the new words.
           if (config.language !== saved.language) {
             rememberLanguage(config.language ?? null);

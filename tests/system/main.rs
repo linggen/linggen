@@ -11,10 +11,7 @@
 
 mod assets;
 mod background;
-mod claude_bridge;
-mod claude_host;
 mod claude_rules;
-mod claude_subagents;
 mod day_places;
 mod day_session;
 mod delegate;

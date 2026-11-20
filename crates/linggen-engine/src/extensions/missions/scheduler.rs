@@ -363,7 +363,6 @@ pub(crate) fn mission_session_meta(
     let mut meta = crate::state_fs::sessions::SessionMeta {
         work: None,
         runtime: Default::default(),
-        claude_permission_mode: Default::default(),
         parent_session_id: None,
         id: session_id.to_string(),
         title: mission_session_title(mission),

@@ -120,7 +120,6 @@ function loadSnapshot(sessionId: string, data: SessionState): LoadSnapshot {
   return {
     sessionId,
     messageCount: data?.messages?.length ?? 0,
-    estimatedCost: data?.claude_usage?.estimated_cost_usd,
     spend: data?.usage?.models.reduce((n, m) => n + m.calls + m.input + m.output + m.cache_read + m.cache_write, 0),
     agentStatus: data?.agent_status,
     planStatus: data?.plan_status,

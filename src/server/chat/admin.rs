@@ -22,28 +22,8 @@ pub(crate) async fn clear_chat_history_api(
         .session_id
         .clone()
         .unwrap_or_else(|| "default".to_string());
-    // Clearing a Claude chat resets the SDK conversation under its turn lock,
-    // after cancellation has unwound widgets and saved the old transcript.
-    let claude = state
-        .manager
-        .global_sessions
-        .get_session_meta(&session_id)
-        .ok()
-        .flatten()
-        .is_some_and(|m| !m.runtime.is_linggen());
-    let _sdk_turn = match claude {
-        true => match crate::server::claude::quiesce(&state, &session_id).await {
-            Ok(guard) => Some(guard),
-            Err(error) => return (StatusCode::CONFLICT, error.to_string()).into_response(),
-        },
-        false => None,
-    };
     // Clear ends the session's background shells and subagents (silently).
     crate::engine::background::end_session(&state.manager, &session_id).await;
-    // A cleared Claude chat starts a new SDK conversation: the old copy goes.
-    if claude {
-        crate::server::claude::forget_transcript(&state, &session_id);
-    }
     // project_root not needed — chat history is stored globally by session ID.
     // Skipping canonicalize avoids failures when the project directory is deleted.
     match state
@@ -55,20 +35,6 @@ pub(crate) async fn clear_chat_history_api(
             if state.tasks.forget(&session_id) {
                 crate::server::tasks::emit(&state, &session_id);
             }
-            if claude {
-                let dir = state.manager.global_sessions.session_dir(&session_id);
-                crate::server::claude::usage::clear(&dir).ok();
-                std::fs::remove_file(dir.join("claude-subagents.json")).ok();
-                state.claude.forget_session(&session_id);
-                crate::server::claude::trust::forget_decline(&dir);
-            }
-            let _ = std::fs::remove_file(
-                state
-                    .manager
-                    .global_sessions
-                    .session_dir(&session_id)
-                    .join("claude.json"),
-            );
             // Clear in-memory chat history for this session's engine.
             // Clone the engine out and drop the map guard before waiting on
             // it: the engine lock is held for a whole turn, and holding the
@@ -334,9 +300,9 @@ pub(crate) async fn compact_chat_api(
         .get_session_meta(&session_id)
         .ok()
         .flatten()
-        .is_some_and(|m| !m.runtime.is_linggen())
+        .is_some_and(|m| crate::server::old_claude::is_read_only(&m))
     {
-        return (StatusCode::BAD_REQUEST, "Claude manages its own context.").into_response();
+        return (StatusCode::GONE, crate::server::old_claude::READ_ONLY).into_response();
     }
     let root = match PathBuf::from(&req.project_root).canonicalize() {
         Ok(r) => r,
@@ -600,10 +566,10 @@ mod tests {
     fn only_the_owner_side_or_the_sessions_own_consumer_answers_a_widget() {
         let dir = tempfile::tempdir().unwrap();
         let store = crate::state_fs::sessions::SessionStore::with_sessions_dir(dir.path().into());
-        let mut room = crate::server::claude::new_meta("room".into(), "/p".into(), None);
+        let mut room = crate::state_fs::sessions::SessionMeta { id: "sess-1-room".into(), ..Default::default() };
         room.user_id = Some("room-user".into());
         store.add_session(&room).unwrap();
-        let owners = crate::server::claude::new_meta("owner".into(), "/p".into(), None);
+        let owners = crate::state_fs::sessions::SessionMeta { id: "sess-2-owner".into(), ..Default::default() };
         store.add_session(&owners).unwrap();
         for who in ["owner", "paired"] {
             assert!(may_answer(&store, Some(&owners.id), who, None));

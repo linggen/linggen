@@ -651,42 +651,6 @@ async fn save_recall(
     .await;
 }
 
-/// One owner turn's memory for a session whose loop is not an AgentEngine
-/// (a Claude session): the same recall, recall row and capture nudge a
-/// native owner turn gets. Returns the model-only text.
-pub(crate) async fn owner_turn_memory(
-    state: &Arc<ServerState>,
-    agent_id: &str,
-    prompt: &str,
-    session_id: &str,
-) -> String {
-    let config = state.manager.get_config_snapshot().await;
-    let recalled = auto_recall_memory(
-        state,
-        prompt,
-        Some(session_id),
-        config.agent.memory_inject_min_score,
-        config.agent.memory_recall_count,
-        None,
-    )
-    .await;
-    let mut parts = Vec::new();
-    if let Some(rows) = recalled {
-        let model_text = format_recall_for_model(&rows);
-        save_recall(
-            &state.manager.global_sessions,
-            &state.events_tx,
-            agent_id,
-            &model_text,
-            Some(session_id),
-        )
-        .await;
-        parts.push(model_text);
-    }
-    parts.push(crate::engine::prompt::core_block::CAPTURE_REMINDER.to_string());
-    parts.join("\n\n")
-}
-
 /// Forward an engine's thinking-channel events to the SSE event bus.
 /// Spawned per-turn for plan dispatch, plan execution, and the structured loop.
 pub(super) fn spawn_thinking_forwarder(

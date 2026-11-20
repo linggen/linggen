@@ -82,23 +82,13 @@ pub(crate) async fn cancel_agent_run(
         .manager
         .run_store
         .get_run(&req.run_id)
-        .map(|r| r.session_id)
-        .or_else(|| crate::server::claude::subagents::session_of(&state, &req.run_id));
+        .map(|r| r.session_id);
     let theirs = match &session {
         Some(sid) => crate::server::day_session::may_enter(sid, &asker),
         None => asker.is_owner(),
     };
     if !theirs {
         return (StatusCode::FORBIDDEN, "that session is another person's").into_response();
-    }
-    if let Some(result) = crate::server::claude::subagents::cancel(&state, &req.run_id).await {
-        return match result {
-            Ok(()) => Json(CancelRunResponse {
-                status: "ok".into(),
-            })
-            .into_response(),
-            Err(error) => (StatusCode::CONFLICT, error.to_string()).into_response(),
-        };
     }
     match state.manager.cancel_run_tree(&req.run_id).await {
         Ok(runs) => {
@@ -458,5 +448,44 @@ mod path_tests {
         };
         let status = get_agent_file_api(Query(query)).await.into_response().status();
         assert_ne!(status, StatusCode::OK, "a file outside home was read");
+    }
+}
+
+#[derive(Deserialize)]
+pub(crate) struct SteerRequest {
+    id: String,
+    /// The caller's person: a message waiting in a day is steered only by
+    /// its own person.
+    #[serde(default)]
+    user_id: Option<String>,
+}
+
+/// POST /api/queue/steer — send one queued message into the running turn
+/// now: the running turn hands off what it waits on (`fold.rs`). Never while a
+/// question is open: the message joins at the step after it is answered.
+pub(crate) async fn steer_queued(
+    State(state): State<Arc<ServerState>>,
+    Json(req): Json<SteerRequest>,
+) -> axum::response::Response {
+    use crate::server::chat;
+    let waits_in = chat::queued_session(&state, &req.id).await;
+    if waits_in.is_some_and(|sid| !crate::server::day_session::may_enter(&sid, &crate::server::person::Person::from_wire(req.user_id.as_deref()))) {
+        return (StatusCode::FORBIDDEN, "that session is another person's").into_response();
+    }
+    if chat::question_open_for_queued(&state, &req.id).await {
+        return (
+            StatusCode::CONFLICT,
+            "A question is open: the message joins once it is answered.",
+        )
+            .into_response();
+    }
+    match state.fold.steer(&req.id) {
+        chat::fold::Steered::Now => {
+            chat::mark_steered(&state, &req.id).await;
+            Json(serde_json::json!({"status": "ok"})).into_response()
+        }
+        chat::fold::Steered::Gone => {
+            (StatusCode::NOT_FOUND, "That message is no longer waiting.").into_response()
+        }
     }
 }

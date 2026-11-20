@@ -21,11 +21,11 @@ pub(super) fn routes() -> Routes {
         .route("/api/sessions/all", delete(delete_unified_session))
         .route("/api/sessions", post(create_session))
         .route("/api/sessions", patch(rename_session_api))
-        .route(
-            "/api/sessions/claude-capabilities",
-            get(crate::server::claude::capabilities),
-        )
         .route("/api/sessions/images", get(get_session_image))
+        .route(
+            "/api/sessions/continue",
+            post(crate::server::old_claude::continue_api),
+        )
         .route(
             "/api/sessions/day",
             get(crate::server::day_session::day_session_api),
@@ -43,7 +43,7 @@ pub(super) fn routes() -> Routes {
         .route("/api/task", post(set_task))
         .route("/api/agent-cancel", post(cancel_agent_run))
         .route("/api/queue/remove", post(remove_queued_message))
-        .route("/api/queue/steer", post(crate::server::claude::steer_queued))
+        .route("/api/queue/steer", post(crate::server::api::agents::steer_queued))
         .route("/api/tasks/stop", post(crate::server::tasks::stop))
         .route("/api/engine/restart", post(crate::server::restart::restart))
         .route("/api/restart/current", post(crate::server::restart::restart_current))

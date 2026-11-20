@@ -236,35 +236,19 @@ async fn perform_restart(
         else {
             continue;
         };
-        if meta.creator == "mission" {
+        // A mission's turn is its own; a 2.5.1 Claude session is a
+        // read-only record (`SessionRuntime::ClaudeAgentSdk`) with no turn.
+        if meta.creator == "mission" || crate::server::old_claude::is_read_only(&meta) {
             continue;
         }
-        let agent = if meta.runtime.is_linggen() {
-            super::chat::members::default_responder(
-                &super::chat::members::of_session(&state.manager, &sid).await,
-            )
-        } else {
-            "claude".to_string()
-        };
+        let agent = super::chat::members::default_responder(
+            &super::chat::members::of_session(&state.manager, &sid).await,
+        );
         turns.push((sid, agent));
     }
     if let Some(sid) = &caller {
         if !turns.iter().any(|(s, _)| s == sid) {
-            let agent = state
-                .manager
-                .global_sessions
-                .get_session_meta(sid)
-                .ok()
-                .flatten()
-                .map_or("ling", |meta| {
-                    if meta.runtime.is_linggen() {
-                        "ling"
-                    } else {
-                        "claude"
-                    }
-                })
-                .to_string();
-            turns.push((sid.clone(), agent));
+            turns.push((sid.clone(), "ling".to_string()));
         }
     }
     // A session can be idle while its background work is still running.
@@ -440,8 +424,6 @@ async fn go_on(
             .unwrap_or("ling")
             .to_string();
         tokio::spawn(super::tasks::tell(state.clone(), sid, agent, message));
-    } else {
-        super::claude::start_task(state.clone(), sid, message, "system".into()).await;
     }
 }
 
@@ -744,13 +726,7 @@ async fn deliver(
             .filter(|(_, kept)| !kept)
             .map(|(d, _)| d)
             .collect();
-        // A Claude session's turn runs whether or not its row was kept:
-        // it is never tried twice. A native one that was not kept never ran.
-        let (native, claude): (Vec<_>, Vec<_>) = pending
-            .into_iter()
-            .partition(|d| d.meta.runtime.is_linggen());
-        given_up.extend(claude);
-        pending = native;
+        // A turn that was not kept never ran: it is tried again.
         if pending.is_empty() {
             break;
         }
@@ -810,6 +786,12 @@ fn deliveries_for(
     else {
         return Vec::new();
     };
+    // A 2.5.1 Claude session named in a plan written before the upgrade is a
+    // read-only record now: it is not continued.
+    if crate::server::old_claude::is_read_only(&meta) {
+        tracing::info!("[restart] {sid} is a read-only Claude session; not continued");
+        return Vec::new();
+    }
     let agent = session["agent_id"]
         .as_str()
         .or_else(|| {
@@ -818,11 +800,7 @@ fn deliveries_for(
                 .and_then(|items| items.first())
                 .and_then(|item| item["agent_id"].as_str())
         })
-        .unwrap_or(if meta.runtime.is_linggen() {
-            "ling"
-        } else {
-            "claude"
-        });
+        .unwrap_or("ling");
     let tasks: Vec<crate::engine::events::BackgroundTask> = session["tasks"]
         .as_array()
         .into_iter()
@@ -1038,56 +1016,22 @@ fn continue_session(
     (message, origin): (String, super::resident::Origin),
     mark: String,
 ) -> impl std::future::Future<Output = bool> + Send + 'static {
-    let place = meta.runtime.is_linggen().then(|| {
-        let (kept, was_kept) = tokio::sync::oneshot::channel();
-        tokio::spawn(super::tasks::tell_marked(
-            state.clone(),
-            (meta.id.clone(), stands_in),
-            agent.clone(),
-            message.clone(),
-            (mark.clone(), kept),
-            origin,
-        ));
-        was_kept
-    });
+    let (kept, was_kept) = tokio::sync::oneshot::channel();
+    tokio::spawn(super::tasks::tell_marked(
+        state.clone(),
+        (meta.id.clone(), stands_in),
+        agent.clone(),
+        message.clone(),
+        (mark.clone(), kept),
+        origin,
+    ));
     async move {
-        let kept = match place {
-            Some(was_kept) => was_kept.await.is_ok(),
-            None => {
-                super::claude::start_marked_task(
-                    state.clone(),
-                    meta.id.clone(),
-                    message.clone(),
-                    mark.clone(),
-                )
-                .await;
-                wait_until_shown(&state, &meta.id, &message).await;
-                told(&state.manager.global_sessions, &meta.id, &mark)
-            }
-        };
+        let kept = was_kept.await.is_ok();
         // A session deleted meanwhile has no one left to tell.
         kept || !matches!(
             state.manager.global_sessions.get_session_meta(&meta.id),
             Ok(Some(_))
         )
-    }
-}
-
-/// A queued continue turn waits behind the running one: it is shown (kept)
-/// as it leaves the queue, never after.
-async fn wait_until_shown(state: &ServerState, session: &str, message: &str) {
-    loop {
-        let queued = state
-            .queued_chats
-            .lock()
-            .await
-            .values()
-            .flatten()
-            .any(|item| item.session_id == session && item.text == message);
-        if !queued {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(250)).await;
     }
 }
 
@@ -1280,8 +1224,8 @@ mod tests {
             vec![item(11, "s1", "yinyue", "second")],
         );
         all.insert(
-            "s2|claude".to_string(),
-            vec![item(9, "s2", "claude", "alone")],
+            "s2|ling".to_string(),
+            vec![item(9, "s2", "ling", "alone")],
         );
         let queued = queued_messages(&all);
         let s1: Vec<&str> = queued["s1"]

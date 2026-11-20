@@ -225,7 +225,7 @@ fn work_code_preset_table_and_unknown_value() {
     for (preset, accepts) in [
         (Preset::Chat, true), (Preset::Delegate, true), (Preset::Handoff, true),
         (Preset::App, false), (Preset::OneOff, false), (Preset::Daily, false),
-        (Preset::Companion, false), (Preset::Mission, false), (Preset::Claude, false),
+        (Preset::Companion, false), (Preset::Mission, false), (Preset::OldClaude, false),
     ] { assert_eq!(preset.takes_work(), accepts, "{preset:?}"); }
     let value: SessionMeta = serde_norway::from_str("id: x\ntitle: x\ncreated_at: 0\nwork: future\n").unwrap();
     assert_eq!(value.work, None);
@@ -519,11 +519,11 @@ fn each_kind_keeps_its_seat_thread_and_runtime() {
         }
     );
 
-    let claude = crate::engine::claude_sdk::new_meta("t".into(), "/w".into(), None);
+    let claude = SessionMeta { id: "sess-1-claude".into(), runtime: SessionRuntime::ClaudeAgentSdk, ..Default::default() };
     let spec = SessionSpec::of(&claude);
     assert_eq!(
         (spec.preset, spec.runtime),
-        (Preset::Claude, SessionRuntime::ClaudeAgentSdk)
+        (Preset::OldClaude, SessionRuntime::ClaudeAgentSdk)
     );
 
     let mut chat = meta("sess-1-c", "user", None);

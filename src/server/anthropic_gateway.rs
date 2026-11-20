@@ -172,9 +172,12 @@ async fn servable_models(state: &ServerState) -> Vec<ModelConfig> {
         .collect()
 }
 
-/// The models a Claude SDK session may run on are the ones it serves.
+/// The models the gateway serves: Anthropic's, on a key the engine holds.
 fn is_servable(cfg: &ModelConfig) -> bool {
-    crate::server::claude::supports_model(cfg)
+    use crate::config::{ProviderKind, SignIn};
+    cfg.provider_kind() == ProviderKind::Anthropic
+        && cfg.sign_in() != SignIn::Claude
+        && cfg.api_key.as_deref().is_some_and(|key| !key.is_empty())
 }
 
 fn upstream_base(url: &str) -> String {

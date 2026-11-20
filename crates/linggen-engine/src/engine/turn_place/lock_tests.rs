@@ -126,11 +126,6 @@ const LISTED: &[(&str, usize, &str)] = &[
         "a Task call's arguments",
     ),
     (
-        "src/server/api/sessions.rs",
-        1,
-        "SessionMeta::withheld_tools",
-    ),
-    (
         "src/server/day_session.rs",
         1,
         "SessionMeta::withheld_tools",

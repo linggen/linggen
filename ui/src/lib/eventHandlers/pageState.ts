@@ -85,7 +85,6 @@ function applyGlobalLists(ps: PageState): void {
   }
   if (ps.models) useServerStore.setState({ models: ps.models, modelsLoaded: true });
   if (ps.default_models) useServerStore.setState({ defaultModels: ps.default_models });
-  if (ps.claude_default_model !== undefined) useServerStore.setState({ claudeDefaultModel: ps.claude_default_model });
   if (ps.skills) useServerStore.setState({ skills: ps.skills, skillsLoaded: true });
   if (ps.missions) useUiStore.getState().bumpMissionRefreshKey();
 }

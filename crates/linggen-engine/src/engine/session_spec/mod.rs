@@ -101,8 +101,8 @@ pub enum Seat {
     MissionAgent,
     /// The agent the caller named (Ling by default).
     Caller,
-    /// The Claude Agent SDK's agent.
-    Claude,
+    /// No one: an old Claude session takes no turn.
+    Nobody,
 }
 
 /// Where a session works when it is made (`doc/session-spec.md` § Default workspace).
@@ -251,7 +251,7 @@ fn row(preset: Preset) -> Row {
         Handoff => (Seat::SkillMembers, Folder::Skill, Memory::CoreAndApp, own),
         Mission => (Seat::MissionAgent, Folder::Mission, Memory::None, own),
         Delegate => (Seat::Caller, Folder::WriteDir, Memory::Full, own),
-        Claude => (Seat::Claude, Folder::Workspace, Memory::Full, own),
+        OldClaude => (Seat::Nobody, Folder::Workspace, Memory::None, own),
     };
     let (tools, framing, permission) = match preset {
         Mission => (Tools::Mission(None), Framing::Task, Permission::Unattended),
