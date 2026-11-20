@@ -11,7 +11,7 @@
 //! and says whether a call matches ([`ClaudeCall::denies`],
 //! [`ClaudeCall::asks`]); the check decides what a match does.
 
-use super::model::{commands_as_written, file_name, command_run, display_path, normalize_path};
+use super::model::{command_run, commands_as_written, display_path, file_name, normalize_path};
 use std::path::{Component, Path, PathBuf};
 
 /// A settings file larger than this is not read (its rules are listed as
@@ -100,12 +100,16 @@ struct Rule {
     matcher: Matcher,
 }
 
-/// Where a settings file's `/path` rules are anchored.
+/// Where a settings file's rules are anchored.
 struct Source {
     file: PathBuf,
-    /// `~/.claude` for the person's own file, the project folder for a
-    /// project's (Claude Code's "relative to the settings source").
+    /// Where `/path` starts: `~/.claude` for the person's own file, the
+    /// folder holding `.claude/` for a project's (Claude Code's "relative
+    /// to the settings source").
     anchor: PathBuf,
+    /// Where `path` and `./path` start: the folder the run starts in, or
+    /// the git root for the root's own files (it holds that folder).
+    base: PathBuf,
 }
 
 /// The rules in force for one run: read at its start, so a change the run
@@ -115,7 +119,6 @@ pub struct ClaudeRules {
     rules: Vec<Rule>,
     not_understood: Vec<String>,
     home: Option<PathBuf>,
-    project: PathBuf,
 }
 
 /// The rules and what of a call they need beyond the check's own inputs.
@@ -144,13 +147,15 @@ static NONE: ClaudeRules = ClaudeRules {
     rules: Vec::new(),
     not_understood: Vec::new(),
     home: None,
-    project: PathBuf::new(),
 };
 
 impl ClaudeRules {
     /// No rules: the check exactly as it is without Claude's settings.
     pub fn none() -> ClaudeCall<'static> {
-        ClaudeCall { rules: &NONE, url: None }
+        ClaudeCall {
+            rules: &NONE,
+            url: None,
+        }
     }
 
     /// Read the person's file under `home` and the project's two files
@@ -160,11 +165,16 @@ impl ClaudeRules {
         let mut sources = Vec::new();
         if let Some(home) = home {
             let dir = home.join(".claude");
-            sources.push(Source { file: dir.join("settings.json"), anchor: dir });
+            sources.push(Source {
+                file: dir.join("settings.json"),
+                anchor: dir,
+                base: project.to_path_buf(),
+            });
         }
         let mut folders = vec![project.to_path_buf()];
         if let Some(root) = crate::engine::tools::search_exec_find_git_root(project) {
-            if normalize_path(&root.to_string_lossy()) != normalize_path(&project.to_string_lossy()) {
+            if normalize_path(&root.to_string_lossy()) != normalize_path(&project.to_string_lossy())
+            {
                 folders.push(root);
             }
         }
@@ -172,13 +182,13 @@ impl ClaudeRules {
             for name in ["settings.json", "settings.local.json"] {
                 sources.push(Source {
                     file: folder.join(".claude").join(name),
-                    anchor: project.to_path_buf(),
+                    anchor: folder.clone(),
+                    base: folder.clone(),
                 });
             }
         }
         let mut rules = ClaudeRules {
             home: home.map(Path::to_path_buf),
-            project: project.to_path_buf(),
             ..Default::default()
         };
         for source in &sources {
@@ -219,18 +229,25 @@ impl ClaudeRules {
     }
 
     fn add(&mut self, kind: Kind, text: &str, source: &Source) {
-        let parsed = parse(text, &source.anchor, self.home.as_deref(), &self.project);
+        let parsed = parse(text, &source.anchor, self.home.as_deref(), &source.base);
         let (tools, matcher) = match (parsed, kind) {
             (Parsed::Understood(tools, matcher), _) => (tools, matcher),
             (Parsed::NotUnderstood(tools), kind) => {
-                self.not_understood.push(format!("`{text}` in {}", display_path(&source.file)));
+                self.not_understood
+                    .push(format!("`{text}` in {}", display_path(&source.file)));
                 match (tools, kind) {
                     (Some(tools), Kind::Deny) => (tools, Matcher::Every),
                     _ => return,
                 }
             }
         };
-        self.rules.push(Rule { kind, text: text.to_string(), file: source.file.clone(), tools, matcher });
+        self.rules.push(Rule {
+            kind,
+            text: text.to_string(),
+            file: source.file.clone(),
+            tools,
+            matcher,
+        });
     }
 
     /// The call as the check judges it: `url` is a fetch's address.
@@ -239,13 +256,31 @@ impl ClaudeRules {
     }
 
     /// The line shown when a run starts, when any rule was not understood.
+    /// Every rule not understood, as the line would name it uncut.
+    #[cfg(test)]
+    pub(super) fn not_understood(&self) -> &[String] {
+        &self.not_understood
+    }
+
+    /// At most three are named; the line says how many more there are.
     pub fn notice(&self) -> Option<String> {
-        (!self.not_understood.is_empty()).then(|| {
-            format!(
-                "Claude Code rules not understood: {}. An unclear deny refuses its whole tool; an unclear ask is not used.",
-                self.not_understood.join(", ")
-            )
-        })
+        const NAMED: usize = 3;
+        if self.not_understood.is_empty() {
+            return None;
+        }
+        let mut named: Vec<String> = self
+            .not_understood
+            .iter()
+            .take(NAMED)
+            .map(|rule| clip(rule))
+            .collect();
+        if self.not_understood.len() > NAMED {
+            named.push(format!("{} more", self.not_understood.len() - NAMED));
+        }
+        Some(format!(
+            "Claude Code rules not understood: {}. An unclear deny refuses its whole tool; an unclear ask is not used.",
+            named.join(", ")
+        ))
     }
 }
 
@@ -258,29 +293,41 @@ impl ClaudeCall<'_> {
     /// The refusal of the first deny rule the call matches.
     pub(super) fn denies(&self, facts: &Facts<'_>) -> Option<String> {
         self.first(Kind::Deny, facts).map(|rule| {
-            format!("{REFUSAL_HEAD} `{}` in {} denies this.", rule.text, display_path(&rule.file))
+            format!(
+                "{REFUSAL_HEAD} `{}` in {} denies this.",
+                rule.text,
+                display_path(&rule.file)
+            )
         })
     }
 
     /// The reason of the first ask rule the call matches.
     pub(super) fn asks(&self, facts: &Facts<'_>) -> Option<String> {
         self.first(Kind::Ask, facts).map(|rule| {
-            format!("`{}` in {} asks before this, every time.", rule.text, display_path(&rule.file))
+            format!(
+                "`{}` in {} asks before this, every time.",
+                rule.text,
+                display_path(&rule.file)
+            )
         })
     }
 
     fn first(&self, kind: Kind, facts: &Facts<'_>) -> Option<&Rule> {
-        self.rules.rules.iter().find(|rule| rule.kind == kind && self.matches(rule, facts))
+        self.rules
+            .rules
+            .iter()
+            .find(|rule| rule.kind == kind && self.matches(rule, facts))
     }
 
     fn matches(&self, rule: &Rule, facts: &Facts<'_>) -> bool {
         if rule.tools.covers(facts.tool) {
             return match &rule.matcher {
                 Matcher::Every => true,
-                Matcher::Command(pattern) => facts
-                    .commands
-                    .iter()
-                    .any(|cmd| command_texts(cmd).iter().any(|text| command_match(pattern, text))),
+                Matcher::Command(pattern) => facts.commands.iter().any(|cmd| {
+                    command_texts(cmd)
+                        .iter()
+                        .any(|text| command_match(pattern, text))
+                }),
                 Matcher::Path(pattern) => facts.path.as_deref().is_some_and(|p| pattern.matches(p)),
                 // An address the gate cannot read a host from: matched.
                 Matcher::Domain(domain) => self
@@ -322,7 +369,12 @@ fn parse(text: &str, anchor: &Path, home: Option<&Path>, project: &Path) -> Pars
         Some(spec) => spec,
     };
     let matcher = match &tools {
-        Tools::Bash if !names_a_parameter(spec, &["command", "description", "timeout", "run_in_background"]) => {
+        Tools::Bash
+            if !names_a_parameter(
+                spec,
+                &["command", "description", "timeout", "run_in_background"],
+            ) =>
+        {
             Some(Matcher::Command(match spec.strip_suffix(":*") {
                 Some(head) => format!("{head} *"),
                 None => spec.to_string(),
@@ -366,14 +418,20 @@ fn tools_named(name: &str) -> Option<Tools> {
 
 /// `Tool(param:value)`: a rule on one of the tool's inputs, not mapped.
 fn names_a_parameter(spec: &str, params: &[&str]) -> bool {
-    spec.split_once(':').is_some_and(|(head, _)| params.contains(&head))
+    spec.split_once(':')
+        .is_some_and(|(head, _)| params.contains(&head))
 }
 
 /// A `Read`/`Edit` pattern: gitignore style, anchored as Claude Code
 /// anchors it — `//x` the filesystem's root, `~/x` the home folder, `/x`
 /// the settings source, anything else the project folder. A name with no
 /// `/`, and a single folder's `name/**`, match at any depth below it.
-fn path_pattern(spec: &str, anchor: &Path, home: Option<&Path>, project: &Path) -> Option<PathPattern> {
+fn path_pattern(
+    spec: &str,
+    anchor: &Path,
+    home: Option<&Path>,
+    project: &Path,
+) -> Option<PathPattern> {
     if names_a_parameter(spec, &["file_path", "path", "pattern"]) {
         return None;
     }
@@ -388,8 +446,14 @@ fn path_pattern(spec: &str, anchor: &Path, home: Option<&Path>, project: &Path) 
     } else {
         let rel = spec.strip_prefix("./").unwrap_or(spec);
         let bare = rel.trim_end_matches('/');
-        let one_folder = bare.strip_suffix("/**").is_some_and(|dir| !dir.contains('/'));
-        (project.to_path_buf(), rel, !bare.contains('/') || one_folder)
+        let one_folder = bare
+            .strip_suffix("/**")
+            .is_some_and(|dir| !dir.contains('/'));
+        (
+            project.to_path_buf(),
+            rel,
+            !bare.contains('/') || one_folder,
+        )
     };
     let rel = rel.trim_end_matches('/');
     let glob = match (rel.is_empty(), anywhere) {
@@ -399,10 +463,22 @@ fn path_pattern(spec: &str, anchor: &Path, home: Option<&Path>, project: &Path) 
     };
     // `name/**` also matches the folder itself (a search rooted there).
     let mut globs = globset::GlobSetBuilder::new();
-    for glob in [Some(glob.as_str()), glob.strip_suffix("/**")].into_iter().flatten() {
-        globs.add(globset::GlobBuilder::new(glob).literal_separator(true).backslash_escape(true).build().ok()?);
+    for glob in [Some(glob.as_str()), glob.strip_suffix("/**")]
+        .into_iter()
+        .flatten()
+    {
+        // A Mac's disk does not tell `.ENV` from `.env`.
+        let mut builder = globset::GlobBuilder::new(glob);
+        builder
+            .literal_separator(true)
+            .backslash_escape(true)
+            .case_insensitive(true);
+        globs.add(builder.build().ok()?);
     }
-    Some(PathPattern { anchor, glob: globs.build().ok()? })
+    Some(PathPattern {
+        anchor,
+        glob: globs.build().ok()?,
+    })
 }
 
 impl PathPattern {
@@ -451,7 +527,11 @@ fn lexical(path: &Path) -> PathBuf {
 /// among them), and its program by its file name.
 fn command_texts(cmd: &str) -> Vec<String> {
     let mut texts = vec![cmd.trim().to_string()];
-    texts.extend(super::model::split_command_segments(cmd).into_iter().map(|seg| seg.trim().to_string()));
+    texts.extend(
+        super::model::split_command_segments(cmd)
+            .into_iter()
+            .map(|seg| seg.trim().to_string()),
+    );
     for words in commands_as_written(cmd) {
         texts.push(words.join(" "));
         let refs: Vec<&str> = words.iter().map(String::as_str).collect();
@@ -516,6 +596,16 @@ fn wild_match(pattern: &str, text: &str) -> bool {
     true
 }
 
+/// A rule's text as shown in a line: a project file is untrusted, so a
+/// long one is cut.
+fn clip(text: &str) -> String {
+    const MOST: usize = 80;
+    match text.char_indices().nth(MOST) {
+        Some((at, _)) => format!("{}…", &text[..at]),
+        None => text.to_string(),
+    }
+}
+
 fn host_of(url: &str) -> Option<String> {
     let host = url::Url::parse(url).ok()?.host_str()?.to_ascii_lowercase();
     Some(host.trim_end_matches('.').to_string())
@@ -530,6 +620,7 @@ fn domain_match(pattern: &str, host: &str) -> bool {
     if let Some(parent) = pattern.strip_prefix("*.") {
         return host.ends_with(&format!(".{parent}"));
     }
-    let (want, have): (Vec<&str>, Vec<&str>) = (pattern.split('.').collect(), host.split('.').collect());
+    let (want, have): (Vec<&str>, Vec<&str>) =
+        (pattern.split('.').collect(), host.split('.').collect());
     want.len() == have.len() && want.iter().zip(&have).all(|(w, h)| wild_match(w, h))
 }
