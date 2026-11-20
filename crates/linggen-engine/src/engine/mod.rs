@@ -1557,6 +1557,24 @@ mod member_tests {
         assert_eq!(AgentEngine::recorded_calls(&done).len(), 1);
     }
 
+    #[test]
+    fn the_next_full_turn_reloads_parent_rules_without_a_git_repo() {
+        let parent = tempfile::tempdir().unwrap();
+        let root = parent.path().join("project");
+        std::fs::create_dir(&root).unwrap();
+        let parent_rules = parent.path().join("AGENTS.md");
+        std::fs::write(&parent_rules, "parent rules version one").unwrap();
+        std::fs::write(root.join("CLAUDE.md"), "workspace rules").unwrap();
+        let mut engine = engine_at(&root);
+        let (before, _, _) = engine.prepare_loop_messages("hi", true, super::prompt::PromptPurpose::Turn);
+        let before = &before[0].content;
+        assert!(before.find("parent rules version one").unwrap() < before.find("workspace rules").unwrap());
+        std::fs::write(&parent_rules, "parent rules version two").unwrap();
+        let (after, _, _) = engine.prepare_loop_messages("hi again", true, super::prompt::PromptPurpose::Turn);
+        assert!(after[0].content.contains("parent rules version two"));
+        assert!(!after[0].content.contains("parent rules version one"));
+    }
+
     /// The project-file check after parallel tools compares like with like:
     /// with nothing changed it finds nothing changed.
     #[test]

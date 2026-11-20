@@ -51,6 +51,24 @@ fn code_meta(id: &str, creator: &str, skill: Option<&str>) -> SessionMeta {
 }
 
 #[test]
+fn project_instructions_reach_native_owner_delegate_mission_and_skill_but_not_consumer() {
+    let chat = SessionSpec::of(&code_meta("sess-chat", "user", None));
+    let delegate = SessionSpec::of(&meta("sess-delegate", "external", None));
+    let skill = SessionSpec::of(&meta("sess-app", "user", Some("dice")));
+    let mission = SessionSpec::of(
+        &crate::extensions::missions::scheduler::mission_session_meta(&mission(), "sess-9-m"),
+    );
+    for (spec, preset) in [(&chat, Preset::Chat), (&delegate, Preset::Delegate),
+        (&mission, Preset::Mission), (&skill, Preset::App)]
+    {
+        assert_eq!(spec.preset, preset);
+        assert!(spec.profile().include_project_context, "{preset:?}");
+    }
+    let consumer = chat.typed(SessionPolicy::consumer(Default::default()), Memory::None, None);
+    assert!(!consumer.profile().include_project_context);
+}
+
+#[test]
 fn a_delegates_typed_followup_does_not_change_the_sessions_origin() {
     let mut e = engine();
     let m = meta("sess-delegate", "external", None);
