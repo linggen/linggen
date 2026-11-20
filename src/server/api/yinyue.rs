@@ -332,7 +332,9 @@ pub(crate) async fn chat_handler(
     let task = frame_with_pending_prompt(&state, &text).await;
     tokio::spawn(async move {
         if let Some(reply) = crate::server::resident::run_yinyue_turn(&state, task, crate::server::resident::Origin::Person).await {
-            crate::server::resident::speak_person_reply(&state, &reply);
+            if let Some(answer) = reply.whole_answer() {
+                crate::server::resident::speak_reply(&state, answer, Default::default());
+            }
         }
     });
     (StatusCode::OK, "ok").into_response()
@@ -481,27 +483,11 @@ pub(crate) async fn presence_handler(
 /// until it is looked at and listed.
 #[cfg(test)]
 mod one_voice_rule {
-    fn rust_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
-        for entry in std::fs::read_dir(dir).unwrap().flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                rust_files(&path, out);
-            } else if path.extension().is_some_and(|e| e == "rs") {
-                out.push(path);
-            }
-        }
-    }
-
-    /// Each file's count of `needle`, against the files it must be in.
+    /// Each file's count of `needle` in production code, against the files
+    /// it must be in.
     fn check(needle: &str, listed: &[(&str, usize)]) {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let mut files = Vec::new();
-        for dir in ["src", "crates/linggen-engine/src"] {
-            rust_files(&root.join(dir), &mut files);
-        }
-        for file in files {
-            let rel = file.strip_prefix(root).unwrap().to_string_lossy().to_string();
-            let found = std::fs::read_to_string(&file).unwrap().matches(needle).count();
+        for (rel, code) in crate::server::lock_scan::production_code(&["src", "crates/linggen-engine/src"]) {
+            let found = code.matches(needle).count();
             let want = listed.iter().find(|(f, _)| *f == rel).map_or(0, |e| e.1);
             assert_eq!(found, want, "{rel}: `{needle}` — her voice has one rule; look at it, then list it");
         }
@@ -524,6 +510,10 @@ mod one_voice_rule {
             &[("src/server/resident/triggers.rs", 2), ("src/server/resident/ambient.rs", 3)],
         );
         // …and it answers through the one predicate the voice rule uses.
+        // Presence is asked of the board in one place, and that place is the
+        // one predicate: a new helper asking it directly fails here.
+        let ask = format!("{}{}", "presence_at_", "page(");
+        check(&ask, &[("src/server/resident/triggers.rs", 1), ("crates/linggen-engine/src/engine/agent/mod.rs", 1)]);
         let drawn = format!("{}{}", "line_is_", "drawn(");
         check(&drawn, &[("src/server/resident/triggers.rs", 3)]);
     }

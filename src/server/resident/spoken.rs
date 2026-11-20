@@ -111,7 +111,7 @@ impl Origin {
 
     /// The finalizer for a reply of this origin: an answer for a person, the
     /// envelope for everything the engine started. The one place that picks.
-    pub(super) fn finalize(self, reply: Option<&str>) -> Option<Event> {
+    fn finalize(self, reply: Option<&str>) -> Option<Event> {
         match self.held() {
             true => finalize_event(reply, self.name()),
             false => finalize_answer(reply),
@@ -304,27 +304,63 @@ pub(crate) fn is_silent_reply(from_id: &str, content: &str) -> bool {
         .is_some_and(is_silence)
 }
 
-/// Say her reply to a person: its spoken line, when it has one (not SILENT).
-/// `at`: where she said it — whether it is heard or only read is the voice's
-/// own rule (`emit_speak`).
-pub(crate) fn speak_reply(
-    state: &std::sync::Arc<crate::server::ServerState>,
-    reply: &str,
-    at: crate::server::api::yinyue::SaidAt<'_>,
-) {
-    if let Some(line) = answer_line(reply) {
-        crate::server::api::yinyue::emit_speak(state, Line::new(line), None, at);
+/// What a turn of hers said, with the origin the turn STARTED as — the one
+/// value every reader of a reply takes. Its finalizer is picked by that
+/// origin alone: a reply cannot be read as another kind of turn's.
+#[derive(Debug, Clone)]
+pub(crate) struct Turned {
+    text: String,
+    origin: Origin,
+}
+
+/// A reply to a person (or to an answer they asked for) that may be voiced:
+/// only a person-origin [`Turned`] makes one.
+pub(crate) struct Answer(Line);
+
+impl Turned {
+    /// `text` as the turn of `origin` ended — `origin` the turn's own value,
+    /// never a variant named where the reply is read (the lock test says so).
+    pub(crate) fn of(text: String, origin: Origin) -> Self {
+        Self { text, origin }
+    }
+
+    pub(crate) fn chars(&self) -> usize {
+        self.text.chars().count()
+    }
+
+    /// The decision of a turn the engine started — or, for a person's, the
+    /// answer path's; picked by the origin.
+    pub(super) fn finalize(&self) -> Option<Event> {
+        self.origin.finalize(Some(&self.text))
+    }
+
+    /// Her reply to a person, read as ever: its final paragraph. `None` for
+    /// a turn the engine started, and for SILENT.
+    pub(crate) fn answer(&self) -> Option<Answer> {
+        if self.origin.held() {
+            return None;
+        }
+        answer_line(&self.text).map(|line| Answer(Line::new(line)))
+    }
+
+    /// Her reply to a person who talked to her on her own stage, as it
+    /// always was: the whole reply, unless it is the bare word SILENT.
+    pub(crate) fn whole_answer(&self) -> Option<Answer> {
+        if self.origin.held() || self.text.eq_ignore_ascii_case(SILENT) {
+            return None;
+        }
+        Some(Answer(Line::new(self.text.clone())))
     }
 }
 
-/// Say her reply to a person who talked to her on her own stage, as it
-/// always was: the whole reply, unless it is the bare word SILENT.
-pub(crate) fn speak_person_reply(state: &std::sync::Arc<crate::server::ServerState>, reply: &str) {
-    if reply.eq_ignore_ascii_case(SILENT) {
-        return;
-    }
-    let line = Line::new(reply.to_string());
-    crate::server::api::yinyue::emit_speak(state, line, None, Default::default());
+/// Say an answer to a person. `at`: where she said it — whether it is heard
+/// or only read is the voice's own rule (`emit_speak`).
+pub(crate) fn speak_reply(
+    state: &std::sync::Arc<crate::server::ServerState>,
+    answer: Answer,
+    at: crate::server::api::yinyue::SaidAt<'_>,
+) {
+    crate::server::api::yinyue::emit_speak(state, answer.0, None, at);
 }
 
 /// The most a spoken line may be, in characters: an app moment's text is cut
@@ -595,11 +631,10 @@ pub(crate) async fn land_row(state: &std::sync::Arc<crate::server::ServerState>,
 /// and published where it stood; the caller holds the session's turn lock.
 pub(crate) async fn say_event(
     state: &std::sync::Arc<crate::server::ServerState>,
-    reply: Option<&str>,
-    origin: Origin,
+    reply: Option<&Turned>,
     (session, place): (&str, &crate::engine::turn_place::TurnPlace),
 ) {
-    let Some(said) = origin.finalize(reply) else {
+    let Some(said) = reply.and_then(Turned::finalize) else {
         return;
     };
     let stage = Stage::of_turn(session, place);
@@ -862,140 +897,133 @@ mod tests {
     }
 }
 
-/// One place decides what she says. A publisher takes only a [`Line`] (it
-/// does not compile with a string), and a `Line` is made in two places: the
-/// event finalizer, and the answer path for a reply to a person. A second
-/// maker, or a second reader of the envelope, fails here until it is looked
-/// at and listed.
+/// One place decides what she says. A publisher takes only a [`Line`], a
+/// `Line` is made only in this file, and what is read of a turn's reply is
+/// read through its [`Turned`] — whose origin is the turn's own. The scans
+/// read production code only (`lock_scan`), literals and comments aside, and
+/// fail loudly on source they cannot read.
 #[cfg(test)]
 mod one_decision {
-    fn rust_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
-        for entry in std::fs::read_dir(dir).unwrap().flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                rust_files(&path, out);
-            } else if path.extension().is_some_and(|e| e == "rs") {
-                out.push(path);
-            }
-        }
-    }
+    use crate::server::lock_scan::production_code;
 
-    /// The file's code without its test items: every `#[cfg(test)]` item is
-    /// cut out whole (to its closing brace, or its `;`), and the code after
-    /// it is still read.
-    fn without_tests(text: &str) -> String {
-        let mut out = String::new();
-        let mut rest = text;
-        while let Some(at) = rest.find("#[cfg(test)]") {
-            out.push_str(&rest[..at]);
-            let after = &rest[at..];
-            let mut depth = 0usize;
-            let mut end = after.len();
-            for (i, c) in after.char_indices() {
-                match c {
-                    '{' => depth += 1,
-                    '}' if depth == 1 => {
-                        end = i + 1;
-                        break;
-                    }
-                    '}' => depth -= 1,
-                    ';' if depth == 0 => {
-                        end = i + 1;
-                        break;
-                    }
-                    _ => {}
-                }
-            }
-            rest = &after[end..];
-        }
-        out.push_str(rest);
-        out
-    }
-
-    /// Each file's count of `needle` in its whole code (test items cut out),
-    /// against the files it may be in.
-    fn check(needle: &str, listed: &[(&str, usize)]) {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let mut files = Vec::new();
-        for dir in ["src", "crates/linggen-engine/src"] {
-            rust_files(&root.join(dir), &mut files);
-        }
-        for file in files {
-            let rel = file.strip_prefix(root).unwrap().to_string_lossy().to_string();
-            let code = without_tests(&std::fs::read_to_string(&file).unwrap());
+    /// Each file's count of `needle` in production code under `dirs`, against
+    /// the files it may be in.
+    fn check(dirs: &[&str], needle: &str, listed: &[(&str, usize)]) {
+        for (rel, code) in production_code(dirs) {
             let found = code.matches(needle).count();
             let want = listed.iter().find(|(f, _)| *f == rel).map_or(0, |e| e.1);
             assert_eq!(found, want, "{rel}: `{needle}` — what she says is decided in one place; look at it, then list it");
         }
     }
 
+    const ALL: &[&str] = &["src", "crates/linggen-engine/src"];
+
     #[test]
     fn a_line_of_hers_is_made_only_by_the_finalizer_or_the_answer_path() {
         // Built from parts, so this test's own text is no match.
         let make = format!("{}{}", "Line::", "new(");
-        check(&make, &[("src/server/resident/spoken.rs", 4)]);
+        check(ALL, &make, &[("src/server/resident/spoken.rs", 4)]);
         let literal = format!("{}{}", "Line { ", "text");
-        check(&literal, &[]);
+        check(ALL, &literal, &[]);
+        let answer = format!("{}{}", "Answer(", "Line");
+        check(ALL, &answer, &[("src/server/resident/spoken.rs", 3)]);
     }
 
     #[test]
     fn the_envelope_is_read_in_one_place() {
         let open = format!("{}{}", "\"<", "say>\"");
-        check(&open, &[("src/server/resident/spoken.rs", 1)]);
+        check(ALL, &open, &[("src/server/resident/spoken.rs", 1)]);
         let fin = format!("{}{}", "finalize_", "event(");
-        check(
-            &fin,
-            &[
-                ("src/server/resident/spoken.rs", 2),
-            ],
-        );
+        check(ALL, &fin, &[("src/server/resident/spoken.rs", 2)]);
+        let ans = format!("{}{}", "finalize_", "answer(");
+        check(ALL, &ans, &[("src/server/resident/spoken.rs", 2)]);
+    }
+
+    /// A reply is read through the turn's own origin: `Turned::of` is handed
+    /// a value (`origin`, `ctx.origin`), never a variant named at the call
+    /// site, so no reader can pick another kind of turn's finalizer. The
+    /// finalizers themselves are private to this file (the compiler's part).
+    #[test]
+    fn a_reply_is_read_with_the_turns_own_origin_never_a_named_variant() {
+        for (rel, code) in production_code(ALL) {
+            let mut rest = code.as_str();
+            let call = format!("{}{}", "Turned::", "of(");
+            while let Some(at) = rest.find(&call) {
+                let args: String = rest[at..].chars().take_while(|c| *c != ')').collect();
+                assert!(!args.contains("Origin::"), "{rel}: `{args}` names an origin where a turn's reply is read");
+                rest = &rest[at + call.len()..];
+            }
+        }
+        let fin = format!("{}{}", ".fin", "alize(");
+        check(&["src/server/resident"], &fin, &[("src/server/resident/spoken.rs", 1), ("src/server/resident/triggers.rs", 3)]);
     }
 
     #[test]
     fn nothing_but_the_finalizers_output_is_published_as_a_row_of_hers() {
-        // The row, the live event and the voice are written from `publish`;
-        // `keep_row` is private to this file.
         let row = format!("{}{}", "fn keep_", "row(");
-        check(&row, &[("src/server/resident/spoken.rs", 1)]);
-        let publish = format!("{}{}", "spoken::", "publish(");
+        check(ALL, &row, &[("src/server/resident/spoken.rs", 1)]);
+        // The function's name: any variables, qualified or not.
+        let publish = format!("{}{}", "publi", "sh(");
         check(
+            &["src/server"],
             &publish,
-            &[("src/server/resident/triggers.rs", 4)],
-        );
-        // Qualified or not (`use spoken::*`): every call hands over a `said`
-        // and a `stage`.
-        let call = format!("{}{}", "said, &", "stage,");
-        check(
-            &call,
-            &[("src/server/resident/spoken.rs", 1), ("src/server/resident/triggers.rs", 4)],
+            &[
+                ("src/server/resident/spoken.rs", 2),
+                ("src/server/resident/triggers.rs", 4),
+                ("src/server/mac_tools.rs", 2),
+                ("src/server/met_watch.rs", 2),
+                ("src/server/api/topic.rs", 1),
+            ],
         );
     }
 
-    /// Her rows and live messages are written by `keep_row` alone: nothing
-    /// under her own code writes a row or a message event but that function.
+    /// The chunks of `code` that are one function each, roughly: split where
+    /// a `fn ` item begins.
+    fn functions(code: &str) -> Vec<&str> {
+        let mut starts: Vec<usize> = code.match_indices("fn ").map(|(i, _)| i).collect();
+        starts.push(code.len());
+        starts.windows(2).map(|w| &code[w[0]..w[1]]).collect()
+    }
+
+    /// A row or live message written as the companion is written by
+    /// `keep_row` alone — anywhere under `src/server`: no other function that
+    /// writes one names her.
     #[test]
-    fn no_other_write_of_a_row_or_message_is_made_in_her_code() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let mut files = Vec::new();
-        rust_files(&root.join("src/server/resident"), &mut files);
-        for needle in [
+    fn no_other_write_of_a_row_or_message_is_made_as_her_anywhere() {
+        let writes = [
             format!("{}{}", "add_chat_", "message("),
             format!("{}{}", "ServerEvent::", "Message"),
             format!("{}{}", "persist_and_", "emit"),
-        ] {
-            for file in &files {
-                let rel = file.strip_prefix(root).unwrap().to_string_lossy().to_string();
-                let code = without_tests(&std::fs::read_to_string(file).unwrap());
-                let found = code.matches(&needle).count();
-                let (want, why) = match rel.as_str() {
-                    "src/server/resident/spoken.rs" => (if needle.starts_with("persist") { 0 } else { 1 }, "keep_row"),
-                    // The agent-chat hand-off keeps a peer's message to her:
-                    // a row of the peer's, not of hers.
-                    "src/server/resident/triggers.rs" if needle.starts_with("persist") => (1, "a peer's message"),
-                    _ => (0, "nothing"),
-                };
-                assert_eq!(found, want, "{rel}: `{needle}` — a row or message as her is written by {why} only");
+            format!("{}{}", "persist_message_", "only"),
+        ];
+        let hers = ["COMPANION_AGENT_ID", "YINYUE_AGENT", "\"yinyue\"", "is_companion"];
+        let mut found = Vec::new();
+        for (rel, code) in production_code(&["src/server"]) {
+            // The scan's own code and the test files (a `#[cfg(test)] mod x;`
+            // is cut from its parent, but its file is read here).
+            if rel == "src/server/lock_scan.rs" || rel.ends_with("/tests.rs") {
+                continue;
+            }
+            for f in functions(&code) {
+                if writes.iter().any(|w| f.contains(w.as_str())) && hers.iter().any(|h| f.contains(h)) {
+                    let name: String = f.chars().skip(3).take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+                    found.push(format!("{rel}::{name}"));
+                }
             }
         }
+        found.sort();
+        let allowed = [
+            // her one writer
+            "src/server/resident/spoken.rs::keep_row",
+            // Rows of the PERSON'S message to her (a chat sent to her, her
+            // kickoff kept as a hidden user row): written `from` the person
+            // or the engine, never as her.
+            "src/server/chat/handler.rs::dispatch_turn",
+            "src/server/chat/handler.rs::start_turn",
+            "src/server/resident/turn.rs::run_at",
+        ];
+        let others: Vec<&String> = found.iter().filter(|f| !allowed.contains(&f.as_str())).collect();
+        assert_eq!(others, Vec::<&String>::new(), "a row or message written as her outside `keep_row` — look at it, then list it");
+        assert_eq!(found.iter().filter(|f| allowed.contains(&f.as_str())).count(), allowed.len());
     }
 }

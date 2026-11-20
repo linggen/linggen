@@ -18,7 +18,7 @@ pub(crate) async fn run_yinyue_turn(
     state: &Arc<ServerState>,
     task: String,
     origin: Origin,
-) -> Option<String> {
+) -> Option<Turned> {
     run_home(state, task, origin, Reach::Open, None).await
 }
 
@@ -33,7 +33,7 @@ pub(crate) async fn run_moment_turn(
     (task, table): (String, Option<super::Table>),
     origin: Origin,
     language: Option<String>,
-) -> Option<String> {
+) -> Option<Turned> {
     match table {
         Some(table) => run_at_table(state, table, task, origin, language).await,
         None => run_home(state, task, origin, Reach::Sealed, language).await,
@@ -80,7 +80,7 @@ pub(super) async fn run_home(
     origin: Origin,
     reach: Reach,
     language: Option<String>,
-) -> Option<String> {
+) -> Option<Turned> {
     let root = her_root();
 
     // Pet settings (Settings → General → Pet). Disabled → she doesn't run at all.
@@ -130,7 +130,7 @@ async fn run_at_table(
     task: String,
     origin: Origin,
     language: Option<String>,
-) -> Option<String> {
+) -> Option<Turned> {
     let session_id = table.session;
     let pet = state.manager.get_config_snapshot().await.pet;
     if !pet.enabled {
@@ -202,7 +202,7 @@ async fn run_at(
     pet: &crate::config::PetConfig,
     task: String,
     origin: Origin,
-) -> Option<String> {
+) -> Option<Turned> {
     let Turn {
         session_id, root, ..
     } = turn;
@@ -311,6 +311,7 @@ async fn run_at(
     spoken
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
+        .map(|text| Turned::of(text, origin))
 }
 
 /// Her place in the session's turn line, with the admission gate to hold
@@ -370,19 +371,19 @@ fn resend_hers(
                 let Some(reply) = run_at(&state, &turn, &pet, task, origin).await else {
                     return;
                 };
-                if origin.held() {
+                let Some(answer) = reply.answer() else {
                     tracing::info!(
                         "[yinyue] {}: a turn run again after a restart says nothing ({} chars dropped)",
                         origin.name(),
-                        reply.chars().count()
+                        reply.chars()
                     );
                     return;
-                }
+                };
                 let at = crate::server::api::yinyue::SaidAt {
                     session: Some(&turn.session_id),
                     app: turn.place.skill.as_deref(),
                 };
-                super::speak_reply(&state, &reply, at);
+                super::speak_reply(&state, answer, at);
             });
         })
     })

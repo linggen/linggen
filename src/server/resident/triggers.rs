@@ -104,7 +104,7 @@ fn herald_ask(
         let Some(reply) = herald_line(&state, kickoff).await else {
             return;
         };
-        let Some(said) = Origin::Herald.finalize(Some(&reply)) else {
+        let Some(said) = reply.finalize() else {
             return;
         };
         if !ask_still_pending(&state, &question_id).await {
@@ -147,7 +147,7 @@ fn herald_kept_ask(state: &Arc<ServerState>, app: String, question_id: String, s
         let Some(reply) = herald_line(&state, kept_ask_kickoff(&app)).await else {
             return;
         };
-        let Some(said) = Origin::Herald.finalize(Some(&reply)) else {
+        let Some(said) = reply.finalize() else {
             return;
         };
         if !ask_still_pending(&state, &question_id).await || user_sees(&state, Sight::Screen) {
@@ -174,16 +174,19 @@ fn kept_ask_kickoff(app: &str) -> String {
 /// reply now, from home's view of the thread. Elsewhere her own turn runs, as
 /// before. Either way it is only her reply: nothing is shown or kept until the
 /// caller has finalized it and checked the question is still waiting.
-async fn herald_line(state: &Arc<ServerState>, kickoff: String) -> Option<String> {
+async fn herald_line(state: &Arc<ServerState>, kickoff: String) -> Option<Turned> {
+    // The turn's own origin: every reading of its reply is by this value.
+    let origin = Origin::Herald;
     let sid = super::session_roll::resolve_current_session(state).await;
     let free = state.manager.session_turn(&sid).try_lock().is_ok();
     if free {
-        return run_yinyue_turn(state, kickoff, Origin::Herald).await;
+        return run_yinyue_turn(state, kickoff, origin).await;
     }
-    let ask = super::spoken::with_contract(kickoff, Origin::Herald);
+    let ask = super::spoken::with_contract(kickoff, origin);
     // The person's language, set here as it is for every turn of hers.
-    let language = super::turn::language_of_turn(state, &sid, Origin::Herald, None).await;
-    crate::server::chat::reply_now(state.clone(), &sid, YINYUE_AGENT, (&ask, language)).await
+    let language = super::turn::language_of_turn(state, &sid, origin, None).await;
+    let text = crate::server::chat::reply_now(state.clone(), &sid, YINYUE_AGENT, (&ask, language)).await?;
+    Some(Turned::of(text, origin))
 }
 
 fn ask_kickoff(
@@ -253,7 +256,7 @@ fn on_agent_chat(
                  You're reached via agent_chat, so you can't pass it to a third agent."
             );
             if let Some(reply) = run_yinyue_turn(&state, kickoff, Origin::AgentChat).await {
-                if let Some(said) = Origin::AgentChat.finalize(Some(&reply)) {
+                if let Some(said) = reply.finalize() {
                     tracing::info!(
                         "[yinyue-watch] relays agent_chat ({} chars)",
                         said.line.text().len()
@@ -626,7 +629,7 @@ pub(super) async fn wake_and_offer(
     // Unsaid or unpublished for any reason — silence, a page that left, the
     // quiet hours, a row not kept — the fact the turn carried is held for the
     // next one: it is never lost.
-    let line = deliver(&state, reply.as_deref(), said_in.as_ref(), (emotion, origin, reach), raised).await;
+    let line = deliver(&state, reply.as_ref(), said_in.as_ref(), (emotion, origin, reach), raised).await;
     if line.is_none() {
         if let Some(f) = rode {
             super::run_fault::hold(f);
@@ -639,12 +642,12 @@ pub(super) async fn wake_and_offer(
 /// was published.
 async fn deliver(
     state: &Arc<ServerState>,
-    reply: Option<&str>,
+    reply: Option<&Turned>,
     said_in: Option<&Table>,
     (emotion, origin, reach): (&str, Origin, Reach),
     raised: Option<Raised<'_>>,
 ) -> Option<Line> {
-    let said = origin.finalize(reply);
+    let said = reply.and_then(Turned::finalize);
     let (shown, unlabelled) = super::offer_labels::shown(
         raised.as_ref().map(|r| r.offers),
         said.as_ref().map(|e| e.labels.as_slice()),

@@ -899,12 +899,16 @@ fn hear_her_at_table(
     session_id: &str,
 ) {
     if super::members::is_companion(&ctx.agent_id) && !crate::server::resident::is_own_session(session_id) {
-        if let Some(reply) = engine.last_assistant_text.clone() {
+        let reply = engine
+            .last_assistant_text
+            .clone()
+            .map(|t| crate::server::resident::Turned::of(t, ctx.origin));
+        if let Some(answer) = reply.and_then(|r| r.answer()) {
             let at = crate::server::api::yinyue::SaidAt {
                 session: Some(session_id),
                 app: ctx.place.skill.as_deref(),
             };
-            crate::server::resident::speak_reply(state, &reply, at);
+            crate::server::resident::speak_reply(state, answer, at);
         }
     }
 }

@@ -463,9 +463,9 @@ async fn tell_in_place(
     super::chat::run_session_turn(&ctx, &mut engine, &state.manager, None).await;
     let ended = running.as_ref().is_some_and(crate::server::resident::RunningOrigin::was_ended);
     if origin.held() && !ended {
-        let reply = engine.last_assistant_text.clone();
+        let reply = engine.last_assistant_text.clone().map(|t| crate::server::resident::Turned::of(t, origin));
         drop(engine);
-        crate::server::resident::say_event(&state, reply.as_deref(), origin, (&session, &told_at)).await;
+        crate::server::resident::say_event(&state, reply.as_ref(), (&session, &told_at)).await;
     }
 }
 
