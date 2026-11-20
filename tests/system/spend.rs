@@ -208,3 +208,28 @@ async fn a_model_with_no_known_price_shows_tokens_and_no_dollars() {
     assert_eq!(usage["unpriced"], json!(["stub-gateway"]));
     assert_eq!(page_state(&w, &sid).await["usage"], usage);
 }
+
+/// Finding 2: the `/compact` button is a model call like any other. A
+/// session's ledger counts the two turns and the summary: three calls.
+#[tokio::test]
+async fn a_manual_compaction_is_a_call_in_the_ledger() {
+    use crate::support::model::{text, Agent};
+    let w = World::start(
+        Setup::default()
+            .script(Agent::Ling, vec![text("OK."), text("Fine.")])
+            .extra("context compaction assistant", "SUMMARY: filler was sent."),
+    )
+    .await;
+    let sid = w.api.create_session(json!({"title": "Long"})).await;
+    w.turn(&sid, &w.work(), &format!("Ignore this filler.\n{}", crate::shared_table::filler()), Agent::Ling).await;
+    w.turn(&sid, &w.work(), "Short one.", Agent::Ling).await;
+    let file = w.home.linggen_home().join("sessions").join(&sid).join("usage.json");
+    let calls = || -> u64 {
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap_or_default()).unwrap_or(json!({}));
+        v["models"]["fake-ling"]["calls"].as_u64().unwrap_or(0)
+    };
+    assert_eq!(calls(), 2, "the two turns");
+    let resp = w.api.post("/api/chat/compact", json!({"session_id": sid, "project_root": w.work()})).await;
+    assert_eq!(resp["compacted"], true, "{resp}");
+    assert_eq!(calls(), 3, "the summary is a call of the summarizing model");
+}

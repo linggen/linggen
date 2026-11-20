@@ -145,9 +145,18 @@ pub(crate) async fn compact_session(
     let span = &rows[base..cut];
     let model_manager = manager.models.read().await.clone();
     let prompt = summary_prompt(span.len(), &transcript(span), focus);
-    let (text, _) =
-        crate::engine::summarize_text(&model_manager, &models.summarizer, (None, None), prompt)
-            .await?;
+    let mut spent = crate::engine::spend::CallSpend::default();
+    let text = crate::engine::summarize_text(
+        &model_manager,
+        &models.summarizer,
+        (None, None),
+        prompt,
+        &mut spent,
+    )
+    .await;
+    // The summary is billed whether or not it came out usable.
+    crate::engine::spend::note_summary(manager, session_id, &models.summarizer, &spent);
+    let text = text?;
     let summary = format!(
         "[Context compacted — {} messages summarized]\n\n{text}",
         span.len()

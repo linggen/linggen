@@ -798,16 +798,19 @@ impl AgentEngine {
             transcript
         );
 
+        let mut spent = crate::engine::spend::CallSpend::default();
         let summary = summarize_text(
             &self.model_manager,
             &self.model_id,
             (self.reasoning_effort.as_deref(), self.app_product()),
             prompt,
+            &mut spent,
         )
         .await;
-        let (result, usage) = summary?;
+        // The summary is billed whether or not it came out usable.
         let model_id = self.model_id.clone();
-        self.note_call(&model_id, usage.as_ref());
+        self.note_call(&model_id, &spent);
+        let result = summary?;
         Some(format!(
             "[Context compacted — {} messages summarized]\n\n{}",
             dropped.len(),
@@ -816,7 +819,8 @@ impl AgentEngine {
     }
 }
 
-/// One summary of `prompt` by `model_id`, and what it spent. `None` when the
+/// One summary of `prompt` by `model_id`; what the provider counted goes into
+/// `spent`, kept even when the summary fails. `None` when the
 /// model call fails or yields nothing — the caller then keeps the transcript
 /// as it was rather than degrading it silently.
 pub async fn summarize_text(
@@ -824,7 +828,8 @@ pub async fn summarize_text(
     model_id: &str,
     (effort, app): (Option<&str>, Option<&str>),
     prompt: String,
-) -> Option<(String, Option<crate::provider::models::TokenUsage>)> {
+    spent: &mut crate::engine::spend::CallSpend,
+) -> Option<String> {
     let summarize_msgs = vec![
         ChatMessage::new(
             "system",
@@ -842,17 +847,12 @@ pub async fn summarize_text(
             return None;
         }
     };
+    spent.opened();
     let mut result = String::new();
-    let mut usage: Option<crate::provider::models::TokenUsage> = None;
     while let Some(chunk) = stream.next().await {
         match chunk {
             Ok(crate::provider::models::StreamChunk::Token(t)) => result.push_str(&t),
-            Ok(crate::provider::models::StreamChunk::Usage(u)) => {
-                usage = Some(match usage {
-                    Some(earlier) => earlier.merged(u),
-                    None => u,
-                });
-            }
+            Ok(crate::provider::models::StreamChunk::Usage(u)) => spent.report(u),
             Ok(_) => {}
             Err(e) => {
                 tracing::warn!("[compact] summary stream error, skipping compaction: {e}");
@@ -865,7 +865,7 @@ pub async fn summarize_text(
         tracing::warn!("[compact] summary model returned empty, skipping compaction");
         return None;
     }
-    Some((result.to_string(), usage))
+    Some(result.to_string())
 }
 
 /// The whole reply is the silence marker (`SILENT`, any case, bare

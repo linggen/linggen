@@ -8,6 +8,7 @@
 
 mod filter;
 
+use crate::engine::spend::{CallSpend, ForkSpend};
 use crate::engine::types::{PlanStatus, StreamResult};
 use crate::engine::AgentEngine;
 use crate::message::ChatMessage;
@@ -160,13 +161,16 @@ impl AgentEngine {
             .unwrap_or_else(|| "unknown".to_string());
         let run_id = run_id.to_string();
         let fork = tokio::spawn(async move {
-            let (guess, spent) = predict(&models, call).await;
-            // The fork is a paid call on the session's model: its tokens
-            // belong in the session's ledger, whatever it answered.
-            if let (Some(sid), Some(spent)) = (session_id.as_deref(), spent.as_ref()) {
-                manager.global_sessions.record_usage(sid, &model_id, Some(spent));
-            }
-            match guess {
+            // The fork is a paid call on the session's model: what its
+            // provider counts goes in the session's ledger when this guard
+            // drops — at the fork's end, or when the next turn aborts it.
+            let mut spend = ForkSpend {
+                manager: manager.clone(),
+                session_id: session_id.clone(),
+                model_id,
+                call: CallSpend::default(),
+            };
+            match predict(&models, call, &mut spend.call).await {
                 Ok(Some(text)) => {
                     let event = crate::engine::agent::AgentEvent::Followups {
                         agent_id,
@@ -223,18 +227,7 @@ fn uncached_tokens(usage: Option<&TokenUsage>) -> u64 {
 async fn predict(
     models: &Arc<ModelManager>,
     call: LastCall,
-) -> (anyhow::Result<Option<String>>, Option<TokenUsage>) {
-    let mut spent = None;
-    let guess = ask(models, call, &mut spent).await;
-    (guess, spent)
-}
-
-/// [`predict`]'s ask; `spent` is what the provider reported, kept even when
-/// the fork is dropped half-read.
-async fn ask(
-    models: &Arc<ModelManager>,
-    call: LastCall,
-    spent: &mut Option<TokenUsage>,
+    spent: &mut CallSpend,
 ) -> anyhow::Result<Option<String>> {
     let mut messages = call.messages;
     messages.push(message("assistant", &call.reply));
@@ -252,6 +245,7 @@ async fn ask(
                 .await?
         }
     };
+    spent.opened();
     let mut text = String::new();
     while let Some(chunk) = stream.next().await {
         match chunk? {
@@ -264,10 +258,7 @@ async fn ask(
                     u.cached_tokens,
                     u.completion_tokens
                 );
-                *spent = Some(match spent.take() {
-                    Some(earlier) => earlier.merged(u),
-                    None => u,
-                });
+                spent.report(u);
             }
         }
     }
@@ -425,5 +416,65 @@ mod tests {
         crate::provider::models::note_unavailable(model, &err);
         assert_eq!(engine.blocked_reason(&call), Some("rate_limit"));
         crate::provider::models::note_healthy(model);
+    }
+}
+
+#[cfg(test)]
+mod spend_tests {
+    //! The fork is a paid call on the session's model: what its provider
+    //! counted is in the ledger even when the person types again before it
+    //! ends and the fork is dropped.
+    use super::*;
+    use crate::engine::spend_tests::{case, Case};
+    use crate::provider::models::Tokens;
+
+    fn last_call(model: &str) -> LastCall {
+        LastCall {
+            model_id: model.to_string(),
+            messages: vec![message("user", "hello")],
+            tools: None,
+            effort: None,
+            app: None,
+            reply: "Hi".to_string(),
+        }
+    }
+
+    async fn forked(mode: &str, type_again_after_ms: Option<u64>) -> Case {
+        let mut c = case(mode).await;
+        c.engine.spawn_next_suggestion(Some(last_call(&format!("spend-{mode}"))), "run-1");
+        match type_again_after_ms {
+            Some(ms) => {
+                tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
+                c.engine.begin_suggestion_turn();
+            }
+            None => tokio::time::sleep(std::time::Duration::from_millis(1_000)).await,
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        c
+    }
+
+    #[tokio::test]
+    async fn a_fork_that_finished_is_recorded_once() {
+        let c = forked("ok", None).await;
+        let spent = c.ledger("spend-ok").expect("recorded");
+        assert_eq!(spent.calls, 1);
+        assert_eq!(spent.tokens, Tokens { input: 1_200, output: 400, cache_read: 5_000, cache_write: 3_000 });
+    }
+
+    /// Finding 3: the person types again while the fork is still being read.
+    #[tokio::test]
+    async fn a_fork_dropped_by_the_next_turn_is_recorded_with_what_was_counted() {
+        let c = forked("hangs", Some(700)).await;
+        let spent = c.ledger("spend-hangs").expect("the dropped fork is in the ledger");
+        assert_eq!((spent.calls, spent.unreported), (1, 0));
+        assert_eq!(spent.tokens, Tokens { input: 1_200, output: 0, cache_read: 5_000, cache_write: 3_000 });
+    }
+
+    /// Finding 3: dropped before its provider counted anything.
+    #[tokio::test]
+    async fn a_fork_dropped_before_any_usage_is_one_unreported_call() {
+        let c = forked("silent", Some(700)).await;
+        let spent = c.ledger("spend-silent").expect("counted");
+        assert_eq!((spent.calls, spent.unreported), (1, 1));
     }
 }

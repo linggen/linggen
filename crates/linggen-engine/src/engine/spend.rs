@@ -23,17 +23,88 @@ impl AgentManager {
     }
 }
 
+/// What one model call's provider counted, kept from the moment its stream
+/// opens — whether the call then finishes, is stopped, fails half-way or is
+/// dropped. The provider bills what it counted either way.
+#[derive(Debug, Default)]
+pub struct CallSpend {
+    opened: bool,
+    usage: Option<TokenUsage>,
+}
+
+impl CallSpend {
+    /// The provider accepted the request: from here the call may be billed.
+    pub fn opened(&mut self) {
+        self.opened = true;
+    }
+
+    /// A usage frame: Anthropic counts the prompt at the start and the
+    /// output at the end, so frames merge.
+    pub fn report(&mut self, usage: TokenUsage) {
+        self.usage = Some(match self.usage.take() {
+            Some(earlier) => earlier.merged(usage),
+            None => usage,
+        });
+    }
+
+    pub fn usage(&self) -> Option<&TokenUsage> {
+        self.usage.as_ref()
+    }
+
+    pub fn is_opened(&self) -> bool {
+        self.opened
+    }
+}
+
+/// Put what a call used into the session's ledger. A call that never opened
+/// (refused, unreachable) cost nothing and is not a call.
+pub(crate) fn record_call(
+    manager: &AgentManager,
+    session_id: &str,
+    model_id: &str,
+    spent: &CallSpend,
+) {
+    if spent.is_opened() {
+        manager
+            .global_sessions
+            .record_usage(session_id, model_id, spent.usage());
+    }
+}
+
+/// A summary of the context (`/compact`, outside any engine) is a call too.
+pub fn note_summary(manager: &AgentManager, session_id: &str, model_id: &str, spent: &CallSpend) {
+    record_call(manager, session_id, model_id, spent);
+}
+
+/// The next-prompt fork's spend, put in the ledger when the fork is dropped
+/// — at its end, or when the person types again and the next turn aborts it.
+pub(crate) struct ForkSpend {
+    pub manager: std::sync::Arc<AgentManager>,
+    pub session_id: Option<String>,
+    pub model_id: String,
+    pub call: CallSpend,
+}
+
+impl Drop for ForkSpend {
+    fn drop(&mut self) {
+        if let Some(sid) = self.session_id.as_deref() {
+            record_call(&self.manager, sid, &self.model_id, &self.call);
+        }
+    }
+}
+
 impl AgentEngine {
-    /// A model call ended (or its summary did): `usage` is what the provider
-    /// reported, `None` when it reported nothing.
-    pub(crate) fn note_call(&mut self, model_id: &str, usage: Option<&TokenUsage>) {
-        self.run_usage.add(model_id, usage);
+    /// A model call ended, however it ended: `spent` is what its provider
+    /// counted.
+    pub(crate) fn note_call(&mut self, model_id: &str, spent: &CallSpend) {
+        if !spent.is_opened() {
+            return;
+        }
+        self.run_usage.add(model_id, spent.usage());
         let (Some(manager), Some(session_id)) = (self.tools.get_manager(), &self.session_id) else {
             return;
         };
-        manager
-            .global_sessions
-            .record_usage(session_id, model_id, usage);
+        record_call(&manager, session_id, model_id, spent);
     }
 }
 
@@ -78,10 +149,9 @@ mod lock {
             .collect();
         found.sort();
         let spend = ("spend.rs".to_string(), 1);
-        let fork = ("mod.rs".to_string(), 1);
         assert_eq!(
             found,
-            vec![fork, spend],
+            vec![spend],
             "a new writer of the session ledger: {found:?}"
         );
     }

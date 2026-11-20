@@ -1,6 +1,7 @@
 use super::types::*;
 use crate::engine::actions;
 use crate::engine::render::normalize_tool_path_arg;
+use crate::engine::spend::CallSpend;
 use crate::message::ChatMessage;
 use anyhow::Result;
 use std::collections::HashSet;
@@ -230,6 +231,7 @@ impl AgentEngine {
         &self,
         model_id: &str,
         messages: &[ChatMessage],
+        spent: &mut CallSpend,
     ) -> Result<StreamResult> {
         use crate::provider::models::StreamChunk;
         let mut stream = self
@@ -241,9 +243,9 @@ impl AgentEngine {
                 self.app_product(),
             )
             .await?;
+        spent.opened();
         let mut accumulated = String::new();
         let mut thinking_ended = false;
-        let mut token_usage: Option<crate::provider::models::TokenUsage> = None;
         let mut first_action: Option<(actions::ModelAction, usize)> = None;
         let mut steered = false;
         let mut cut = false;
@@ -292,12 +294,7 @@ impl AgentEngine {
                         }
                     }
                 }
-                StreamChunk::Usage(usage) => {
-                    token_usage = Some(match token_usage.take() {
-                        Some(prev) => prev.merged(usage),
-                        None => usage,
-                    });
-                }
+                StreamChunk::Usage(usage) => spent.report(usage),
                 StreamChunk::Cut => cut = true,
                 StreamChunk::ToolCall(_) => {
                     // Tool call chunks are not expected in legacy streaming mode;
@@ -316,7 +313,7 @@ impl AgentEngine {
 
         Ok(StreamResult {
             full_text: accumulated,
-            token_usage,
+            token_usage: spent.usage().cloned(),
             first_action: first_action.filter(|_| !steered && !cut),
             tool_calls: Vec::new(),
             steered,
@@ -339,6 +336,7 @@ impl AgentEngine {
         model_id: &str,
         messages: &[ChatMessage],
         tools: Vec<serde_json::Value>,
+        spent: &mut CallSpend,
     ) -> Result<StreamResult> {
         use crate::provider::models::StreamChunk;
 
@@ -352,9 +350,9 @@ impl AgentEngine {
                 self.app_product(),
             )
             .await?;
+        spent.opened();
 
         let mut accumulated_text = String::new();
-        let mut token_usage: Option<crate::provider::models::TokenUsage> = None;
         // What of the text is shown live: none of a <think> block.
         let mut think = ThinkFilter::default();
         // Accumulate tool call deltas keyed by index
@@ -401,12 +399,7 @@ impl AgentEngine {
                         self.stream(ThinkingEvent::ContentToken(shown));
                     }
                 }
-                StreamChunk::Usage(usage) => {
-                    token_usage = Some(match token_usage.take() {
-                        Some(prev) => prev.merged(usage),
-                        None => usage,
-                    });
-                }
+                StreamChunk::Usage(usage) => spent.report(usage),
                 StreamChunk::Cut => cut = true,
                 StreamChunk::ToolCall(tc) => {
                     let idx = tc.index;
@@ -502,7 +495,7 @@ impl AgentEngine {
 
         Ok(StreamResult {
             full_text: accumulated_text,
-            token_usage,
+            token_usage: spent.usage().cloned(),
             first_action: None,
             tool_calls,
             steered,
@@ -621,11 +614,14 @@ impl AgentEngine {
             // lines of the session's work section (`prompt::work`).
             let adjusted = self.messages_for_model(&model_id, messages);
             let attempt_messages = adjusted.as_deref().unwrap_or(messages);
+            // What this attempt's provider counted, kept whether the attempt
+            // ends well or not: a stopped or failed call is billed too.
+            let mut spent = CallSpend::default();
             let result = if let Some(ref tool_defs) = tools {
-                self.stream_with_tool_calling(&model_id, attempt_messages, tool_defs.clone())
+                self.stream_with_tool_calling(&model_id, attempt_messages, tool_defs.clone(), &mut spent)
                     .await
             } else {
-                self.stream_with_thinking_model(&model_id, attempt_messages).await
+                self.stream_with_thinking_model(&model_id, attempt_messages, &mut spent).await
             };
 
             match result {
@@ -641,7 +637,7 @@ impl AgentEngine {
                     }
                     crate::provider::models::note_healthy(&model_id);
                     self.remember_call(&model_id, attempt_messages, tools.as_ref(), &result);
-                    self.note_call(&model_id, result.token_usage.as_ref());
+                    self.note_call(&model_id, &spent);
                     self.note_run_model(&model_id);
                     crate::engine::cloud_meter::after_call(self, result.token_usage.as_ref());
                     if model_id != preferred {
@@ -658,6 +654,7 @@ impl AgentEngine {
                     return Ok(result);
                 }
                 Err(e) => {
+                    self.note_call(&model_id, &spent);
                     // A backend that said nothing at all for the first-event
                     // window changed nothing: ask the same model once more
                     // before blaming it (a second silence benches it and
