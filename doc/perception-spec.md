@@ -199,8 +199,10 @@ that holds her: the main page's dock and the desktop pet window
 (`useYinyuePresenter`); an app's page draws none (an app that hides her body
 holds her as a bodyless stage), and a private app's page never counts. So a
 condition is not published, and not told, while only an app's page is in
-front; a routine herald does not wait, and is written and spoken under the
-voice rule. Still not told apart: the phone alone, and long quiet reading
+front; a notice of Ling's work (a reply ready, a run waiting, a run failed)
+does not wait: it is told only while the person is away, as her cue alone,
+never a row — what it is about carries its mark
+([yinyue-companion-spec.md](yinyue-companion-spec.md) § Herald). Still not told apart: the phone alone, and long quiet reading
 (over two minutes without input) — a condition waits through both. Telling
 them apart
 needs a Mac-local awake and recent-input signal, which does not exist yet.
@@ -443,8 +445,10 @@ new telling that spends the answer. "Declined" holds until it is worse.
 happened, with no level — waved off is quiet for 6 hours. The phone's older
 stores (the sweep's `condition.fired.*`, the resident's `yinyue.declined.*`,
 the weekly Mac-disk check's told weeks) are read once into it and removed.
-Two stores stay apart because they are not about problems: the herald's
-ledger is a daily delivery budget, and the push told keys
+Three stores stay apart because they are not about problems: a notice of
+Ling's work is told once per waiting session and marked on what it is about
+(`resident::herald`, in memory), the herald's ledger is a daily delivery
+budget, and the push told keys
 ([phone-push-spec.md](phone-push-spec.md)) are delivery receipts for
 skill-declared lines shared by both devices.
 

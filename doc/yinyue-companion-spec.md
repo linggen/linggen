@@ -97,26 +97,64 @@ The person is at that page when one of its own surfaces reads present
 gesture, never the talking loop, and fetches no audio — as when muted. When
 and how often she speaks up is unchanged. The phone has no spoken voice.
 
-## Herald — watch the bus, don't call-site-inject
+## Herald — what she tells of Ling's work, decided in one place
 
-Terminal/blocked run events are already broadcast; `server/resident/triggers.rs` subscribes
-and matches the few that matter. The engine stays ignorant of Yinyue; any agent
-heralds for free.
+Terminal/blocked run events are already broadcast; `server/resident/triggers.rs`
+subscribes and turns the few that are news of Ling's work into one closed set,
+`resident::herald::Herald`: **a reply is ready** (`Notification(RunCompleted)`),
+**a run waits for the person** (`AskUser` — a question or a permission prompt),
+**a run failed** (`Notification(RunFailed)`; a user cancel emits nothing).
+Each is handed to one entry, `herald::tell`, which alone decides, for every
+kind:
 
-Hook set (terminal / "stops the chat"):
+- **Whose.** A run in a session another tool started (`creator: external`,
+  an `agent_run` from Claude Code or Codex) is never told — its caller has
+  it — nor a session of another person's (`day_session::is_builders`). This
+  is checked first, before a cooldown or a hold is spent on it. Her own turns
+  are not news; her own failure rides her next woken turn (`run_fault`).
+- **Where.** Only while the person is away (`user_sees(Screen)`, checked
+  before her turn and again before she speaks): at a screen the page holds
+  the reply, the card and the failure line. What she says goes out as her
+  stage's cue alone — spoken unless muted or her line is drawn where they
+  look (§ Heard or read) — and **never as a row of the thread**. Instead the
+  thing it is about carries one folded mark, "Yinyue said this while you were
+  away · HH:MM", her line inside: the run's last row (its reply, or its
+  failure line) and the waiting question's card. The mark is set only when
+  the line was said aloud — a notice never spoken leaves none — and reaches
+  the page live (`notice_told`) and on load (`told_aloud_at` /
+  `told_aloud_line` on the row's meta and the listed question). The marks
+  live in memory: a restart drops them, never the reply or the card.
+- **The answer.** A wait's answer lives on its card. Her cue for a wait names
+  the question (`question_id`), and her bubble then carries that question's
+  own card — `PendingAskCard`, the one implementation of its buttons on the
+  page, in a subagent's pane and in her bubble — answered through the same
+  endpoint as the page (§ Interactive loop-back). A question kept to a
+  private app is told only as that the app waits, and her bubble shows no
+  card for it.
+- **No repeat.** One telling per session while any question in it waits: a
+  second question there (a subagent's prompt seconds after its parent's) is
+  folded into the first telling and wakes no one; its card carries the same
+  mark. A telling that came to nothing (silence, the answer came first, the
+  person came back) leaves no wait behind it. Once a wait is over nothing
+  about it is said or written. A failure keeps its 90 s storm cooldown.
 
-| Event | Meaning | State |
-|---|---|---|
-| `AskUser` | Ling blocked, waiting on you (covers questions **and** permission prompts) | exists, **add hook** |
-| `Notification(RunFailed)` | run errored (a user cancel emits nothing) | wired |
-| `Notification(MissionCompleted)` | an unattended mission run that had something go wrong — she is handed its facts (§ A mission run that went wrong); a clean run wakes no one | wired |
-| **new** `RunCompleted` | success completion — emit at `chat/runtime.rs:31` (mirror `RunFailed`) | **add** |
+Locks: `herald::tests::one_entry` (the notice's cue, its mark, the turn of a
+wait and the gate of whose are made in `herald.rs` alone; the bus's notices
+are built and handed to `tell` in `triggers.rs` only), `whose` is private to
+`herald.rs`, and the system tests in `tests/system/heralds.rs`.
 
-Guards: skip her own events (no self-loop), skip `Cancelled`, presence-gate
-`RunCompleted` and `AskUser` — herald only when away, checked again before she
-speaks: a finished reply or a question with its buttons is already on the
-screen the user is looking at (2026-09-11: she narrated every choice of a game
-being played). Always-look on `RunFailed`.
+A mission run's fault (§ below), a restart's notice (`wake_to_tell`, kept as
+her row), app moments and glances are not notices of Ling's work and keep
+their own paths. A phone push that carries a wait's approve/deny is not
+built: the phone reads the pending list (`/api/pending-ask-user`).
+
+**A turn the engine started for her shows nothing on any page.** Her held
+runs (every origin but a person's or an asked one) are known by id as they
+begin (`resident::hold_run`), and the one mapping every page reads
+(`ui_events::map_server_event_to_ui_message` → `resident::shows_on_page`)
+drops every event they send — status, run, token count — live; nothing of
+them is a row on reload. What she says reaches the page only as her cue (and,
+for a line that is not a notice, her row).
 
 ## A mission run that went wrong — a fact, not a verdict
 
@@ -170,8 +208,9 @@ When Ling parks on `AskUser`/permission, the event carries a `question_id`, and
 the engine already has the plumbing to deliver an answer to it. Yinyue relays the
 **user's** decision two ways:
 
-- **a button in her bubble** — the pet renders the Approve/Deny widget → existing
-  answer endpoint (fast, no LLM)
+- **the card in her bubble** — her cue for a wait names its question, and the
+  bubble (the main page's dock, the desktop pet window) draws that question's
+  own card (`PendingAskCard`) → the existing answer endpoint (fast, no LLM)
 - **a spoken "approve"** — `answer_prompt(question_id, response)` tool (LLM in loop)
 
 **Guardrail:** Yinyue is the user's **courier, never the approver** — the decision
@@ -207,7 +246,7 @@ game's loss, a hard win, a wound. **Nothing is said then.** The moments queue
 - `asked` moments (the user asked HER — a reading, a word): woken at once,
   no quiet, no cooldown, and told silence is not an answer.
 
-Then she is woken once with everything queued (`wake_herald`), in her own
+Then she is woken once with everything queued (`wake_for_moment`), in her own
 voice. A turn the engine started shows and keeps nothing of what she writes:
 she speaks only by one `<say>…</say>` that is the last thing in her reply
 (text before it is dropped; none, two, text after, an empty, broken or
