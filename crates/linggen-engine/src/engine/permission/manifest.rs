@@ -48,13 +48,11 @@ impl Grants {
 }
 
 /// Parse a frontmatter mode string into the engine enum
-/// ([`PermissionMode::parse_written`], so `"write"` is edit). Unknown
-/// strings fall back to `Read` — the safest default — and so, as it always
-/// has, does `"chat"`.
+/// ([`PermissionMode::parse_written`], so `"write"` is edit, `"chat"` chat).
+/// Unknown strings fall back to `Read` — the safest default for a word
+/// that names no mode.
 pub fn parse_mode_str(m: &str) -> PermissionMode {
-    PermissionMode::parse_written(m)
-        .filter(|mode| *mode != PermissionMode::Chat)
-        .unwrap_or(PermissionMode::Read)
+    PermissionMode::parse_written(m).unwrap_or(PermissionMode::Read)
 }
 
 /// Apply every grant in `perm` to `session` via `set_path_mode`, in order.

@@ -1632,7 +1632,7 @@ mod tests {
     fn each_reader_of_a_written_mode_word() {
         use PermissionMode::*;
         for (word, tier, grant) in [
-            ("chat", None, Read),
+            ("chat", None, Chat),
             ("read", Some(Read), Read),
             ("edit", Some(Edit), Edit),
             ("write", Some(Edit), Edit),
