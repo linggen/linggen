@@ -5,8 +5,9 @@
 // nothing of that shows, and an app opens in a new browser tab as before.
 //
 // ONE_SHELL_SHOTS=<dir> also saves the screenshots the change was shown with.
+import { mkdirSync, writeFileSync } from 'node:fs';
 import type { Page } from '@playwright/test';
-import { test, expect, watchAsked, asked } from '../support/world';
+import { test, expect, expectWebRtc, watchAsked, asked } from '../support/world';
 import { standInForShell, shellCalls } from '../support/shell';
 
 const shots = process.env.ONE_SHELL_SHOTS;
@@ -23,6 +24,13 @@ const chatBox = (page: Page) => page.getByTestId('chat-input');
 const back = (page: Page) => page.getByRole('button', { name: 'Back', exact: true });
 /** When the frame's page started: the same number means it never reloaded. */
 const loadedAt = (page: Page) => diceReady(page).evaluate(() => performance.timeOrigin);
+
+function installApp(home: string) {
+  const dir = `${home}/skills/late-app`;
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(`${dir}/SKILL.md`, '---\nname: late-app\ndescription: A fixture installed during a test.\napp:\n  launcher: web\n  entry: index.html\n  title: Late App\n---\n\nA test app.\n');
+  writeFileSync(`${dir}/index.html`, '<h1>Late App</h1>');
+}
 
 test.describe('inside the desktop app', () => {
   test.beforeEach(async ({ page }) => {
@@ -151,6 +159,64 @@ test.describe('inside the desktop app', () => {
     await expect(page.getByRole('button', { name: 'Models', exact: true })).toHaveAttribute('aria-current', 'true');
   });
 
+  test('opening settings without a section leaves the current section and history alone', async ({ page, world }) => {
+    await page.goto(`${world.url}/`);
+    await page.evaluate(() => window.postMessage({ type: 'linggen:show-settings', section: 'memory' }, location.origin));
+    const memory = page.getByRole('button', { name: 'Memory', exact: true });
+    await expect(memory).toHaveAttribute('aria-current', 'true');
+    const before = await page.evaluate(() => history.length);
+    // Wait for the message to reach the window before checking that it did nothing.
+    await page.evaluate(() => new Promise<void>((resolve) => {
+      window.addEventListener('message', function delivered(e) {
+        if (e.data?.type !== 'linggen:show-settings') return;
+        window.removeEventListener('message', delivered);
+        requestAnimationFrame(() => resolve());
+      });
+      window.postMessage({ type: 'linggen:show-settings' }, location.origin);
+    }));
+    expect(await page.evaluate(() => history.length)).toBe(before);
+    await expect(memory).toHaveAttribute('aria-current', 'true');
+  });
+
+  test('a skill card shown after reload can open its app without reloading the page', async ({ page, world, request }) => {
+    await page.goto(`${world.url}/`);
+    await expect(tab(page, 'dice')).toBeVisible();
+    installApp(world.linggenHome);
+    expect((await request.post(`${world.url}/api/skills/reload`, { data: {} })).ok()).toBe(true);
+    await page.getByText('/late-app', { exact: true }).click();
+    await expect(tab(page, 'Late App')).toHaveAttribute('aria-current', 'page');
+    await expect(page.frameLocator('iframe[title="Late App"]').getByRole('heading', { name: 'Late App' })).toBeVisible();
+  });
+
+  test('the engine immediately stops hearing that chat home is in front when an app tab covers it', async ({ page, world }) => {
+    await page.addInitScript(() => {
+      const beats: unknown[] = [];
+      Object.defineProperty(window, '__beats', { value: beats });
+      const send = RTCDataChannel.prototype.send;
+      RTCDataChannel.prototype.send = function (this: RTCDataChannel, data: string | Blob | ArrayBuffer | ArrayBufferView) {
+        if (typeof data === 'string' && data.includes('"/api/presence"')) {
+          beats.push(JSON.parse(data).body);
+        }
+        return send.call(this, data as string);
+      } as typeof RTCDataChannel.prototype.send;
+    });
+    const beats = () => page.evaluate(() => Reflect.get(window, '__beats') as {
+      surface: string; app?: string; focused: boolean; typing: boolean;
+    }[]);
+    await page.goto(`${world.url}/`);
+    await expect.poll(async () => (await beats()).at(-1)).toMatchObject({ focused: true });
+    const home = (await beats()).at(-1)!;
+    expect(home.app).toBeUndefined();
+    const before = (await beats()).length;
+    await tab(page, 'dice').click();
+    await expect.poll(async () => (await beats()).slice(before).at(-1), { timeout: 2000 })
+      .toMatchObject({ surface: home.surface, focused: false, typing: false });
+    await expect(diceReady(page)).toBeVisible();
+    await tab(page, 'Chat').click();
+    await expect.poll(async () => (await beats()).at(-1), { timeout: 2000 })
+      .toMatchObject({ surface: home.surface, focused: true });
+  });
+
   test('the tab last used opens next time; an app launch brings its tab and the window up', async ({ page, world }) => {
     await page.goto(`${world.url}/`);
     await tab(page, 'Abacus').click();
@@ -228,6 +294,70 @@ test.describe('inside the desktop app', () => {
     // Settings over it: neither.
     await page.getByTitle('Settings', { exact: true }).click();
     await expect.poll(async () => (await said()).at(-1)).toBe('release');
+  });
+});
+
+test('page Escape leaves unsaved text and editor focus in settings', async ({ page, world }) => {
+  await page.goto(`${world.url}/settings`);
+  await expect(back(page)).toBeVisible();
+  // Exercise all editor shapes with real focus and key events.
+  await back(page).evaluate((button) => {
+    button.insertAdjacentHTML('afterend', `
+      <input aria-label="Test field" value="unsaved">
+      <select aria-label="Test select"><option>unsaved</option></select>
+      <textarea aria-label="Test textarea">unsaved</textarea>
+      <div contenteditable="true" aria-label="Test editor"><span>unsaved</span></div>
+    `);
+  });
+  for (const name of ['Test field', 'Test select', 'Test textarea', 'Test editor']) {
+    const field = page.locator(`[aria-label="${name}"]`);
+    await field.press('Escape');
+    await expect(page).toHaveURL(`${world.url}/settings`);
+    await expect(field).toBeFocused();
+    if (name === 'Test editor') await expect(field).toHaveText('unsaved');
+    else await expect(field).toHaveValue('unsaved');
+  }
+  await back(page).press('Escape');
+  await expect(page).toHaveURL(`${world.url}/`);
+});
+
+test.describe('a browser without a selected session', () => {
+  test.use({ scenario: { noConfig: true } });
+
+  test('a browser does not open an app launch that names no session', async ({ page, world, request, httpRequests }) => {
+    installApp(world.linggenHome);
+    expect((await request.post(`${world.url}/api/skills/reload`, { data: {} })).ok()).toBe(true);
+    await page.addInitScript(() => {
+      const seen = { launches: 0, opens: 0, omitSession: false };
+      Object.defineProperty(window, '__seen', { value: seen });
+      window.open = () => { seen.opens++; return null; };
+      const prop = Object.getOwnPropertyDescriptor(RTCDataChannel.prototype, 'onmessage')!;
+      Object.defineProperty(RTCDataChannel.prototype, 'onmessage', {
+        ...prop,
+        set(fn) {
+          prop.set!.call(this, function (this: RTCDataChannel, e: MessageEvent) {
+            const msg = typeof e.data === 'string' && JSON.parse(e.data);
+            if (msg?.kind !== 'app_launched') return fn.call(this, e);
+            // The current server uses a broadcast sentinel. Also exercise the
+            // UI contract for an event with no session_id field at all.
+            if (seen.omitSession) delete msg.session_id;
+            fn.call(this, new MessageEvent('message', { data: JSON.stringify(msg) }));
+            queueMicrotask(() => seen.launches++);
+          });
+        },
+      });
+    });
+    await page.goto(world.url);
+    await expectWebRtc(page, httpRequests);
+    await expect(page.getByTestId('session-list-empty')).toBeVisible();
+    await expect(page.getByText('/late-app', { exact: true })).toBeVisible();
+    expect((await request.post(`${world.url}/api/apps/launch`, { data: { skill: 'late-app' } })).ok()).toBe(true);
+    const seen = () => page.evaluate(() => Reflect.get(window, '__seen'));
+    await expect.poll(seen).toMatchObject({ launches: 1, opens: 0 });
+    await page.evaluate(() => { Reflect.get(window, '__seen').omitSession = true; });
+    expect((await request.post(`${world.url}/api/apps/launch`, { data: { skill: 'late-app' } })).ok()).toBe(true);
+    await expect.poll(seen).toMatchObject({ launches: 2 });
+    expect(await seen()).toMatchObject({ opens: 0 });
   });
 });
 
