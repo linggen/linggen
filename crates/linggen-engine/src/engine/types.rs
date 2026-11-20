@@ -736,7 +736,8 @@ impl AgentEngine {
             prompt_profile: super::prompt::profile::PromptProfile::default(),
             session_dir: None,
             default_models: Vec::new(),
-            auto_fallback: true,
+            // Decided once, by the routing default (config.rs).
+            auto_fallback: crate::config::RoutingConfig::default().auto_fallback,
             context_window_tokens: None,
             context_window_model: None,
             compact_threshold: None,
@@ -909,6 +910,22 @@ mod tests {
     }
     fn set(items: &[&str]) -> HashSet<String> {
         items.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// A new engine falls back as a config with no word on it does: the
+    /// default is decided once, by `RoutingConfig::default`.
+    #[test]
+    fn a_new_engine_takes_auto_fallback_from_the_routing_default() {
+        let models =
+            std::sync::Arc::new(crate::provider::models::ModelManager::new_with_credentials(
+                vec![],
+                &crate::credentials::Credentials::default(),
+            ));
+        let engine = AgentEngine::new(cfg(), models, "m".into(), AgentRole::Lead).unwrap();
+        assert_eq!(
+            engine.auto_fallback,
+            crate::config::RoutingConfig::default().auto_fallback
+        );
     }
 
     #[test]
