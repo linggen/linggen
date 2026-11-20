@@ -13,7 +13,7 @@ Read files under `doc/` and follow them. If you find wrong content in any doc fi
 - `doc/models.md` — hardware abstraction: providers, routing
 - `doc/storage-spec.md` — filesystem layout: all persistent state, data formats
 - `doc/cli.md` — CLI reference
-- `doc/code-style.md` — code style rules (flat logic, small files/functions, clean code)
+- `doc/code-style.md` — architecture principles (one place decides and a lock holds it there; open what varies, close what does not) and code style — read before any non-trivial change
 - `doc/session-spec.md` — session/context: creators, effective tools, prompt assembly
 - `doc/memory-spec.md` — memory system: extraction, storage, two-tier loading
 - `doc/mission-spec.md` — cron mission system
@@ -113,13 +113,12 @@ Config search: `$LINGGEN_CONFIG` → `~/.linggen/config/linggen.runtime.toml` �
 
 Key sections: `[[models]]` (LLM providers), `[server]` (port), `[agent]` (max_iters, safety mode, default_permission_mode), `[logging]`, `[[agents]]` (agent spec references), `[routing]` (the default model chain and auto-fallback).
 
-## Code Style
+## Architecture Principles and Code Style
 
-Follow `doc/code-style.md`:
-- Prefer guard clauses and early returns over deep nesting
-- Keep files and functions small and focused; refactor when complexity grows
-- Remove unused code — no compatibility shims or dead feature flags
-- Keep async control flow explicit and traceable
+`doc/code-style.md` is the one place these rules are written — read it before
+a non-trivial change; nothing here repeats it. In one line: a design is
+measured by in how many places one thing is decided, not by how small its
+pieces are.
 
 ## Key Design Patterns
 
