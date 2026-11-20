@@ -21,6 +21,14 @@ impl ReadOrigin {
             _ => Self::LocalTask,
         }
     }
+
+    /// What a turn nobody typed stands as (a host's follow-up, the engine's
+    /// own notice): the session's last turn may have been its owner's, and
+    /// the owner's say over a secret file does not carry into this one.
+    /// Looking stays as free as it was.
+    pub fn unattended(self) -> Self {
+        self.task_child()
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -85,5 +93,19 @@ pub(super) fn decide(
         ReadDecision::Allow
     } else {
         ReadDecision::Ask
+    }
+}
+
+#[cfg(test)]
+mod unattended_tests {
+    use super::ReadOrigin;
+
+    /// A turn nobody typed never stands as the owner; a looker stays a looker.
+    #[test]
+    fn a_turn_nobody_typed_is_never_the_owners() {
+        assert_eq!(ReadOrigin::LocalOwner.unattended(), ReadOrigin::LocalTask);
+        assert_eq!(ReadOrigin::LocalDelegate.unattended(), ReadOrigin::LocalTask);
+        assert_eq!(ReadOrigin::LocalTask.unattended(), ReadOrigin::LocalTask);
+        assert_eq!(ReadOrigin::Other.unattended(), ReadOrigin::Other);
     }
 }

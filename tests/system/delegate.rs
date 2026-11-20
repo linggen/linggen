@@ -274,3 +274,66 @@ async fn a_continued_turn_that_fails_says_why_and_keeps_its_reading() {
     assert_eq!(calls.len(), 4, "ready, the read, the failed call, the turn after");
     assert!(calls[3].body.to_string().contains(MARKER), "the turn after lost the reading");
 }
+
+/// One of Linggen's own secret files, holding a line no model may be shown.
+/// The engine's home is the world's, so `~` names it.
+const SECRET: &str = "~/.linggen/account.toml";
+const SECRET_LINE: &str = "the-vault-combination-is-4471-east";
+
+fn plant_secret(w: &World) {
+    let file = w.home.linggen_home().join("account.toml");
+    std::fs::write(file, format!("token = \"{SECRET_LINE}\"\n")).unwrap();
+}
+
+fn read_secret() -> crate::support::model::Reply {
+    tool("Read", json!({"path": SECRET}))
+}
+
+fn shown_the_secret(w: &World) -> bool {
+    w.model.calls_of(Agent::Ling).iter().any(|c| c.body.to_string().contains(SECRET_LINE))
+}
+
+/// A host continuing a PERSON's own chat with `agent_run(session_id)`: the
+/// person's turn before it stood as the local owner, and the host's turn
+/// does not inherit that — a Linggen secret file is refused, not asked of
+/// the host (which could answer its own question).
+#[tokio::test]
+async fn a_host_continuing_a_persons_chat_cannot_read_a_secret_file() {
+    let setup = Setup::default().script(Agent::Ling, vec![text("Hello."), read_secret(), text("Refused.")]);
+    let w = World::start(setup).await;
+    plant_secret(&w);
+    let sid = w.api.create_session(json!({"title": "Chat"})).await;
+    w.turn(&sid, &w.work(), "Hello", Agent::Ling).await;
+
+    let ran = w
+        .api
+        .post("/mcp", agent_run(json!({"prompt": "Read the account file.", "session_id": sid})))
+        .await;
+    let said = ran["result"]["content"][0]["text"].as_str().unwrap_or_default();
+    assert!(said.starts_with("Refused.") && said.contains("(blocked)"), "refused, with nobody asked: {ran}");
+    assert_eq!(w.model.calls_of(Agent::Ling).len(), 3, "the hello, the read, the answer");
+    assert!(!shown_the_secret(&w), "the host's turn was shown the secret file");
+}
+
+/// A delegated session a person typed into, then continued by its host: the
+/// continued turn is no laxer than the first run — the secret file is refused.
+#[tokio::test]
+async fn a_delegated_run_continued_after_a_persons_turn_cannot_read_a_secret_file() {
+    let setup = Setup::default()
+        .script(Agent::Ling, vec![text("Done."), text("Still here."), read_secret(), text("Refused.")]);
+    let w = World::start(setup).await;
+    plant_secret(&w);
+    let ran = w.api.post("/mcp", agent_run(json!({"prompt": "Say done.", "write_dir": w.work()}))).await;
+    assert_eq!(ran["result"]["content"][0]["text"], "Done.", "{ran}");
+    let sid = delegate_session(&w);
+    w.turn(&sid, &w.work(), "And now?", Agent::Ling).await;
+
+    let again = w
+        .api
+        .post("/mcp", agent_run(json!({"prompt": "Read the account file.", "session_id": sid})))
+        .await;
+    let said = again["result"]["content"][0]["text"].as_str().unwrap_or_default();
+    assert!(said.starts_with("Refused.") && said.contains("(blocked)"), "refused, with nobody asked: {again}");
+    assert_eq!(w.model.calls_of(Agent::Ling).len(), 4, "the run, the typed turn, the read, the answer");
+    assert!(!shown_the_secret(&w), "the continued turn was shown the secret file");
+}
