@@ -33,6 +33,8 @@ mod prompt;
 mod readable_shapes_tests;
 #[cfg(test)]
 mod read_policy_tests;
+#[cfg(test)]
+mod read_lock_tests;
 mod scripts;
 mod sensitive;
 mod shell_text;
