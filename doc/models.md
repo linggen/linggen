@@ -163,10 +163,15 @@ All use their respective `provider` value (or `provider = "openai"` with their e
 
 ## Default model
 
-Settings → Models sets one default per kind of session:
+Settings → Models sets the default:
 
-- **Star** — the default for Linggen sessions (`routing.default_models`).
-- **Moon** — the default for Claude sessions (`routing.claude_default_model`). Only Anthropic API-key models can take it. Unset, or the model no longer usable, Claude sessions fall back to the star, then to the first Claude API-key model in the list.
+- **Star** — the default for new sessions (`routing.default_models`).
+
+A Claude model runs natively, with an API key or the Claude subscription
+sign-in. The 2.5.1 key for the retired Claude sessions' default,
+`routing.claude_default_model`, is read once on load: when the config names
+no other default it becomes the star, so a person who ran only Claude keeps
+it (`Config::migrate_retired_claude_default`); it is never written again.
 
 ## Which model a turn runs on
 

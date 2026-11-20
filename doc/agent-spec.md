@@ -39,30 +39,13 @@ Agents are discovered dynamically from `agents/*.md` markdown files. No hardcode
 
 Runtime configuration (model, effective tools, bound skill) is set at the session level. See `session-spec.md`.
 
-### Claude Agent SDK sessions
+### Claude models
 
-Claude Agent is an external runtime, not a native Markdown agent. **New Claude
-session** creates a single-agent conversation using the official SDK prompt,
-tools, loop, context management and permission system. It cannot seat Ling or
-Yinyue. Native sessions and their New chat entry keep their existing behavior.
-
-Linggen provides the chat, progress, question and approval widgets, plus
-process lifecycle, credentials and session links. SDK permission callbacks
-round-trip the person's choice; native path grants and permission tiers do
-not participate. The session exposes SDK modes: default, accept edits and plan.
-
-Ling can use `StartClaudeSession` to launch an independent linked coding task.
-The task receives an explicit brief and working folder; follow-ups and approvals
-stay in the Claude session. The parent receives a completion status and link.
-This does not create a native delegated worker or share a conversation history.
-
-A configured Anthropic API-key model is required. Only compatible models are
-offered; invalid choices fail visibly. The SDK runs on bundled Bun with pinned
-dependencies installed on first use. Its session ID persists across restarts;
-clearing the conversation resets it. SDK transcripts own execution context;
-Linggen's chat log is a display record, never a replacement SDK transcript.
-Project Claude configuration loads through the SDK itself. Configured MCP
-servers are passed to the SDK. Stop aborts the SDK and bounds process shutdown.
+A Claude model is a model like any other: it runs in a Linggen session through
+the native Anthropic provider, with an API key or the Claude subscription
+sign-in (`models.md`). The Claude Agent SDK session that ran up to 2.5.1 is
+gone; an old one is a read-only record (`session-spec.md` § Old Claude
+sessions).
 
 ### Appearing only once met
 

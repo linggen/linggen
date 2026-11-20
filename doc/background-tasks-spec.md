@@ -10,13 +10,11 @@ guide: |
 # Background tasks
 
 Work an agent starts and does not wait for: a long shell command, a
-subagent, a watch on a log. It runs beside the chat, never in front of it.
-The same in a native Linggen session and in a Claude session.
+subagent. It runs beside the chat, never in front of it.
 
 ## Related docs
 
 - `chat-spec.md`: message queue, Steer, the subagent pane.
-- `session-spec.md`: Claude sessions, the SDK runner.
 - `agent-spec.md`: delegation (`Task`).
 - `tool-spec.md`: `Bash`.
 
@@ -54,9 +52,8 @@ The same in a native Linggen session and in a Claude session.
 5. **What ends them.** Finishing, the person's stop, the agent's own stop,
    Clear or delete of the session, an engine restart. A task the engine
    restart ended is listed as interrupted, not as failed. Clear and delete
-   stop a native session's tasks before the session is cleared or removed,
-   and their ends are told to no agent; a Claude session's go with its
-   runner.
+   stop a session's tasks before the session is cleared or removed, and
+   their ends are told to no agent.
 6. **A subagent waits for its own work.** A delegated run does not end
    while its own background shells or subagents still run: when its loop
    would end, it waits on its notices, and each end comes in as its next
@@ -68,30 +65,16 @@ The same in a native Linggen session and in a Claude session.
 
 ## Kinds
 
-| Kind | Native session | Claude session |
-|:-----|:---------------|:---------------|
-| Shell | `Bash` with `run_in_background`, or moved by its foreground limit or Steer | SDK background shell |
-| Subagent | `Task` with `run_in_background` | SDK background subagent |
-| Watch | — | SDK Monitor / MCP task |
+| Kind | How it starts |
+|:-----|:--------------|
+| Shell | `Bash` with `run_in_background`, or moved by its foreground limit or Steer |
+| Subagent | `Task` with `run_in_background` |
 
-A native agent lists, reads, messages and stops what it started with tools
-of its own (`TaskList`, `TaskOutput`, `SendMessage`, `TaskStop`); a Claude
-agent uses the SDK's. The session's agent owns its tasks by name, so a later
+An agent lists, reads, messages and stops what it started with tools
+of its own (`TaskList`, `TaskOutput`, `SendMessage`, `TaskStop`). The session's agent owns its tasks by name, so a later
 turn still reaches them; a subagent owns its own, their ends are told to
 it alone, and it runs until they have ended (rule 6). A subagent starts with its parent's path grants and asks the
 person for more only when its parent could.
-
-## Claude sessions: the runner lives while work does
-
-The SDK keeps background tasks inside its process. So the runner process
-stays up past a turn's result while the session has queued messages,
-background tasks or an active goal, and exits only when idle for a while
-(and on Clear, delete, an engine restart). Each turn — a person's message,
-a task's notification — is its own run in the session, with its own run
-record and busy state; the runner is not. A person's message reaches the
-live runner directly. Per-turn context (memory recall) rides each message.
-A change of model, MCP servers or folder trust ends the runner at its next
-idle, and the next turn starts a fresh one on the new settings.
 
 ## Engine restart
 
@@ -119,8 +102,9 @@ afterwards, not only the one that asked:
    the state before redoing anything that changes things, and which
    background tasks the restart ended, addressed to the agent that started
    them. Child-owned tasks do not wake a session agent. Interrupted tasks
-   remain in the session list marked interrupted. A Claude session continues
-   the same SDK conversation. Idle sessions are not touched. Each plan runs
+   remain in the session list marked interrupted. An old Claude session
+   (`session-spec.md` § Old Claude sessions) named in a plan is not
+   continued. Idle sessions are not touched. Each plan runs
    once: it is removed only after every turn's message is in its chat, and a
    plan replayed after a crash skips the messages already there. A rolled-back
    engine continues them at once. A turn that cannot be kept is tried a few
@@ -154,7 +138,7 @@ the move, use `TaskStop` or stop the task from the list.
 ### Moved by Steer
 
 Steer on a queued message (`chat-spec.md` § Message queue) moves the turn's
-running foreground work here, as the SDK does in a Claude session. A
+running foreground work here, as Claude Code does. A
 foreground `Bash` that does not end within a second of the Steer is not
 killed: it becomes a shell task, its output from then on going to its task
 file (what it printed so far opens the file). A running foreground `Task`
