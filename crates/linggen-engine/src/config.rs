@@ -467,7 +467,8 @@ pub struct RoutingConfig {
 }
 
 impl Config {
-    pub fn load_with_path() -> Result<(Self, Option<PathBuf>)> {
+    /// The files a config is looked for in, first found wins.
+    pub fn candidate_paths() -> Vec<PathBuf> {
         let mut candidates = Vec::new();
 
         if let Ok(explicit) = std::env::var("LINGGEN_CONFIG") {
@@ -478,8 +479,11 @@ impl Config {
         let cfg_dir = crate::paths::config_dir();
         candidates.push(cfg_dir.join("linggen.runtime.toml"));
         candidates.push(cfg_dir.join("linggen.toml"));
+        candidates
+    }
 
-        for path in candidates {
+    pub fn load_with_path() -> Result<(Self, Option<PathBuf>)> {
+        for path in Self::candidate_paths() {
             if path.exists() {
                 let content = fs::read_to_string(&path)?;
                 let config = Config::from_toml(&content)
@@ -623,6 +627,32 @@ impl Config {
         }
     }
 
+    /// What `ling status` says about the config files themselves: one that
+    /// exists but cannot be loaded (the engine then runs on defaults), and
+    /// copies of earlier unloadable files set aside beside them
+    /// (`save_runtime`).
+    pub fn health_lines(candidates: &[PathBuf]) -> Vec<String> {
+        let mut lines = Vec::new();
+        for path in candidates.iter().filter(|p| p.exists()) {
+            if let Err(why) = loadable(path) {
+                lines.push(format!(
+                    "{} could not be read ({why}); the engine runs on defaults until it is fixed.",
+                    path.display()
+                ));
+            }
+            let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else { continue };
+            let prefix = format!("{}{UNREADABLE_MARK}", name.to_string_lossy());
+            let kept = std::fs::read_dir(dir).into_iter().flatten().flatten();
+            for entry in kept.filter(|e| e.file_name().to_string_lossy().starts_with(&prefix)) {
+                lines.push(format!(
+                    "An earlier config that did not load was set aside and kept at {}.",
+                    entry.path().display()
+                ));
+            }
+        }
+        lines
+    }
+
     pub fn runtime_config_path(config_dir: Option<&Path>) -> PathBuf {
         if let Some(dir) = config_dir {
             return dir.join("linggen.runtime.toml");
@@ -630,11 +660,16 @@ impl Config {
         crate::paths::config_dir().join("linggen.runtime.toml")
     }
 
+    /// The one place a config is written. A file already there that cannot
+    /// be loaded is the person's, not ours to replace with defaults: it is
+    /// first set aside whole (`<name>.unreadable-<timestamp>`); if that, or
+    /// reading it, fails, nothing is written.
     pub fn save_runtime(&self, config_dir: Option<&Path>) -> Result<PathBuf> {
         let path = Self::runtime_config_path(config_dir);
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
+        set_aside_if_unloadable(&path)?;
         fs::write(&path, toml::to_string_pretty(self)?)?;
         Ok(path)
     }
@@ -740,6 +775,48 @@ impl Config {
         }
         Ok(())
     }
+}
+
+const UNREADABLE_MARK: &str = ".unreadable-";
+
+/// Whether the file at `path` loads as a config; the reason if not.
+fn loadable(path: &Path) -> std::result::Result<(), String> {
+    let bytes = fs::read(path).map_err(|e| e.to_string())?;
+    let text = String::from_utf8(bytes).map_err(|e| e.to_string())?;
+    // The first line of the parser's report: where it stopped.
+    Config::from_toml(&text)
+        .map(|_| ())
+        .map_err(|e| e.to_string().lines().next().unwrap_or_default().to_string())
+}
+
+/// A file that exists and cannot be loaded is moved aside before a config is
+/// written in its place. A file that could not even be read is not touched
+/// and nothing is written over it.
+fn set_aside_if_unloadable(path: &Path) -> Result<()> {
+    let bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => anyhow::bail!("{} cannot be read ({e}); nothing was written over it", path.display()),
+    };
+    let loads = String::from_utf8(bytes).is_ok_and(|text| Config::from_toml(&text).is_ok());
+    if loads {
+        return Ok(());
+    }
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(format!("{UNREADABLE_MARK}{}", chrono::Utc::now().timestamp()));
+    let aside = path.with_file_name(name);
+    fs::rename(path, &aside).map_err(|e| {
+        anyhow::anyhow!(
+            "{} cannot be loaded and could not be set aside ({e}); nothing was written over it",
+            path.display()
+        )
+    })?;
+    tracing::warn!(
+        "[config] {} could not be loaded; kept as {} before the new config was written",
+        path.display(),
+        aside.display()
+    );
+    Ok(())
 }
 
 impl Default for Config {
@@ -1110,6 +1187,50 @@ mod tests {
         let loaded = Config::from_toml(&toml::to_string(&priced(2.0, 10.0)).unwrap()).unwrap();
         assert_eq!(loaded.models[0].price.as_ref().unwrap().input, 2.0);
         assert!(loaded.problems.is_empty());
+    }
+
+    /// The older hazard: a file that could not be loaded must never be
+    /// written over by defaults. It is set aside, whole, before the save.
+    #[test]
+    fn a_config_file_that_cannot_load_is_set_aside_before_a_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = Config::runtime_config_path(Some(dir.path()));
+        let broken = b"[server\nurl = \"127.0.0.1:9\" # the person's own models are below\n";
+        std::fs::write(&path, broken).unwrap();
+        valid_config().save_runtime(Some(dir.path())).unwrap();
+        let aside: Vec<_> = std::fs::read_dir(dir.path()).unwrap().flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| n.starts_with("linggen.runtime.toml.unreadable-"))
+            .collect();
+        assert_eq!(aside.len(), 1, "{aside:?}");
+        assert_eq!(std::fs::read(dir.path().join(&aside[0])).unwrap(), broken, "the original bytes are kept");
+        Config::from_toml(&std::fs::read_to_string(&path).unwrap()).expect("the new file loads");
+    }
+
+    /// A file that loads is replaced as before — nothing set aside.
+    #[test]
+    fn a_config_file_that_loads_is_not_set_aside() {
+        let dir = tempfile::tempdir().unwrap();
+        valid_config().save_runtime(Some(dir.path())).unwrap();
+        valid_config().save_runtime(Some(dir.path())).unwrap();
+        let names: Vec<_> = std::fs::read_dir(dir.path()).unwrap().flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string()).collect();
+        assert_eq!(names, ["linggen.runtime.toml"], "{names:?}");
+    }
+
+    /// `ling status` says what it found: the file that cannot load, and a
+    /// copy set aside earlier.
+    #[test]
+    fn the_health_lines_name_an_unloadable_file_and_its_set_aside_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = Config::runtime_config_path(Some(dir.path()));
+        std::fs::write(&path, "[server").unwrap();
+        let lines = Config::health_lines(&[path.clone()]);
+        assert!(lines.iter().any(|l| l.contains("could not be read") && l.contains("linggen.runtime.toml")), "{lines:?}");
+        valid_config().save_runtime(Some(dir.path())).unwrap();
+        let lines = Config::health_lines(&[path]);
+        assert!(lines.iter().any(|l| l.contains(".unreadable-")), "{lines:?}");
+        assert!(!lines.iter().any(|l| l.contains("could not be read")), "{lines:?}");
     }
 
     #[test]

@@ -45,6 +45,9 @@ pub async fn run(config: &Config, config_path: Option<&Path>) -> Result<()> {
         Some(p) => println!("  Config:      {}", p.display()),
         None => println!("  Config:      (default)"),
     }
+    for line in Config::health_lines(&Config::candidate_paths()) {
+        fail("Config", &line);
+    }
 
     // 3. Workspace
     match crate::paths::resolve_workspace_root(None) {

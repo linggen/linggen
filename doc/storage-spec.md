@@ -41,7 +41,7 @@ Project path encoding: `/Users/foo/project` → `-Users-foo-project` (same conve
 ```
 ~/.linggen/
 ├── config/
-│   ├── linggen.runtime.toml    # Runtime config overrides (TOML)
+│   ├── linggen.runtime.toml    # Runtime config overrides (TOML). A file that cannot load is set aside, never overwritten: linggen.runtime.toml.unreadable-<unix secs> (named by `ling status`)
 ├── logs/
 │   └── linggen-{YYYY-MM-DD}.log  # Daily rolling logs (text)
 ├── agents/

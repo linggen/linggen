@@ -345,3 +345,39 @@ async fn saving_a_bad_price_is_refused_and_names_it() {
         "nothing was written"
     );
 }
+
+/// The older hazard (it is the config's, not the price's): a config file that
+/// cannot be loaded is never written over by a save through the API — its
+/// original bytes are kept under a set-aside name.
+#[tokio::test]
+async fn a_save_never_writes_over_a_config_file_that_cannot_load() {
+    let w = World::start(Setup::default()).await;
+    let config = w.api.get("/api/config").await;
+    let path = w.home.config_path();
+    let broken = b"[server\nurl = \"the person's own file, broken by a hand edit\"\n";
+    std::fs::write(&path, broken).unwrap();
+    w.api.post("/api/config", config).await;
+    let dir = path.parent().unwrap();
+    let aside: Vec<_> = std::fs::read_dir(dir)
+        .unwrap()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .contains(".unreadable-")
+        })
+        .collect();
+    assert_eq!(aside.len(), 1, "{aside:?}");
+    assert_eq!(
+        std::fs::read(&aside[0]).unwrap(),
+        broken,
+        "the original bytes are kept"
+    );
+    assert_ne!(
+        std::fs::read(&path).unwrap(),
+        broken,
+        "the save wrote the new config"
+    );
+}
