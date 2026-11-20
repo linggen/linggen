@@ -363,7 +363,8 @@ async fn her_place(
 /// one reaches the finalizer's checks only where it started (the question still
 /// waiting, a page in front, the last word): replayed here those are out of
 /// reach, and a line published without them is a second, unchecked way out — so
-/// the replayed turn says nothing, and the thing that woke it wakes again.
+/// it is not run at all (a model turn only to drop its line), and the thing
+/// that woke it wakes again.
 fn resend_hers(
     state: Arc<ServerState>,
     turn: Turn,
@@ -372,17 +373,16 @@ fn resend_hers(
 ) -> crate::server::admission::Resend {
     Box::new(move || {
         Box::pin(async move {
+            if !replays(origin) {
+                tracing::info!("[yinyue] {}: a turn kept in a restart's plan is dropped, not run", origin.name());
+                return;
+            }
             tokio::spawn(async move {
                 let pet = state.manager.get_config_snapshot().await.pet;
                 let Some(reply) = run_at(&state, &turn, &pet, task, origin).await else {
                     return;
                 };
                 let Some(answer) = reply.answer() else {
-                    tracing::info!(
-                        "[yinyue] {}: a turn run again after a restart says nothing ({} chars dropped)",
-                        origin.name(),
-                        reply.chars()
-                    );
                     return;
                 };
                 let at = crate::server::api::yinyue::SaidAt {
@@ -393,6 +393,12 @@ fn resend_hers(
             });
         })
     })
+}
+
+/// Whether a turn of this origin, kept in a restart's plan, is run again:
+/// only a person's (or an answer they asked for) — the rest is dropped.
+fn replays(origin: Origin) -> bool {
+    !origin.held()
 }
 
 /// The language this turn's words are in: the one its caller names (an app
@@ -549,6 +555,19 @@ mod tests {
     fn ready(engine: &mut crate::engine::AgentEngine, turn: &Turn) {
         ready_for_turn(engine, turn, &Default::default());
         engine.begin_turn(turn_settings(turn, Origin::Person));
+    }
+
+    #[test]
+    fn only_a_persons_turn_is_run_again_from_a_restarts_plan() {
+        for origin in [Origin::Person, Origin::Asked] {
+            assert!(replays(origin), "{origin:?}");
+        }
+        for origin in [
+            Origin::Herald, Origin::AgentChat, Origin::Fault, Origin::Moment,
+            Origin::InUse, Origin::Glance, Origin::Note, Origin::TaskEnd,
+        ] {
+            assert!(!replays(origin), "{origin:?} would run a model turn only to drop its line");
+        }
     }
 
     /// A moment turn cannot reach another agent; her own turns can.
