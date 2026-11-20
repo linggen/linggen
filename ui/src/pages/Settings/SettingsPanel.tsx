@@ -1,4 +1,5 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState } from 'react';
+import { ArrowLeft } from 'lucide-react';
 import { appLabel } from '../../apps/appLabel';
 import { SettingsSectionBody } from '../../components/settings/sections';
 import { useSettingsRequirements } from '../../hooks/useSettingsRequirements';
@@ -38,19 +39,18 @@ function groupEntries(entries: Entry[]) {
 }
 
 type Props = {
-  initial?: string | null | { section?: string };
-  heading: ReactNode;
-  trailing?: ReactNode;
+  initial: string | null;
+  requestKey: string;
+  onBack: () => void;
   canOpenRun: boolean;
 };
 
-export function SettingsPanel({ initial, heading, trailing, canOpenRun }: Props) {
+export function SettingsPanel({ initial, requestKey, onBack, canOpenRun }: Props) {
   const requirements = useSettingsRequirements();
-  const requested = typeof initial === 'object' ? initial?.section : initial;
-  const [selection, setSelection] = useState(() => ({ initial, picked: resolveSettingsTab(requested) }));
-  if (selection.initial !== initial) setSelection({ initial, picked: resolveSettingsTab(requested) });
+  const [selection, setSelection] = useState(() => ({ requestKey, picked: resolveSettingsTab(initial) }));
+  if (selection.requestKey !== requestKey) setSelection({ requestKey, picked: resolveSettingsTab(initial) });
   const { picked } = selection;
-  const setPicked = (id: string) => setSelection({ initial, picked: id });
+  const setPicked = (id: string) => setSelection({ requestKey, picked: id });
   const save = useAutoSaveConfig();
   const apps = useAppSettings();
   const entries: Entry[] = SETTINGS_SECTIONS.filter((section) => sectionAvailable(section, requirements))
@@ -63,10 +63,11 @@ export function SettingsPanel({ initial, heading, trailing, canOpenRun }: Props)
     <div className="flex flex-col h-full min-h-0 bg-slate-100/70 dark:bg-[#0a0a0a] text-slate-900 dark:text-slate-200">
       <header className="shrink-0 border-b border-slate-200 dark:border-white/5 bg-white/90 dark:bg-[#0f0f0f]/90 backdrop-blur-md z-50">
         <div className="flex items-center justify-between px-3 md:px-6 py-2 md:py-3">
-          {heading}
+          <button onClick={onBack} className="flex items-center gap-1.5 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:text-blue-600 transition-colors shrink-0">
+            <ArrowLeft size={16} /> Back
+          </button>
           <div className="flex items-center gap-2 min-h-[30px]">
             <SaveStatus state={save.state} error={save.error} />
-            {trailing}
           </div>
         </div>
         <nav className="md:hidden flex items-center gap-1 px-3 pb-2 overflow-x-auto">

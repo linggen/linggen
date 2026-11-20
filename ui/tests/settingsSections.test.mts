@@ -72,7 +72,9 @@ test('mcp aliases Tools; the legacy model id and retired app entries are absent'
 });
 
 const panel = 'pages/Settings/SettingsPanel.tsx';
-const frames = new Set(['pages/Settings/SettingsHome.tsx', 'pages/Settings/BareSection.tsx', 'apps/LauncherSettings.tsx']);
+const frames = new Set(['pages/Settings/SettingsHome.tsx', 'pages/Settings/BareSection.tsx']);
+const faceReader = 'lib/launcherFace.mts';
+const faceMark = 'linggen:launcher-face';
 const launcher = 'apps/LauncherApp.tsx';
 const moduleOptions = { moduleResolution: ts.ModuleResolutionKind.Bundler, allowJs: true };
 const moduleCache = ts.createModuleResolutionCache(root, (file) => file);
@@ -148,7 +150,7 @@ function importViolation(node: ts.Node, file: string) {
     const used = use.names === null ? [...bodies] : use.names.filter((name) => bodies.has(name));
     if (used.length) return `${used.join(', ')} may only be imported by ${mapping}`;
   }
-  // Named exception: SettingsPanel renders the mapping on behalf of both faces.
+  // Named exception: SettingsPanel renders the mapping for SettingsHome.
   if (file === panel && target === mapping) return;
   if ((target === mapping || target === panel) && !frames.has(file)) {
     return `${target} may only be imported by settings frames`;
@@ -177,6 +179,18 @@ function duplicateDispatch(node: ts.Node, file: string): boolean {
     (isId(node.left) || isId(node.right));
 }
 
+function readsLauncherFace(node: ts.Node) {
+  if (ts.isStringLiteralLike(node) || ts.isTemplateLiteralToken(node)) {
+    return node.text.includes(faceMark) || /(?:^|[?&])launcher=/.test(node.text);
+  }
+  if (ts.isCallExpression(node) && node.arguments[0]) {
+    const [key] = node.arguments;
+    return ts.isStringLiteralLike(key) && key.text === 'launcher' &&
+      /(?:\.|\[['"])(get|getAll|has)(?:['"]\])?$/.test(node.expression.getText());
+  }
+  return ts.isRegularExpressionLiteral(node) && node.getText().includes('launcher=');
+}
+
 const desktop = 'components/settings/DesktopSection.tsx';
 const flagFile = /\b(?:start-at-login|pet-disabled|pet-always-on)\b/;
 
@@ -186,6 +200,9 @@ function inspect(tree: ts.SourceFile, file: string) {
   const scoped = drawsSettings(file);
   walk(tree, (node) => {
     const line = () => tree.getLineAndCharacterOfPosition(node.getStart()).line + 1;
+    if (file !== faceReader && readsLauncherFace(node)) {
+      violations.push(`${file}:${line()}: launcher face belongs in ${faceReader}`);
+    }
     const access = importViolation(node, file);
     if (access) violations.push(`${file}:${line()}: ${access}`);
     if (file !== desktop && (ts.isStringLiteralLike(node) || ts.isTemplateLiteralToken(node)) && flagFile.test(node.text)) {
@@ -243,19 +260,33 @@ import { SettingsPanel } from '../pages/Settings/SettingsPanel';`;
     `${otherApp}:1: ${mapping} may only be imported by settings frames`,
     `${otherApp}:2: ${panel} may only be imported by settings frames`,
   ]);
-  assert.deepEqual(fixture(code, 'apps/LauncherSettings.tsx'), []);
+  assert.deepEqual(fixture(code, launcher), fixture(code, otherApp).map((line) => line.replace(otherApp, launcher)));
+  assert.deepEqual(fixture("import { SettingsPanel } from './SettingsPanel';", 'pages/Settings/SettingsHome.tsx'), []);
 });
 
 for (const [name, file, code] of [
   ['switch', launcher, "switch (key) { case 'memory': render(); }"],
   ['comparison chain', panel, "tab === 'memory' ? Memory : tab === 'models' ? Models : null"],
-  ['property comparison', 'apps/LauncherSettings.tsx', "active.id === 'memory' ? Memory : Storage"],
+  ['property comparison', 'pages/Settings/SettingsHome.tsx', "active.id === 'memory' ? Memory : Storage"],
   ['id-keyed map', 'components/settings/ExtraPanel.tsx', "const render = { ['memory']: Memory, storage: Storage };"],
 ]) {
   test(`the lock rejects a duplicate ${name} in settings`, () => {
     assert.match(fixture(code, file).join('\n'), /second settings dispatch/);
   });
 }
+
+test('only the face module reads the launcher query or window mark', () => {
+  for (const code of [
+    "new URLSearchParams(location.search).get('launcher')",
+    "new URLSearchParams(location.search)['has']('launcher')",
+    "location.search.includes('launcher=1')",
+    "sessionStorage.getItem('linggen:launcher-face')",
+  ]) {
+    assert.match(fixture(code).join('\n'), /launcher face belongs in/);
+    assert.deepEqual(fixture(code, faceReader), []);
+  }
+  assert.deepEqual(fixture("apps.filter((app) => app.launcher === 'web')"), []);
+});
 
 test('the lock rejects all three flag paths outside DesktopSection', () => {
   for (const flag of ['start-at-login', 'pet-disabled', 'pet-always-on']) {

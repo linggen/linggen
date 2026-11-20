@@ -21,7 +21,6 @@ export const ZH: Record<string, string> = {
   'Loading…': '加载中…',
   'Loading...': '加载中…',
   'Settings': '设置',
-  'Linggen Settings': 'Linggen 设置',
   'Close (Esc)': '关闭（Esc）',
   'Account': '账户',
   'AI features run through your linggen.dev account (free trial included). One account covers every app.': 'AI 功能通过你的 linggen.dev 账户运行（含免费试用）。一个账户覆盖所有应用。',

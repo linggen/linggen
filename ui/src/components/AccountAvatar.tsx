@@ -25,7 +25,7 @@ const toAccountInfo = (a: Account): AccountInfo => ({
 });
 
 export const AccountAvatar: React.FC<{
-  /** Extra dropdown row (e.g. the launcher opens its Settings overlay). */
+  /** Extra dropdown row (e.g. the launcher opens Settings → Account). */
   onManage?: () => void;
 }> = ({ onManage }) => {
   const [account, setAccount] = useState<AccountInfo | null>(null);

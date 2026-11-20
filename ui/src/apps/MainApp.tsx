@@ -33,7 +33,6 @@ import { useChatActions } from '../hooks/useChatActions';
 import { sendViewContext, useYinyuePresenter } from '../hooks/useTransport';
 import { useOpenSettings } from '../hooks/useOpenSettings';
 import '../lib/ownModel';
-import { useLocation } from 'react-router-dom';
 import { useShallow } from 'zustand/react/shallow';
 
 const urlParams = new URLSearchParams(window.location.search);
@@ -60,7 +59,7 @@ function useIsMobile(): boolean {
 /** Detect remote/tunnel mode (blob iframe with injected instance meta tag). */
 const isRemoteMode = typeof document !== 'undefined' && !!document.querySelector('meta[name="linggen-instance"]');
 
-export const MainApp: React.FC = () => {
+export const MainApp: React.FC<{ covered: boolean }> = ({ covered }) => {
   // --- Stores ---
   // Only the fields this shell renders from. A whole-store subscription made
   // every streamed token (chat store) and token-rate tick (server store)
@@ -112,14 +111,6 @@ export const MainApp: React.FC = () => {
   // Presence beat — tell the server whether the user is here (typing / reading /
   // away) so Yinyue's `sense` can read the room. Owner UI only; mounts once.
   useEffect(() => startPresenceBeat(), []);
-
-  // Hide the main shell when an overlay route (Settings, Mission editor) is
-  // active. We keep MainApp mounted so WebRTC stays alive — only the visual
-  // shell is hidden so the routed overlay component is the only thing on
-  // screen.
-  const location = useLocation();
-  const isOverlayRoute = location.pathname === '/settings'
-    || location.pathname === '/missions/edit';
 
   const isMobile = useIsMobile();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -327,7 +318,7 @@ export const MainApp: React.FC = () => {
       <ToastContainer />
       <LingMemConnectModal />
       {showYinyue && <YinyueBubble />}
-      <div className={`flex flex-col h-screen bg-(--surface-shell) text-slate-900 dark:text-slate-200 font-sans overflow-hidden${isOverlayRoute ? ' hidden' : ''}`}>
+      <div className={`flex flex-col h-screen bg-(--surface-shell) text-slate-900 dark:text-slate-200 font-sans overflow-hidden${covered ? ' hidden' : ''}`}>
         {/* Header */}
         <HeaderBar
           onOpenSettings={() => openSettings('general')}

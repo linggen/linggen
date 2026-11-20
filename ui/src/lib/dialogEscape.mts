@@ -3,11 +3,18 @@ type KeyTarget = {
   removeEventListener(type: string, listener: EventListener, capture?: boolean): void;
 };
 
+function topDialog(doc: Document) {
+  return [...doc.querySelectorAll('[aria-modal="true"], dialog[open]')]
+    .filter((element) => element.getClientRects().length > 0).at(-1);
+}
+
 export function watchTopDialogEscape(dialog: HTMLElement, close: () => void) {
   const doc = dialog.ownerDocument;
-  const isTop = () => [...doc.querySelectorAll('[aria-modal="true"], dialog[open]')]
-    .filter((element) => element.getClientRects().length > 0).at(-1) === dialog;
-  return watchDialogEscape(doc.defaultView!, isTop, close);
+  return watchDialogEscape(doc.defaultView!, () => topDialog(doc) === dialog, close);
+}
+
+export function watchPageEscape(doc: Document, close: () => void) {
+  return watchDialogEscape(doc.defaultView!, () => !topDialog(doc), close);
 }
 
 export function watchDialogEscape(target: KeyTarget, isTop: () => boolean, close: () => void) {

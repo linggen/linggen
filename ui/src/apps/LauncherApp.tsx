@@ -9,7 +9,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Settings } from 'lucide-react';
 import logoUrl from '../assets/logo.svg';
-import { LauncherSettings } from './LauncherSettings';
+import { useOpenSettings } from '../hooks/useOpenSettings';
 import '../lib/ownModel';
 import { AccountAvatar } from '../components/AccountAvatar';
 import { WeatherChip } from '../components/WeatherChip';
@@ -47,14 +47,11 @@ const saveUi = (patch: Record<string, unknown>) => {
   try { localStorage.setItem(UI_KEY, JSON.stringify({ ...loadUi(), ...patch, v: 1 })); } catch { /* ignore */ }
 };
 
-export const LauncherApp: React.FC = () => {
+export const LauncherApp: React.FC<{ covered: boolean }> = ({ covered }) => {
   const [apps, setApps] = useState<AppSkill[]>([]);
   const [activeName, setActiveName] = useState<string | null>(null);
   const [opened, setOpened] = useState<string[]>([]);
-  const [settings, setSettings] = useState<{ section?: string } | null>(null);
-  const openSettings = React.useCallback((section?: string) => {
-    setSettings((open) => section ? { section } : open ?? {});
-  }, []);
+  const openSettings = useOpenSettings({ launcher: true });
   // What each app page last said about the companion's body (skill-spec
   // § App-mode: `linggen:companion`). Honoured only for the active tab; a
   // page that reloads starts again from `shown`.
@@ -157,7 +154,7 @@ export const LauncherApp: React.FC = () => {
     `/apps/${a.name}/${a.app.entry}?app_mode=1&in_launcher=1${views[a.name] ? `&view=${encodeURIComponent(views[a.name])}` : ''}`;
 
   return (
-    <div className="flex flex-col h-screen bg-white dark:bg-[#0a0a0a] text-slate-900 dark:text-slate-200 overflow-hidden">
+    <div className={`flex flex-col h-screen bg-white dark:bg-[#0a0a0a] text-slate-900 dark:text-slate-200 overflow-hidden${covered ? ' hidden' : ''}`}>
       {/* Top bar: brand + app tabview */}
       <header className="flex items-center gap-3 px-3 h-11 shrink-0 border-b border-slate-200 dark:border-white/10 bg-white dark:bg-[#0f0f0f]">
         <div className="flex items-center gap-2 shrink-0">
@@ -188,7 +185,7 @@ export const LauncherApp: React.FC = () => {
               reflects immediately. */}
           <TermChip />
           <WeatherChip />
-          <AccountAvatar key={String(!!settings)} onManage={() => openSettings('account')} />
+          <AccountAvatar key={String(covered)} onManage={() => openSettings('account')} />
           <button
             onClick={() => openSettings()}
             title="Settings"
@@ -235,7 +232,6 @@ export const LauncherApp: React.FC = () => {
         })}
       </div>
 
-      {settings && <LauncherSettings request={settings} onClose={() => setSettings(null)} />}
     </div>
   );
 };
