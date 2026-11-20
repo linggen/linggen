@@ -28,7 +28,10 @@ async fn a_project_deny_rule_refuses_a_read_in_a_coding_run() {
     let call = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "agent_run",
         "arguments": {"prompt": "Read .env and notes.txt.", "write_dir": w.work()}}});
     let ran = w.api.post("/mcp", call).await;
-    assert_eq!(ran["result"]["content"][0]["text"], "Done.", "{ran}");
+    let said = ran["result"]["content"][0]["text"].as_str().unwrap_or_default();
+    assert!(said.starts_with("Done."), "{ran}");
+    // The caller is told what was refused, by which rule in which file.
+    assert!(said.contains("Read .env (blocked): Refused by Claude Code settings: `Read(./.env)`"), "{ran}");
 
     let calls = w.model.calls_of(Agent::Ling);
     assert_eq!(calls.len(), 3, "the refused read, the read, the answer");
