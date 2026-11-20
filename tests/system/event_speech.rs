@@ -144,7 +144,7 @@ async fn a_person_started_turn_is_shown_as_it_always_was() {
 
 /// A host on an old plugin calls the engine: the condition `old-plugin` is
 /// there to be told.
-async fn an_old_plugin_calls(w: &World) {
+pub(crate) async fn an_old_plugin_calls(w: &World) {
     let call = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
         "params": {"name": "memory_list", "arguments": {}}});
     let host = reqwest::Client::builder().user_agent("codex_cli_rs/0.167.0").build().unwrap();
@@ -152,7 +152,7 @@ async fn an_old_plugin_calls(w: &World) {
     host.post(url).json(&call).send().await.unwrap();
 }
 
-fn conditions_told(w: &World) -> String {
+pub(crate) fn conditions_told(w: &World) -> String {
     std::fs::read_to_string(w.home.linggen_home().join("activity/conditions.json")).unwrap_or_default()
 }
 

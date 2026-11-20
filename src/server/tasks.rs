@@ -383,6 +383,10 @@ async fn tell_in_place(
             None => return,
         },
     };
+    // Where this turn comes from is recorded the moment it holds the lock: a
+    // person's message that comes now ends it, and a restart's plan reads it.
+    let origin = Origin::for_agent(&agent, told);
+    let running = crate::server::resident::RunningOrigin::at_lock(&session, origin);
     // A plan proposed while this waited for its turn holds it too.
     let Some(notice) = state
         .manager
@@ -434,7 +438,6 @@ async fn tell_in_place(
     drop(gate);
     // What kind of turn this is for the one it is told to: her turns have an
     // origin, every other agent's is answered as ever.
-    let origin = Origin::for_agent(&agent, told);
     // Her words are in the person's language, as for every turn of hers.
     let language = crate::server::resident::language_of_turn(&state, &session, origin, None).await;
     let mut engine = engine.lock().await;
@@ -458,7 +461,8 @@ async fn tell_in_place(
         turn: crate::engine::turn_place::TurnSettings { language, ..Default::default() },
     };
     super::chat::run_session_turn(&ctx, &mut engine, &state.manager, None).await;
-    if origin.held() {
+    let ended = running.as_ref().is_some_and(crate::server::resident::RunningOrigin::was_ended);
+    if origin.held() && !ended {
         let reply = engine.last_assistant_text.clone();
         drop(engine);
         crate::server::resident::say_event(&state, reply.as_deref(), origin, (&session, &told_at)).await;

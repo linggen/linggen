@@ -362,6 +362,38 @@ fn held_turn_running(session: &str) -> bool {
     crate::server::resident::running_origin(session).is_some_and(|o| o.held())
 }
 
+/// A person outranks anything the engine started: their message ends a held
+/// turn running in `session` — what it says is dropped, and it is cancelled,
+/// again and again until it has unwound (its run record may not exist yet).
+/// What the turn carried is kept as on any unpublished return: a condition
+/// stays untold, a rode fault is held, a routine herald is dropped. The
+/// message waits only for that unwinding, then runs as its own person turn.
+fn end_held_turn(state: &Arc<ServerState>, session: &str) {
+    if !crate::server::resident::end_held_turns(session) {
+        return;
+    }
+    let (state, session) = (state.clone(), session.to_string());
+    tokio::spawn(async move {
+        for _ in 0..100 {
+            let runs = state
+                .manager
+                .list_agent_runs(&std::path::PathBuf::new(), Some(&session))
+                .await
+                .unwrap_or_default();
+            // The held turn's record is dropped before the turn lock is, and
+            // the next turn begins only under the lock: a held turn still
+            // recorded after the listing means every run listed is its own.
+            if !held_turn_running(&session) {
+                return;
+            }
+            for run in runs.iter().filter(|r| r.parent_run_id.is_none() && r.status == crate::engine::agent::AgentRunStatus::Running) {
+                let _ = state.manager.cancel_run_tree(&run.run_id).await;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    });
+}
+
 /// How a message sent while the agent is busy meets the running turn.
 #[derive(Debug, PartialEq, Eq)]
 enum BusyMessage {
@@ -830,12 +862,12 @@ pub(crate) async fn run_session_turn(
         Some(sid) => super::turn_place::mark_turn(manager, sid, &ctx.place),
         None => None,
     };
-    // Where the turn comes from is kept while it runs: a restart's plan
-    // records it, so the turn it continues is the same kind of turn.
+    // A person's turn is recorded here, for a restart's plan; one the engine
+    // started was recorded when it took the turn lock.
     let _origin = ctx
         .session_id
         .as_deref()
-        .map(|sid| crate::server::resident::RunningOrigin::keep(sid, ctx.origin));
+        .and_then(|sid| crate::server::resident::RunningOrigin::in_turn(sid, ctx.origin));
     // The turn's own settings; what closes it names this turn's run, never
     // the last one's.
     engine.begin_turn(ctx.turn.clone());
@@ -1294,10 +1326,14 @@ pub(crate) async fn start_turn(
     let queue = crate::engine::turn_place::running::meets_running(running.as_ref(), &turn_place, rule);
     // A turn of hers the engine started holds its reply for the finalizer: a
     // person's message never joins it (it would be answered on the event path
-    // and the answer dropped). It waits for that turn to end and then runs as
-    // its own turn, answered and shown as any person's.
+    // and the answer dropped). The person outranks it: it is ended, and the
+    // message runs as its own turn, answered and shown as any person's, as
+    // soon as it has unwound.
     let queue = match was_busy && held_turn_running(&effective_session_id) {
-        true => Meets::AfterRun,
+        true => {
+            end_held_turn(&state, &effective_session_id);
+            Meets::AfterRun
+        }
         false => queue,
     };
     // Not queued: this turn holds the lock now, and its place is kept

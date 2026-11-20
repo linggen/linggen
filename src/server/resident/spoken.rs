@@ -131,34 +131,78 @@ impl Origin {
     }
 }
 
-/// The origin of the turn running in each session now, kept while it runs:
-/// a restart's plan records it, so the turn it continues keeps it (a person's
-/// turn stays on the answer path).
-static RUNNING: std::sync::Mutex<Vec<(String, Origin)>> = std::sync::Mutex::new(Vec::new());
+/// The turns of hers running now, one entry each, keyed by the turn — two
+/// overlapping turns in a session never clear each other's. Recorded when the
+/// turn takes its place in the session's line, so there is no moment a held
+/// turn runs unrecorded. A restart's plan reads the origin from here.
+static RUNNING: std::sync::Mutex<Vec<Running>> = std::sync::Mutex::new(Vec::new());
+static NEXT_TURN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
-/// Held while a turn of `origin` runs in `session`.
-pub(crate) struct RunningOrigin(String);
+struct Running {
+    turn: u64,
+    session: String,
+    origin: Origin,
+    /// A person's message ended this turn: what it says is dropped.
+    ended: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+/// Held while a turn of `origin` runs in `session`; removed by its own turn.
+pub(crate) struct RunningOrigin {
+    turn: u64,
+    ended: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
 
 impl RunningOrigin {
-    pub(crate) fn keep(session: &str, origin: Origin) -> Self {
+    /// Recorded the moment a turn of hers the engine started takes the
+    /// session's turn lock — before anything of it runs. A person's turn is
+    /// recorded by [`Self::in_turn`] instead, so none is recorded twice.
+    pub(crate) fn at_lock(session: &str, origin: Origin) -> Option<Self> {
+        origin.held().then(|| Self::keep(session, origin))
+    }
+
+    /// A person's turn, recorded as it starts running.
+    pub(crate) fn in_turn(session: &str, origin: Origin) -> Option<Self> {
+        (!origin.held()).then(|| Self::keep(session, origin))
+    }
+
+    fn keep(session: &str, origin: Origin) -> Self {
+        use std::sync::atomic::Ordering;
+        let turn = NEXT_TURN.fetch_add(1, Ordering::Relaxed);
+        let ended = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let mut all = RUNNING.lock().unwrap_or_else(|p| p.into_inner());
-        all.retain(|(s, _)| s != session);
-        all.push((session.to_string(), origin));
-        Self(session.to_string())
+        all.push(Running { turn, session: session.to_string(), origin, ended: ended.clone() });
+        Self { turn, ended }
+    }
+
+    /// Whether a person's message ended this turn.
+    pub(crate) fn was_ended(&self) -> bool {
+        self.ended.load(std::sync::atomic::Ordering::Relaxed)
     }
 }
 
 impl Drop for RunningOrigin {
     fn drop(&mut self) {
         let mut all = RUNNING.lock().unwrap_or_else(|p| p.into_inner());
-        all.retain(|(s, _)| *s != self.0);
+        all.retain(|r| r.turn != self.turn);
     }
 }
 
-/// The origin of the turn running in `session`, when one is.
+/// The origin of the newest turn running in `session`, when one is.
 pub(crate) fn running_origin(session: &str) -> Option<Origin> {
     let all = RUNNING.lock().unwrap_or_else(|p| p.into_inner());
-    all.iter().find(|(s, _)| s == session).map(|(_, o)| *o)
+    all.iter().rev().find(|r| r.session == session).map(|r| r.origin)
+}
+
+/// A person's message ends every held turn running in `session`: each is
+/// marked, and what it says is dropped. True when there was one.
+pub(crate) fn end_held_turns(session: &str) -> bool {
+    let all = RUNNING.lock().unwrap_or_else(|p| p.into_inner());
+    let mut any = false;
+    for r in all.iter().filter(|r| r.session == session && r.origin.held()) {
+        r.ended.store(true, std::sync::atomic::Ordering::Relaxed);
+        any = true;
+    }
+    any
 }
 
 /// The kickoff marked hidden and with the speaking contract its origin names,

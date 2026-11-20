@@ -1,7 +1,7 @@
 //! A person's question is never answered on the event path: a message typed
-//! to her while a turn of hers the engine started is running waits for that
-//! turn, then runs as its own turn — and its answer is shown as any
-//! person's is.
+//! to her while a turn of hers the engine started is running ends that turn
+//! (the person outranks it) and runs at once as its own turn — and its answer
+//! is shown as any person's is.
 
 use crate::missions::beat_present;
 use crate::notes::{she_writes_the_note, the_clock_moves};
@@ -33,7 +33,7 @@ async fn a_question_typed_during_a_held_turn_gets_a_shown_answer() {
             text("Noted."),
             // A slow step, so a message typed now is folded in at the next one.
             slow(tool("note_write", json!({"text": "second thought"}))),
-            say("The parcel comes tomorrow."),
+            // The person's message ends the woken turn; this is its answer.
             text("ANSWER-TO-THE-QUESTION it is Tuesday."),
         ],
     );
@@ -60,7 +60,7 @@ async fn a_question_typed_during_a_held_turn_gets_a_shown_answer() {
     let heard = events
         .iter()
         .any(|x| x["kind"] == "pet_speak" && x["text"].as_str().is_some_and(|t| t.contains("ANSWER-TO-THE-QUESTION")));
-    assert!(heard, "her answer to the question was not spoken");
+    assert!(heard, "her answer to the question was not spoken\n{}", w.engine.log());
     tokio::time::sleep(Duration::from_secs(2)).await;
     assert!(every_row(&w).contains("ANSWER-TO-THE-QUESTION"), "her answer is no row of the thread");
 }
@@ -459,4 +459,94 @@ async fn a_task_end_told_to_her_speaks_only_in_the_envelope() {
     assert_eq!(every_row(&w).matches("TASK-LINE").count(), 1);
     let told = w.model.calls_of(Agent::Yinyue).pop().expect("her call");
     assert!(told.text().contains("<say>"), "the speaking contract was not attached to the notice");
+}
+
+/// A woken note's turn that would not end for minutes (a stalled provider)
+/// is ended by the person's message: two messages typed to her meanwhile are
+/// each answered, in the order they were typed, and promptly.
+#[tokio::test]
+async fn messages_typed_during_a_stalled_held_turn_end_it_and_are_answered_in_order() {
+    let long = "x".repeat(900);
+    let setup = Setup::default().script(
+        Agent::Yinyue,
+        vec![
+            tool("note_write", json!({"text": "the parcel arrives tomorrow", "look_again": "+40m"})),
+            text("Noted."),
+            slow(text(&long)),
+            text("ANSWER-ONE it is Tuesday."),
+            text("ANSWER-TWO yes, Tuesday."),
+        ],
+    );
+    let w = World::start(setup).await;
+    she_writes_the_note(&w).await;
+    beat_present(&w).await;
+    the_clock_moves(&w);
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while w.model.calls_of(Agent::Yinyue).len() < 3 {
+        assert!(std::time::Instant::now() < deadline, "the woken turn never began");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let day = w.api.get("/api/sessions/day").await["id"].as_str().unwrap().to_string();
+    for words in ["What day is it?", "Sure?"] {
+        let typed = json!({"session_id": day, "project_root": w.work(), "agent_id": "yinyue", "message": words});
+        w.api.post("/api/chat", typed).await;
+    }
+    let started = std::time::Instant::now();
+    let both = |e: &Vec<serde_json::Value>| {
+        ["ANSWER-ONE", "ANSWER-TWO"].iter().all(|m| {
+            e.iter().any(|x| x["kind"] == "pet_speak" && x["text"].as_str().is_some_and(|t| t.contains(m)))
+        })
+    };
+    w.events_when(|e| both(&e.to_vec())).await;
+    assert!(started.elapsed() < Duration::from_secs(40), "the answers waited for the stalled turn");
+    let rows = every_row(&w);
+    let (one, two) = (rows.find("ANSWER-ONE"), rows.find("ANSWER-TWO"));
+    assert!(one.is_some() && two.is_some() && one < two, "answers out of order or missing");
+    assert!(!rows.contains(&long[..50]), "the stalled turn's words reached a thread");
+}
+
+/// A condition's glance that a person's message ended was never told: the
+/// glance loop raises it again, and that line is shown and told.
+#[tokio::test]
+async fn a_condition_turn_ended_by_a_message_is_raised_again() {
+    use crate::event_speech::{an_old_plugin_calls, conditions_told};
+    let setup = Setup {
+        env: vec![("LINGGEN_AMBIENT_SECS", "3".to_string())],
+        ..Setup::default()
+    }
+    .script(
+        Agent::Yinyue,
+        vec![
+            text("Hello."),
+            slow(say("FIRST-LINE-NEVER-SHOWN your plugin is old, so please update it now.")),
+            text("ANSWER-TO-THE-QUESTION it is Tuesday."),
+            say("AGAIN-LINE your plugin is old."),
+        ],
+    );
+    let w = World::start(setup).await;
+    let mark = w.mark();
+    w.api.post("/api/yinyue/chat", json!({"text": "Hello"})).await;
+    w.wait_agent(Agent::Yinyue, mark).await;
+    an_old_plugin_calls(&w).await;
+    beat_present(&w).await;
+    let deadline = std::time::Instant::now() + Duration::from_secs(40);
+    while w.model.calls_of(Agent::Yinyue).len() < 2 {
+        assert!(std::time::Instant::now() < deadline, "the condition was never raised");
+        beat_present(&w).await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    let day = w.api.get("/api/sessions/day").await["id"].as_str().unwrap().to_string();
+    let typed = json!({"session_id": day, "project_root": w.work(), "agent_id": "yinyue", "message": "What day is it?"});
+    w.api.post("/api/chat", typed).await;
+    let again = |e: &Vec<serde_json::Value>| {
+        e.iter().any(|x| x["kind"] == "pet_speak" && x["text"].as_str().is_some_and(|t| t.contains("AGAIN-LINE")))
+    };
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    while !again(&w.events()) {
+        assert!(std::time::Instant::now() < deadline, "the condition was not raised again\n{}", conditions_told(&w));
+        beat_present(&w).await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    assert!(conditions_told(&w).contains("old-plugin"), "{}", conditions_told(&w));
+    assert!(!every_row(&w).contains("FIRST-LINE-NEVER-SHOWN"), "the ended turn's line reached a thread");
 }

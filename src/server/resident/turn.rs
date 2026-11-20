@@ -229,6 +229,9 @@ async fn run_at(
     let spoken = {
         // Past a restart's snapshot her turn waits in its plan instead.
         let (_held, gate) = her_place(state, turn, &task, origin).await?;
+        // Recorded the moment the lock is ours: a person's message that comes
+        // now finds a held turn to end, and a restart's plan reads its origin.
+        let running = RunningOrigin::at_lock(session_id, origin);
         let _mark = crate::server::chat::turn_place::mark_turn(&state.manager, session_id, &turn.place);
         // Persist the incoming message to the session store so it survives
         // reload and every member's thread holds it. (The turn core only
@@ -296,7 +299,11 @@ async fn run_at(
         if origin == Origin::AgentChat {
             state.manager.clear_agent_chat_session(session_id);
         }
-        engine.last_assistant_text.clone()
+        // A person's message ended this turn: nothing of it is said.
+        match running.as_ref().is_some_and(RunningOrigin::was_ended) {
+            true => None,
+            false => engine.last_assistant_text.clone(),
+        }
     };
 
     // The turn core handles + persists its own errors and its run; an empty
