@@ -266,3 +266,49 @@ async fn a_condition_is_told_only_where_her_line_is_drawn() {
     assert_eq!(cue["data"]["voice"], false, "a seen line was spoken aloud: {cue}");
     assert!(conditions_told(&w).contains("old-plugin"), "{}", conditions_told(&w));
 }
+
+/// A condition is not attempted while it cannot be published: with a turn
+/// running in her thread there is no model call for it that glance; once the
+/// thread is free it is raised and told.
+#[tokio::test]
+async fn a_condition_is_not_attempted_while_her_thread_is_busy() {
+    let setup = Setup {
+        env: vec![("LINGGEN_AMBIENT_SECS", "3".to_string())],
+        ..Setup::default()
+    }
+    .script(
+        Agent::Yinyue,
+        vec![
+            text("Hello."),
+            crate::support::model::slow(text(&"y".repeat(120))),
+            say("Your Codex plugin is old. Update it."),
+        ],
+    );
+    let w = World::start(setup).await;
+    let mark = w.mark();
+    w.api.post("/api/yinyue/chat", json!({"text": "Hello"})).await;
+    w.wait_agent(Agent::Yinyue, mark).await;
+    an_old_plugin_calls(&w).await;
+    beat_present(&w).await;
+    // A slow answer to the person: her thread is busy for ~18 s.
+    let mark = w.mark();
+    w.api.post("/api/yinyue/chat", json!({"text": "Tell me a long one"})).await;
+    let raised = |w: &World| {
+        w.model.calls_of(Agent::Yinyue).iter().filter(|c| c.text().contains("Something crossed a line")).count()
+    };
+    for _ in 0..4 {
+        beat_present(&w).await;
+        tokio::time::sleep(Duration::from_secs(3)).await;
+    }
+    assert_eq!(raised(&w), 0, "a condition's model call while her thread was busy");
+    w.wait_agent(Agent::Yinyue, mark).await;
+    let line = "Your Codex plugin is old. Update it.";
+    for _ in 0..30 {
+        beat_present(&w).await;
+        if w.events().iter().any(|x| x["kind"] == "pet_speak" && x["text"] == line) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+    assert!(conditions_told(&w).contains("old-plugin"), "{}", conditions_told(&w));
+}

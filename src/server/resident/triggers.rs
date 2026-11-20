@@ -672,12 +672,13 @@ async fn deliver(
         tracing::info!("[yinyue-watch] a condition's line has no page to show on — held, not told");
         return None;
     }
-    if source.is_some_and(|s| s.counts()) {
-        super::guard::spoke_unprompted();
-    }
     let notice = raised.as_ref().map(|r| r.notice);
     let problem = raised.as_ref().map(|r| (r.problem.to_string(), shown));
     let line = spoken::publish(state, said, &stage, Some(emotion.to_string()), problem).await;
+    // Counted against the hour's ceiling only when a line went out.
+    if line.is_some() && source.is_some_and(|s| s.counts()) {
+        super::guard::spoke_unprompted();
+    }
     // Told only when the line was published — its row kept.
     if let (Some(notice), Some(_)) = (notice, &line) {
         crate::perception::conditions::spoken(notice);

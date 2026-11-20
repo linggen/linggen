@@ -516,6 +516,13 @@ impl Stage {
         Self { row_session: table.session.clone(), place, said_session: Some(table.session.clone()), app, holds_lock: false }
     }
 
+    /// Whether her row could land this moment: no turn runs in the row's
+    /// session. A condition is published only then (it is told only with its
+    /// row kept), so it is not even attempted while the session is busy.
+    pub(super) fn row_is_free(&self, state: &crate::server::ServerState) -> bool {
+        self.holds_lock || state.manager.session_turn(&self.row_session).try_lock_owned().is_ok()
+    }
+
     /// A turn the caller ran in `session` and still holds the turn lock of:
     /// its place is the row's.
     pub(super) fn of_turn(session: &str, place: &crate::engine::turn_place::TurnPlace) -> Self {
@@ -543,7 +550,9 @@ impl Stage {
 /// turn is over — except a condition (`problem`), which is published only
 /// with its row kept, so it can be told. `None`: nothing was published.
 /// The window between the caller's last check and the row is accepted: two
-/// awaits at most, and the worst is a line a moment late.
+/// awaits at most, and the worst is a line a moment late. A routine herald's
+/// row that waits for a turn may land after the person's next message — as on
+/// main, accepted: the cue is time-critical, the row is the record.
 pub(super) async fn publish(
     state: &std::sync::Arc<crate::server::ServerState>,
     said: Event,

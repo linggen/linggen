@@ -86,6 +86,14 @@ pub(super) async fn ambient_glance(state: &Arc<ServerState>) {
             tracing::info!("[yinyue-ambient] no page in front — {} waits", notice.topic);
             return;
         }
+        // Published only with its row kept: while a turn runs in her thread
+        // the row cannot land, so no model call is spent on it this glance —
+        // it stays due for the next one.
+        let stage = super::spoken::Stage::of(state, None).await;
+        if !stage.row_is_free(state) {
+            tracing::info!("[yinyue-ambient] her thread is busy — {} waits", notice.topic);
+            return;
+        }
         let kickoff = format!(
             "Something crossed a line worth one sentence: {}. {}. \
              You noticed it — say so in your own voice, one short line, plain prose. \
