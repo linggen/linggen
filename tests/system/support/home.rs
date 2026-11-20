@@ -111,9 +111,7 @@ impl Drop for Home {
 /// write there would never ask), and the OS temp dirs are never a project
 /// (no project memory).
 fn base_dir() -> PathBuf {
-    std::env::var_os("LINGGEN_SYSTEM_ROOT")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/var/tmp/linggen-system-tests"))
+    PathBuf::from("/var/tmp/linggen-system-tests")
 }
 
 /// Kept roots (failed tests, `LINGGEN_SYSTEM_KEEP`) older than this are

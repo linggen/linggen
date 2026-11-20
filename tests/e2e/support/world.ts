@@ -9,7 +9,7 @@
 import { test as base, expect, type Frame, type Locator, type Page, type Request } from '@playwright/test';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { readFileSync, realpathSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
 /** What the fake model answers, call by call, per member. */
@@ -38,12 +38,13 @@ export type World = {
 /** The person's engine port and the old memory daemon's — a world never uses
  *  them (as tests/system's guard). */
 const REAL_PORTS = ['9527', '9528'];
-const rootBase = () => realpathSync(process.env.LINGGEN_SYSTEM_ROOT ?? '/var/tmp/linggen-system-tests');
+const ROOT_BASE = '/var/tmp/linggen-system-tests/';
 
 function guard(hello: { url: string; root: string }) {
   const port = new URL(hello.url).port;
   if (REAL_PORTS.includes(port)) throw new Error(`HERMETIC GUARD: world on real port ${port}`);
-  if (!hello.root.startsWith(`${rootBase()}${path.sep}`)) throw new Error(`HERMETIC GUARD: world root ${hello.root}`);
+  const root = hello.root.replace(/^\/private/, '');
+  if (!root.startsWith(ROOT_BASE)) throw new Error(`HERMETIC GUARD: world root ${hello.root}`);
 }
 
 type Running = {
