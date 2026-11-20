@@ -349,17 +349,18 @@ Full native turns load `AGENTS.md`, `CLAUDE.md`, `.cursorrules` and
 A workspace under home stops at home (inclusive); one outside home can walk
 up to the filesystem root. Git is not required. Owner chat, delegates,
 missions and skill sessions get this context; consumers do not. Claude SDK
-sessions keep their own loader. Linggen does not look up `~/.claude/CLAUDE.md`
-or `.claude/rules/` here.
+sessions keep their own loader. Native coding turns load the person's
+`~/.claude/CLAUDE.md` first, labelled with its path. Companion, app and
+consumer turns do not get it. Linggen does not load `.claude/rules/` here.
 
 An `@path` in rule text, outside Markdown code, inlines the named file with
 its source. Relative paths start beside the importing file. If the exact
 path does not name a file, the loader retries without trailing sentence
 punctuation and leaves that punctuation in the text. Missing paths and ordinary mentions stay as written;
 chat messages do not expand imports.
-Imports stay inside the canonical workspace, use the unattended read gate,
-and never include protected files. A refusal leaves a one-line note in the
-prompt instead. Discovered rule symlinks follow the same gate as imports.
+Project imports stay inside the canonical workspace. Personal imports may
+leave it, but use the same unattended read gate: protected files never load.
+A refusal leaves a one-line note. Discovered rule symlinks use the same gate.
 A discovered rule that cannot be loaded leaves a one-line reason in its
 section. The loader accepts regular UTF-8 text up to 256 KiB per file and
 512 KiB total, with five import levels and up to 128 references to existing

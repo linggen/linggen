@@ -1,4 +1,4 @@
-//! Discovery, expansion and change detection for native project instructions.
+//! Discovery, expansion and change detection for native instruction files.
 
 use super::permission::{self, DeclinedScopes, PermissionMode, ReadOrigin, SessionPermissions};
 use super::AgentEngine;
@@ -18,6 +18,16 @@ const MAX_DEPTH: usize = 5;
 const MAX_FILE: usize = 256 * 1024;
 const MAX_TOTAL: usize = 512 * 1024;
 const MAX_IMPORTS: usize = 128;
+
+fn personal_rule_path(home: &Path) -> PathBuf {
+    home.join(".claude").join(CLAUDE)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RuleSource {
+    Project,
+    Personal,
+}
 
 #[derive(Default)]
 pub(super) struct Instructions {
@@ -42,18 +52,26 @@ pub(super) struct InstructionScope {
     declined: DeclinedScopes,
     origin: ReadOrigin,
     coding: bool,
+    personal: bool,
     ceiling: Option<PermissionMode>,
 }
 
 impl AgentEngine {
     pub(super) fn instruction_scope(&self) -> InstructionScope {
+        let coding = self.is_coding_session();
+        // A companion or app turn can speak in someone else's coding session.
+        let personal = coding
+            && self.agent_id.as_deref() != Some(super::agent::COMPANION_AGENT_ID)
+            && self.tools.builtins.private_app.is_none()
+            && self.turn_place().is_none_or(|place| place.skill.is_none());
         InstructionScope {
             root: self.cfg.ws_root.clone(),
             enabled: self.prompt_profile.include_project_context,
             permissions: self.session_permissions.clone(),
             declined: self.declined_scopes.clone(),
             origin: self.read_origin(),
-            coding: self.is_coding_session(),
+            coding,
+            personal,
             ceiling: self.session_spec.ceiling,
         }
     }
@@ -74,10 +92,16 @@ impl InstructionScope {
         let mut loader = Loader {
             scope: self,
             project: &root,
+            home,
             result: Instructions::default(),
             bytes_left: MAX_TOTAL,
             imports_left: MAX_IMPORTS,
         };
+        let personal = home.filter(|_| self.personal).and_then(|home| {
+            let path = personal_rule_path(home);
+            let label = format!("Personal instructions (from {})", path.display());
+            loader.discover_entry(label, path, RuleSource::Personal)
+        });
         let dirs = super::tools::project_ancestors_within(&root, home);
         // Reserve discovered files in the legacy nearest-first order, then
         // render outermost first. An import cannot steal a discovered section.
@@ -90,38 +114,71 @@ impl InstructionScope {
                 } else {
                     format!("{name} (from {})", dir.display())
                 };
-                match loader.discover(&path) {
-                    Ok(Some(text)) => entries.push((label, Some(path), text)),
-                    Ok(None) => {}
-                    Err(reason) => {
-                        entries.push((label, None, format!("[Rule not loaded: {reason}.]")))
-                    }
+                if let Some(entry) = loader.discover_entry(label, path, RuleSource::Project) {
+                    entries.push(entry);
                 }
             }
         }
-        for (label, path, text) in entries.into_iter().rev() {
-            let text = match path {
-                Some(path) => loader.expand(&path, &text, 0),
-                None => text,
-            };
-            if !text.trim().is_empty() {
-                loader.result.sections.push((label, text.trim().to_owned()));
-            }
+        for entry in personal.into_iter().chain(entries.into_iter().rev()) {
+            loader.render(entry);
         }
         loader.result
     }
 }
 
+struct RuleEntry {
+    label: String,
+    path: PathBuf,
+    source: RuleSource,
+    text: Result<String, &'static str>,
+}
+
 struct Loader<'a> {
     scope: &'a InstructionScope,
     project: &'a Path,
+    home: Option<&'a Path>,
     result: Instructions,
     bytes_left: usize,
     imports_left: usize,
 }
 
 impl Loader<'_> {
-    fn discover(&mut self, path: &Path) -> Result<Option<String>, &'static str> {
+    fn discover_entry(
+        &mut self,
+        label: String,
+        path: PathBuf,
+        source: RuleSource,
+    ) -> Option<RuleEntry> {
+        let (source, text) = match self.discover(&path, source) {
+            Ok(Some((source, text))) => (source, Ok(text)),
+            Ok(None) => return None,
+            Err(reason) => (source, Err(reason)),
+        };
+        Some(RuleEntry {
+            label,
+            path,
+            source,
+            text,
+        })
+    }
+
+    fn render(&mut self, entry: RuleEntry) {
+        let text = match entry.text {
+            Ok(text) => self.expand(&entry.path, &text, 0, entry.source),
+            Err(reason) => format!("[Rule not loaded: {reason}.]"),
+        };
+        if !text.trim().is_empty() {
+            self.result
+                .sections
+                .push((entry.label, text.trim().to_owned()));
+        }
+    }
+
+    fn discover(
+        &mut self,
+        path: &Path,
+        source: RuleSource,
+    ) -> Result<Option<(RuleSource, String)>, &'static str> {
         let entry = match path.symlink_metadata() {
             Ok(entry) => entry,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -130,7 +187,7 @@ impl Loader<'_> {
         let canonical = path.canonicalize().map_err(|_| "unreadable")?;
         let expected = if entry.is_symlink() || canonical != path {
             let metadata = canonical.metadata().map_err(|_| "unreadable")?;
-            self.check_import_target(path, &canonical)?;
+            self.check_import_target(path, &canonical, source)?;
             Some(metadata)
         } else {
             None
@@ -138,17 +195,36 @@ impl Loader<'_> {
         if self.result.files.contains(&canonical) {
             return Ok(None);
         }
-        self.read(&canonical, expected.as_ref()).map(Some)
+        let source = if expected.is_some() {
+            self.followed_source(&canonical, source)
+        } else {
+            source
+        };
+        self.read(&canonical, expected.as_ref())
+            .map(|text| Some((source, text)))
+    }
+
+    /// Opting into a file inside the workspace does not let its author
+    /// opt into further reads outside it.
+    fn followed_source(&self, canonical: &Path, source: RuleSource) -> RuleSource {
+        if canonical.starts_with(self.project) {
+            RuleSource::Project
+        } else {
+            source
+        }
     }
 
     fn check_import_target<'p>(
         &self,
         target: &Path,
         canonical: &'p Path,
+        source: RuleSource,
     ) -> Result<&'p Path, &'static str> {
-        let relative = canonical
-            .strip_prefix(self.project)
-            .map_err(|_| "outside the project")?;
+        let label = match canonical.strip_prefix(self.project) {
+            Ok(relative) => relative,
+            Err(_) if source == RuleSource::Personal => canonical,
+            Err(_) => return Err("outside the project"),
+        };
         if !permission::allows_instruction_import(
             target,
             canonical,
@@ -161,7 +237,7 @@ impl Loader<'_> {
         ) {
             return Err("protected or requires approval");
         }
-        Ok(relative)
+        Ok(label)
     }
 
     fn check_size(&self, len: u64) -> Result<(), &'static str> {
@@ -212,7 +288,7 @@ impl Loader<'_> {
         Ok(text)
     }
 
-    fn expand(&mut self, source: &Path, text: &str, depth: usize) -> String {
+    fn expand(&mut self, path: &Path, text: &str, depth: usize, source: RuleSource) -> String {
         let mut code = Parser::new(text)
             .into_offset_iter()
             .filter_map(|(event, range)| {
@@ -247,7 +323,7 @@ impl Loader<'_> {
             if token.is_empty() || token.contains('@') {
                 continue;
             }
-            let Some((expanded, consumed)) = self.import(source, token, depth) else {
+            let Some((expanded, consumed)) = self.import(path, token, depth, source) else {
                 continue;
             };
             out.push_str(&text[copied..start]);
@@ -259,16 +335,24 @@ impl Loader<'_> {
     }
 
     /// None keeps the token verbatim (it doesn't name an existing file).
-    fn import(&mut self, source: &Path, token: &str, depth: usize) -> Option<(String, usize)> {
-        let base = source.parent()?;
+    fn import(
+        &mut self,
+        path: &Path,
+        token: &str,
+        depth: usize,
+        source: RuleSource,
+    ) -> Option<(String, usize)> {
+        let base = path.parent()?;
         let shortened =
             token.trim_end_matches(['.', ',', ';', ':', '!', '?', ')', ']', '}', '\'', '"']);
         let shortened = (shortened != token && !shortened.is_empty()).then_some(shortened);
         let (token, (target, canonical, metadata)) = [Some(token), shortened]
             .into_iter()
             .flatten()
-            .find_map(|candidate| existing_import(base, candidate).map(|file| (candidate, file)))?;
-        let text = self.expand_import(token, &target, &canonical, &metadata, depth);
+            .find_map(|candidate| {
+                existing_import(self.home, base, candidate).map(|file| (candidate, file))
+            })?;
+        let text = self.expand_import(token, &target, &canonical, &metadata, depth, source);
         Some((text, token.len()))
     }
 
@@ -279,13 +363,14 @@ impl Loader<'_> {
         canonical: &Path,
         metadata: &Metadata,
         depth: usize,
+        source: RuleSource,
     ) -> String {
         let note = |reason| format!("[Import @{token} not loaded: {reason}.]");
         if self.imports_left == 0 {
             return note("import count limit");
         }
         self.imports_left -= 1;
-        let label = match self.check_import_target(target, canonical) {
+        let label = match self.check_import_target(target, canonical, source) {
             Ok(relative) => relative,
             Err(reason) => return note(reason),
         };
@@ -299,7 +384,12 @@ impl Loader<'_> {
             Ok(text) => text,
             Err(reason) => return note(reason),
         };
-        let text = self.expand(target, &text, depth + 1);
+        let text = self.expand(
+            target,
+            &text,
+            depth + 1,
+            self.followed_source(canonical, source),
+        );
         format!(
             "\n\n[Imported from {label:?}]\n{}\n[End import]\n\n",
             text.trim()
@@ -307,9 +397,13 @@ impl Loader<'_> {
     }
 }
 
-fn existing_import(base: &Path, token: &str) -> Option<(PathBuf, PathBuf, Metadata)> {
+fn existing_import(
+    home: Option<&Path>,
+    base: &Path,
+    token: &str,
+) -> Option<(PathBuf, PathBuf, Metadata)> {
     let target = match token.strip_prefix("~/") {
-        Some(path) => dirs::home_dir()?.join(path),
+        Some(path) => home?.join(path),
         None => base.join(token),
     };
     let canonical = target.canonicalize().ok()?;
