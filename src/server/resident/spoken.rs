@@ -329,7 +329,8 @@ fn is_silence(paragraph: &str) -> bool {
 /// contract's [`SILENT`]. Nothing was said — the chat shows no words for it
 /// (its tool calls may stay). A person's message is never one.
 pub(crate) fn is_silent_reply(from_id: &str, content: &str) -> bool {
-    if matches!(crate::state_fs::RowAuthor::of(from_id), crate::state_fs::RowAuthor::Person | crate::state_fs::RowAuthor::System) {
+    use crate::state_fs::RowAuthor;
+    if matches!(RowAuthor::of(from_id), RowAuthor::Person | RowAuthor::System) {
         return false;
     }
     content

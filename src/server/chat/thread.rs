@@ -213,7 +213,7 @@ async fn speaking_agents(ctx: &ChatRunCtx, rows: &[ChatMsg]) -> HashSet<String> 
         .iter()
         .flat_map(|r| [&r.from_id, &r.agent_id, &r.to_id])
     {
-        if matches!(id.as_str(), "user" | "system") || !asked.insert(id.as_str()) {
+        if matches!(RowAuthor::of(id), RowAuthor::Person | RowAuthor::System) || !asked.insert(id.as_str()) {
             continue;
         }
         if ctx.manager.agent_exists(&ctx.root, id).await {

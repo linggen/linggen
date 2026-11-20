@@ -60,11 +60,12 @@ impl Scan<'_> {
     }
 }
 
-/// `x.from_id`, or a plain `from_id` / `from` binding.
+/// `x.from_id`, or a plain `from_id` / `from` / `sender` binding. Macro
+/// bodies (`matches!`) are not parsed and other names are not seen.
 fn is_sender(expr: &Expr) -> bool {
     match expr {
         Expr::Field(field) => matches!(&field.member, syn::Member::Named(n) if n == "from_id"),
-        Expr::Path(path) => path.path.is_ident("from_id") || path.path.is_ident("from"),
+        Expr::Path(path) => ["from_id", "from", "sender"].iter().any(|n| path.path.is_ident(n)),
         Expr::MethodCall(call) if call.method == "as_str" || call.method == "as_ref" => {
             is_sender(&call.receiver)
         }
