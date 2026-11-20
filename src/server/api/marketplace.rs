@@ -1,6 +1,7 @@
+use super::skills::{skills_changed, SkillsChange};
 use crate::extensions::skills;
 use crate::extensions::skills::marketplace::{self, SkillScope};
-use crate::server::{ServerEvent, ServerState};
+use crate::server::ServerState;
 use axum::{
     extract::{Json, Query, State},
     http::StatusCode,
@@ -81,11 +82,7 @@ pub(crate) async fn marketplace_install(
     .await
     {
         Ok(msg) => {
-            let _ = state.skills.load_all(project_root_path).await;
-            state.manager.session_engines.lock().await.clear();
-            // The skill may ship missions.
-            state.missions.reload();
-            let _ = state.events_tx.send(ServerEvent::StateUpdated);
+            let _ = skills_changed(&state, project_root_path, SkillsChange::OnDisk).await;
             axum::Json(serde_json::json!({ "ok": true, "message": msg })).into_response()
         }
         Err(e) => {
@@ -119,10 +116,9 @@ pub(crate) async fn marketplace_uninstall(
 
     match marketplace::delete_skill(&req.name, &target_dir) {
         Ok(msg) => {
-            let _ = state.skills.load_all(project_root_path).await;
             // Its missions go with it, and so does what the user kept for them.
-            state.missions.forget_skill(&req.name);
-            let _ = state.events_tx.send(ServerEvent::StateUpdated);
+            let removed = SkillsChange::Removed(&req.name);
+            let _ = skills_changed(&state, project_root_path, removed).await;
             axum::Json(serde_json::json!({ "ok": true, "message": msg })).into_response()
         }
         Err(e) => {
@@ -155,8 +151,7 @@ pub(crate) async fn marketplace_move_to_global(
 
     match marketplace::move_skill_to_global(&req.name, &skill.source, project_root_path) {
         Ok(msg) => {
-            let _ = state.skills.load_all(project_root_path).await;
-            let _ = state.events_tx.send(ServerEvent::StateUpdated);
+            let _ = skills_changed(&state, project_root_path, SkillsChange::OnDisk).await;
             axum::Json(serde_json::json!({ "ok": true, "message": msg })).into_response()
         }
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
@@ -205,9 +200,7 @@ pub(crate) async fn builtin_skills_install(
     .await
     {
         Ok(msg) => {
-            let _ = state.skills.load_all(None).await;
-            state.missions.reload();
-            let _ = state.events_tx.send(ServerEvent::StateUpdated);
+            let _ = skills_changed(&state, None, SkillsChange::OnDisk).await;
             axum::Json(serde_json::json!({ "ok": true, "message": msg })).into_response()
         }
         Err(e) => {
