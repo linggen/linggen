@@ -30,6 +30,9 @@ export const EVENT_KINDS = [
   // Interactive widgets
   'ask_user',
   'widget_resolved',
+  // A notice Yinyue said aloud while the person was away: the reply or the
+  // waiting card it is about shows a folded mark of it.
+  'notice_told',
 
   // Notifications / fallbacks
   'notification',

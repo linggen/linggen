@@ -122,7 +122,7 @@ export const sessionApi = {
   setPermission: (sessionId: string, path: string, mode: string) =>
     apiPatch<void>('/api/sessions/permission', { session_id: sessionId, path, mode }),
   pendingAskUser: () =>
-    apiGet<Array<{ question_id: string; agent_id?: string; questions?: unknown[]; session_id?: string | null; place?: string | null }>>('/api/pending-ask-user'),
+    apiGet<Array<import('./askQueue.mts').ListedAsk & { session_id?: string | null }>>('/api/pending-ask-user'),
   /** Drop one queued message; it comes back (text + pictures) for an Edit. */
   removeQueued: (sessionId: string, agentId: string, id: string) =>
     apiPost<{ message?: string; images?: string[] }>('/api/queue/remove', { session_id: sessionId, agent_id: agentId, id }),

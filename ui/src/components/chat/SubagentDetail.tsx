@@ -9,8 +9,7 @@ import { ArrowDown } from 'lucide-react';
 import type { ContentBlock, PendingAskUser, AskUserAnswer, SubagentTreeEntry } from '../../types';
 import { MarkdownContent } from './MarkdownContent';
 import { ContentBlockView } from './ContentBlockView';
-import { AskUserCard } from '../AskUserCard';
-import { ToolPermissionCard } from '../ToolPermissionCard';
+import { PendingAskCard } from '../PendingAskCard';
 import { useAutoScroll } from '../../hooks/useAutoScroll';
 
 export const SubagentDetail: React.FC<{
@@ -86,11 +85,7 @@ export const SubagentDetail: React.FC<{
       {/* 4. AskUser widget — same card main chat uses. */}
       {pendingAskUser && onRespondToAskUser && (
         <div>
-          {(pendingAskUser.questions[0]?.permission || pendingAskUser.questions[0]?.header === 'Permission') ? (
-            <ToolPermissionCard key={pendingAskUser.questionId} pending={pendingAskUser} onRespond={onRespondToAskUser} />
-          ) : (
-            <AskUserCard key={pendingAskUser.questionId} pending={pendingAskUser} onRespond={onRespondToAskUser} />
-          )}
+          <PendingAskCard pending={pendingAskUser} onRespond={onRespondToAskUser} />
         </div>
       )}
 

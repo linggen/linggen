@@ -1,10 +1,18 @@
 import type { PendingAskUser } from '../types';
+import { toldOf } from './toldAloud.mts';
 
 export type AskQueues = Record<string, PendingAskUser[]>;
 
 /** An open question as the engine lists it (the page state, the pending
  *  list) — its place only when the engine told one. */
-export type ListedAsk = { question_id: string; agent_id?: string; questions?: unknown[]; place?: string | null };
+export type ListedAsk = { question_id: string; agent_id?: string; questions?: unknown[]; place?: string | null; told_aloud_at?: number; told_aloud_line?: string };
+
+/** Whether a waiting question is a permission prompt (its card is the
+ *  permission card) rather than a question of the agent's. */
+export function isPermissionAsk(ask: PendingAskUser): boolean {
+  const q = ask.questions[0];
+  return !!q?.permission || q?.header === 'Permission';
+}
 
 /** A listed question as the page keeps it. */
 export function listedAsk(it: ListedAsk): PendingAskUser {
@@ -14,6 +22,8 @@ export function listedAsk(it: ListedAsk): PendingAskUser {
     questions: (it.questions || []) as PendingAskUser['questions'],
   };
   if (it.place) ask.place = it.place;
+  const told = toldOf(it);
+  if (told) ask.toldAloud = told;
   return ask;
 }
 
@@ -23,6 +33,14 @@ export function enqueueAsk(queues: AskQueues, sessionId: string, ask: PendingAsk
   const next = [...queue];
   if (index < 0) next.push(ask); else next[index] = ask;
   return { ...queues, [sessionId]: next };
+}
+
+/** The waiting question `questionId` in `sessionId`, marked: her notice of
+ *  its wait was said aloud (`lib/toldAloud.mts`). */
+export function markAsk(queues: AskQueues, sessionId: string, questionId: string, told: PendingAskUser['toldAloud']): AskQueues {
+  const queue = queues[sessionId];
+  if (!queue?.some((ask) => ask.questionId === questionId)) return queues;
+  return { ...queues, [sessionId]: queue.map((ask) => (ask.questionId === questionId ? { ...ask, toldAloud: told } : ask)) };
 }
 
 export function removeAsk(queues: AskQueues, sessionId: string, questionId: string): AskQueues {

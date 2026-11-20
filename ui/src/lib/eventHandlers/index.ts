@@ -26,6 +26,7 @@ import {
 import {
   handleAskUser,
   handleWidgetResolved,
+  handleNoticeTold,
   handleQueue,
   handleTasks,
   handleModelFallback,
@@ -75,6 +76,7 @@ export const eventHandlers: { [K in EventKind]: (item: UiEventByKind[K]) => void
   // Interactive widgets
   ask_user: handleAskUser,
   widget_resolved: handleWidgetResolved,
+  notice_told: handleNoticeTold,
 
   // Notifications / fallbacks
   notification: handleNotification,

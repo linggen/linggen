@@ -135,6 +135,9 @@ export interface ChatMessage {
   /** A run's bubble: how many of its run's saved rows were on screen when it
    *  took the run (a reload mid-run) — those rows show; the rest are its. */
   seenSaved?: number;
+  /** Yinyue told of this reply aloud while the person was away: its folded
+   *  mark, on the run's last row (`lib/toldAloud.mts`). */
+  toldAloud?: import('./lib/toldAloud.mts').ToldAloud;
 }
 
 
@@ -159,6 +162,10 @@ export interface PersistedMeta {
   place?: string;
   /** A person's message: the engine's URLs for the pictures it kept. */
   images?: string[];
+  /** A run's last row: Yinyue told of its reply aloud while the person was
+   *  away (lib/toldAloud.mts), Unix seconds, and her line. */
+  told_aloud_at?: number;
+  told_aloud_line?: string;
   [key: string]: unknown;
 }
 
@@ -505,4 +512,7 @@ export interface PendingAskUser {
   /** In a day's session, the place of the turn that asked it, as the
    *  engine told it (`lib/dayFold.mts` `askedElsewhere`). Absent elsewhere. */
   place?: string;
+  /** Yinyue told of this wait aloud while the person was away: the card's
+   *  folded mark (`lib/toldAloud.mts`). */
+  toldAloud?: import('./lib/toldAloud.mts').ToldAloud;
 }

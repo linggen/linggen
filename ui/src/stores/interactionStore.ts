@@ -3,7 +3,7 @@
  */
 import { create } from 'zustand';
 import type { BackgroundTask, Plan, PendingAskUser, QueuedChatItem } from '../types';
-import { enqueueAsk, removeAsk, replaceAsks, type AskQueues } from '../lib/askQueue.mts';
+import { enqueueAsk, markAsk, removeAsk, replaceAsks, type AskQueues } from '../lib/askQueue.mts';
 
 interface InteractionState {
   queuedMessages: QueuedChatItem[];
@@ -15,6 +15,8 @@ interface InteractionState {
   askRevision: number;
   enqueueAsk: (sessionId: string, ask: PendingAskUser) => void;
   removeAsk: (sessionId: string, questionId: string) => void;
+  /** Yinyue told of this wait aloud while the person was away. */
+  markAsk: (sessionId: string, questionId: string, told: PendingAskUser['toldAloud']) => void;
   replaceAsks: (sessionId: string, asks: PendingAskUser[]) => void;
   activePlan: Plan | null;
 
@@ -34,6 +36,7 @@ export const useInteractionStore = create<InteractionState>((set) => ({
   askRevision: 0,
   enqueueAsk: (sessionId, ask) => set((s) => ({ askQueues: enqueueAsk(s.askQueues, sessionId, ask), askRevision: s.askRevision + 1 })),
   removeAsk: (sessionId, questionId) => set((s) => ({ askQueues: removeAsk(s.askQueues, sessionId, questionId), askRevision: s.askRevision + 1 })),
+  markAsk: (sessionId, questionId, told) => set((s) => ({ askQueues: markAsk(s.askQueues, sessionId, questionId, told), askRevision: s.askRevision + 1 })),
   replaceAsks: (sessionId, asks) => set((s) => ({ askQueues: replaceAsks(s.askQueues, sessionId, asks), askRevision: s.askRevision + 1 })),
   activePlan: null,
 

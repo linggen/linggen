@@ -28,6 +28,7 @@ import { interruptedRunMessage, isInterruptedRunMeta, type RunMeta } from '../li
 import { endedCalls, savedToolBlocks } from '../lib/toolStatus.mts';
 import { agentTracker } from '../lib/agentTracker';
 import { confirmSent } from '../lib/sentMessage.mts';
+import { markRun, toldOf, type ToldAloud } from '../lib/toldAloud.mts';
 import { isEventEcho } from '../lib/rowIdentity.mts';
 import { bubbleOfRun, claimForRun, isRunBubble, runBubbleIndex, sealedSegment } from '../lib/runBinding.mts';
 import { loadOutcome, stillOn, type LoadSnapshot } from '../lib/sessionLoad.mts';
@@ -100,6 +101,8 @@ interface ChatState {
   finalizeOnIdle: (agentId: string, elapsed?: number, ctxTokens?: number, runId?: string) => void;
   /** The agent's latest row was the spoken contract's silence. */
   markLastSilent: (agentId: string, runId?: string) => void;
+  /** Yinyue told of run `runId`'s reply aloud while the person was away. */
+  markToldAloud: (runId: string, told: ToldAloud) => void;
   contentBlockStart: (agentId: string, block: ContentBlock, runId?: string) => void;
   contentBlockUpdate: (agentId: string, blockId: string, status?: ContentBlock['status'], summary?: string, isError?: boolean, diffData?: ContentBlock['diffData'], bashOutput?: string[], runId?: string) => void;
   toolProgress: (agentId: string, line: string, runId?: string) => void;
@@ -485,6 +488,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     return next;
   })),
 
+  markToldAloud: (runId, told) => set(mutate((state) => markRun(state, runId, told))),
+
   finalizeOnIdle: (agentId, elapsed, ctxTokens, runId) => set(mutate((state) => {
     const idx = findLastGeneratingMessageIndex(state, agentId, runId);
     if (idx < 0 || !state[idx].isGenerating) return state;
@@ -826,6 +831,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
               ...(meta.via_note ? { viaNote: String(meta.via_note) } : {}),
               // A day's session: the place it was written in, for the page to fold.
               ...(typeof meta.place === 'string' ? { place: meta.place } : {}),
+              // Yinyue told of this reply aloud while the person was away.
+              ...(toldOf(meta) ? { toldAloud: toldOf(meta) } : {}),
               // The pictures the row kept: the engine's URLs for each.
               ...(Array.isArray(meta.images) && meta.images.length ? { images: meta.images.map(String) } : {}),
             }];
