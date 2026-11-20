@@ -27,6 +27,10 @@
   to five levels deep, never from a code span or block, and only when the path
   names a file — an `@name` mention stays as written.
 - **`CLAUDE.local.md` is read** beside `CLAUDE.md`.
+- **Your own rule file, `~/.claude/CLAUDE.md`, is read in a coding session**,
+  before a project's rules, with its imports. A chat with Ling, Yinyue and the
+  apps do not get it. Its imports may name a file outside the project; a
+  protected place stays out.
 - **An import is a read nobody was asked about**, so it brings in only what the
   session may read without asking: files inside the project, never a
   protected place. A rule file that is a link follows the same rule.
