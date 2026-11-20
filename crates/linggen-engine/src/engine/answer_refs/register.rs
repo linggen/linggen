@@ -13,7 +13,7 @@ use crate::state_fs::sessions::SessionStore;
 /// Number `result` in `session_id`'s table. A result with nothing to number,
 /// or a session whose table cannot be written, is left as it was.
 pub fn number(store: &SessionStore, session_id: &str, result: &mut ToolResult) {
-    if !numberable(result) || !valid_session(session_id) {
+    if !numberable(result) || !crate::state_fs::sessions::safe_session_id(session_id) {
         return;
     }
     let dir = store.session_dir(session_id);
@@ -55,10 +55,6 @@ fn numberable(result: &ToolResult) -> bool {
         ToolResult::PictureFile { base64, .. } => !base64.is_empty(),
         _ => false,
     }
-}
-
-fn valid_session(id: &str) -> bool {
-    !id.is_empty() && !id.contains("..") && !id.contains('/') && !id.contains('\\')
 }
 
 /// A search numbers its sources only: pictures come from fetched pages.
@@ -242,6 +238,35 @@ fn label_pictures(turn: u32, pictures: &mut [WebPicture]) {
 mod tests {
     use super::*;
     use crate::engine::render::render_tool_result;
+
+    /// A session's sources are numbered and shown only under an id safe as
+    /// a folder name: no table is written where an unsafe id leads, and a
+    /// table planted there is not read.
+    #[test]
+    fn sources_are_numbered_only_under_an_id_safe_as_a_folder_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SessionStore::with_sessions_dir(dir.path().join("a/sessions"));
+        number(&store, "sess-1-a", &mut search());
+        let kept = table::path(&store.session_dir("sess-1-a"));
+        let shown = |id: &str| super::super::view::refs_for(&store, id, ["See [turn1search1]"]);
+        assert!(!shown("sess-1-a").is_empty(), "the probe shows under a safe id");
+        let mut through = Vec::new();
+        for id in crate::state_fs::sessions::UNSAFE_SESSION_IDS {
+            let planted = table::path(&store.session_dir(id));
+            std::fs::create_dir_all(planted.parent().unwrap()).unwrap();
+            let _ = std::fs::remove_file(&planted);
+            number(&store, id, &mut search());
+            if planted.exists() {
+                through.push(format!("numbered: {id:?}"));
+            }
+            std::fs::copy(&kept, &planted).unwrap();
+            if !shown(id).is_empty() {
+                through.push(format!("shown: {id:?}"));
+            }
+            let _ = std::fs::remove_file(&planted);
+        }
+        assert!(through.is_empty(), "{through:?}");
+    }
 
     fn search() -> ToolResult {
         ToolResult::WebSearchResults {

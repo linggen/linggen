@@ -391,14 +391,15 @@ pub(crate) async fn get_workspace_state(
         sid,
         spoken.iter().map(String::as_str),
     );
-    let claude_usage = if !sid.is_empty() && !sid.contains('/') && !sid.contains("..") {
+    let safe = crate::state_fs::sessions::safe_session_id(sid);
+    let claude_usage = if safe {
         crate::server::claude::usage::read(&state.manager.global_sessions.session_dir(sid))
     } else {
         None
     };
-    let usage = match sid.is_empty() || sid.contains('/') || sid.contains("..") {
-        true => None,
-        false => state.manager.session_spend(sid),
+    let usage = match safe {
+        true => state.manager.session_spend(sid),
+        false => None,
     };
     Json(WorkspaceStateResponse {
         claude_usage,

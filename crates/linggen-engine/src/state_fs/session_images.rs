@@ -85,7 +85,7 @@ impl SessionStore {
     /// Keep the pictures a message carried; their names, in order. One that
     /// doesn't decode, isn't a known kind or is too big is skipped.
     pub fn keep_images(&self, session_id: &str, sent: &[String]) -> Vec<String> {
-        if sent.is_empty() || session_id.contains("..") || session_id.contains('/') {
+        if sent.is_empty() || !super::sessions::safe_session_id(session_id) {
             return Vec::new();
         }
         let dir = self.session_dir(session_id).join(IMAGES_DIR);
@@ -114,10 +114,7 @@ impl SessionStore {
 
     /// The file of a kept picture, when the name is one and it exists.
     pub fn image_path(&self, session_id: &str, name: &str) -> Option<PathBuf> {
-        if !valid_name(name) || session_id.is_empty() || session_id.contains("..") {
-            return None;
-        }
-        if session_id.contains('/') || session_id.contains('\\') {
+        if !valid_name(name) || !super::sessions::safe_session_id(session_id) {
             return None;
         }
         let path = self.session_dir(session_id).join(IMAGES_DIR).join(name);
@@ -130,6 +127,29 @@ mod tests {
     use super::*;
 
     const PNG_1PX: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+
+    /// Pictures are kept and found only under a session id safe as a folder
+    /// name: a picture planted where an unsafe id leads is not found.
+    #[test]
+    fn pictures_are_kept_only_under_an_id_safe_as_a_folder_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SessionStore::with_sessions_dir(dir.path().join("a/sessions"));
+        let name = store.keep_images("sess-1-a", &[PNG_1PX.to_string()]).remove(0);
+        let kept = store.image_path("sess-1-a", &name).expect("kept under a safe id");
+        let mut through = Vec::new();
+        for id in crate::state_fs::sessions::UNSAFE_SESSION_IDS {
+            if !store.keep_images(id, &[PNG_1PX.to_string()]).is_empty() {
+                through.push(format!("kept: {id:?}"));
+            }
+            let planted = store.session_dir(id).join(IMAGES_DIR);
+            std::fs::create_dir_all(&planted).unwrap();
+            std::fs::copy(&kept, planted.join(&name)).unwrap();
+            if store.image_path(id, &name).is_some() {
+                through.push(format!("found: {id:?}"));
+            }
+        }
+        assert!(through.is_empty(), "{through:?}");
+    }
 
     #[test]
     fn a_messages_pictures_are_kept_and_found_again() {
