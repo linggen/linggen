@@ -167,7 +167,7 @@ pub fn price_of(cfg: &ModelConfig) -> Option<Priced> {
 }
 
 /// How a model's use is paid for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Billing {
     /// By the token, on a key: the spend is the person's.
@@ -194,6 +194,8 @@ pub fn billing_of(cfg: &ModelConfig) -> Billing {
         || cfg.provider == "proxy";
     match () {
         _ if account => Billing::Account,
+        // The person said what it costs: it is metered, whatever its host.
+        _ if cfg.price.is_some() => Billing::Metered,
         // Anthropic's wire is a hosted service even behind a local gateway:
         // someone bills it, so its tokens stay spend.
         _ if cfg.provider != "anthropic" && crate::provider::is_local_backend(&cfg.url) => {
@@ -258,15 +260,21 @@ impl ModelManager {
     pub fn spend_of(&self, ledger: &SessionUsage) -> SessionSpend {
         let mut out = SessionSpend::default();
         for (id, tally) in &ledger.models {
-            let config = self.config_of(id);
-            let billing = config.map_or(Billing::Unknown, billing_of);
-            let priced = config.and_then(price_of).filter(|_| billing.is_spend());
+            // The class the calls had when they were made; a price is the
+            // config's now, and only a metered model has one.
+            let billing = tally.billing.unwrap_or(Billing::Unknown);
+            let priced = self
+                .config_of(id)
+                .and_then(price_of)
+                .filter(|_| billing == Billing::Metered);
             let cost = priced.map(|p| p.cost(tally));
             if billing.is_spend() {
                 out.tokens.add(&tally.tokens);
                 match cost {
                     Some(c) => *out.cost_usd.get_or_insert(0.0) += c,
-                    None if !tally.tokens.is_zero() => out.unpriced.push(id.clone()),
+                    None if billing == Billing::Metered && !tally.tokens.is_zero() => {
+                        out.unpriced.push(id.clone())
+                    }
                     None => {}
                 }
             }
@@ -431,6 +439,22 @@ mod tests {
         );
     }
 
+    /// Finding 6: the person said what it costs — whatever the host.
+    #[test]
+    fn a_model_with_a_configured_price_is_metered_whatever_its_host() {
+        let mut gateway = model("openai", "http://192.168.1.20:8000/v1", "x");
+        assert_eq!(billing_of(&gateway), Billing::Local);
+        gateway.price = Some(ModelPrice { input: 1.0, output: 2.0, cache_read: None, cache_write: None });
+        assert_eq!(billing_of(&gateway), Billing::Metered);
+        let mut local = model("ollama", "http://127.0.0.1:11434", "x");
+        local.price = gateway.price.clone();
+        assert_eq!(billing_of(&local), Billing::Metered);
+        // An allowance model stays one: a price on it is a config error.
+        let mut plan = model("chatgpt", "", "x");
+        plan.price = gateway.price.clone();
+        assert_eq!(billing_of(&plan), Billing::Account);
+    }
+
     #[test]
     fn a_session_spend_counts_priced_models_and_names_the_unpriced() {
         let mut priced = model("anthropic", API, "claude-sonnet-5-5");
@@ -443,19 +467,13 @@ mod tests {
             vec![priced, unpriced, account],
             &crate::credentials::Credentials::default(),
         );
+        let with = |billing: Option<Billing>, t: ModelTally| ModelTally { billing, ..t };
         let mut ledger = SessionUsage::default();
-        ledger
-            .models
-            .insert("sonnet".into(), tally(&[call(1_000_000, 0, 0, 100_000)]));
-        ledger
-            .models
-            .insert("gem".into(), tally(&[call(500, 0, 0, 20)]));
-        ledger
-            .models
-            .insert("gpt".into(), tally(&[call(9_000, 0, 0, 90)]));
-        ledger
-            .models
-            .insert("gone".into(), tally(&[call(7, 0, 0, 1)]));
+        let metered = Some(Billing::Metered);
+        ledger.models.insert("sonnet".into(), with(metered, tally(&[call(1_000_000, 0, 0, 100_000)])));
+        ledger.models.insert("gem".into(), with(metered, tally(&[call(500, 0, 0, 20)])));
+        ledger.models.insert("gpt".into(), with(Some(Billing::Account), tally(&[call(9_000, 0, 0, 90)])));
+        ledger.models.insert("gone".into(), with(metered, tally(&[call(7, 0, 0, 1)])));
         let spend = models.spend_of(&ledger);
         // 1M in × 2 + 0.1M out × 10 = 3.00; the ChatGPT account has no price.
         assert!((spend.cost_usd.unwrap() - 3.0).abs() < 1e-9);
@@ -465,6 +483,37 @@ mod tests {
         assert_eq!(by("gpt").billing, Billing::Account);
         assert_eq!(by("gpt").cost_usd, None);
         assert_eq!(by("gem").cost_usd, None);
-        assert_eq!(by("gone").billing, Billing::Unknown);
+        assert_eq!(by("gone").billing, Billing::Metered);
+    }
+
+    /// Finding 5: the class a call had when it was made is what it keeps —
+    /// an allowance model that left the config later is still no spend, and
+    /// a call from before classes were recorded makes no claim.
+    #[test]
+    fn a_calls_billing_class_does_not_change_with_the_config() {
+        let models = ModelManager::new_with_credentials(
+            Vec::new(),
+            &crate::credentials::Credentials::default(),
+        );
+        let mut ledger = SessionUsage::default();
+        ledger.models.insert(
+            "old-chatgpt".into(),
+            ModelTally { billing: Some(Billing::Account), ..tally(&[call(9_000, 0, 0, 90)]) },
+        );
+        ledger.models.insert("legacy".into(), tally(&[call(70, 0, 0, 1)]));
+        let spend = models.spend_of(&ledger);
+        assert_eq!(spend.tokens.input, 70, "an allowance model's tokens are no spend, gone or not");
+        assert!(spend.unpriced.is_empty(), "no claim about a call of unknown class: {:?}", spend.unpriced);
+        assert_eq!(spend.cost_usd, None);
+        let legacy = spend.models.iter().find(|m| m.model == "legacy").unwrap();
+        assert_eq!((legacy.billing, legacy.input, legacy.cost_usd), (Billing::Unknown, 70, None));
+    }
+
+    /// A ledger written before classes were recorded still reads.
+    #[test]
+    fn an_older_ledger_entry_without_a_class_reads() {
+        let old = r#"{"calls":1,"unreported":0,"tokens":{"input":5,"output":1,"cache_read":0,"cache_write":0}}"#;
+        let tally: ModelTally = serde_json::from_str(old).unwrap();
+        assert_eq!(tally.billing, None);
     }
 }

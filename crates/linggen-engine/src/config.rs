@@ -476,16 +476,55 @@ impl Config {
         for path in candidates {
             if path.exists() {
                 let content = fs::read_to_string(&path)?;
-                let mut config: Config = toml::from_str(&content)?;
-                config.server.migrated_legacy_addr = config.server.migrate_legacy_fields();
-                config.migrate_retired_chatgpt_builtins();
-                config.migrate_retired_cloud_ids();
+                let config = Config::from_toml(&content)
+                    .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
                 crate::provider::set_first_event_timeout(config.routing.first_event_timeout_secs);
                 return Ok((config, Some(path)));
             }
         }
 
         Ok((Config::default(), None))
+    }
+
+    /// A config file's text, read and brought up to date.
+    pub fn from_toml(content: &str) -> Result<Self> {
+        let mut config: Config = toml::from_str(content)?;
+        config.server.migrated_legacy_addr = config.server.migrate_legacy_fields();
+        config.migrate_retired_chatgpt_builtins();
+        config.migrate_retired_cloud_ids();
+        config.check_prices()?;
+        Ok(config)
+    }
+
+    /// A model's `price` is real money: every number finite and not
+    /// negative, and only on a model paid by the token — one that bills an
+    /// account (a ChatGPT sign-in, Linggen Cloud, a room, a subscription)
+    /// would never use it. The error names the model and the field.
+    fn check_prices(&self) -> Result<()> {
+        for model in &self.models {
+            let Some(price) = &model.price else { continue };
+            let fields = [
+                ("price.input", Some(price.input)),
+                ("price.output", Some(price.output)),
+                ("price.cache_read", price.cache_read),
+                ("price.cache_write", price.cache_write),
+            ];
+            for (field, value) in fields {
+                if let Some(n) = value.filter(|n| !n.is_finite() || *n < 0.0) {
+                    anyhow::bail!(
+                        "Model '{}': {field} must be a finite number, not negative (got {n}).",
+                        model.id
+                    );
+                }
+            }
+            if crate::provider::models::billing_of(model) == crate::provider::models::Billing::Account {
+                anyhow::bail!(
+                    "Model '{}' has a price, but it bills an account, not by the token: remove its price.",
+                    model.id
+                );
+            }
+        }
+        Ok(())
     }
 
     /// Bring persisted references in line with the ChatGPT catalog in force.
@@ -579,6 +618,7 @@ impl Config {
         // built-in models (Linggen Cloud, ChatGPT) at runtime regardless of
         // what's configured here, so an empty list is a valid "use only the
         // built-ins" config, not a broken one.
+        self.check_prices()?;
         let mut seen_ids = std::collections::HashSet::new();
         for model in &self.models {
             if model.id.trim().is_empty() {
@@ -968,6 +1008,50 @@ mod tests {
         cfg.models.push(dup);
         let err = cfg.validate().unwrap_err();
         assert!(err.to_string().contains("Duplicate model ID"));
+    }
+
+    fn priced(input: f64, output: f64) -> Config {
+        let mut cfg = valid_config();
+        cfg.models[0].price = Some(ModelPrice { input, output, cache_read: None, cache_write: None });
+        cfg
+    }
+
+    /// Finding 7: a price is real money — every number finite and not
+    /// negative, and the error names the model and the field.
+    #[test]
+    fn a_price_must_be_finite_and_not_negative() {
+        priced(2.0, 10.0).validate().unwrap();
+        priced(0.0, 0.0).validate().unwrap();
+        for (cfg, field) in [
+            (priced(-1.0, 10.0), "price.input"),
+            (priced(2.0, f64::NAN), "price.output"),
+            (priced(f64::INFINITY, 1.0), "price.input"),
+        ] {
+            let said = cfg.validate().unwrap_err().to_string();
+            assert!(said.contains("'test-model'") && said.contains(field), "{said}");
+        }
+        let mut cfg = priced(1.0, 1.0);
+        cfg.models[0].price.as_mut().unwrap().cache_write = Some(-0.5);
+        assert!(cfg.validate().unwrap_err().to_string().contains("price.cache_write"));
+    }
+
+    /// Finding 7: a price on a model that bills an account is never used.
+    #[test]
+    fn a_price_on_an_allowance_model_is_an_error() {
+        let mut cfg = priced(1.0, 1.0);
+        cfg.models[0].provider = "chatgpt".into();
+        cfg.models[0].auth_mode = Some("chatgpt_oauth".into());
+        let said = cfg.validate().unwrap_err().to_string();
+        assert!(said.contains("'test-model'") && said.contains("price"), "{said}");
+    }
+
+    /// Finding 7: the file does not load with a bad price, and says where.
+    #[test]
+    fn a_bad_price_in_the_file_does_not_load() {
+        let text = |input: f64| toml::to_string(&priced(input, 10.0)).unwrap();
+        let said = Config::from_toml(&text(-2.0)).err().expect("refused").to_string();
+        assert!(said.contains("'test-model'") && said.contains("price.input"), "{said}");
+        assert_eq!(Config::from_toml(&text(2.0)).unwrap().models[0].price.as_ref().unwrap().input, 2.0);
     }
 
     #[test]

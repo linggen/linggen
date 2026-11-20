@@ -119,6 +119,11 @@ pub struct ModelTally {
     #[serde(default)]
     pub unreported: u64,
     pub tokens: Tokens,
+    /// How the model's use was paid for when its latest call was made — kept
+    /// with the call, so what it cost does not change when the config does.
+    /// Absent in a ledger from before classes were recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub billing: Option<super::Billing>,
     /// The part of `tokens` that came from long-prompt calls
     /// ([`LONG_PROMPT_TOKENS`]).
     #[serde(default)]

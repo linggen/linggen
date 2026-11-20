@@ -7,7 +7,7 @@
 
 use super::devices::write_atomic;
 use super::SessionStore;
-use crate::provider::models::{ModelTally, TokenUsage};
+use crate::provider::models::{Billing, ModelTally, TokenUsage};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -33,8 +33,14 @@ impl SessionStore {
     /// Add one model call to the session's ledger. A session with no folder
     /// (a call made outside any session, or one removed meanwhile) records
     /// nothing.
-    pub fn record_usage(&self, session_id: &str, model_id: &str, usage: Option<&TokenUsage>) {
-        if let Err(e) = self.try_record_usage(session_id, model_id, usage) {
+    pub fn record_usage(
+        &self,
+        session_id: &str,
+        model_id: &str,
+        billing: Option<Billing>,
+        usage: Option<&TokenUsage>,
+    ) {
+        if let Err(e) = self.try_record_usage(session_id, model_id, billing, usage) {
             tracing::warn!("usage of '{model_id}' not recorded for session {session_id}: {e:#}");
         }
     }
@@ -43,6 +49,7 @@ impl SessionStore {
         &self,
         session_id: &str,
         model_id: &str,
+        billing: Option<Billing>,
         usage: Option<&TokenUsage>,
     ) -> anyhow::Result<()> {
         if !valid(session_id) {
@@ -63,11 +70,9 @@ impl SessionStore {
                 SessionUsage::default()
             }
         };
-        ledger
-            .models
-            .entry(model_id.to_string())
-            .or_default()
-            .add(usage);
+        let tally = ledger.models.entry(model_id.to_string()).or_default();
+        tally.add(usage);
+        tally.billing = billing;
         write_atomic(&path, &serde_json::to_vec(&ledger)?)?;
         Ok(())
     }
@@ -130,10 +135,10 @@ mod tests {
     #[test]
     fn calls_add_up_per_session_and_model() {
         let (_dir, store) = store();
-        store.record_usage("s1", "sonnet", Some(&call(1_000, 600, 100, 50)));
-        store.record_usage("s1", "sonnet", Some(&call(2_000, 0, 0, 70)));
-        store.record_usage("s1", "gemini", Some(&call(10, 0, 0, 5)));
-        store.record_usage("s1", "gemini", None);
+        store.record_usage("s1", "sonnet", None, Some(&call(1_000, 600, 100, 50)));
+        store.record_usage("s1", "sonnet", None, Some(&call(2_000, 0, 0, 70)));
+        store.record_usage("s1", "gemini", None, Some(&call(10, 0, 0, 5)));
+        store.record_usage("s1", "gemini", None, None);
         let ledger = store.session_usage("s1");
         let sonnet = &ledger.models["sonnet"];
         assert_eq!(sonnet.calls, 2);
@@ -149,8 +154,8 @@ mod tests {
     #[test]
     fn a_call_outside_any_session_folder_records_nothing() {
         let (dir, store) = store();
-        store.record_usage("no-such", "m", Some(&call(1, 0, 0, 1)));
-        store.record_usage("../escape", "m", Some(&call(1, 0, 0, 1)));
+        store.record_usage("no-such", "m", None, Some(&call(1, 0, 0, 1)));
+        store.record_usage("../escape", "m", None, Some(&call(1, 0, 0, 1)));
         assert!(!dir.path().join("no-such").exists());
         assert!(!dir.path().parent().unwrap().join("escape").exists());
     }
@@ -165,7 +170,7 @@ mod tests {
         // Reading it for the page says nothing, and touches nothing.
         assert!(store.session_usage("s1").is_empty());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "{ not json");
-        store.record_usage("s1", "m", Some(&call(10, 0, 0, 1)));
+        store.record_usage("s1", "m", None, Some(&call(10, 0, 0, 1)));
         assert_eq!(
             store.session_usage("s1").models["m"].calls,
             1,
@@ -193,7 +198,7 @@ mod tests {
                 let store = store.clone();
                 std::thread::spawn(move || {
                     for _ in 0..50 {
-                        store.record_usage("s1", "m", Some(&call(10, 0, 0, 1)));
+                        store.record_usage("s1", "m", None, Some(&call(10, 0, 0, 1)));
                     }
                 })
             })
@@ -224,7 +229,7 @@ mod tests {
                 let store = store.clone();
                 std::thread::spawn(move || {
                     for _ in 0..10 {
-                        store.record_usage("s1", "m", Some(&call(10, 0, 0, 1)));
+                        store.record_usage("s1", "m", None, Some(&call(10, 0, 0, 1)));
                     }
                 })
             })

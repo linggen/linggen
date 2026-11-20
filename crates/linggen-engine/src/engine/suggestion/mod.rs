@@ -166,6 +166,7 @@ impl AgentEngine {
             // drops — at the fork's end, or when the next turn aborts it.
             let mut spend = ForkSpend {
                 manager: manager.clone(),
+                models: models.clone(),
                 session_id: session_id.clone(),
                 model_id,
                 call: CallSpend::default(),

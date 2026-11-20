@@ -196,6 +196,8 @@ async fn a_call_that_finished_is_recorded_once() {
             ..PROMPT
         }
     );
+    // The class the call had when it was made, kept with it.
+    assert_eq!(spent.billing, Some(crate::provider::models::Billing::Metered));
 }
 
 /// Finding 1: the provider counted the prompt, then failed mid-stream — the

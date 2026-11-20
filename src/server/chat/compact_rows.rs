@@ -155,7 +155,13 @@ pub(crate) async fn compact_session(
     )
     .await;
     // The summary is billed whether or not it came out usable.
-    crate::engine::spend::note_summary(manager, session_id, &models.summarizer, &spent);
+    crate::engine::spend::note_summary(
+        manager,
+        &model_manager,
+        session_id,
+        &models.summarizer,
+        &spent,
+    );
     let text = text?;
     let summary = format!(
         "[Context compacted — {} messages summarized]\n\n{text}",

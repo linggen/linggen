@@ -6,7 +6,7 @@
 
 use crate::engine::agent::AgentManager;
 use crate::engine::AgentEngine;
-use crate::provider::models::{SessionSpend, TokenUsage};
+use crate::provider::models::{billing_of, ModelManager, SessionSpend, TokenUsage};
 
 impl AgentManager {
     /// What the session's model calls used and, for the models with a price,
@@ -60,26 +60,37 @@ impl CallSpend {
 /// (refused, unreachable) cost nothing and is not a call.
 pub(crate) fn record_call(
     manager: &AgentManager,
+    models: &ModelManager,
     session_id: &str,
     model_id: &str,
     spent: &CallSpend,
 ) {
-    if spent.is_opened() {
-        manager
-            .global_sessions
-            .record_usage(session_id, model_id, spent.usage());
+    if !spent.is_opened() {
+        return;
     }
+    // The model's billing class now goes in with the call.
+    let billing = models.config_of(model_id).map(billing_of);
+    manager
+        .global_sessions
+        .record_usage(session_id, model_id, billing, spent.usage());
 }
 
 /// A summary of the context (`/compact`, outside any engine) is a call too.
-pub fn note_summary(manager: &AgentManager, session_id: &str, model_id: &str, spent: &CallSpend) {
-    record_call(manager, session_id, model_id, spent);
+pub fn note_summary(
+    manager: &AgentManager,
+    models: &ModelManager,
+    session_id: &str,
+    model_id: &str,
+    spent: &CallSpend,
+) {
+    record_call(manager, models, session_id, model_id, spent);
 }
 
 /// The next-prompt fork's spend, put in the ledger when the fork is dropped
 /// — at its end, or when the person types again and the next turn aborts it.
 pub(crate) struct ForkSpend {
     pub manager: std::sync::Arc<AgentManager>,
+    pub models: std::sync::Arc<ModelManager>,
     pub session_id: Option<String>,
     pub model_id: String,
     pub call: CallSpend,
@@ -88,7 +99,7 @@ pub(crate) struct ForkSpend {
 impl Drop for ForkSpend {
     fn drop(&mut self) {
         if let Some(sid) = self.session_id.as_deref() {
-            record_call(&self.manager, sid, &self.model_id, &self.call);
+            record_call(&self.manager, &self.models, sid, &self.model_id, &self.call);
         }
     }
 }
@@ -104,7 +115,7 @@ impl AgentEngine {
         let (Some(manager), Some(session_id)) = (self.tools.get_manager(), &self.session_id) else {
             return;
         };
-        record_call(&manager, session_id, model_id, spent);
+        record_call(&manager, &self.model_manager, session_id, model_id, spent);
     }
 }
 
