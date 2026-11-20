@@ -1625,6 +1625,52 @@ mod tests {
         assert_eq!(tool_action_tier("Memory_query"), PermissionMode::Admin);
     }
 
+    /// What each reader of a written mode makes of every word, the hosts'
+    /// words with them: a skill tool's `tier:` and a skill's or mission's
+    /// path grant (`Grants`).
+    #[test]
+    fn each_reader_of_a_written_mode_word() {
+        use PermissionMode::*;
+        for (word, tier, grant) in [
+            ("chat", None, Read),
+            ("read", Some(Read), Read),
+            ("edit", Some(Edit), Edit),
+            ("write", Some(Edit), Edit),
+            ("admin", Some(Admin), Admin),
+            ("Admin", None, Read),
+            ("", None, Read),
+            ("plan", None, Read),
+            ("default", None, Read),
+            ("acceptEdits", None, Read),
+            ("auto", None, Read),
+            ("bypassPermissions", None, Read),
+        ] {
+            assert_eq!(parse_skill_tier(word), tier, "tier {word}");
+            assert_eq!(super::manifest::parse_mode_str(word), grant, "grant {word}");
+        }
+    }
+
+    /// `PermissionMode`'s printed word, its serde word and its parse are
+    /// one table: every mode round-trips, nothing else is a mode.
+    #[test]
+    fn a_mode_prints_serializes_and_parses_as_one_word() {
+        for mode in PermissionMode::ALL {
+            let word = mode.as_str();
+            assert_eq!(mode.to_string(), word);
+            assert_eq!(serde_json::to_value(mode).unwrap(), serde_json::json!(word));
+            assert_eq!(serde_json::from_value::<PermissionMode>(serde_json::json!(word)).unwrap(), mode);
+            assert_eq!(PermissionMode::parse(word), Some(mode));
+            assert_eq!(PermissionMode::parse_written(word), Some(mode));
+        }
+        assert_eq!(PermissionMode::parse("write"), None);
+        assert!(serde_json::from_value::<PermissionMode>(serde_json::json!("write")).is_err());
+        assert_eq!(PermissionMode::parse_written("write"), Some(PermissionMode::Edit));
+        for other in ["Admin", "", "plan", "default", "acceptEdits", "auto", "bypassPermissions"] {
+            assert_eq!(PermissionMode::parse(other), None, "{other}");
+            assert_eq!(PermissionMode::parse_written(other), None, "{other}");
+        }
+    }
+
     #[test]
     fn test_parse_skill_tier() {
         assert_eq!(parse_skill_tier("read"), Some(PermissionMode::Read));
