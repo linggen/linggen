@@ -156,8 +156,16 @@ impl RunningOrigin {
     /// Recorded the moment a turn of hers the engine started takes the
     /// session's turn lock — before anything of it runs. A person's turn is
     /// recorded by [`Self::in_turn`] instead, so none is recorded twice.
+    ///
+    /// A person's message waiting for the session ([`PersonWaiting`]) outranks
+    /// it: a turn that takes the lock ahead of that message is ended on
+    /// arrival — it does not run, and nothing of it is published.
     pub(crate) fn at_lock(session: &str, origin: Origin) -> Option<Self> {
-        origin.held().then(|| Self::keep(session, origin))
+        let held = origin.held().then(|| Self::keep(session, origin))?;
+        if person_is_waiting(session) {
+            held.ended.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        Some(held)
     }
 
     /// A person's turn, recorded as it starts running.
@@ -185,6 +193,34 @@ impl Drop for RunningOrigin {
         let mut all = RUNNING.lock().unwrap_or_else(|p| p.into_inner());
         all.retain(|r| r.turn != self.turn);
     }
+}
+
+/// Sessions where a person's message waits for the turn lock behind a held
+/// turn, one entry per waiting message.
+static WAITING: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// Held while a person's message waits for `session`; dropped when it has
+/// the lock (or gives up).
+pub(crate) struct PersonWaiting(String);
+
+impl PersonWaiting {
+    pub(crate) fn new(session: &str) -> Self {
+        WAITING.lock().unwrap_or_else(|p| p.into_inner()).push(session.to_string());
+        Self(session.to_string())
+    }
+}
+
+impl Drop for PersonWaiting {
+    fn drop(&mut self) {
+        let mut all = WAITING.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(at) = all.iter().position(|s| *s == self.0) {
+            all.remove(at);
+        }
+    }
+}
+
+fn person_is_waiting(session: &str) -> bool {
+    WAITING.lock().unwrap_or_else(|p| p.into_inner()).iter().any(|s| s == session)
 }
 
 /// The origin of the newest turn running in `session`, when one is.
@@ -713,6 +749,28 @@ pub(super) fn spoken_line(reply: &str) -> Option<String> {
 mod tests {
     use super::{answer_line, is_engine_prompt, spoken_line, with_contract, Origin};
 
+    use super::{end_held_turns, PersonWaiting, RunningOrigin};
+
+    /// A held turn that takes the lock while a person's message waits behind
+    /// the running one is ended on arrival; one that takes it otherwise is not.
+    #[test]
+    fn a_held_turn_taking_the_lock_ahead_of_a_waiting_person_is_ended() {
+        let session = "waiting-test-session";
+        let first = RunningOrigin::at_lock(session, Origin::Note).unwrap();
+        assert!(!first.was_ended());
+        let waiting = PersonWaiting::new(session);
+        assert!(end_held_turns(session));
+        assert!(first.was_ended());
+        let queued = RunningOrigin::at_lock(session, Origin::Herald).unwrap();
+        assert!(queued.was_ended(), "a second held turn ran ahead of the person");
+        let elsewhere = RunningOrigin::at_lock("another-session", Origin::Herald).unwrap();
+        assert!(!elsewhere.was_ended());
+        drop(waiting);
+        let later = RunningOrigin::at_lock(session, Origin::Glance).unwrap();
+        assert!(!later.was_ended(), "the person already has the session");
+        assert!(RunningOrigin::at_lock(session, Origin::Person).is_none());
+    }
+
     #[test]
     fn an_asked_turn_is_not_offered_silence() {
         let event = with_contract("k".into(), Origin::Herald);
@@ -902,6 +960,12 @@ mod tests {
 /// read through its [`Turned`] — whose origin is the turn's own. The scans
 /// read production code only (`lock_scan`), literals and comments aside, and
 /// fail loudly on source they cannot read.
+///
+/// What these are: tripwires for the plain forms, not a proof. A renamed
+/// variable holding an origin, a write inside an allow-listed function, or a
+/// helper that writes for a name passed in would slip past them. The real
+/// barrier is the structure: private constructors (`Line`, `Turned`) and the
+/// typed origin that decides held-ness, contract and finalizer in one place.
 #[cfg(test)]
 mod one_decision {
     use crate::server::lock_scan::production_code;

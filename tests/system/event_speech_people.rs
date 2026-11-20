@@ -550,3 +550,58 @@ async fn a_condition_turn_ended_by_a_message_is_raised_again() {
     assert!(conditions_told(&w).contains("old-plugin"), "{}", conditions_told(&w));
     assert!(!every_row(&w).contains("FIRST-LINE-NEVER-SHOWN"), "the ended turn's line reached a thread");
 }
+
+/// A second held turn of hers waits for the session behind a stalled one (a
+/// peer's `agent_chat`), and a person's message arrives: neither held turn
+/// says anything — the second never runs — and the person is answered.
+#[tokio::test]
+async fn a_held_turn_queued_behind_another_is_ended_too_and_the_person_is_answered() {
+    let long = "x".repeat(900);
+    let setup = Setup::default()
+        .script(
+            Agent::Yinyue,
+            vec![
+                tool("note_write", json!({"text": "the parcel arrives tomorrow", "look_again": "+40m"})),
+                text("Noted."),
+                slow(say(&format!("NOTE-LINE-NEVER-SHOWN {long}"))),
+                text("ANSWER-TO-THE-QUESTION it is Tuesday."),
+                say("AGENT-CHAT-LINE-NEVER-SHOWN the dice are back."),
+            ],
+        )
+        .script(
+            Agent::Ling,
+            vec![tool("agent_chat", json!({"to": "yinyue", "message": "The dice are back."})), text("Told her.")],
+        );
+    let w = World::start(setup).await;
+    she_writes_the_note(&w).await;
+    beat_present(&w).await;
+    the_clock_moves(&w);
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while w.model.calls_of(Agent::Yinyue).len() < 3 {
+        assert!(std::time::Instant::now() < deadline, "the woken turn never began");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    // Ling hands her a message; it waits for the session behind the note's turn.
+    let other = w.api.create_session(json!({"title": "Ling's"})).await;
+    w.api.chat(&other, &w.work(), "Tell her the dice are back").await;
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while w.model.calls_of(Agent::Ling).len() < 2 {
+        assert!(std::time::Instant::now() < deadline, "Ling never handed it over");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    let day = w.api.get("/api/sessions/day").await["id"].as_str().unwrap().to_string();
+    let typed = json!({"session_id": day, "project_root": w.work(), "agent_id": "yinyue", "message": "What day is it?"});
+    w.api.post("/api/chat", typed).await;
+    w.events_when(|e| {
+        e.iter().any(|x| x["kind"] == "pet_speak" && x["text"].as_str().is_some_and(|t| t.contains("ANSWER-TO-THE-QUESTION")))
+    })
+    .await;
+    tokio::time::sleep(Duration::from_secs(4)).await;
+    let rows = every_row(&w);
+    let events = serde_json::to_string(&w.events()).unwrap();
+    for never in ["NOTE-LINE-NEVER-SHOWN", "AGENT-CHAT-LINE-NEVER-SHOWN"] {
+        assert!(!rows.contains(never) && !events.contains(never), "{never} was said");
+    }
+    assert_eq!(w.model.calls_of(Agent::Yinyue).len(), 4, "the queued held turn ran a model call");
+}

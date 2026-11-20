@@ -387,6 +387,13 @@ async fn tell_in_place(
     // person's message that comes now ends it, and a restart's plan reads it.
     let origin = Origin::for_agent(&agent, told);
     let running = crate::server::resident::RunningOrigin::at_lock(&session, origin);
+    // A person's message was waiting for the session: this notice's turn does
+    // not run. (A restart's own continue turn, `mark`, keeps its retry
+    // contract and runs.)
+    let ended = running.as_ref().is_some_and(crate::server::resident::RunningOrigin::was_ended);
+    if ended && mark.is_none() {
+        return;
+    }
     // A plan proposed while this waited for its turn holds it too.
     let Some(notice) = state
         .manager

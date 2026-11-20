@@ -1336,8 +1336,12 @@ pub(crate) async fn start_turn(
     // and the answer dropped). The person outranks it: it is ended, and the
     // message runs as its own turn, answered and shown as any person's, as
     // soon as it has unwound.
+    // While it waits for the session, any held turn that takes the lock ahead
+    // of it is ended on arrival (`RunningOrigin::at_lock`).
+    let mut waiting = None;
     let queue = match was_busy && held_turn_running(&effective_session_id) {
         true => {
+            waiting = Some(crate::server::resident::PersonWaiting::new(&effective_session_id));
             end_held_turn(&state, &effective_session_id);
             Meets::AfterRun
         }
@@ -1456,6 +1460,8 @@ pub(crate) async fn start_turn(
                 },
             },
         };
+        // It has the session: no held turn is ahead of it any more.
+        drop(waiting);
         if let Some(queued_id) = queued_item_id.as_deref() {
             state_clone.fold.forget(queued_id);
         }

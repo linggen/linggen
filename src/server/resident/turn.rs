@@ -232,6 +232,12 @@ async fn run_at(
         // Recorded the moment the lock is ours: a person's message that comes
         // now finds a held turn to end, and a restart's plan reads its origin.
         let running = RunningOrigin::at_lock(session_id, origin);
+        // A person's message was waiting for the session: this turn does not
+        // run, and nothing of it is published (what it carried is kept as on
+        // any unpublished return).
+        if running.as_ref().is_some_and(RunningOrigin::was_ended) {
+            return None;
+        }
         let _mark = crate::server::chat::turn_place::mark_turn(&state.manager, session_id, &turn.place);
         // Persist the incoming message to the session store so it survives
         // reload and every member's thread holds it. (The turn core only
