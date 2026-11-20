@@ -1,5 +1,52 @@
 # Changelog
 
+## [2.5.1] - unreleased — a coding session that asks less and says what it cost
+
+### Permissions
+
+- **Looking is free in a coding turn.** A command proven to only read
+  (`ls`, `cat`, `grep`, `git log`, a glob, a recursive search) runs without
+  a question, in the session's own folder and outside it.
+- **Protected places always ask.** `~/.ssh`, `~/.gnupg`, cloud credentials,
+  `.env` files and keychains are never covered by a wildcard or a home-wide
+  grant; only a grant that names the place, or the person's own answer.
+- **Linggen's own secret files are read only by a grant naming the file**, or
+  by the person at this Mac saying yes. A delegated or unattended run is
+  refused.
+- **The gate follows `cd`.** `cd ui && …; cd .. && git status` is judged where
+  each part really runs.
+
+### Yinyue
+
+- **She speaks only what she marks as speech.** A turn the engine started for
+  her shows a line only when her reply ends with one; her reasons for staying
+  quiet are never shown or saved.
+- **A reminder is spent only where it was seen.** A condition counts as told
+  when its line was drawn on the page in front, not when it was written.
+- **Your message comes first.** Typing to her ends a turn the engine started
+  for her; it never ends work you asked Ling to do.
+
+### Working with models
+
+- **Claude models get their real output limit**, asked from the provider per
+  model, in place of a fixed 8,192; `max_output_tokens` in a model's config
+  overrides it.
+- **A tool call cut at the limit is told to make a smaller one.**
+- **A coding turn may take 1,000 steps** (`agent.coding_max_iters`); a run that
+  reaches it says so.
+- **A session on a pay-per-token model shows what it used and an estimate of
+  what it cost**, in the top bar and in `agent_status op=session`. Every call
+  that reported usage is counted, stopped and failed ones too; a call's cost
+  is fixed when it is made. A `price` in a model's config always wins; a
+  model with no known price shows tokens and no dollars.
+
+### Configuration
+
+- **A config file that cannot be read is never written over.** It is set
+  aside under a new name before a save, and `ling status` says so.
+- **A wrong `price` costs only itself.** At load that model simply has no
+  price, and `ling status` names it; a save refuses it.
+
 ## [2.5.0] - 2026-11-19 — one MCP door
 
 One door for Claude Code and Codex, and the fixes of a whole-code review.
