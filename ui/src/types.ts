@@ -356,6 +356,8 @@ export interface SkillToolDef {
 export interface SkillAppConfig {
   launcher: 'web' | 'bash' | 'url';
   entry: string;
+  /** A relative path to this web app's settings page. */
+  settings?: string;
   /** The launcher's name for the app; absent → the skill's name. */
   title?: string;
   /** `false` keeps an installed-but-unfinished app out of the tab bar. */

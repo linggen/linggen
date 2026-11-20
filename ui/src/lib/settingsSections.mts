@@ -54,6 +54,3 @@ export function sectionAvailable(section: SettingsSection, requirements: Setting
 export const BARE_SECTIONS = SETTINGS_SECTIONS.filter((section) => section.bare);
 
 export const APPS_GROUP = 'Apps';
-// Step 2 replaces this list with a settings field declared by the skill.
-const HAS_SETTINGS: ReadonlySet<string> = new Set(['cfo', 'apple-shifu', 'pulse', 'dj', 'lingjing']);
-export const appHasSettings = (name: string) => HAS_SETTINGS.has(name);

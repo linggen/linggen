@@ -43,3 +43,24 @@ test('launcher settings survive reload and preserve the selected app when leavin
   await expect(input).toBeVisible();
   expect(await input.evaluate(() => Reflect.get(window, '__LINGGEN_VIEW__'))).toBe('embed');
 });
+
+const shots = process.env.SETTINGS_SHOTS;
+
+for (const face of ['web', 'launcher'] as const) {
+  test(`${face} Settings → Apps lists only the declared page`, async ({ page, world }) => {
+    if (face === 'launcher') {
+      await page.goto(`${world.url}/?launcher=1`);
+      await expect(page.frameLocator('iframe[title="dice"]').locator('body')).toBeVisible();
+      await page.getByTitle('Settings', { exact: true }).click();
+    } else {
+      await page.goto(`${world.url}/settings`);
+    }
+    const apps = page.locator('aside > div').filter({ has: page.getByText('Apps', { exact: true }) });
+    await expect(apps.getByRole('button')).toHaveText(['Fixture Options']);
+    await apps.getByRole('button', { name: 'Fixture Options' }).click();
+    const frame = page.locator('iframe[title="Fixture Options"]');
+    await expect(frame).toHaveAttribute('src', '/apps/fixture-options/pages/options.html?embed=1');
+    await expect(frame.contentFrame().getByRole('heading', { name: 'Fixture Options' })).toBeVisible();
+    if (shots) await page.screenshot({ path: `${shots}/${face}.png` });
+  });
+}

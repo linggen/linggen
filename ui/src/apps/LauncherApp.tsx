@@ -15,7 +15,7 @@ import { AccountAvatar } from '../components/AccountAvatar';
 import { WeatherChip } from '../components/WeatherChip';
 import { TermChip } from '../components/TermChip';
 import { skillsApi } from '../lib/endpoints';
-import { appLabel } from './appLabel';
+import { appLabel } from './appLabel.mts';
 import { useYinyuePresenter } from '../hooks/useTransport';
 import type { SkillAppConfig, SkillInfoFull } from '../types';
 import { frameAllow } from '../lib/frameAllow.mts';

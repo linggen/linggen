@@ -1,17 +1,17 @@
 import { useEffect, useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
-import { appLabel } from '../../apps/appLabel';
+import { appSettingsEntries } from '../../components/settings/appSettings.mts';
 import { SettingsSectionBody } from '../../components/settings/sections';
 import { useSettingsRequirements } from '../../hooks/useSettingsRequirements';
 import { skillsApi } from '../../lib/endpoints';
 import { translate } from '../../lib/i18n';
-import { APPS_GROUP, appHasSettings, SETTINGS_SECTIONS, resolveSettingsTab, sectionAvailable, type SettingsSection } from '../../lib/settingsSections.mts';
+import { SETTINGS_SECTIONS, resolveSettingsTab, sectionAvailable, type SettingsSection } from '../../lib/settingsSections.mts';
 import type { SkillInfoFull } from '../../types';
 import { SaveStatus } from './SaveStatus';
 import { useAutoSaveConfig } from './useAutoSaveConfig';
 
 type Entry = { id: string; label: string; group: string | null; section: SettingsSection } |
-  { id: string; label: string; group: typeof APPS_GROUP; skill: string };
+  ReturnType<typeof appSettingsEntries>[number];
 
 function useAppSettings() {
   const [apps, setApps] = useState<Entry[] | null>(null);
@@ -19,9 +19,7 @@ function useAppSettings() {
     let mounted = true;
     skillsApi.list().then((data) => {
       if (!mounted) return;
-      setApps((Array.isArray(data) ? data as SkillInfoFull[] : [])
-        .filter((s) => s.app?.launcher === 'web' && appHasSettings(s.name))
-        .map((s) => ({ id: `app-${s.name}`, label: appLabel({ name: s.name, app: s.app ?? undefined }), group: APPS_GROUP, skill: s.name })));
+      setApps(appSettingsEntries(Array.isArray(data) ? data as SkillInfoFull[] : []));
     }).catch(() => { if (mounted) setApps([]); });
     return () => { mounted = false; };
   }, []);
@@ -87,7 +85,7 @@ export function SettingsPanel({ initial, requestKey, onBack, canOpenRun }: Props
           {waitingForApp && <p role="status" className="p-4 text-sm text-slate-500">Loading…</p>}
           {active && ('section' in active
             ? <SettingsSectionBody id={active.section.id} save={save} requirements={requirements} canOpenRun={canOpenRun} />
-            : <iframe className="block h-full w-full border-0" src={`/apps/${active.skill}/scripts/settings.html?embed=1`} title={active.label} />)}
+            : <iframe className="block h-full w-full border-0" src={active.src} title={active.label} />)}
         </div>
       </div>
     </div>

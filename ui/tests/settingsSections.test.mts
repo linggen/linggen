@@ -4,10 +4,21 @@ import { join, relative } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
-import { APPS_GROUP, BARE_SECTIONS, SETTINGS_SECTIONS, appHasSettings, resolveSettingsTab, sectionAvailable } from '../src/lib/settingsSections.mts';
+import { APPS_GROUP, BARE_SECTIONS, SETTINGS_SECTIONS, resolveSettingsTab, sectionAvailable } from '../src/lib/settingsSections.mts';
+import { appSettingsEntries } from '../src/components/settings/appSettings.mts';
+import type { SkillAppConfig, SkillInfoFull } from '../src/types.ts';
 
 const root = fileURLToPath(new URL('../src/', import.meta.url));
 const declaration = 'lib/settingsSections.mts';
+const fixtureSkills = fileURLToPath(new URL('../../tests/fixtures/', import.meta.url));
+const appNames = new Set(readdirSync(fixtureSkills, { recursive: true, withFileTypes: true })
+  .filter((entry) => entry.name === 'SKILL.md' && entry.isFile())
+  .flatMap((entry) => {
+    const md = readFileSync(join(entry.parentPath, entry.name), 'utf8');
+    const yaml = md.split(/^---\s*$/m)[1] ?? '';
+    const name = yaml.match(/^name: (\S+)$/m)?.[1];
+    return name && /^app:/m.test(yaml) ? [name] : [];
+  }));
 const mapping = 'components/settings/sections.tsx';
 const ids = new Set<string>(SETTINGS_SECTIONS.map(({ id }) => id));
 const source = (file: string) => ts.createSourceFile(file, readFileSync(join(root, file), 'utf8'), ts.ScriptTarget.Latest, true);
@@ -64,11 +75,34 @@ test('bare settings uses the declared subset and still gates Room', () => {
   assert.equal(sectionAvailable(desktop, { ...off, shell: true }), true);
 });
 
-test('mcp aliases Tools; the legacy model id and retired app entries are absent', () => {
+test('mcp aliases Tools; the legacy model id is absent', () => {
   assert.equal(resolveSettingsTab('mcp'), 'tools');
   assert.equal(ids.has('model'), false);
-  assert.equal(appHasSettings('pulse'), true);
-  for (const name of ['mac-shifu', 'sys-doctor', 'health']) assert.equal(appHasSettings(name), false);
+});
+
+const webApp = (name: string, app: Partial<SkillAppConfig> = {}): SkillInfoFull => ({
+  name, description: '', content: '', source: { type: 'Global' }, tool_defs: [],
+  app: { launcher: 'web', entry: 'index.html', ...app },
+});
+
+test('Apps depends on the skill declaration, not the app name or the launcher tab list', () => {
+  const name = `new-app-${process.pid}`;
+  assert.deepEqual(appSettingsEntries([
+    webApp(name, { settings: 'pages/my options.html', title: ' Options ', list: false }),
+    webApp('no-declaration'),
+    webApp('not-a-web-app', { launcher: 'bash', settings: 'options.html' }),
+  ]), [{ id: `app-${name}`, group: APPS_GROUP, label: 'Options', src: `/apps/${name}/pages/my%20options.html?embed=1` }]);
+});
+
+test('app settings href keeps paths and URL syntax inside the app route', () => {
+  for (const settings of ['../other/index.html', '/index.html', 'pages/./index.html', 'pages\\index.html']) {
+    assert.deepEqual(appSettingsEntries([webApp('test', { settings })]), []);
+  }
+  for (const name of ['.', '..', 'next/other', 'next\\other']) {
+    assert.deepEqual(appSettingsEntries([webApp(name, { settings: 'index.html' })]), []);
+  }
+  assert.equal(appSettingsEntries([webApp('test', { settings: 'pages/%2e%2e?#.html' })])[0].src,
+    '/apps/test/pages/%252e%252e%3F%23.html?embed=1');
 });
 
 const panel = 'pages/Settings/SettingsPanel.tsx';
@@ -196,7 +230,7 @@ const flagFile = /\b(?:start-at-login|pet-disabled|pet-always-on)\b/;
 
 function inspect(tree: ts.SourceFile, file: string) {
   const violations: string[] = [];
-  if (file !== declaration && /\b(?:HAS_SETTINGS|KNOWN_SECTIONS|sidebarZh|ManagementTab)\b/.test(tree.getFullText())) violations.push(`${file}: legacy section list`);
+  if (/\b(?:HAS_SETTINGS|appHasSettings|KNOWN_SECTIONS|sidebarZh|ManagementTab)\b/.test(tree.getFullText())) violations.push(`${file}: legacy section list`);
   const scoped = drawsSettings(file);
   walk(tree, (node) => {
     const line = () => tree.getLineAndCharacterOfPosition(node.getStart()).line + 1;
@@ -207,6 +241,10 @@ function inspect(tree: ts.SourceFile, file: string) {
     if (access) violations.push(`${file}:${line()}: ${access}`);
     if (file !== desktop && (ts.isStringLiteralLike(node) || ts.isTemplateLiteralToken(node)) && flagFile.test(node.text)) {
       violations.push(`${file}:${line()}: flag file belongs in DesktopSection`);
+    }
+    if ((file === declaration || file.startsWith('pages/Settings/') || file.startsWith('components/settings/'))
+      && ts.isStringLiteralLike(node) && appNames.has(node.text)) {
+      violations.push(`${file}:${line()}: app names belong in skill declarations`);
     }
     if (scoped && duplicateDispatch(node, file)) {
       violations.push(`${file}:${line()}: second settings dispatch`);
@@ -226,6 +264,17 @@ test('settings source respects section import, dispatch, and flag ownership', ()
 });
 
 const fixture = (code: string, file = 'lib/example.ts') => inspect(ts.createSourceFile(file, code, ts.ScriptTarget.Latest, true), file);
+
+test('app-name literals from fixture declarations are banned only in shared settings', () => {
+  assert.ok(appNames.size > 0);
+  for (const name of appNames) {
+    const code = `const names = [${JSON.stringify(name)}];`;
+    assert.match(fixture(code, panel).join('\n'), /app names belong in skill declarations/);
+    assert.match(fixture(code, declaration).join('\n'), /app names belong in skill declarations/);
+    assert.match(fixture(code, 'components/settings/appSettings.mts').join('\n'), /app names belong in skill declarations/);
+    assert.deepEqual(fixture(code, launcher), []);
+  }
+});
 
 const otherApp = 'apps/OtherSettings.tsx';
 
