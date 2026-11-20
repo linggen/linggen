@@ -15,6 +15,9 @@ pub mod error;
 pub mod models;
 pub mod ollama;
 pub mod openai;
+pub mod output_limit;
+#[cfg(test)]
+mod anthropic_limit_tests;
 pub mod proxy_provider;
 
 /// Render a mid-stream body read error with a truthful name: reqwest wraps

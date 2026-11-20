@@ -87,6 +87,7 @@ Optional fields:
 | `context_window` | Override context size when provider API doesn't report it |
 | `supports_tools` | Force enable/disable native function calling (`true`/`false`) |
 | `reasoning_effort` | Reasoning effort hint (provider-specific) |
+| `max_output_tokens` | Output limit (`max_tokens`) sent to an Anthropic model; clamped to the model's cap when the Models API gives it. Other providers ignore it |
 
 ### Web UI setup
 
@@ -102,6 +103,19 @@ A provider bills a repeated beginning of a request at a fraction of the price, s
 - Anthropic caches only what a request marks: the engine sends the top-level `cache_control` (automatic caching) to api.anthropic.com only; a compatible gateway may not take it.
 - A capped session (Yinyue) trims its history in chunks, so the beginning holds between cuts.
 - OpenAI API keys, Gemini, DeepSeek and Ollama cache a repeated beginning on their own.
+
+## Output limit (Anthropic)
+
+Anthropic requires an output limit on every request, and a coding run is cut when one reply must write more than it. The engine learns each model's cap once, from the Models API (`GET /v1/models/{id}`, `max_tokens`), and sends:
+
+- **A request with tools** (an agent's turn): the cap, or 64,000 when the cap is higher. The limit counts against the context window and toward the output rate limit when a request begins, so the full 128,000 is not asked for by every turn; 64,000 is eight times the old limit.
+- **A text-only request** (a summary, a title, the companion's one line): 8,192, the number used before, which it never outgrew.
+- **A model the host cannot describe** (another host behind the same wire, an unknown id, no network): 8,192. A lookup that failed is asked again on a later request; a final "not found" is not.
+- **`max_output_tokens` in the model's config** replaces both numbers, still clamped to the cap.
+
+The window counts input and limit together, and a context is compacted only at 95% of it, so a request can overflow it. The refusal names the input it counted; the engine sends the request once more with the room left (when at least 1,024 tokens), and any other refusal is the caller's. The limit does not change the cached prefix.
+
+When a reply is cut at the limit the model is told what was cut (`agentic-loop.md`). Other providers set no output limit of their own, except the 65,536 `max_completion_tokens` Chat Completions asks for a reasoning model; the one cut note and the one three-cuts rule serve them all.
 
 ## Credentials
 
@@ -176,5 +190,6 @@ model: gpt-5.4
 - `provider/models.rs`: multi-provider dispatch, streaming, fallback error classification.
 - `engine/mod.rs`: `stream_with_fallback()` — auto-retry with model fallback.
 - `provider/ollama.rs`: Ollama API client.
+- `provider/output_limit.rs`: the output limit an Anthropic request carries.
 - `provider/openai.rs`: OpenAI-compatible API client (used by all cloud providers).
 - `provider/codex_auth.rs`: ChatGPT OAuth token management.

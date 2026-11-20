@@ -2,7 +2,18 @@
 import type { PermissionMode } from "./PermissionMode";
 import type { WriteSafetyMode } from "./WriteSafetyMode";
 
-export type AgentConfig = { max_iters: number, write_safety_mode: WriteSafetyMode, 
+export type AgentConfig = { 
+/**
+ * Most steps (a model reply and the tool calls in it) one turn may take.
+ * A coding session has [`coding_max_iters`](Self::coding_max_iters).
+ */
+max_iters: number, 
+/**
+ * The same limit for a coding session (`work: code`): a long job is
+ * many steps, and a limit tuned for chat ends it half done. Defaults to
+ * the most the config allows ([`MAX_ITERS_CEILING`]).
+ */
+coding_max_iters: number, write_safety_mode: WriteSafetyMode, 
 /**
  * Default permission for new sessions (chat/read/edit/admin). Defaults to read.
  */
