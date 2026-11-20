@@ -9,8 +9,8 @@
 //! runs on this machine has no per-token price: it is `Billing::Account` or
 //! `Billing::Local`, and a session's spend leaves it out.
 
-use super::{signs_in_with_chatgpt, ModelManager, TokenUsage, Tokens};
-use crate::config::{ModelConfig, ModelPrice};
+use super::{ModelManager, TokenUsage, Tokens};
+use crate::config::{ModelConfig, ModelPrice, ProviderKind, SignIn};
 use crate::state_fs::session_usage::SessionUsage;
 use serde::Serialize;
 
@@ -193,8 +193,8 @@ fn names(name: &str, model: &str) -> bool {
 /// Anthropic's own API, by key: the one place the built-in table is true.
 /// A gateway or a cloud reseller sets its own prices.
 fn on_anthropic_api(cfg: &ModelConfig) -> bool {
-    cfg.provider == "anthropic"
-        && cfg.auth_mode.as_deref() != Some("claude_oauth")
+    cfg.provider_kind() == ProviderKind::Anthropic
+        && cfg.sign_in() != SignIn::Claude
         && (cfg.url.trim().is_empty()
             || crate::provider::anthropic::takes_top_level_cache_control(&cfg.url))
 }
@@ -243,21 +243,22 @@ impl Billing {
 }
 
 pub fn billing_of(cfg: &ModelConfig) -> Billing {
-    let mode = cfg.auth_mode.as_deref();
-    let account = signs_in_with_chatgpt(cfg)
-        || matches!(mode, Some("linggen_account" | "claude_oauth"))
-        || cfg.provider == "proxy";
+    let kind = cfg.provider_kind();
+    let account = matches!(
+        cfg.sign_in(),
+        SignIn::ChatGpt | SignIn::LinggenAccount | SignIn::Claude
+    ) || kind == ProviderKind::Proxy;
     match () {
         _ if account => Billing::Account,
         // The person said what it costs: it is metered, whatever its host.
         _ if cfg.price.is_some() => Billing::Metered,
         // Anthropic's wire is a hosted service even behind a local gateway:
         // someone bills it, so its tokens stay spend.
-        _ if cfg.provider != "anthropic" && crate::provider::is_local_backend(&cfg.url) => {
+        _ if kind != ProviderKind::Anthropic && crate::provider::is_local_backend(&cfg.url) => {
             Billing::Local
         }
         // Ollama's hosted models are a plan, not a price per token.
-        _ if cfg.provider == "ollama" => Billing::Account,
+        _ if kind == ProviderKind::Ollama => Billing::Account,
         _ => Billing::Metered,
     }
 }
@@ -285,15 +286,26 @@ pub struct ModelSpend {
     pub as_of: Option<String>,
 }
 
-/// What a session spent: per model and class, and in all for the models
-/// whose use is paid by the token. The one answer the chat's top bar and
-/// `agent_status` both give.
+/// What a session's engine calls spent: per model and class, and in all for
+/// the models whose use is paid by the token. The ledger's half of what a
+/// session cost (`server::session_cost`, which the chat's top bar and
+/// `agent_status` both ask).
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct SessionSpend {
     pub models: Vec<ModelSpend>,
     /// The tokens of every model whose use is spend (not an account's, not
     /// local).
+    #[serde(serialize_with = "counted")]
     pub tokens: Tokens,
+    /// The part of `tokens` whose calls had a price — what `cost_usd` is of.
+    #[serde(serialize_with = "counted")]
+    pub priced_tokens: Tokens,
+    /// The part of `tokens` of the `unpriced` models.
+    #[serde(serialize_with = "counted")]
+    pub unpriced_tokens: Tokens,
+    /// Whether the session used any token paid for by the token — what the
+    /// top bar shows a spend for.
+    pub spent: bool,
     /// The estimate over the priced calls among them; absent when none had
     /// a price.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -304,11 +316,20 @@ pub struct SessionSpend {
     pub unpriced: Vec<String>,
 }
 
-impl SessionSpend {
-    /// Whether the session spent by the token at all.
-    pub fn has_spend(&self) -> bool {
-        self.models.iter().any(|m| m.billing.is_spend())
+/// Tokens as the UI reads them: the four counts, and the prompt they make
+/// (`Tokens::prompt`) so no reader adds them up again.
+fn counted<S: serde::Serializer>(t: &Tokens, s: S) -> Result<S::Ok, S::Error> {
+    #[derive(Serialize)]
+    struct Counted<'a> {
+        #[serde(flatten)]
+        tokens: &'a Tokens,
+        prompt: u64,
     }
+    Counted {
+        tokens: t,
+        prompt: t.prompt(),
+    }
+    .serialize(s)
 }
 
 impl ModelManager {
@@ -329,9 +350,16 @@ pub fn spend_of(ledger: &SessionUsage) -> SessionSpend {
             if let Some(c) = e.cost_usd {
                 *out.cost_usd.get_or_insert(0.0) += c;
             }
-            let named = out.unpriced.contains(&e.model);
-            if billing == Billing::Metered && !e.priced && !e.tally.tokens.is_zero() && !named {
-                out.unpriced.push(e.model.clone());
+            if e.priced {
+                out.priced_tokens.add(&e.tally.tokens);
+            }
+            let unpriced =
+                billing == Billing::Metered && !e.priced && !e.tally.tokens.is_zero();
+            if unpriced {
+                out.unpriced_tokens.add(&e.tally.tokens);
+                if !out.unpriced.contains(&e.model) {
+                    out.unpriced.push(e.model.clone());
+                }
             }
         }
         out.models.push(ModelSpend {
@@ -348,6 +376,7 @@ pub fn spend_of(ledger: &SessionUsage) -> SessionSpend {
             as_of: e.as_of.clone(),
         });
     }
+    out.spent = !out.tokens.is_zero();
     out
 }
 
@@ -618,5 +647,23 @@ mod tests {
         assert_eq!(by("gpt", false).billing, Billing::Account);
         assert_eq!(by("legacy", false).billing, Billing::Unknown);
         assert_eq!(by("sonnet", true).cost_usd, Some(3.0));
+        // The priced and unpriced parts are told here, once — the top bar's
+        // hover only words them.
+        assert_eq!(spend.priced_tokens.input, 1_000_000);
+        assert_eq!(spend.unpriced_tokens.input, 500 + 7 + 40);
+        assert!(spend.spent);
+        let wire = serde_json::to_value(&spend).unwrap();
+        assert_eq!(wire["tokens"]["prompt"], 1_000_000 + 500 + 7 + 40 + 70);
+        assert_eq!(wire["unpriced_tokens"]["prompt"], 547);
+        assert_eq!(wire["spent"], true);
+        // Only an account's tokens: nothing spent by the token.
+        let account = spend_of(&SessionUsage::of_entries(vec![entry(
+            "gpt",
+            Some(Billing::Account),
+            false,
+            9_000,
+            None,
+        )]));
+        assert!(!account.spent);
     }
 }

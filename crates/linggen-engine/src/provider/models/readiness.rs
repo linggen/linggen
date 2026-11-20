@@ -8,7 +8,7 @@
 //! which keeps a usage limit's reset as the provider named it.
 
 use super::{standing, ModelManager};
-use crate::config::ModelConfig;
+use crate::config::{ModelConfig, ProviderKind, SignIn};
 use crate::provider::error::ProviderErrorKind;
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -142,7 +142,7 @@ impl ModelManager {
 /// A sign-in the pre-flight refused. Linggen Cloud is told by the model's
 /// auth mode, never by the message's words.
 fn signed_out(cfg: &ModelConfig, err: &anyhow::Error) -> Readiness {
-    if cfg.auth_mode.as_deref() == Some("linggen_account") {
+    if cfg.sign_in() == SignIn::LinggenAccount {
         return match cloud_sign_in() {
             NotReady::SignInExpired => Readiness::not(
                 NotReady::SignInExpired,
@@ -229,9 +229,8 @@ pub(crate) fn refusing(
 /// names the key itself, so it is no sign-in.
 fn needs_key(cfg: &ModelConfig) -> bool {
     let has_key = cfg.api_key.as_deref().is_some_and(|k| !k.trim().is_empty());
-    let signs_in = cfg.auth_mode.as_deref().is_some_and(|m| m != "api_key")
-        || super::signs_in_with_chatgpt(cfg);
-    let keyless = matches!(cfg.provider.as_str(), "ollama" | "proxy");
+    let signs_in = cfg.sign_in() != SignIn::Key;
+    let keyless = matches!(cfg.provider_kind(), ProviderKind::Ollama | ProviderKind::Proxy);
     !(has_key || signs_in || keyless || crate::provider::is_local_backend(&cfg.url))
 }
 
@@ -253,7 +252,7 @@ mod tests {
         }))
         .unwrap();
         cfg.api_key = key.map(str::to_string);
-        cfg.auth_mode = auth.map(str::to_string);
+        cfg.auth_mode = auth.map(Into::into);
         cfg
     }
 

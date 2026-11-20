@@ -172,10 +172,9 @@ async fn servable_models(state: &ServerState) -> Vec<ModelConfig> {
         .collect()
 }
 
+/// The models a Claude SDK session may run on are the ones it serves.
 fn is_servable(cfg: &ModelConfig) -> bool {
-    cfg.provider == "anthropic"
-        && cfg.auth_mode.as_deref() != Some("claude_oauth")
-        && cfg.api_key.as_deref().is_some_and(|k| !k.is_empty())
+    crate::server::claude::supports_model(cfg)
 }
 
 fn upstream_base(url: &str) -> String {
@@ -214,7 +213,7 @@ mod tests {
             "id": "m", "provider": provider, "url": "", "model": "m"
         }))
         .unwrap();
-        cfg.auth_mode = auth.map(str::to_string);
+        cfg.auth_mode = auth.map(Into::into);
         cfg.api_key = key.map(str::to_string);
         cfg
     }

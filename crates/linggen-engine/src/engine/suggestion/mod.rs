@@ -254,10 +254,8 @@ async fn predict(
             StreamChunk::ToolCall(_) | StreamChunk::Cut => return Ok(None),
             StreamChunk::Usage(u) => {
                 tracing::debug!(
-                    "next-prompt suggestion: prompt {:?}, cached {:?}, output {:?}",
-                    u.prompt_tokens,
-                    u.cached_tokens,
-                    u.completion_tokens
+                    "next-prompt suggestion: {:?}",
+                    crate::provider::models::Tokens::of(&u)
                 );
                 spent.report(u);
             }

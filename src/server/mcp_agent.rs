@@ -924,9 +924,10 @@ pub async fn status(state: &Arc<ServerState>, session: &str) -> Result<String, S
     if let Some(grants) = grants {
         out["grants"] = grants;
     }
-    // What the session's model calls used, and cost where a price is known.
-    if let Some(spend) = state.manager.session_spend(session) {
-        out["usage"] = serde_json::to_value(spend).unwrap_or_default();
+    // What the session cost: the answer the chat's top bar gives.
+    let cost = serde_json::to_value(super::session_cost::of(state, session)).unwrap_or_default();
+    if let serde_json::Value::Object(fields) = cost {
+        out.as_object_mut().expect("an object").extend(fields);
     }
     Ok(out.to_string())
 }
@@ -1995,7 +1996,7 @@ mod tests {
         assert_eq!(selected["default"], true);
         assert_eq!(
             selected["provider"],
-            manager.provider_kind(&builtin).unwrap()
+            manager.provider_name(&builtin).unwrap()
         );
         assert_eq!(rows.iter().filter(|m| m["default"] == true).count(), 1);
         assert!(rows.iter().any(|m| m["id"] == "deepseek-flash"));

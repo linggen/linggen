@@ -1,4 +1,4 @@
-use crate::config::ModelConfig;
+use crate::config::{ModelConfig, ProviderKind, SignIn};
 use crate::credentials::{self, Credentials};
 use crate::message::ChatMessage;
 use crate::provider::anthropic::AnthropicClient;
@@ -36,15 +36,6 @@ fn hold_permit(stream: ChunkStream, permit: tokio::sync::OwnedSemaphorePermit) -
         (stream, permit),
         |(mut stream, permit)| async move { stream.next().await.map(|item| (item, (stream, permit))) },
     ))
-}
-
-/// Whether a model runs on the ChatGPT sign-in: `auth_mode = "chatgpt_oauth"`,
-/// or a `chatgpt` provider whatever else its auth mode says (but Linggen
-/// Cloud's). The one answer for the client the manager builds, the
-/// pre-flight, and readiness.
-pub(crate) fn signs_in_with_chatgpt(cfg: &ModelConfig) -> bool {
-    let mode = cfg.auth_mode.as_deref();
-    mode != Some("linggen_account") && (mode == Some("chatgpt_oauth") || cfg.provider == "chatgpt")
 }
 
 /// The client a ChatGPT-signed-in model speaks through. It reads the tokens
@@ -88,8 +79,8 @@ impl ModelManager {
     /// Tokens are checked live (not at startup) so we catch both "never
     /// signed in" (file absent) and "expired" the same way.
     fn check_provider_auth(cfg: &ModelConfig) -> Result<()> {
-        match cfg.auth_mode.as_deref() {
-            _ if signs_in_with_chatgpt(cfg) => {
+        match cfg.sign_in() {
+            SignIn::ChatGpt => {
                 let tokens = codex_auth::CodexAuthTokens::load(&codex_auth::codex_auth_file());
                 if !tokens.is_valid() {
                     let reason = if tokens.access_token.is_none() {
@@ -103,7 +94,7 @@ impl ModelManager {
                     );
                 }
             }
-            Some("linggen_account") => {
+            SignIn::LinggenAccount => {
                 let Some((token, _)) = crate::account::resolve_token() else {
                     anyhow::bail!(
                         "AUTH_REQUIRED: Not signed in to linggen.dev for model '{}'. Run `ling account login` or sign in from the app.",
@@ -120,7 +111,7 @@ impl ModelManager {
                     );
                 }
             }
-            Some("claude_oauth") => {
+            SignIn::Claude => {
                 let tokens = crate::provider::claude_auth::load().map_err(|_| {
                     anyhow::anyhow!(
                         "AUTH_REQUIRED: Claude not signed in for model '{}'. Run `claude` once to sign in, then retry.",
@@ -140,7 +131,7 @@ impl ModelManager {
                     );
                 }
             }
-            _ => {}
+            SignIn::Key | SignIn::Unknown => {}
         }
         Ok(())
     }
@@ -164,10 +155,11 @@ impl ModelManager {
         let all_configs = configs.clone();
         for mut cfg in configs {
             // Check if this model uses ChatGPT OAuth
-            let is_chatgpt_oauth = signs_in_with_chatgpt(&cfg);
+            let sign_in = cfg.sign_in();
+            let kind = cfg.provider_kind();
+            let is_chatgpt_oauth = sign_in == SignIn::ChatGpt;
             // Anthropic with Claude Code OAuth (CC Max subscription).
-            let is_claude_oauth =
-                cfg.provider == "anthropic" && cfg.auth_mode.as_deref() == Some("claude_oauth");
+            let is_claude_oauth = kind == ProviderKind::Anthropic && sign_in == SignIn::Claude;
 
             if !is_chatgpt_oauth && !is_claude_oauth {
                 // Standard: TOML > credentials.json > env var, else a sibling
@@ -175,18 +167,22 @@ impl ModelManager {
                 cfg.api_key = credentials::resolve_api_key_shared(&cfg, &all_configs, creds);
             }
 
-            let is_linggen_account = cfg.auth_mode.as_deref() == Some("linggen_account");
+            let is_linggen_account = sign_in == SignIn::LinggenAccount;
 
-            let client = match cfg.provider.as_str() {
+            let client = match kind {
                 _ if is_linggen_account => {
                     Arc::new(OpenAiClient::new_linggen_account(cfg.url.clone()))
                         as Arc<dyn Provider>
                 }
-                "ollama" => Arc::new(OllamaClient::new(cfg.url.clone(), cfg.api_key.clone())),
-                "anthropic" if is_claude_oauth => {
+                ProviderKind::Ollama => {
+                    Arc::new(OllamaClient::new(cfg.url.clone(), cfg.api_key.clone()))
+                }
+                ProviderKind::Anthropic if is_claude_oauth => {
                     Arc::new(AnthropicClient::new_claude_oauth(cfg.url.clone()))
                 }
-                "anthropic" => Arc::new(AnthropicClient::new(cfg.url.clone(), cfg.api_key.clone())),
+                ProviderKind::Anthropic => {
+                    Arc::new(AnthropicClient::new(cfg.url.clone(), cfg.api_key.clone()))
+                }
                 _ if is_chatgpt_oauth => Arc::new(chatgpt_client(&cfg)),
                 // All other providers (openai, gemini, groq, deepseek, etc.) use OpenAI-compatible API.
                 _ => Arc::new(OpenAiClient::new(cfg.url.clone(), cfg.api_key.clone())),
@@ -408,7 +404,7 @@ impl ModelManager {
         // would 401 and look like a network hang. Prefer the name-based
         // guess in that case so engine startup keeps moving.
         if Self::check_provider_auth(&instance.config).is_err() {
-            if signs_in_with_chatgpt(&instance.config) {
+            if instance.config.signs_in_with_chatgpt() {
                 return Ok(None);
             }
             let guess = Self::guess_context_window(&instance.config.model);
@@ -553,10 +549,10 @@ impl ModelManager {
     /// debug/export surfaces to render tool-defs in the wire shape that
     /// model's provider actually receives — so what you copy from the
     /// system-prompt panel matches what gets sent on the wire.
-    pub fn provider_kind(&self, model_id: &str) -> Option<&str> {
+    pub fn provider_name(&self, model_id: &str) -> Option<&str> {
         self.models
             .get(self.key(model_id).as_ref())
-            .map(|m| m.config.provider.as_str())
+            .map(|m| m.config.provider_name())
     }
 
     /// Return the first OllamaClient found among configured models.
@@ -674,7 +670,7 @@ mod tests {
         assert!(m.has_model("gpt-6-sol"));
         assert_eq!(m.resolve_id("gpt-6-sol").as_deref(), Some("gpt-6.2-sol"));
         assert_eq!(m.resolve_id("gpt-6.1-sol").as_deref(), Some("gpt-6.2-sol"));
-        assert_eq!(m.provider_kind("gpt-6-sol"), Some("chatgpt"));
+        assert_eq!(m.provider_name("gpt-6-sol"), Some("chatgpt"));
         assert_eq!(
             m.resolve_id("gpt-5.5"),
             Some(chatgpt_catalog::primary_id())
@@ -704,7 +700,7 @@ mod tests {
         ids.sort();
         assert_eq!(ids, want);
         assert_eq!(m.resolve_id("gpt-6.1-sol").as_deref(), Some("gpt-6.1-sol"));
-        assert_eq!(m.provider_kind("gpt-5.6-luna"), Some("chatgpt"));
+        assert_eq!(m.provider_name("gpt-5.6-luna"), Some("chatgpt"));
         assert_eq!(m.resolve_id("gpt-5.5"), Some(snap.primary_id()));
 
         // Once the backend stops listing it, a pin moves to its family.
@@ -720,7 +716,7 @@ mod tests {
         let mut snap = chatgpt_catalog::Snapshot::seed();
         snap.listed = chatgpt_catalog::tests::measured_list();
         let m = ModelManager::new_with_catalog(vec![byok("gpt-6-sol")], &Credentials::default(), &snap);
-        assert_eq!(m.provider_kind("gpt-6-sol"), Some("openai"));
+        assert_eq!(m.provider_name("gpt-6-sol"), Some("openai"));
         assert!(m.list_models().iter().any(|c| c.id == "gpt-6-sol"));
     }
 
@@ -729,7 +725,7 @@ mod tests {
         let m =
             ModelManager::new_with_credentials(vec![byok("gpt-6-sol")], &Credentials::default());
         assert_eq!(m.resolve_id("gpt-6-sol").as_deref(), Some("gpt-6-sol"));
-        assert_eq!(m.provider_kind("gpt-6-sol"), Some("openai"));
+        assert_eq!(m.provider_name("gpt-6-sol"), Some("openai"));
     }
 
     #[test]

@@ -276,11 +276,10 @@ pub(crate) async fn read_file_api(
 
 #[derive(Serialize)]
 struct WorkspaceStateResponse {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    claude_usage: Option<crate::server::claude::usage::Usage>,
-    /// What the session's model calls used and cost (`AgentManager::session_spend`).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    usage: Option<crate::provider::models::SessionSpend>,
+    /// What the session cost: `claude_usage` and `usage`, the answer
+    /// `agent_status` gives too.
+    #[serde(flatten)]
+    cost: crate::server::session_cost::SessionCost,
     active_task: Option<(crate::state_fs::StateFile, String)>,
     user_stories: Option<(crate::state_fs::StateFile, String)>,
     tasks: Vec<(crate::state_fs::StateFile, String)>,
@@ -391,19 +390,8 @@ pub(crate) async fn get_workspace_state(
         sid,
         spoken.iter().map(String::as_str),
     );
-    let safe = crate::state_fs::sessions::safe_session_id(sid);
-    let claude_usage = if safe {
-        crate::server::claude::usage::read(&state.manager.global_sessions.session_dir(sid))
-    } else {
-        None
-    };
-    let usage = match safe {
-        true => state.manager.session_spend(sid),
-        false => None,
-    };
     Json(WorkspaceStateResponse {
-        claude_usage,
-        usage,
+        cost: crate::server::session_cost::of(&state, sid),
         active_task,
         user_stories,
         tasks,

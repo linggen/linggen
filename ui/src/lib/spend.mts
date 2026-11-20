@@ -24,10 +24,21 @@ export interface ModelSpend {
   as_of?: string;
 }
 
-/** The engine's answer (`AgentManager::session_spend`): the same one `agent_status` gives. */
+/** A call's counts as the engine sends them; `prompt` is everything sent (`Tokens::prompt`). */
+export interface Tokens { input: number; output: number; cache_read: number; cache_write: number; prompt: number }
+
+/**
+ * The engine's answer (`server::session_cost`, its `usage`): the same one
+ * `agent_status` gives. Every count and rule is the engine's
+ * (`pricing.rs` `spend_of`): which tokens were priced, which not, and
+ * whether the session spent at all — this file only words them.
+ */
 export interface SessionSpend {
   models: ModelSpend[];
-  tokens: { input: number; output: number; cache_read: number; cache_write: number };
+  tokens: Tokens;
+  priced_tokens: Tokens;
+  unpriced_tokens: Tokens;
+  spent: boolean;
   cost_usd?: number;
   unpriced?: string[];
 }
@@ -64,26 +75,8 @@ export function dollars(cost: number): string {
   return cost >= 0.1 ? cost.toFixed(2) : cost.toFixed(3);
 }
 
-/** The prompt (everything sent) and what was read from the cache. */
-function promptOf(t: SessionSpend['tokens']): { sent: number; cached: number } {
-  return { sent: t.input + t.cache_read + t.cache_write, cached: t.cache_read };
-}
-
-function breakdown(t: SessionSpend['tokens']): string {
-  const { sent, cached } = promptOf(t);
-  return `${compactTokens(sent)} in, ${compactTokens(t.output)} out, ${compactTokens(cached)} cached`;
-}
-
-/** The tokens of the ledger rows that were priced (`priced`), or the metered rows that were not. */
-function tokensOfModels(u: SessionSpend, priced: boolean): SessionSpend['tokens'] {
-  const sum = { input: 0, output: 0, cache_read: 0, cache_write: 0 };
-  for (const m of u.models ?? []) {
-    const has = m.cost_usd !== undefined;
-    const skip = priced ? !has : has || m.billing !== 'metered';
-    if (skip) continue;
-    sum.input += m.input; sum.output += m.output; sum.cache_read += m.cache_read; sum.cache_write += m.cache_write;
-  }
-  return sum;
+function breakdown(t: Tokens): string {
+  return `${compactTokens(t.prompt)} in, ${compactTokens(t.output)} out, ${compactTokens(t.cache_read)} cached`;
 }
 
 function estimateOf(u: SessionSpend, cost: number): NonNullable<SpendView['estimate']> {
@@ -98,24 +91,21 @@ function estimateOf(u: SessionSpend, cost: number): NonNullable<SpendView['estim
   // hover tells their tokens from the priced ones.
   return {
     text: `≈ $${dollars(cost)}+`,
-    title: `Estimate at list price for the priced models: ${breakdown(tokensOfModels(u, true))}. Your bill may differ. `
-      + `Not priced, so not in the amount: ${unpriced.join(', ')} (${breakdown(tokensOfModels(u, false))}).`,
+    title: `Estimate at list price for the priced models: ${breakdown(u.priced_tokens)}. Your bill may differ. `
+      + `Not priced, so not in the amount: ${unpriced.join(', ')} (${breakdown(u.unpriced_tokens)}).`,
   };
 }
 
 function tokensOf(u: SessionSpend): NonNullable<SpendView['tokens']> {
-  const { sent } = promptOf(u.tokens);
   return {
-    text: `${compactTokens(sent)} in · ${compactTokens(u.tokens.output)} out`,
+    text: `${compactTokens(u.tokens.prompt)} in · ${compactTokens(u.tokens.output)} out`,
     title: `Tokens used: ${breakdown(u.tokens)}. No price is known for this model, so no cost is shown.`,
   };
 }
 
-/** Whether any model paid by the token has used anything. */
+/** Whether any model paid by the token has used anything: the engine's `spent`. */
 function spends(u?: SessionSpend | null): u is SessionSpend {
-  if (!u) return false;
-  const t = u.tokens;
-  return t.input + t.output + t.cache_read + t.cache_write > 0;
+  return !!u?.spent;
 }
 
 export function spendView(f: SpendFacts): SpendView {

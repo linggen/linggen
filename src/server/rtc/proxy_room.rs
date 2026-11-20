@@ -132,7 +132,7 @@ async fn rebuild_model_manager(state: &ServerState) {
     let local_configs: Vec<_> = old_mm
         .list_models()
         .iter()
-        .filter(|c| c.provider != "proxy")
+        .filter(|c| c.provider_kind() != crate::config::ProviderKind::Proxy)
         .map(|c| (*c).clone())
         .collect();
     let mut new_mm = crate::provider::models::ModelManager::new(local_configs);
@@ -232,7 +232,7 @@ pub async fn connect_proxy_room(
     let local_configs: Vec<_> = old_mm
         .list_models()
         .iter()
-        .filter(|c| c.provider != "proxy")
+        .filter(|c| c.provider_kind() != crate::config::ProviderKind::Proxy)
         .map(|c| (*c).clone())
         .collect();
     let mut new_mm = crate::provider::models::ModelManager::new(local_configs);
@@ -321,7 +321,7 @@ pub async fn disconnect_all_proxy_rooms(state: Arc<ServerState>) {
     let configs: Vec<_> = old_mm
         .list_models()
         .iter()
-        .filter(|c| c.provider != "proxy")
+        .filter(|c| c.provider_kind() != crate::config::ProviderKind::Proxy)
         .map(|c| (*c).clone())
         .collect();
     let new_mm = crate::provider::models::ModelManager::new(configs);

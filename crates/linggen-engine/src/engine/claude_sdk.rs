@@ -3,14 +3,14 @@
 //! itself is the server's (`server::claude`); the engine's
 //! `StartClaudeSession` tool creates the session through these.
 
-use crate::config::ModelConfig;
+use crate::config::{ModelConfig, ProviderKind, SignIn};
 use crate::state_fs::sessions::{SessionMember, SessionMeta, SessionRuntime};
 
 pub const AGENT_ID: &str = "claude";
 
 pub fn supports_model(model: &ModelConfig) -> bool {
-    model.provider == "anthropic"
-        && model.auth_mode.as_deref() != Some("claude_oauth")
+    model.provider_kind() == ProviderKind::Anthropic
+        && model.sign_in() != SignIn::Claude
         && model.api_key.as_deref().is_some_and(|key| !key.is_empty())
 }
 

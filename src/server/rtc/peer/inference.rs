@@ -71,7 +71,8 @@ pub(super) async fn process_inference_request(
                 .filter(|m| {
                     // Only expose local models the owner has explicitly shared.
                     // Proxy models (from rooms this owner joined) are never re-shared.
-                    m.provider != "proxy" && room_cfg.shared_models.contains(&m.id)
+                    m.provider_kind() != crate::config::ProviderKind::Proxy
+                        && room_cfg.shared_models.contains(&m.id)
                 })
                 .map(|m| {
                     serde_json::json!({

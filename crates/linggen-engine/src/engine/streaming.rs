@@ -513,8 +513,8 @@ impl AgentEngine {
             .list_models()
             .into_iter()
             .find(|m| m.id == model)
-            .and_then(|m| m.auth_mode.clone());
-        let why = crate::cannot_run::CannotRun::of_model_error(err, Some(&model), auth.as_deref());
+            .map(|m| m.sign_in());
+        let why = crate::cannot_run::CannotRun::of_model_error(err, Some(&model), auth);
         if let Some(why) = why {
             manager.run_store.set_cannot_run(run_id, why);
         }
@@ -597,10 +597,8 @@ impl AgentEngine {
                     self.last_token_usage = result.token_usage.clone();
                     if let Some(u) = result.token_usage.as_ref() {
                         tracing::debug!(
-                            "model call {model_id}: prompt {:?}, cached {:?}, output {:?}",
-                            u.prompt_tokens,
-                            u.cached_tokens,
-                            u.completion_tokens
+                            "model call {model_id}: {:?}",
+                            crate::provider::models::Tokens::of(u)
                         );
                     }
                     crate::provider::models::note_healthy(&model_id);

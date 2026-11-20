@@ -58,14 +58,14 @@ impl CannotRun {
     pub fn of_model_error(
         err: &anyhow::Error,
         model: Option<&str>,
-        auth_mode: Option<&str>,
+        sign_in: Option<crate::config::SignIn>,
     ) -> Option<Self> {
         let text = format!("{err:#}");
         if text.contains(NO_MODELS_CONFIGURED) {
             return Some(Self::NoModel);
         }
         let kind = kind_of(err);
-        let cloud = auth_mode == Some("linggen_account");
+        let cloud = sign_in == Some(crate::config::SignIn::LinggenAccount);
         provider(kind, retry_after_of(err), model, cloud)
     }
 
@@ -275,12 +275,12 @@ mod tests {
             "AUTH_REQUIRED: Not signed in to linggen.dev for model 'cloud'. Run `ling account login` or sign in from the app."
         );
         let cloud =
-            CannotRun::of_model_error(&refused, Some("cloud"), Some("linggen_account")).unwrap();
+            CannotRun::of_model_error(&refused, Some("cloud"), Some(crate::config::SignIn::LinggenAccount)).unwrap();
         assert!(matches!(cloud, CannotRun::CloudSignIn { .. }), "{cloud:?}");
         assert!(cloud.line().contains("Linggen account"));
 
         let chatgpt = anyhow::anyhow!("AUTH_REQUIRED: ChatGPT not signed in for model 'g'. Open Settings → Models → Sign in with ChatGPT.");
-        let other = CannotRun::of_model_error(&chatgpt, Some("g"), Some("chatgpt_oauth")).unwrap();
+        let other = CannotRun::of_model_error(&chatgpt, Some("g"), Some(crate::config::SignIn::ChatGpt)).unwrap();
         assert_eq!(
             other,
             CannotRun::Provider {

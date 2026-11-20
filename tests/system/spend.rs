@@ -284,9 +284,10 @@ async fn a_local_models_calls_are_listed_but_are_no_spend() {
     );
     assert_eq!(
         usage["tokens"],
-        json!({"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}),
+        json!({"input": 0, "output": 0, "cache_read": 0, "cache_write": 0, "prompt": 0}),
         "{usage}"
     );
+    assert_eq!(usage["spent"], false, "{usage}");
     assert!(usage.get("unpriced").is_none(), "{usage}");
 }
 
