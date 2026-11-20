@@ -702,6 +702,8 @@ impl SessionStore {
     pub fn remove_session(&self, session_id: &str) -> Result<()> {
         Self::validate_id(session_id)?;
         let dir = self.session_dir(session_id);
+        // Held for the whole removal: a ledger write in flight finishes first
+        // and none starts on a folder that is going.
         let _held = self.usage_lock.lock().unwrap_or_else(|e| e.into_inner());
         if dir.exists() {
             fs::remove_dir_all(dir)?;

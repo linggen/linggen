@@ -55,18 +55,19 @@ impl CallSpend {
     }
 }
 
-/// The only key to the session ledger's writer (`SessionStore::record_usage`):
-/// its field is private to this module, so a call record can be written only
-/// from here — `record_call` below, which every model call (an engine's, a
-/// summary, the next-prompt fork) goes through. A second writer, however
-/// aliased, does not compile.
+/// The key `SessionStore::record_usage` asks for. Its field is private to this
+/// module, so only code here can make one; every model call (an engine's, a
+/// summary, the next-prompt fork) is recorded through `record_call` below.
+/// That makes a second writer a deliberate act — it must implement
+/// `LedgerKey` for a type of its own, since the trait is public — not a
+/// proof there is none: see the tripwire test at the end of this file.
 pub struct Seal(());
 
 impl crate::state_fs::session_usage::LedgerKey for Seal {}
 
 /// Put what a call used into the session's ledger. A call that never opened
 /// (refused, unreachable) cost nothing and is not a call.
-pub(crate) fn record_call(
+fn record_call(
     manager: &AgentManager,
     models: &ModelManager,
     session_id: &str,
@@ -143,12 +144,15 @@ mod lock {
         }
     }
 
-    /// A TRIPWIRE, not the lock: the lock is `Seal` — a call record only this
-    /// module can make, which `record_usage` demands, so a second writer does
-    /// not compile. This text scan catches what the types cannot say: a
-    /// second `record_call` site, a key made elsewhere, or the ledger's file
-    /// written by hand. It says nothing about one call counted twice — that
-    /// is what the engine tests (one call, one record) are for.
+    /// A TRIPWIRE for the plain forms of a second writer, not a proof. It
+    /// reads source text and counts: the ledger's write call as it is spelled
+    /// today (reached through the manager's session store, whitespace ignored)
+    /// in every file, the key being made, an
+    /// `impl LedgerKey for`, and the ledger's file name outside its own
+    /// module. A store held under another name, a macro, a renamed method or
+    /// a write built another way passes it. It does not count `record_call`
+    /// sites and says nothing about one call being counted twice — the
+    /// engine tests (one call, one record) are for that.
     #[test]
     fn the_session_ledger_has_listed_writers_only() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));

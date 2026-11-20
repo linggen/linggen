@@ -11,7 +11,7 @@
 
 use super::{signs_in_with_chatgpt, ModelManager, TokenUsage, Tokens};
 use crate::config::{ModelConfig, ModelPrice};
-use crate::state_fs::session_usage::{LedgerEntry, SessionUsage};
+use crate::state_fs::session_usage::SessionUsage;
 use serde::Serialize;
 
 /// USD per million tokens.
@@ -355,6 +355,7 @@ pub fn spend_of(ledger: &SessionUsage) -> SessionSpend {
 mod tests {
     use super::*;
     use crate::provider::models::ModelTally;
+    use crate::state_fs::session_usage::LedgerEntry;
 
     fn model(provider: &str, url: &str, name: &str) -> ModelConfig {
         serde_json::from_value(serde_json::json!({
