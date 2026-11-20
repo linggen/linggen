@@ -357,10 +357,11 @@ its source. Relative paths start beside the importing file. Missing paths
 and ordinary mentions stay as written; chat messages do not expand imports.
 Imports stay inside the canonical workspace, use the unattended read gate,
 and never include protected files. A refusal leaves a one-line note in the
-prompt instead. Discovery skips symbolic links; imports can follow links
-only to eligible workspace files. The loader accepts regular UTF-8 text,
-up to 32 KiB per file and 128 KiB total, with five import levels and up to
-128 candidate references per load. It never executes what it reads.
+prompt instead. Discovered rule symlinks follow the same gate as imports.
+A discovered rule that cannot be loaded leaves a one-line reason in its
+section. The loader accepts regular UTF-8 text up to 256 KiB per file and
+512 KiB total, with five import levels and up to 128 candidate references
+per load. It never executes what it reads.
 
 Instructions are part of the stable prompt. Each full turn reloads them;
 the parallel-tool staleness check uses the same loader and includes parent

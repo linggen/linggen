@@ -4,7 +4,7 @@ use super::permission::{self, DeclinedScopes, PermissionMode, ReadOrigin, Sessio
 use super::AgentEngine;
 use pulldown_cmark::{Event, Parser, Tag};
 use std::collections::{hash_map::DefaultHasher, BTreeSet};
-use std::fs::File;
+use std::fs::{File, Metadata};
 use std::hash::{Hash, Hasher};
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -15,8 +15,8 @@ const LOCAL: &str = "CLAUDE.local.md";
 pub(super) const CURSOR: &str = ".cursorrules";
 const NAMES: &[&str] = &[AGENTS, LOCAL, CLAUDE, CURSOR];
 const MAX_DEPTH: usize = 5;
-const MAX_FILE: usize = 32 * 1024;
-const MAX_TOTAL: usize = 128 * 1024;
+const MAX_FILE: usize = 256 * 1024;
+const MAX_TOTAL: usize = 512 * 1024;
 const MAX_IMPORTS: usize = 128;
 
 #[derive(Default)]
@@ -85,26 +85,25 @@ impl InstructionScope {
         for dir in dirs {
             for &name in NAMES {
                 let path = dir.join(name);
-                let Ok(real) = path.canonicalize() else {
-                    continue;
+                let label = if dir == root {
+                    name.to_owned()
+                } else {
+                    format!("{name} (from {})", dir.display())
                 };
-                // Discovery is implicit too: a rule filename must not be
-                // a symlink around the import gate.
-                if real != path || loader.result.files.contains(&real) {
-                    continue;
-                }
-                if let Some(text) = loader.read(&real, None) {
-                    let label = if dir == root {
-                        name.to_owned()
-                    } else {
-                        format!("{name} (from {})", dir.display())
-                    };
-                    entries.push((label, path, text));
+                match loader.discover(&path) {
+                    Ok(Some(text)) => entries.push((label, Some(path), text)),
+                    Ok(None) => {}
+                    Err(reason) => {
+                        entries.push((label, None, format!("[Rule not loaded: {reason}.]")))
+                    }
                 }
             }
         }
         for (label, path, text) in entries.into_iter().rev() {
-            let text = loader.expand(&path, &text, 0);
+            let text = match path {
+                Some(path) => loader.expand(&path, &text, 0),
+                None => text,
+            };
             if !text.trim().is_empty() {
                 loader.result.sections.push((label, text.trim().to_owned()));
             }
@@ -122,43 +121,91 @@ struct Loader<'a> {
 }
 
 impl Loader<'_> {
-    fn read(&mut self, path: &Path, expected: Option<&std::fs::Metadata>) -> Option<String> {
-        let limit = self.bytes_left.min(MAX_FILE);
-        if limit == 0 {
-            return None;
+    fn discover(&mut self, path: &Path) -> Result<Option<String>, &'static str> {
+        let entry = match path.symlink_metadata() {
+            Ok(entry) => entry,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(_) => return Err("unreadable"),
+        };
+        let canonical = path.canonicalize().map_err(|_| "unreadable")?;
+        let expected = if entry.is_symlink() || canonical != path {
+            let metadata = canonical.metadata().map_err(|_| "unreadable")?;
+            self.check_import_target(path, &canonical)?;
+            Some(metadata)
+        } else {
+            None
+        };
+        if self.result.files.contains(&canonical) {
+            return Ok(None);
         }
-        let file = open_text(path, expected.is_some())?;
-        let meta = file.metadata().ok()?;
-        if !meta.is_file() || meta.len() > limit as u64 {
-            return None;
+        self.read(&canonical, expected.as_ref()).map(Some)
+    }
+
+    fn check_import_target(&self, target: &Path, canonical: &Path) -> Result<(), &'static str> {
+        if !canonical.starts_with(self.project) {
+            return Err("outside the project");
+        }
+        if !permission::allows_instruction_import(
+            target,
+            canonical,
+            self.project,
+            &self.scope.permissions,
+            self.scope.coding,
+            self.scope.ceiling,
+            self.scope.origin,
+            &self.scope.declined,
+        ) {
+            return Err("protected or requires approval");
+        }
+        Ok(())
+    }
+
+    fn check_size(&self, len: u64) -> Result<(), &'static str> {
+        if len > MAX_FILE as u64 {
+            return Err("over file size limit");
+        }
+        if len > self.bytes_left as u64 {
+            return Err("over total size limit");
+        }
+        Ok(())
+    }
+
+    fn read(&mut self, path: &Path, expected: Option<&Metadata>) -> Result<String, &'static str> {
+        let limit = self.bytes_left.min(MAX_FILE);
+        let file = open_text(path, expected.is_some()).ok_or("unreadable")?;
+        let meta = file.metadata().map_err(|_| "unreadable")?;
+        if !meta.is_file() {
+            return Err("not a regular file");
         }
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt;
             // A hard link can hide a protected path's name from the gate.
-            // Check we opened the same file the import gate examined.
-            if meta.nlink() != 1
-                || expected
-                    .is_some_and(|before| (before.dev(), before.ino()) != (meta.dev(), meta.ino()))
+            if meta.nlink() != 1 {
+                return Err("hard-linked file");
+            }
+            if expected
+                .is_some_and(|before| (before.dev(), before.ino()) != (meta.dev(), meta.ino()))
             {
-                return None;
+                return Err("file changed before reading");
             }
         }
+        self.check_size(meta.len())?;
         let mut bytes = Vec::new();
-        file.take(limit as u64 + 1).read_to_end(&mut bytes).ok()?;
-        if bytes.len() > limit {
-            return None;
-        }
+        file.take(limit as u64 + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|_| "unreadable")?;
+        self.check_size(bytes.len() as u64)?;
         self.bytes_left -= bytes.len();
-        let text = String::from_utf8(bytes).ok()?;
+        let text = String::from_utf8(bytes).map_err(|_| "not UTF-8 text")?;
         if text
             .chars()
             .any(|c| c.is_control() && !matches!(c, '\t' | '\r' | '\n'))
         {
-            return None;
+            return Err("not UTF-8 text");
         }
         self.result.files.insert(path.to_path_buf());
-        Some(text)
+        Ok(text)
     }
 
     fn expand(&mut self, source: &Path, text: &str, depth: usize) -> String {
@@ -225,20 +272,8 @@ impl Loader<'_> {
             return None;
         }
         let note = |reason| format!("[Import @{token} not loaded: {reason}.]");
-        if !canonical.starts_with(self.project) {
-            return Some(note("outside the project"));
-        }
-        if !permission::allows_instruction_import(
-            &target,
-            &canonical,
-            self.project,
-            &self.scope.permissions,
-            self.scope.coding,
-            self.scope.ceiling,
-            self.scope.origin,
-            &self.scope.declined,
-        ) {
-            return Some(note("protected or requires approval"));
+        if let Err(reason) = self.check_import_target(&target, &canonical) {
+            return Some(note(reason));
         }
         if self.result.files.contains(&canonical) {
             return Some(String::new());
@@ -246,8 +281,9 @@ impl Loader<'_> {
         if depth == MAX_DEPTH {
             return Some(note("depth limit"));
         }
-        let Some(text) = self.read(&canonical, Some(&metadata)) else {
-            return Some(note("unreadable, not text, or over size limit"));
+        let text = match self.read(&canonical, Some(&metadata)) {
+            Ok(text) => text,
+            Err(reason) => return Some(note(reason)),
         };
         let label = canonical.strip_prefix(self.project).ok()?;
         let text = self.expand(&target, &text, depth + 1);
