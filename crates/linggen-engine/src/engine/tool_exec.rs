@@ -505,7 +505,7 @@ impl AgentEngine {
             self.rebuild_system_message(messages, allowed_tools.as_ref());
         }
         let msg = meeting.wait?;
-        self.refuse_saved(t, messages, msg).await
+        self.refuse_saved_noted(t, messages, msg, "Held once: this place's rules were just loaded.").await
     }
 
     /// Write-safety gate: Write/Edit on an existing file not Read first.

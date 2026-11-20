@@ -1717,6 +1717,29 @@ mod member_tests {
         assert_eq!(state.messages[0].content.matches("UI RULE").count(), 1, "once, not per call");
     }
 
+    /// A `.claude/rules/` rule scoped by `paths:` holds a change under its
+    /// glob the same way, and sits beside a sub-folder's rule, each once.
+    #[tokio::test]
+    async fn a_path_scoped_rule_reaches_the_model_before_the_first_change_it_matches() {
+        let root = place_project();
+        std::fs::create_dir_all(root.path().join(".claude/rules")).unwrap();
+        std::fs::write(root.path().join(".claude/rules/api.md"), "---\npaths: [\"src/api/**/*.ts\"]\n---\nAPI RULE").unwrap();
+        let (mut engine, mut state) = coding_turn(root.path());
+        assert!(!state.messages[0].content.contains("API RULE"));
+        let other = reply(&mut engine, &mut state, vec![file_call("Write", "src/other.ts")]).await;
+        assert!(!other.iter().any(|r| r.contains("Not changed yet")), "{other:?}");
+        assert!(!state.messages[0].content.contains("API RULE"), "no match, no rule");
+
+        let first = reply(&mut engine, &mut state, vec![file_call("Write", "src/api/v1/users.ts")]).await;
+        assert!(first.iter().any(|r| r.contains("Not changed yet")), "{first:?}");
+        assert!(!root.path().join("src/api/v1/users.ts").exists());
+        reply(&mut engine, &mut state, vec![file_call("Write", "src/api/v1/users.ts")]).await;
+        assert!(root.path().join("src/api/v1/users.ts").exists());
+        reply(&mut engine, &mut state, vec![file_call("Read", "ui/src/a.txt")]).await;
+        let system = &state.messages[0].content;
+        assert_eq!((system.matches("API RULE").count(), system.matches("UI RULE").count()), (1, 1));
+    }
+
     /// A Read and a Write in one reply: the reply was written without the
     /// rule the Read brings, so the Write still waits.
     #[tokio::test]
