@@ -3,9 +3,8 @@
 use super::permission::{self, DeclinedScopes, PermissionMode, ReadOrigin, SessionPermissions};
 use super::AgentEngine;
 use pulldown_cmark::{Event, Parser, Tag};
-use std::collections::{hash_map::DefaultHasher, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{File, Metadata};
-use std::hash::{Hash, Hasher};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
@@ -32,19 +31,98 @@ enum RuleSource {
 #[derive(Default)]
 pub(super) struct Instructions {
     pub sections: Vec<(String, String)>,
-    files: BTreeSet<PathBuf>,
+    pub watch: InstructionWatch,
 }
 
-impl Instructions {
-    pub fn fingerprint(&self) -> u64 {
-        let mut hash = DefaultHasher::new();
-        self.sections.hash(&mut hash);
-        self.files.hash(&mut hash);
-        hash.finish()
+/// Names checked during the load, including missing rules and import candidates.
+#[derive(Default)]
+pub(crate) struct InstructionWatch {
+    names: BTreeMap<PathBuf, NameStamp>,
+    scope: Option<InstructionScope>,
+}
+
+impl InstructionWatch {
+    pub(super) fn is_stale(&self, scope: &InstructionScope) -> bool {
+        self.scope.as_ref() != Some(scope) || self.paths_changed()
+    }
+
+    fn paths_changed(&self) -> bool {
+        self.names
+            .iter()
+            .any(|(path, before)| *before != NameStamp::of(path))
+    }
+
+    fn observe(&mut self, path: &Path) -> std::io::Result<Metadata> {
+        let entry = path.symlink_metadata();
+        self.names
+            .entry(path.to_owned())
+            .or_insert_with(|| NameStamp::from_entry(path, &entry));
+        entry
     }
 }
 
-/// An owned snapshot so staleness checks can do their IO off the runtime.
+#[derive(PartialEq, Eq)]
+struct NameStamp {
+    entry: Result<FileStamp, std::io::ErrorKind>,
+    target: Option<Result<FileStamp, std::io::ErrorKind>>,
+}
+
+impl NameStamp {
+    fn of(path: &Path) -> Self {
+        Self::from_entry(path, &path.symlink_metadata())
+    }
+
+    fn from_entry(path: &Path, entry: &std::io::Result<Metadata>) -> Self {
+        Self {
+            entry: FileStamp::from_result(entry),
+            target: entry
+                .as_ref()
+                .ok()
+                .filter(|meta| meta.is_symlink())
+                .map(|_| FileStamp::from_result(&path.metadata())),
+        }
+    }
+}
+
+#[derive(PartialEq, Eq)]
+struct FileStamp {
+    kind: std::fs::FileType,
+    len: u64,
+    modified: Option<std::time::SystemTime>,
+    #[cfg(unix)]
+    identity: (u64, u64),
+    #[cfg(unix)]
+    mode_and_links: (u32, u64),
+}
+
+impl FileStamp {
+    fn from_result(meta: &std::io::Result<Metadata>) -> Result<Self, std::io::ErrorKind> {
+        meta.as_ref().map(Self::of).map_err(std::io::Error::kind)
+    }
+
+    fn of(meta: &Metadata) -> Self {
+        #[cfg(unix)]
+        use std::os::unix::fs::MetadataExt;
+        Self {
+            kind: meta.file_type(),
+            // A directory is not rule text. Adding an unrelated child does
+            // not invalidate the prompt; the candidate names are watched.
+            len: if meta.is_dir() { 0 } else { meta.len() },
+            modified: if meta.is_dir() {
+                None
+            } else {
+                meta.modified().ok()
+            },
+            #[cfg(unix)]
+            identity: (meta.dev(), meta.ino()),
+            #[cfg(unix)]
+            mode_and_links: (meta.mode(), if meta.is_dir() { 0 } else { meta.nlink() }),
+        }
+    }
+}
+
+/// An owned snapshot of the policy used to load rules.
+#[derive(Clone, PartialEq, Eq)]
 pub(super) struct InstructionScope {
     root: PathBuf,
     enabled: bool,
@@ -83,17 +161,24 @@ impl InstructionScope {
     }
 
     fn load_with_home(&self, home: Option<&Path>) -> Instructions {
+        let mut result = Instructions::default();
+        result.watch.scope = Some(self.clone());
         if !self.enabled {
-            return Instructions::default();
+            return result;
+        }
+        let _ = result.watch.observe(&self.root);
+        if let Some(home) = home {
+            let _ = result.watch.observe(home);
         }
         let Ok(root) = self.root.canonicalize() else {
-            return Instructions::default();
+            return result;
         };
         let mut loader = Loader {
             scope: self,
             project: &root,
             home,
-            result: Instructions::default(),
+            result,
+            files: BTreeSet::new(),
             bytes_left: MAX_TOTAL,
             imports_left: MAX_IMPORTS,
         };
@@ -103,7 +188,11 @@ impl InstructionScope {
             // Treat a mounted/aliased home like the project root. Links below
             // that boundary still use the gate, as do all explicit imports.
             let discovery_home = home.canonicalize().unwrap_or_else(|_| home.to_path_buf());
-            loader.discover_entry(label, personal_rule_path(&discovery_home), RuleSource::Personal)
+            loader.discover_entry(
+                label,
+                personal_rule_path(&discovery_home),
+                RuleSource::Personal,
+            )
         });
         // Personal rules have their own allowance. Reserve both sets of
         // discovered files before expanding either set of imports.
@@ -150,6 +239,7 @@ struct Loader<'a> {
     project: &'a Path,
     home: Option<&'a Path>,
     result: Instructions,
+    files: BTreeSet<PathBuf>,
     bytes_left: usize,
     imports_left: usize,
 }
@@ -191,16 +281,21 @@ impl Loader<'_> {
         path: &Path,
         source: RuleSource,
     ) -> Result<Option<(RuleSource, String)>, &'static str> {
-        let entry = match path.symlink_metadata() {
+        let entry = match self.result.watch.observe(path) {
             Ok(entry) => entry,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(_) => return Err("unreadable"),
         };
         let canonical = path.canonicalize().map_err(|_| "unreadable")?;
+        if canonical != path {
+            let _ = self.result.watch.observe(&canonical);
+        }
         // Discovery starts in canonical directories. Compare the parent,
         // not the filename: case-insensitive lookup can change its spelling.
         let parent_link = path.parent().is_some_and(|parent| {
-            parent.symlink_metadata().is_ok_and(|meta| meta.is_symlink())
+            parent
+                .symlink_metadata()
+                .is_ok_and(|meta| meta.is_symlink())
                 || parent.canonicalize().ok().as_deref() != canonical.parent()
         });
         let expected = if entry.is_symlink() || parent_link {
@@ -210,7 +305,7 @@ impl Loader<'_> {
         } else {
             None
         };
-        if self.result.files.contains(&canonical) {
+        if self.files.contains(&canonical) {
             return Ok(None);
         }
         let source = if expected.is_some() {
@@ -221,11 +316,10 @@ impl Loader<'_> {
         // For a plain discovery, open the name we checked, not a resolved
         // replacement. The descriptor walk rejects links swapped in later.
         let opened = if expected.is_some() { &canonical } else { path };
-        self.read(opened, expected.as_ref())
-            .map(|text| {
-                self.result.files.insert(canonical);
-                Some((source, text))
-            })
+        self.read(opened, expected.as_ref()).map(|text| {
+            self.files.insert(canonical);
+            Some((source, text))
+        })
     }
 
     /// Opting into a file inside the workspace does not let its author
@@ -373,7 +467,8 @@ impl Loader<'_> {
             .into_iter()
             .flatten()
             .find_map(|candidate| {
-                existing_import(self.home, base, candidate).map(|file| (candidate, file))
+                self.existing_import(base, candidate)
+                    .map(|file| (candidate, file))
             })?;
         let text = self.expand_import(token, &target, &canonical, &metadata, depth, source);
         Some((text, token.len()))
@@ -397,7 +492,7 @@ impl Loader<'_> {
             Ok(relative) => relative,
             Err(reason) => return note(reason),
         };
-        if self.result.files.contains(canonical) {
+        if self.files.contains(canonical) {
             return String::new();
         }
         if depth == MAX_DEPTH {
@@ -407,7 +502,7 @@ impl Loader<'_> {
             Ok(text) => text,
             Err(reason) => return note(reason),
         };
-        self.result.files.insert(canonical.to_path_buf());
+        self.files.insert(canonical.to_path_buf());
         let text = self.expand(
             target,
             &text,
@@ -419,20 +514,20 @@ impl Loader<'_> {
             text.trim()
         )
     }
-}
-
-fn existing_import(
-    home: Option<&Path>,
-    base: &Path,
-    token: &str,
-) -> Option<(PathBuf, PathBuf, Metadata)> {
-    let target = match token.strip_prefix("~/") {
-        Some(path) => home?.join(path),
-        None => base.join(token),
-    };
-    let canonical = target.canonicalize().ok()?;
-    let metadata = canonical.metadata().ok()?;
-    metadata.is_file().then_some((target, canonical, metadata))
+    fn existing_import(
+        &mut self,
+        base: &Path,
+        token: &str,
+    ) -> Option<(PathBuf, PathBuf, Metadata)> {
+        let target = match token.strip_prefix("~/") {
+            Some(path) => self.home?.join(path),
+            None => base.join(token),
+        };
+        self.result.watch.observe(&target).ok()?;
+        let canonical = target.canonicalize().ok()?;
+        let metadata = self.result.watch.observe(&canonical).ok()?;
+        metadata.is_file().then_some((target, canonical, metadata))
+    }
 }
 
 /// Open the already checked canonical path without following a replacement

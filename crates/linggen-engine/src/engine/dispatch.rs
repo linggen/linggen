@@ -372,13 +372,7 @@ impl AgentEngine {
         // Each `tools.execute(call)` future internally `spawn_blocking`s its
         // sync tool body, so awaiting many in parallel naturally fans them
         // out across the blocking pool. WebSearch/WebFetch/AskUser run on
-        // the runtime directly. The staleness check is CPU-bound — moved
-        // off the runtime via `spawn_blocking`.
-        let cached_hash = self.cached_system_prompt.as_ref().map(|c| c.files_hash);
-        let scope = self.instruction_scope();
-        let staleness_task = tokio::task::spawn_blocking(move || {
-            cached_hash.is_some_and(|hash| scope.load().fingerprint() != hash)
-        });
+        // the runtime directly.
 
         let tool_futures = ready.into_iter().map(|(idx, call, exec)| {
             let tools = self.tools_for_call(&exec);
@@ -389,7 +383,16 @@ impl AgentEngine {
         });
         let results: Vec<(usize, ReadyExec, anyhow::Result<tools::ToolResult>)> =
             futures_util::future::join_all(tool_futures).await;
-        let prompt_stale = staleness_task.await.unwrap_or(false);
+        // Check after the batch: a tool in it may have changed a watched file.
+        let prompt_stale = if let Some(cache) = &self.cached_system_prompt {
+            let watch = cache.instruction_watch.clone();
+            let scope = self.instruction_scope();
+            tokio::task::spawn_blocking(move || watch.is_stale(&scope))
+                .await
+                .unwrap_or(false)
+        } else {
+            false
+        };
 
         // If context files changed, build the system message again, the one
         // way it is built.

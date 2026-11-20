@@ -609,8 +609,8 @@ impl CutAt {
 /// Cached system prompt with hash for quick staleness checks.
 pub struct CachedSystemPrompt {
     pub input_hash: u64,
-    /// Fingerprint of the instruction snapshot rendered into this prompt.
-    pub files_hash: u64,
+    /// Metadata for the instruction snapshot rendered into this prompt.
+    pub(crate) instruction_watch: std::sync::Arc<super::instruction_files::InstructionWatch>,
     pub content: String,
 }
 

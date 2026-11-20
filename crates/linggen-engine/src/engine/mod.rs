@@ -1585,10 +1585,10 @@ mod member_tests {
         std::fs::write(root.path().join(CLAUDE), "the rules").unwrap();
         let mut engine = engine_at(root.path());
         engine.prepare_loop_messages("hi", true, crate::engine::prompt::PromptPurpose::Turn);
-        let cached = engine.cached_system_prompt.as_ref().unwrap().files_hash;
-        assert_eq!(cached, engine.instruction_scope().load().fingerprint());
+        let watch = &engine.cached_system_prompt.as_ref().unwrap().instruction_watch;
+        assert!(!watch.is_stale(&engine.instruction_scope()));
         std::fs::write(root.path().join(CLAUDE), "new rules").unwrap();
-        assert_ne!(cached, engine.instruction_scope().load().fingerprint());
+        assert!(watch.is_stale(&engine.instruction_scope()));
     }
 
     /// After parallel tools find the project files changed, the system

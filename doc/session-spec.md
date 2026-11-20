@@ -369,8 +369,8 @@ separate 512 KiB and 128 existing import reference allowances for personal
 and project rules, and up to five import levels. It never executes what it reads.
 
 Instructions are part of the stable prompt. Each full turn reloads them;
-the parallel-tool staleness check uses the same loader and includes parent
-and imported files. Subfolder rules below the workspace are not discovered
+after parallel tools finish, a metadata check watches rule and import names,
+including parent rules, and reloads only on change. Subfolder rules below the workspace are not discovered
 from tool paths yet.
 
 ### Beside the turn

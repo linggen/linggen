@@ -51,8 +51,9 @@ fn imports_expand_relative_to_each_source_with_labels_and_cycles_end() {
     assert_eq!(text.matches("First rule.").count(), 1);
     assert!(!text.contains("@first.md"));
     assert!(result
-        .files
-        .contains(&root.join("nested/second.md").canonicalize().unwrap()));
+        .watch
+        .names
+        .contains_key(&root.join("nested/second.md").canonicalize().unwrap()));
 }
 
 #[test]
@@ -154,17 +155,17 @@ fn imports_respect_the_turn_ceiling_and_reject_binary_and_oversize_files() {
 
 #[test]
 #[cfg(unix)]
-fn changing_only_an_import_changes_the_instruction_fingerprint() {
+fn changing_only_an_import_makes_the_snapshot_stale() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     write(root.join(CLAUDE), "@notes.md").unwrap();
     write(root.join("notes.md"), "before").unwrap();
     let scope = scope(root);
     let first = scope.load();
-    assert_eq!(first.fingerprint(), scope.load().fingerprint());
+    assert!(!first.watch.is_stale(&scope));
     write(root.join("notes.md"), "after").unwrap();
+    assert!(first.watch.is_stale(&scope));
     let second = scope.load();
-    assert_ne!(first.fingerprint(), second.fingerprint());
     assert!(rendered(&second).contains("after"));
 }
 
@@ -368,7 +369,7 @@ fn personal_rule_symlinks_follow_the_gate_and_missing_rules_leave_nothing() {
 
 #[test]
 #[cfg(unix)]
-fn changes_to_personal_rules_and_their_imports_change_the_fingerprint() {
+fn changes_to_personal_rules_and_their_imports_make_the_snapshot_stale() {
     let (_dir, root, personal) = personal_fixture();
     let home = root.parent().unwrap();
     let style = home.join("style.md");
@@ -376,13 +377,13 @@ fn changes_to_personal_rules_and_their_imports_change_the_fingerprint() {
     write(&personal, "original rule\n@~/style.md").unwrap();
     let scope = scope(&root);
     let load = || scope.load_with_home(Some(home));
-    let first = load().fingerprint();
-    write(&personal, "updated rule\n@~/style.md").unwrap();
-    let second = load().fingerprint();
-    assert_ne!(first, second);
+    let first = load();
+    write(&personal, "updated personal rule\n@~/style.md").unwrap();
+    assert!(first.watch.is_stale(&scope));
+    let second = load();
     write(&style, "updated style").unwrap();
+    assert!(second.watch.is_stale(&scope));
     let third = load();
-    assert_ne!(second, third.fingerprint());
     assert!(rendered(&third).contains("updated style"));
 }
 
@@ -398,8 +399,14 @@ fn review_discovered_hard_links_load_but_imported_hard_links_do_not() {
     std::os::unix::fs::symlink("alias.md", root.join(CURSOR)).unwrap();
     let text = rendered(&scope(root).load_with_home(Some(root)));
     assert_eq!(text.matches("shared rule").count(), 2, "{text}");
-    assert!(text.contains("[Import @alias.md not loaded: hard-linked file.]"), "{text}");
-    assert!(text.contains("[Rule not loaded: hard-linked file.]"), "{text}");
+    assert!(
+        text.contains("[Import @alias.md not loaded: hard-linked file.]"),
+        "{text}"
+    );
+    assert!(
+        text.contains("[Rule not loaded: hard-linked file.]"),
+        "{text}"
+    );
 }
 
 #[test]
@@ -412,11 +419,15 @@ fn review_discovered_rules_load_through_search_only_directories() {
     fs::create_dir_all(&root).unwrap();
     write(root.join(AGENTS), "search-only rule\n@notes.md").unwrap();
     write(root.join("notes.md"), "search-only import").unwrap();
-    fs::set_permissions(&search, fs::Permissions::from_mode(0o711)).unwrap();
-    let text = rendered(&scope(&root).load_with_home(Some(&root)));
-    fs::set_permissions(&search, fs::Permissions::from_mode(0o700)).unwrap();
-    assert!(text.contains("search-only rule"), "{text}");
-    assert!(text.contains("search-only import"), "{text}");
+    // 711 reproduces the mount layout; 111 also takes listing permission
+    // away from the test process, which owns the fixture directory.
+    for mode in [0o711, 0o111] {
+        fs::set_permissions(&search, fs::Permissions::from_mode(mode)).unwrap();
+        let text = rendered(&scope(&root).load_with_home(Some(&root)));
+        fs::set_permissions(&search, fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(text.contains("search-only rule"), "{mode:o}: {text}");
+        assert!(text.contains("search-only import"), "{mode:o}: {text}");
+    }
 }
 
 #[test]
@@ -425,7 +436,11 @@ fn review_case_insensitive_rule_name_is_not_a_symlink() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("work");
     fs::create_dir(&root).unwrap();
-    write(dir.path().join(AGENTS.to_ascii_lowercase()), "case variant rule").unwrap();
+    write(
+        dir.path().join(AGENTS.to_ascii_lowercase()),
+        "case variant rule",
+    )
+    .unwrap();
     if !dir.path().join(AGENTS).exists() {
         return; // This volume is case-sensitive.
     }
@@ -470,9 +485,21 @@ fn review_personal_rules_do_not_spend_project_size_or_import_allowance() {
     let (_dir, root, personal) = personal_fixture();
     let home = root.parent().unwrap();
     write(home.join("style.md"), "personal import").unwrap();
-    write(&personal, format!("{}{}", "@~/style.md ".repeat(MAX_IMPORTS), "p".repeat(MAX_FILE / 2))).unwrap();
+    write(
+        &personal,
+        format!(
+            "{}{}",
+            "@~/style.md ".repeat(MAX_IMPORTS),
+            "p".repeat(MAX_FILE / 2)
+        ),
+    )
+    .unwrap();
     write(root.join(AGENTS), vec![b'a'; MAX_FILE]).unwrap();
-    write(root.join(CLAUDE), format!("@project.md\n{}", "b".repeat(MAX_FILE - 64))).unwrap();
+    write(
+        root.join(CLAUDE),
+        format!("@project.md\n{}", "b".repeat(MAX_FILE - 64)),
+    )
+    .unwrap();
     write(root.join("project.md"), "project import").unwrap();
     let result = scope(&root).load_with_home(Some(home));
     assert!(result.sections[0].1.contains("personal import"));
@@ -492,8 +519,23 @@ fn review_staleness_detects_a_replaced_inode_without_reloading_text() {
     let first = scope.load_with_home(Some(root));
     let replacement = root.join("replacement");
     write(&replacement, "same rule").unwrap();
-    fs::rename(replacement, rule).unwrap();
-    assert_ne!(first.fingerprint(), scope.load_with_home(Some(root)).fingerprint());
+    assert!(!first.watch.is_stale(&scope));
+    fs::rename(replacement, &rule).unwrap();
+    assert!(first.watch.is_stale(&scope));
+
+    write(&rule, "@later.md").unwrap();
+    let pending = scope.load_with_home(Some(root));
+    assert!(!pending.watch.is_stale(&scope));
+    write(root.join("unrelated.txt"), "not watched").unwrap();
+    assert!(!pending.watch.is_stale(&scope));
+    write(root.join("later.md"), "now exists").unwrap();
+    assert!(pending.watch.is_stale(&scope));
+    let loaded = scope.load_with_home(Some(root));
+    assert!(rendered(&loaded).contains("now exists"));
+    fs::remove_file(root.join("later.md")).unwrap();
+    assert!(loaded.watch.is_stale(&scope));
+    fs::remove_file(rule).unwrap();
+    assert!(pending.watch.is_stale(&scope));
 }
 
 #[test]

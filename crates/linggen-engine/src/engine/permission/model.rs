@@ -58,7 +58,7 @@ impl std::fmt::Display for PermissionMode {
 }
 
 /// A path-scoped mode grant. The mode covers the path and all its children.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PathMode {
     pub path: String,
     pub mode: PermissionMode,
