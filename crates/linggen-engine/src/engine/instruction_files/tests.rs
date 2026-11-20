@@ -143,7 +143,8 @@ fn imports_respect_the_turn_ceiling_and_reject_binary_and_oversize_files() {
     let mut scope = scope(root);
     let text = rendered(&scope.load());
     assert!(text.contains("rule text"));
-    assert_eq!(text.matches("over size limit").count(), 2);
+    assert!(text.contains("[Import @binary not loaded: not UTF-8 text.]"));
+    assert!(text.contains("[Import @large not loaded: over file size limit.]"));
     scope.ceiling = Some(PermissionMode::Chat);
     let text = rendered(&scope.load());
     assert!(!text.contains("rule text"));
@@ -184,6 +185,111 @@ fn root_home_and_machine_local_rules_load_but_home_parents_do_not() {
     assert!(!text.contains("above home"));
     scope.enabled = false;
     assert!(scope.load_with_home(Some(&home)).sections.is_empty());
+}
+
+#[test]
+#[cfg(unix)]
+fn discovered_symlinks_follow_the_import_gate_and_explain_refusals() {
+    use std::os::unix::fs::symlink;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("project");
+    fs::create_dir_all(root.join("docs")).unwrap();
+    write(root.join("docs/agents.md"), "Linked project rule").unwrap();
+    write(dir.path().join("outside.md"), "outside contents").unwrap();
+    write(root.join(".env"), "protected contents").unwrap();
+    symlink("docs/agents.md", root.join(AGENTS)).unwrap();
+    symlink("../outside.md", root.join(CLAUDE)).unwrap();
+    symlink(".env", root.join(LOCAL)).unwrap();
+    symlink("missing.md", root.join(CURSOR)).unwrap();
+    let result = scope(&root).load_with_home(Some(&root));
+    let section = |name| {
+        result
+            .sections
+            .iter()
+            .find(|(label, _)| label == name)
+            .map(|(_, text)| text.as_str())
+    };
+    assert_eq!(section(AGENTS), Some("Linked project rule"));
+    assert!(section(CLAUDE).unwrap().contains("outside the project"));
+    assert!(section(LOCAL)
+        .unwrap()
+        .contains("protected or requires approval"));
+    assert!(section(CURSOR).unwrap().contains("unreadable"));
+    let text = rendered(&result);
+    assert!(!text.contains("outside contents") && !text.contains("protected contents"));
+}
+
+#[test]
+#[cfg(unix)]
+fn discovered_rules_load_ordinary_large_text_and_explain_each_rejection() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let ordinary = "a".repeat(60 * 1024);
+    write(root.join(AGENTS), &ordinary).unwrap();
+    write(root.join(LOCAL), vec![b'b'; 256 * 1024 + 1]).unwrap();
+    write(root.join(CLAUDE), b"binary\0contents").unwrap();
+    write(root.join("alias"), "hard-linked contents").unwrap();
+    fs::hard_link(root.join("alias"), root.join(CURSOR)).unwrap();
+    let result = scope(root).load_with_home(Some(root));
+    let section = |name| {
+        result
+            .sections
+            .iter()
+            .find(|(label, _)| label == name)
+            .unwrap()
+            .1
+            .as_str()
+    };
+    assert_eq!(section(AGENTS), ordinary);
+    assert!(section(LOCAL).contains("file size limit"));
+    assert!(section(CLAUDE).contains("not UTF-8 text"));
+    assert!(section(CURSOR).contains("hard-linked"));
+
+    write(root.join(AGENTS), vec![b'a'; 256 * 1024]).unwrap();
+    write(root.join(LOCAL), vec![b'b'; 256 * 1024]).unwrap();
+    let text = rendered(&scope(root).load_with_home(Some(root)));
+    assert!(text.contains("total size limit"));
+}
+
+#[test]
+#[cfg(unix)]
+fn ordinary_mentions_do_not_spend_the_import_budget() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let mentions = "@coder @银月 ".repeat(MAX_IMPORTS);
+    write(root.join(CLAUDE), format!("{mentions}@style.md")).unwrap();
+    write(root.join("style.md"), "Use the style guide").unwrap();
+    let text = rendered(&scope(root).load_with_home(Some(root)));
+    assert!(text.contains(mentions.trim_end()));
+    assert!(text.contains("Use the style guide"));
+}
+
+#[test]
+#[cfg(unix)]
+fn sentence_end_imports_keep_punctuation_unless_it_names_a_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    write(
+        root.join(CLAUDE),
+        "Follow @style.md.\nThen (@other.md)!\nRead @literal.md.",
+    )
+    .unwrap();
+    for (name, text) in [
+        ("style.md", "Style rule"),
+        ("other.md", "Other rule"),
+        ("literal.md.", "Literal filename rule"),
+        ("literal.md", "Wrong file"),
+    ] {
+        write(root.join(name), text).unwrap();
+    }
+    let text = rendered(&scope(root).load_with_home(Some(root)));
+    assert!(text.contains("Style rule\n[End import]\n\n."), "{text}");
+    assert!(text.contains("Other rule\n[End import]\n\n)!"), "{text}");
+    assert!(
+        text.ends_with("Literal filename rule\n[End import]"),
+        "{text}"
+    );
+    assert!(!text.contains("Wrong file"));
 }
 
 #[test]

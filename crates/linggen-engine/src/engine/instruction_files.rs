@@ -141,10 +141,14 @@ impl Loader<'_> {
         self.read(&canonical, expected.as_ref()).map(Some)
     }
 
-    fn check_import_target(&self, target: &Path, canonical: &Path) -> Result<(), &'static str> {
-        if !canonical.starts_with(self.project) {
-            return Err("outside the project");
-        }
+    fn check_import_target<'p>(
+        &self,
+        target: &Path,
+        canonical: &'p Path,
+    ) -> Result<&'p Path, &'static str> {
+        let relative = canonical
+            .strip_prefix(self.project)
+            .map_err(|_| "outside the project")?;
         if !permission::allows_instruction_import(
             target,
             canonical,
@@ -157,7 +161,7 @@ impl Loader<'_> {
         ) {
             return Err("protected or requires approval");
         }
-        Ok(())
+        Ok(relative)
     }
 
     fn check_size(&self, len: u64) -> Result<(), &'static str> {
@@ -243,55 +247,74 @@ impl Loader<'_> {
             if token.is_empty() || token.contains('@') {
                 continue;
             }
-            let end = start + 1 + token.len();
-            let Some(expanded) = self.import(source, token, depth) else {
+            let Some((expanded, consumed)) = self.import(source, token, depth) else {
                 continue;
             };
             out.push_str(&text[copied..start]);
             out.push_str(&expanded);
-            copied = end;
+            copied = start + 1 + consumed;
         }
         out.push_str(&text[copied..]);
         out
     }
 
     /// None keeps the token verbatim (it doesn't name an existing file).
-    fn import(&mut self, source: &Path, token: &str, depth: usize) -> Option<String> {
+    fn import(&mut self, source: &Path, token: &str, depth: usize) -> Option<(String, usize)> {
+        let base = source.parent()?;
+        let shortened =
+            token.trim_end_matches(['.', ',', ';', ':', '!', '?', ')', ']', '}', '\'', '"']);
+        let shortened = (shortened != token && !shortened.is_empty()).then_some(shortened);
+        let (token, (target, canonical, metadata)) = [Some(token), shortened]
+            .into_iter()
+            .flatten()
+            .find_map(|candidate| existing_import(base, candidate).map(|file| (candidate, file)))?;
+        let text = self.expand_import(token, &target, &canonical, &metadata, depth);
+        Some((text, token.len()))
+    }
+
+    fn expand_import(
+        &mut self,
+        token: &str,
+        target: &Path,
+        canonical: &Path,
+        metadata: &Metadata,
+        depth: usize,
+    ) -> String {
+        let note = |reason| format!("[Import @{token} not loaded: {reason}.]");
         if self.imports_left == 0 {
-            return None;
+            return note("import count limit");
         }
         self.imports_left -= 1;
-        let base = source.parent()?;
-        let target = match token.strip_prefix("~/") {
-            Some(path) => dirs::home_dir()?.join(path),
-            None => base.join(token),
+        let label = match self.check_import_target(target, canonical) {
+            Ok(relative) => relative,
+            Err(reason) => return note(reason),
         };
-        let canonical = target.canonicalize().ok()?;
-        let metadata = canonical.metadata().ok()?;
-        if !metadata.is_file() {
-            return None;
-        }
-        let note = |reason| format!("[Import @{token} not loaded: {reason}.]");
-        if let Err(reason) = self.check_import_target(&target, &canonical) {
-            return Some(note(reason));
-        }
-        if self.result.files.contains(&canonical) {
-            return Some(String::new());
+        if self.result.files.contains(canonical) {
+            return String::new();
         }
         if depth == MAX_DEPTH {
-            return Some(note("depth limit"));
+            return note("depth limit");
         }
-        let text = match self.read(&canonical, Some(&metadata)) {
+        let text = match self.read(canonical, Some(metadata)) {
             Ok(text) => text,
-            Err(reason) => return Some(note(reason)),
+            Err(reason) => return note(reason),
         };
-        let label = canonical.strip_prefix(self.project).ok()?;
-        let text = self.expand(&target, &text, depth + 1);
-        Some(format!(
+        let text = self.expand(target, &text, depth + 1);
+        format!(
             "\n\n[Imported from {label:?}]\n{}\n[End import]\n\n",
             text.trim()
-        ))
+        )
     }
+}
+
+fn existing_import(base: &Path, token: &str) -> Option<(PathBuf, PathBuf, Metadata)> {
+    let target = match token.strip_prefix("~/") {
+        Some(path) => dirs::home_dir()?.join(path),
+        None => base.join(token),
+    };
+    let canonical = target.canonicalize().ok()?;
+    let metadata = canonical.metadata().ok()?;
+    metadata.is_file().then_some((target, canonical, metadata))
 }
 
 /// Open the already checked canonical path without following a replacement
