@@ -32,6 +32,9 @@ function worldBuild(): string {
 }
 
 export default function globalSetup() {
+  // Inherited by the builds and Playwright workers. The Rust world also
+  // sets its own opt-out because it clears the engine's inherited env.
+  process.env.LINGGEN_NO_TELEMETRY = '1';
   uiBuild();
   process.env.LINGGEN_WORLD_BIN = worldBuild();
 }

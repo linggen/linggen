@@ -61,3 +61,51 @@ async fn zero_tool_skill_offers_no_tools() {
     assert_eq!(offered, ["note_done", "note_write"], "the call offered {offered:?}");
     w.assert_all_scripted();
 }
+
+/// A skill written, deleted or uninstalled through the API reaches a chat
+/// already under way: its next turn lists exactly the skills on disk. Every
+/// "skills changed" path ends in one follow-up (`api/skills.rs`
+/// `skills_changed`), which drops the live engines holding the old list.
+#[tokio::test]
+async fn a_change_of_skills_reaches_a_live_session() {
+    let ling = (1..=4).map(|n| text(&format!("Turn {n}."))).collect();
+    let w = World::start(Setup::default().setting_off().script(Agent::Ling, ling)).await;
+    let root = w.work();
+    let sid = w.api.create_session(json!({"title": "chat"})).await;
+    let last_call = |w: &World| w.model.calls_of(Agent::Ling).pop().expect("his call").text();
+
+    w.turn(&sid, &root, "One.", Agent::Ling).await;
+    assert!(!last_call(&w).contains("PROBE-WRITTEN"));
+
+    // A project skill written through the skill-file editor.
+    let file = json!({
+        "project_root": root,
+        "path": "probe-written/SKILL.md",
+        "content": "---\nname: probe-written\ndescription: PROBE-WRITTEN skill.\n---\n\nBody.\n",
+    });
+    w.api.post("/api/skill-file", file).await;
+    w.turn(&sid, &root, "Two.", Agent::Ling).await;
+    assert!(last_call(&w).contains("PROBE-WRITTEN"), "the written skill is not listed");
+
+    // The same file deleted.
+    let gone = json!({"project_root": root, "path": "probe-written/SKILL.md"});
+    w.api.delete_status("/api/skill-file", gone).await;
+    w.turn(&sid, &root, "Three.", Agent::Ling).await;
+    assert!(!last_call(&w).contains("PROBE-WRITTEN"), "the deleted skill is still listed");
+
+    // A global skill uninstalled from the marketplace page.
+    let dir = w.home.linggen_home().join("skills/probe-global");
+    std::fs::create_dir_all(&dir).expect("skill dir");
+    std::fs::write(
+        dir.join("SKILL.md"),
+        "---\nname: probe-global\ndescription: PROBE-GLOBAL skill.\n---\n\nBody.\n",
+    )
+    .expect("SKILL.md");
+    w.api.post("/api/skills/reload", json!({"project_root": root})).await;
+    w.api
+        .delete_status("/api/marketplace/uninstall", json!({"name": "probe-global", "project_root": root}))
+        .await;
+    w.turn(&sid, &root, "Four.", Agent::Ling).await;
+    assert!(!last_call(&w).contains("PROBE-GLOBAL"), "the uninstalled skill is still listed");
+    w.assert_all_scripted();
+}

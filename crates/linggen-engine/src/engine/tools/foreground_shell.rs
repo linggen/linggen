@@ -564,7 +564,7 @@ mod tests {
         Arc::get_mut(&mut manager)
             .expect("a fresh manager")
             .global_sessions =
-            crate::state_fs::SessionStore::with_sessions_dir(dir.join("sessions"));
+            crate::state_fs::SessionStore::leaked(dir.join("sessions"));
         manager
     }
 

@@ -43,7 +43,7 @@ pub(crate) fn compose_memory_report(messages: &[ChatMsg]) -> Option<String> {
     let mut merges = 0u64;
     let mut retired = 0u64;
 
-    for m in messages.iter().filter(|m| m.from_id == "system") {
+    for m in messages.iter().filter(|m| m.author().is_system()) {
         let Some(json) = memory_result(&m.content) else {
             continue;
         };

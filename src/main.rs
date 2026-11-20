@@ -1,6 +1,8 @@
 mod cli;
 #[cfg(test)]
 mod permission_lock_tests;
+#[cfg(test)]
+mod structure_lock_tests;
 mod server;
 
 // The engine's modules, by the names the server and the CLI use for them
@@ -411,6 +413,8 @@ async fn main() -> Result<()> {
                 interface_mode,
             );
 
+            // Boot: the first read, before any session. Every later change
+            // of skills goes through `server::api::skills::skills_changed`.
             let _ = skills.load_all(Some(&ws_root)).await;
 
             // Auto-install built-in skills if none found

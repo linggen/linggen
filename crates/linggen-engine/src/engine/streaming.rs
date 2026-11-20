@@ -1120,7 +1120,7 @@ mod fallback_window_tests {
         let sessions = root.path().join("sessions");
         Arc::get_mut(&mut manager)
             .expect("a fresh manager")
-            .global_sessions = crate::state_fs::SessionStore::with_sessions_dir(sessions);
+            .global_sessions = crate::state_fs::SessionStore::leaked(sessions);
         let session = format!("s-nf-{port}");
         manager
             .global_sessions
@@ -1241,7 +1241,7 @@ mod fallback_window_tests {
         Arc::get_mut(&mut manager)
             .expect("a fresh manager")
             .global_sessions =
-            crate::state_fs::SessionStore::with_sessions_dir(root.path().join("sessions"));
+            crate::state_fs::SessionStore::leaked(root.path().join("sessions"));
         manager
             .global_sessions
             .add_session(&crate::state_fs::sessions::SessionMeta {

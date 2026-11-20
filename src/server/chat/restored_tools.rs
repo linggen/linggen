@@ -46,7 +46,7 @@ pub(super) fn tool_row(m: &ChatMsg, own_agent: &str) -> Option<ToolRow> {
         let args = v.get("args").cloned().unwrap_or(Value::Null);
         return Some(ToolRow::Call { name, args });
     }
-    if m.from_id == "system" && m.to_id == own_agent {
+    if m.author().is_system() && m.to_id == own_agent {
         let (name, text) = m.content.strip_prefix("Tool ")?.split_once(": ")?;
         return Some(ToolRow::Result {
             name: name.to_string(),
@@ -249,7 +249,7 @@ mod tests {
                 continue;
             }
             replay.flush(&mut out);
-            let role = if m.from_id == "user" {
+            let role = if m.author().is_person() {
                 "user"
             } else {
                 "assistant"

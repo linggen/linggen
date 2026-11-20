@@ -19,6 +19,7 @@
 //! The thread starts at the newest compaction row: what came before it is
 //! what that summary stands for.
 
+use crate::state_fs::RowAuthor;
 use super::restored_tools::{self, ToolReplay, ToolRow};
 use super::ChatRunCtx;
 use crate::engine::compaction::{since_compaction, COMPACTION_SENDER};
@@ -200,7 +201,7 @@ fn is_stale(
         || total < mark.rows
         || since
             .iter()
-            .any(|r| r.agent_id != own || r.from_id == COMPACTION_SENDER)
+            .any(|r| r.agent_id != own || r.author() == RowAuthor::Compaction)
 }
 
 /// The senders and recipients in `rows` that are agents, the reader with
@@ -212,7 +213,7 @@ async fn speaking_agents(ctx: &ChatRunCtx, rows: &[ChatMsg]) -> HashSet<String> 
         .iter()
         .flat_map(|r| [&r.from_id, &r.agent_id, &r.to_id])
     {
-        if matches!(id.as_str(), "user" | "system") || !asked.insert(id.as_str()) {
+        if matches!(RowAuthor::of(id), RowAuthor::Person | RowAuthor::System) || !asked.insert(id.as_str()) {
             continue;
         }
         if ctx.manager.agent_exists(&ctx.root, id).await {
@@ -311,14 +312,14 @@ fn read_tool_row(
 /// A spoken row as the reader reads it; `None` for a row that isn't part
 /// of its thread.
 fn spoken(m: &ChatMsg, reader: &Reader) -> Option<ChatMessage> {
-    if m.from_id == "system" {
+    if m.author().is_system() {
         return None;
     }
     // Another member's hidden kickoff is that member's turn alone.
     if m.content.contains("[HIDDEN]") && m.agent_id != reader.id {
         return None;
     }
-    if let (Some(device), "user") = (m.via.as_deref(), m.from_id.as_str()) {
+    if let (Some(device), RowAuthor::Person) = (m.via.as_deref(), m.author()) {
         return Some(ChatMessage::new(
             "user",
             super::via_line(device, &m.content),
@@ -327,7 +328,7 @@ fn spoken(m: &ChatMsg, reader: &Reader) -> Option<ChatMessage> {
     if m.from_id == reader.id {
         return Some(ChatMessage::new("assistant", answer_words(&m.content)));
     }
-    if m.from_id == "user" {
+    if m.author().is_person() {
         return Some(ChatMessage::new("user", user_line(m, reader)));
     }
     if reader.agents.contains(&m.from_id) {
@@ -362,7 +363,7 @@ fn user_line(m: &ChatMsg, reader: &Reader) -> String {
 /// An observation row of another member's: its call, or a result handed to
 /// it. `None` for the reader's own rows and for anything else.
 fn other_tool_row(m: &ChatMsg, reader: &Reader) -> Option<(String, ToolRow)> {
-    let agent = if m.from_id == "system" {
+    let agent = if m.author().is_system() {
         &m.to_id
     } else {
         &m.from_id

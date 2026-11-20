@@ -173,7 +173,7 @@ pub(super) async fn last_user_line(state: &Arc<ServerState>, session_id: &str) -
     let line = history
         .iter()
         .rev()
-        .filter(|m| m.from_id == "user")
+        .filter(|m| m.author().is_person())
         .map(|m| m.content.trim())
         .find(|c| !c.is_empty() && !c.starts_with('{') && !c.contains("[HIDDEN]"))?;
     let mut out: String = line.chars().take(80).collect();

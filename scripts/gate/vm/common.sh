@@ -8,6 +8,8 @@ set -uo pipefail
 # The last line out, whatever the exit: the host FAILs a run without it
 # (lib.sh vm_run), so a set -u abort or a crash can't leave the gate green.
 trap 'printf "GATE_EXIT\t%s\n" "$?"' EXIT
+. ./telemetry.sh || exit 1
+gate_disable_telemetry
 export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
 
 GOOD="$MIRROR/good"
@@ -34,6 +36,14 @@ gap() { r GAP "$@"; }
 info() { r INFO "$@"; }
 check() { # name rc fail-detail [pass-detail]
   if [ "$2" = 0 ]; then pass "$1" "${4:-}"; else fail "$1" "$3"; fi
+}
+
+open_app() { # app path
+  if ! gate_vm_telemetry_disabled; then
+    fail "app: telemetry disabled" 'guest is missing ~/.linggen/no-telemetry'
+    exit 1
+  fi
+  open "$@"
 }
 
 wait_http() { # url seconds

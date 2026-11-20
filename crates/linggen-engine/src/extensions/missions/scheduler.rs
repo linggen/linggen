@@ -399,14 +399,15 @@ pub(crate) fn mission_session_meta(
 }
 
 /// Create a new session for a mission run in the global session store.
-pub fn create_mission_session(mission: &Mission) -> Option<String> {
+pub fn create_mission_session(
+    store: &crate::state_fs::SessionStore,
+    mission: &Mission,
+) -> Option<String> {
     let session_id = format!(
         "sess-{}-{}",
         crate::util::now_ts_secs(),
         &uuid::Uuid::new_v4().to_string()[..8]
     );
-    let store =
-        crate::state_fs::SessionStore::with_sessions_dir(crate::paths::global_sessions_dir());
     let meta = mission_session_meta(mission, &session_id);
     match store.add_session(&meta) {
         Ok(_) => Some(session_id),
@@ -634,7 +635,7 @@ async fn dispatch_mission_prompt(
 
     // Use pre-created session or create a new one
     let has_pre_session = pre_session_id.is_some();
-    let session_id = pre_session_id.or_else(|| create_mission_session(mission));
+    let session_id = pre_session_id.or_else(|| create_mission_session(state.manager.global_sessions, mission));
 
     // Record the run as `running` up front, finalized at the end of this
     // function — a hang, crash, or daemon restart must leave a visible
@@ -737,8 +738,7 @@ async fn dispatch_mission_prompt(
     // Persist the first kickoff item as a user message in the session.
     // Skip if the trigger API already persisted it (pre-created session).
     if !has_pre_session {
-        let global_store =
-            crate::state_fs::SessionStore::with_sessions_dir(crate::paths::global_sessions_dir());
+        let global_store = state.manager.global_sessions;
         if let Some(sid) = session_id.as_deref() {
             let _ = global_store.add_chat_message(
                 sid,

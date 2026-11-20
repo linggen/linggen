@@ -1761,11 +1761,14 @@ fn is_upward_relative(token: &str) -> bool {
 
 /// Directories the user can grant, broadest first.
 ///
-/// The chain runs from the file's directory up to the git repo root. With no
-/// repo root it stops before the home directory, so a path `a/b/c/file` can
-/// be granted at `a` without granting every directory. `/` and system
-/// directories such as `/dev` are not offered.
+/// The chain runs from the file's directory up to the project root — the
+/// one `find_git_root` names, the same root a declined prompt closes
+/// (`declined.rs`). With no repo root it stops before the home directory
+/// (and after 12 folders), so a path `a/b/c/file` can be granted at `a`
+/// without granting every directory. `/` and system directories such as
+/// `/dev` are not offered.
 fn grant_directories(target: &Path, _session_cwd: &Path) -> Vec<PathBuf> {
+    const NO_REPO_DEPTH: usize = 12;
     let target = PathBuf::from(normalize_path(&target.to_string_lossy()));
     let start = if target.is_dir() {
         target
@@ -1775,11 +1778,15 @@ fn grant_directories(target: &Path, _session_cwd: &Path) -> Vec<PathBuf> {
     if ungrantable(&start) {
         return Vec::new();
     }
+    let repo = crate::engine::tools::search_exec_find_git_root(&start);
     let mut leaf_to_root = Vec::new();
     let mut cur = start;
-    for _ in 0..12 {
+    loop {
         leaf_to_root.push(cur.clone());
-        if cur.join(".git").exists() {
+        if repo.as_ref() == Some(&cur) {
+            break;
+        }
+        if repo.is_none() && leaf_to_root.len() >= NO_REPO_DEPTH {
             break;
         }
         let Some(parent) = cur.parent() else { break };
@@ -1914,5 +1921,34 @@ mod grantable_tests {
             Path::new("/Users/alex/repo"),
             Some(Path::new("/Users/alex"))
         ));
+    }
+}
+
+#[cfg(test)]
+mod root_tests {
+    use super::grant_directories;
+    use std::path::Path;
+
+    /// The permission card's broadest folder is the project root a decline
+    /// closes — one root, asked of `find_git_root` — however deep the file.
+    #[test]
+    fn the_grant_card_offers_the_root_a_decline_closes() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join(format!("perm-deep-root-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let repo = root.join("repo");
+        let deep = (0..14).fold(repo.clone(), |d, i| d.join(format!("d{i}")));
+        std::fs::create_dir_all(&deep).unwrap();
+        std::fs::create_dir(repo.join(".git")).unwrap();
+        let file = deep.join("f.rs");
+        std::fs::write(&file, "x").unwrap();
+
+        let offered = grant_directories(&file, &repo);
+        let declined =
+            super::super::declined::DeclinedScopes::default().decline(&file.to_string_lossy());
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(declined, repo);
+        assert_eq!(offered.first(), Some(&repo), "{offered:?}");
     }
 }

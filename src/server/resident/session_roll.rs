@@ -1,6 +1,7 @@
 //! Her rolling session: one per day, a fresh segment when the day's thread
 //! nears its context limit, seeded with where the last one left off.
 
+use crate::state_fs::RowAuthor;
 use super::*;
 
 /// Whether `session_id` is one of her own rolling sessions.
@@ -118,10 +119,10 @@ pub(super) fn last_spoken_line(state: &Arc<ServerState>, current_sid: &str) -> O
         };
         let line = history.iter().rev().find(|m| {
             !m.is_observation
-                && m.from_id != "user"
-                && m.from_id != "system"
-                && m.from_id != "memory"
-                && !crate::engine::prompt::world::is_world_row(m)
+                && !matches!(
+                    m.author(),
+                    RowAuthor::Person | RowAuthor::System | RowAuthor::World | RowAuthor::Agent("memory")
+                )
                 && !m.content.trim().is_empty()
         });
         if let Some(m) = line {

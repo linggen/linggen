@@ -6,6 +6,8 @@
 # own ~/.linggen, 9527/9528 and install dirs are never touched.
 
 GATE_SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$GATE_SRC/vm/telemetry.sh" || exit 1
+gate_disable_telemetry
 REPO="$(cd "$GATE_SRC/../.." && pwd)"
 WS="$(cd "$REPO/.." && pwd)"
 
@@ -184,6 +186,13 @@ vm_clone() { # src dst — scratch VM, deleted on exit
   SCRATCH_VMS+=("$2")
 }
 
+# The app's engine does not inherit the SSH shell's opt-out. Require the
+# on-disk opt-out separately, including after installers and before the UI probe.
+vm_require_no_telemetry() { # vm
+  vm_ssh "$1" 'cd ~/gate && . ./telemetry.sh && gate_vm_telemetry_disabled' \
+    || die "$1: telemetry disabled" 'guest is missing ~/.linggen/no-telemetry'
+}
+
 # Run a VM-side script (scripts/gate/vm/<name>.sh, staged with the rest of
 # what the VM gets in $VMFILES) with env; its RESULT lines
 # become records, the rest goes to the run log. common.sh's EXIT trap prints
@@ -195,6 +204,15 @@ vm_run() { # vm script [VAR=value…]
   rm -f "$done_file"
   vm_ssh "$vm" "rm -rf ~/gate && mkdir -p ~/gate" || die "copy scripts" "ssh failed"
   vm_scp "$vm" "$VMFILES/." "~/gate/" || die "copy scripts" "scp failed"
+  # Check freshness before the opt-out creates the only file in the new home.
+  if [ "$script" = first-install.sh ]; then
+    vm_ssh "$vm" 'test ! -e "$HOME/.linggen"' || die "fresh VM (no ~/.linggen)" "home already exists or SSH failed"
+    record PASS "fresh VM (no ~/.linggen)"
+  fi
+  vm_ssh "$vm" 'cd ~/gate && . ./telemetry.sh && gate_prepare_vm_telemetry' \
+    || die "$vm: telemetry disabled" 'could not create guest opt-out file'
+  vm_require_no_telemetry "$vm"
+  record PASS "$vm: telemetry disabled" '~/.linggen/no-telemetry'
   vm_ssh "$vm" "cd ~/gate && env $* bash ./$script" 2>&1 | tee -a "$RUN/vm-$vm.log" | \
   while IFS= read -r line; do
     case "$line" in
@@ -213,6 +231,7 @@ vm_run() { # vm script [VAR=value…]
   else
     record PASS "$script ran to the end" "exit 0"
   fi
+  vm_require_no_telemetry "$vm"
   # Bring the VM's logs home for a look after the VM is gone.
   mkdir -p "$RUN/vm-$vm"
   vm_ssh "$vm" "bash -c 'cd ~ && tar -czf - gate/*.log gate/*.json gate/*.txt .linggen/ling.log .linggen/logs .linggen/config 2>/dev/null'" \

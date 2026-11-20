@@ -680,7 +680,10 @@ async fn execute_turn(state: Arc<ServerState>, req: chat::types::ChatRequest, me
     let notify_parent = req
         .sender
         .as_deref()
-        .is_some_and(|sender| sender != "user" && sender != "system");
+        .is_some_and(|sender| {
+            use crate::state_fs::RowAuthor;
+            !matches!(RowAuthor::of(sender), RowAuthor::Person | RowAuthor::System)
+        });
     let root = Path::new(&meta.cwd);
     let run_id = match state
         .manager

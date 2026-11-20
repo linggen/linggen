@@ -47,6 +47,7 @@ impl Engine {
     ) -> Self {
         let mut env = hermetic_env(home);
         env.extend_from_slice(extra_env);
+        guard::env(&env, &home.root);
         let spawn = |port: u16| {
             if has_config {
                 set_config_port(home, port);

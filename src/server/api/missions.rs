@@ -534,7 +534,7 @@ pub(crate) async fn trigger_mission_core(
     // Pre-create the session BEFORE emitting `MissionTriggered`. The UI
     // needs the session id immediately so the new session row appears in
     // the sidebar at click time, not at completion time.
-    let session_id = crate::extensions::missions::scheduler::create_mission_session(&mission);
+    let session_id = crate::extensions::missions::scheduler::create_mission_session(state.manager.global_sessions, &mission);
 
     // Persist the first kickoff message as a user turn so the UI has something
     // to show when it loads the session. The mission body lives in the system

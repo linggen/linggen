@@ -28,12 +28,15 @@
   names a file — an `@name` mention stays as written.
 - **`CLAUDE.local.md` is read** beside `CLAUDE.md`.
 - **Your own rule file, `~/.claude/CLAUDE.md`, is read in a coding session**,
-  before a project's rules, with its imports. A chat with Ling, Yinyue and the
-  apps do not get it. Its imports may name a file outside the project; a
-  protected place stays out.
+  before a project's rules, with its imports. Yinyue's turns and an app's
+  turns never get it, even inside a coding session; nor does a plain chat
+  with Ling. Its imports may name a file outside the project, wherever the
+  session may read without asking; a protected place stays out.
 - **An import is a read nobody was asked about**, so it brings in only what the
-  session may read without asking: files inside the project, never a
-  protected place. A rule file that is a link follows the same rule.
+  session may read without asking, and never a protected place. A project's
+  rule file imports only from inside the project; a rule file that is a link
+  follows the same rule — so a project's `CLAUDE.md` that links to a file
+  outside the project is no longer read, and says so in its place.
 - **A rule that is not loaded says so** in its place — refused, too large
   (256 KiB a file, 512 KiB in all), not text.
 - **A change to a parent folder's rules or to an imported file** is picked up

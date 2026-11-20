@@ -356,7 +356,7 @@ fn sighting_of(ev: &ServerEvent) -> Vec<Sighting<'_>> {
     match ev {
         ServerEvent::Message {
             from, to, images, ..
-        } if from == "user" => {
+        } if crate::state_fs::RowAuthor::of(from).is_person() => {
             let mut out = vec![Sighting::UserMessage { agent: to }];
             if !images.is_empty() {
                 out.push(Sighting::UserImage { agent: to });

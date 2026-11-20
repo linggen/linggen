@@ -41,7 +41,7 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
                     .session(session_id)
                     .run(run_id.clone())
                     .data(MessageData {
-                        role: if from == "user" { "user" } else { "assistant" }.to_string(),
+                        role: if crate::state_fs::RowAuthor::of(&from).is_person() { "user" } else { "assistant" }.to_string(),
                         from,
                         to,
                         // Subagent routing keys — present only when emitted

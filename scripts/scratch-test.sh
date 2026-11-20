@@ -41,6 +41,7 @@ env HOME="$scratch" \
   CARGO_HOME="${CARGO_HOME:-$real_home/.cargo}" \
   RUSTUP_HOME="${RUSTUP_HOME:-$real_home/.rustup}" \
   LINGGEN_HOME="$scratch/.linggen" LINGGEN_DATA_DIR="$scratch/.linggen" \
+  LINGGEN_NO_TELEMETRY=1 LING_MEM_NO_TELEMETRY=1 \
   LINGGEN_NO_BONJOUR=1 LINGGEN_TEST_SKIPPED="$skipped" \
   nice -n 10 cargo test -j "${TEST_JOBS:-6}" "$@" || status=$?
 if [ -s "$skipped" ]; then

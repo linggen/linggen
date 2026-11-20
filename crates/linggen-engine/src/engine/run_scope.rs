@@ -73,7 +73,7 @@ impl AgentEngine {
         let Some(manager) = self.tools.get_manager() else {
             return;
         };
-        if row.from_id != "user" {
+        if !row.author().is_person() {
             row.run_id = self.run_id.clone();
         }
         manager
