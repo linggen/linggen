@@ -171,6 +171,64 @@ test.describe('inside the desktop app', () => {
     await expect(diceFrame(page)).toHaveAttribute('src', '/apps/dice/index.html?app_mode=1&in_launcher=1&view=table');
     await expect.poll(() => shellCalls(page)).toEqual(['plugin:window|show', 'plugin:window|unminimize', 'plugin:window|set_focus']);
   });
+
+  test('a skill card opens its app as a tab; a launch never opens an app the bar leaves out', async ({ page, world }) => {
+    await page.goto(`${world.url}/`);
+    await expect(chatBox(page)).toBeVisible();
+    await page.getByText('/dice', { exact: true }).click();
+    await expect(tab(page, 'dice')).toHaveAttribute('aria-current', 'page');
+    await expect(diceReady(page)).toBeVisible();
+    expect(page.context().pages()).toHaveLength(1);
+    await expect.poll(() => shellCalls(page)).toEqual(['plugin:window|show', 'plugin:window|unminimize', 'plugin:window|set_focus']);
+
+    // `list: false`: a launch leaves it out, the person's own click opens it.
+    await tab(page, 'Chat').click();
+    const res = await fetch(`${world.url}/api/apps/launch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ skill: 'fixture-options' }),
+    });
+    expect(res.ok).toBe(true);
+    await page.waitForTimeout(1500);
+    await expect(tab(page, 'Chat')).toHaveAttribute('aria-current', 'page');
+    await expect(tab(page, 'Fixture Options')).toHaveCount(0);
+    await page.getByText('/fixture-options', { exact: true }).click();
+    await expect(tab(page, 'Fixture Options')).toHaveAttribute('aria-current', 'page');
+    await expect(page.locator('iframe[title="Fixture Options"]').contentFrame().getByRole('heading', { name: 'Fixture Options' })).toBeVisible();
+    expect(page.context().pages()).toHaveLength(1);
+  });
+
+  test("an app page that holds no body for Yinyue makes this window her bodyless stage, while it is in front", async ({ page, world }) => {
+    await page.addInitScript(() => {
+      const said: string[] = [];
+      Object.defineProperty(window, '__yinyueSaid', { value: said });
+      const send = RTCDataChannel.prototype.send;
+      RTCDataChannel.prototype.send = function (this: RTCDataChannel, data: string | Blob | ArrayBuffer | ArrayBufferView) {
+        if (typeof data === 'string' && data.includes('"yinyue_')) {
+          const msg = JSON.parse(data);
+          said.push(msg.type === 'yinyue_subscribe' ? `subscribe stage=${msg.stage}` : 'release');
+        }
+        return send.call(this, data as string);
+      } as typeof RTCDataChannel.prototype.send;
+    });
+    const said = () => page.evaluate(() => [...(Reflect.get(window, '__yinyueSaid') as string[])]);
+    await page.goto(`${world.url}/`);
+    await tab(page, 'dice').click();
+    await expect(diceReady(page)).toBeVisible();
+    await page.waitForTimeout(1500);
+    expect((await said()).filter((m) => m.startsWith('subscribe'))).toEqual([]);
+
+    await diceReady(page).evaluate(() => window.parent.postMessage({ type: 'linggen:companion', companion: 'hidden' }, location.origin));
+    await expect.poll(said).toContain('subscribe stage=true');
+    // The chat home in front: the page's word no longer counts.
+    await tab(page, 'Chat').click();
+    await expect.poll(async () => (await said()).at(-1)).toBe('release');
+    await tab(page, 'dice').click();
+    await expect.poll(async () => (await said()).at(-1)).toBe('subscribe stage=true');
+    // Settings over it: neither.
+    await page.getByTitle('Settings', { exact: true }).click();
+    await expect.poll(async () => (await said()).at(-1)).toBe('release');
+  });
 });
 
 test('framed pages stay what they are even when every frame looks like the shell', async ({ page, world }) => {
