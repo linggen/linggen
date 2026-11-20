@@ -140,6 +140,59 @@ async fn say_kept_apart(ctx: &ChatRunCtx, skill: &str) {
     .await;
 }
 
+/// How a person started a skill: the one difference in what the gate says.
+#[derive(Clone, Copy)]
+enum UserStart<'a> {
+    /// `/name`, as typed.
+    Slash(&'a str),
+    /// A trigger prefix the person set up.
+    Trigger,
+}
+
+/// Whether the person may start `skill` here — by `/name` or by a trigger
+/// alike: never one the skill keeps from users (`user-invocable: false`),
+/// nor one this room does not offer. `Err` is the line the turn shows. The
+/// day's session keeping a private app out is decided after this, in
+/// `activate_skill`; the model's side is `model_may_start` (`delegation.rs`).
+/// Locked by `the_user_side_skill_gate_is_written_once`.
+fn user_may_start(
+    skill: &crate::extensions::skills::Skill,
+    policy: &crate::engine::session_policy::SessionPolicy,
+    how: UserStart<'_>,
+) -> Result<(), String> {
+    if !skill.user_invocable {
+        let by = match how {
+            UserStart::Slash(cmd) => format!("with /{cmd}"),
+            UserStart::Trigger => "via trigger".to_string(),
+        };
+        return Err(format!(
+            "Skill '{}' is not user-invocable and cannot be activated {by}.",
+            skill.name
+        ));
+    }
+    if !policy.is_skill_allowed(&skill.name) {
+        return Err(format!("Skill '{}' is not available in this room.", skill.name));
+    }
+    Ok(())
+}
+
+/// The line a turn shows when [`user_may_start`] refuses.
+async fn say_refused(ctx: &ChatRunCtx, line: &str) {
+    persist_and_emit_message(
+        &ctx.manager,
+        &ctx.events_tx,
+        &ctx.root,
+        &ctx.agent_id,
+        &ctx.agent_id,
+        "user",
+        line,
+        ctx.session_id.as_deref(),
+        false,
+        None,
+    )
+    .await;
+}
+
 enum SlashResolution {
     /// Skill resolved and ready to activate.
     Skill(crate::extensions::skills::Skill),
@@ -168,41 +221,8 @@ async fn resolve_slash_skill(
         return SlashResolution::NoMatch;
     };
 
-    if !skill.user_invocable {
-        let err_msg = format!(
-            "Skill '{}' is not user-invocable and cannot be activated with /{cmd}.",
-            skill.name
-        );
-        persist_and_emit_message(
-            &ctx.manager,
-            &ctx.events_tx,
-            &ctx.root,
-            &ctx.agent_id,
-            &ctx.agent_id,
-            "user",
-            &err_msg,
-            ctx.session_id.as_deref(),
-            false,
-            None,
-        )
-        .await;
-        return SlashResolution::HandledOrBlocked;
-    }
-    if !ctx.policy.is_skill_allowed(&skill.name) {
-        let err_msg = format!("Skill '{}' is not available in this room.", skill.name);
-        persist_and_emit_message(
-            &ctx.manager,
-            &ctx.events_tx,
-            &ctx.root,
-            &ctx.agent_id,
-            &ctx.agent_id,
-            "user",
-            &err_msg,
-            ctx.session_id.as_deref(),
-            false,
-            None,
-        )
-        .await;
+    if let Err(line) = user_may_start(&skill, &ctx.policy, UserStart::Slash(cmd)) {
+        say_refused(ctx, &line).await;
         return SlashResolution::HandledOrBlocked;
     }
 
@@ -346,41 +366,8 @@ pub(super) async fn run_trigger_dispatch(
     let mut skill_default_task: Option<String> = None;
     if let Some(manager) = engine.tools.get_manager() {
         if let Some(skill) = manager.skills.reload_one(skill_name).await {
-            if !skill.user_invocable {
-                let err_msg = format!(
-                    "Skill '{}' is not user-invocable and cannot be activated via trigger.",
-                    skill.name
-                );
-                persist_and_emit_message(
-                    &ctx.manager,
-                    &ctx.events_tx,
-                    &ctx.root,
-                    &ctx.agent_id,
-                    &ctx.agent_id,
-                    "user",
-                    &err_msg,
-                    ctx.session_id.as_deref(),
-                    false,
-                    None,
-                )
-                .await;
-                return;
-            }
-            if !ctx.policy.is_skill_allowed(&skill.name) {
-                let err_msg = format!("Skill '{}' is not available in this room.", skill.name);
-                persist_and_emit_message(
-                    &ctx.manager,
-                    &ctx.events_tx,
-                    &ctx.root,
-                    &ctx.agent_id,
-                    &ctx.agent_id,
-                    "user",
-                    &err_msg,
-                    ctx.session_id.as_deref(),
-                    false,
-                    None,
-                )
-                .await;
+            if let Err(line) = user_may_start(&skill, &ctx.policy, UserStart::Trigger) {
+                say_refused(ctx, &line).await;
                 return;
             }
             if user_args.is_none() {
@@ -452,5 +439,55 @@ pub(super) async fn run_trigger_dispatch(
             emit_outcome_event(ctx, outcome, engine.last_run_id.as_deref()).await;
         }
         let _ = ctx.events_tx.send(ServerEvent::StateUpdated);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// This file's code, its tests left out.
+    fn code() -> &'static str {
+        let all = include_str!("skill_dispatch.rs");
+        all.split("#[cfg(test)]").next().unwrap_or(all)
+    }
+
+    use super::{user_may_start, UserStart};
+    use crate::engine::session_policy::{ConsumerCeiling, SessionPolicy};
+    use crate::extensions::skills::{parse_skill_text, SkillSource};
+
+    fn skill(invocable: bool) -> crate::extensions::skills::Skill {
+        let text = format!(
+            "---\nname: dice\ndescription: Dice.\nuser-invocable: {invocable}\n---\nBody."
+        );
+        parse_skill_text(&text, SkillSource::Global).expect("skill")
+    }
+
+    /// Both ways a person starts a skill meet the same two refusals.
+    #[test]
+    fn a_person_may_start_only_an_offered_user_invocable_skill() {
+        let owner = SessionPolicy::owner();
+        let room = SessionPolicy::consumer(ConsumerCeiling {
+            skills: vec!["other".into()],
+            ..Default::default()
+        });
+        for how in [UserStart::Slash("dice"), UserStart::Trigger] {
+            assert_eq!(user_may_start(&skill(true), &owner, how), Ok(()));
+            let kept = user_may_start(&skill(false), &owner, how).unwrap_err();
+            assert!(kept.contains("not user-invocable"), "{kept}");
+            let not_here = user_may_start(&skill(true), &room, how).unwrap_err();
+            assert!(not_here.contains("not available in this room"), "{not_here}");
+        }
+    }
+
+    /// The lock on `user_may_start`: a person's `/name` and a trigger ask
+    /// the same gate, so each of its checks is written once in this file.
+    #[test]
+    fn the_user_side_skill_gate_is_written_once() {
+        for check in [".user_invocable", ".is_skill_allowed("] {
+            assert_eq!(
+                code().matches(check).count(),
+                1,
+                "`{check}` is checked in more than one place; ask `user_may_start`"
+            );
+        }
     }
 }
