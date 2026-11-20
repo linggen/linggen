@@ -1611,14 +1611,74 @@ pub async fn stop(state: &Arc<ServerState>, session: &str) -> Result<String, Str
     Ok(serde_json::json!({"stopped": stopped}).to_string())
 }
 
+/// A calling host's permission mode, as `agent_run`'s `permission_mode`
+/// names it — the one list of its words. The schema's enum, both
+/// descriptions (`mcp::catalog`) and the grant are made from it
+/// (lock: `structure_lock_tests::a_hosts_permission_words_are_written_once`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum HostMode {
+    Plan,
+    Default,
+    AcceptEdits,
+    Auto,
+    BypassPermissions,
+}
+
+impl HostMode {
+    pub(crate) const ALL: [Self; 5] =
+        [Self::Plan, Self::Default, Self::AcceptEdits, Self::Auto, Self::BypassPermissions];
+
+    /// The word the host sends.
+    pub(crate) fn word(self) -> &'static str {
+        match self {
+            Self::Plan => "plan",
+            Self::Default => "default",
+            Self::AcceptEdits => "acceptEdits",
+            Self::Auto => "auto",
+            Self::BypassPermissions => "bypassPermissions",
+        }
+    }
+
+    pub(crate) fn parse(word: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|m| m.word() == word)
+    }
+
+    /// What it grants in `write_dir`: `None` is read-only.
+    pub(crate) fn grant(self) -> Option<PermissionMode> {
+        match self {
+            Self::Plan => None,
+            Self::Default | Self::AcceptEdits => Some(PermissionMode::Edit),
+            Self::Auto | Self::BypassPermissions => Some(PermissionMode::Admin),
+        }
+    }
+
+    /// The words, grouped by what they grant, in [`Self::ALL`]'s order:
+    /// `("plan", None)`, `("default/acceptEdits", Some(Edit))`, …
+    pub(crate) fn by_grant() -> Vec<(String, Option<PermissionMode>)> {
+        let mut groups: Vec<(String, Option<PermissionMode>)> = Vec::new();
+        for mode in Self::ALL {
+            match groups.iter_mut().find(|(_, g)| *g == mode.grant()) {
+                Some((words, _)) => {
+                    words.push('/');
+                    words.push_str(mode.word());
+                }
+                None => groups.push((mode.word().to_string(), mode.grant())),
+            }
+        }
+        groups
+    }
+}
+
+/// The grant a new run's `permission_mode` gives in `write_dir`, if it has
+/// one. No mode is admin there, as before `HostMode`.
 fn permission_mapping(mode: Option<&str>, has_dir: bool) -> Result<Option<PermissionMode>, String> {
     let grant = match mode {
-        None | Some("auto") | Some("bypassPermissions") => PermissionMode::Admin,
-        Some("default") | Some("acceptEdits") => PermissionMode::Edit,
-        Some("plan") => return Ok(None),
-        Some(other) => return Err(format!("unknown permission_mode: {other}")),
+        None => Some(PermissionMode::Admin),
+        Some(word) => HostMode::parse(word)
+            .ok_or_else(|| format!("unknown permission_mode: {word}"))?
+            .grant(),
     };
-    Ok(has_dir.then_some(grant))
+    Ok(grant.filter(|_| has_dir))
 }
 
 /// The configured default as the model it resolves to now, if it does.
@@ -1780,6 +1840,9 @@ mod tests {
             assert_eq!(permission_mapping(Some(mode), false).unwrap(), None);
         }
         assert!(permission_mapping(Some("bad"), true).is_err());
+        for mode in HostMode::ALL {
+            assert_eq!(permission_mapping(Some(mode.word()), true).unwrap(), mode.grant());
+        }
         assert_eq!(
             permission_mapping(None, true).unwrap(),
             Some(PermissionMode::Admin)

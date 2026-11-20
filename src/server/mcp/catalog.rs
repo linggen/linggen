@@ -62,11 +62,64 @@ pub(crate) enum AgentOp {
     Close,
 }
 
-/// The engine's tools, after memory's five.
+/// A host's permission modes as `agent_run`'s description names them, made
+/// from `mcp_agent::HostMode`: "plan = read-only, default/acceptEdits = edit, …".
+fn host_modes_in_brief() -> String {
+    grant_phrases(|words, grant| format!("{words} = {grant}"), |words| format!("{words} = read-only"))
+}
+
+/// The `permission_mode` schema's description, made from `HostMode`.
+fn host_mode_schema_text() -> String {
+    let modes = grant_phrases(|words, grant| format!("{words} grant {grant}"), |words| format!("{words} is read-only"));
+    format!("Your current permission mode; {modes} in write_dir only. New sessions only.")
+}
+
+/// The `permission_mode` schema's enum: `HostMode`'s words.
+fn host_mode_words() -> Vec<&'static str> {
+    crate::server::mcp_agent::HostMode::ALL.iter().map(|m| m.word()).collect()
+}
+
+/// `HostMode`'s words grouped by grant, each group phrased by `granted` or
+/// `read_only`, joined by ", ".
+fn grant_phrases(
+    granted: impl Fn(&str, crate::engine::permission::PermissionMode) -> String,
+    read_only: impl Fn(&str) -> String,
+) -> String {
+    crate::server::mcp_agent::HostMode::by_grant()
+        .iter()
+        .map(|(words, grant)| match grant {
+            Some(mode) => granted(words, *mode),
+            None => read_only(words),
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// The engine's tools as published: [`TOOLS`] with `{host_modes}` filled in
+/// from `HostMode` (`host_modes_in_brief`).
+fn published_tools() -> &'static [ToolDoc] {
+    static PUBLISHED: LazyLock<Vec<ToolDoc>> = LazyLock::new(|| {
+        let brief = host_modes_in_brief();
+        TOOLS
+            .iter()
+            .map(|t| ToolDoc {
+                description: match t.description.contains("{host_modes}") {
+                    true => Box::leak(t.description.replace("{host_modes}", &brief).into_boxed_str()),
+                    false => t.description,
+                },
+                ..*t
+            })
+            .collect()
+    });
+    &PUBLISHED
+}
+
+/// The engine's tools, after memory's five; `{host_modes}` is filled in
+/// when published ([`published_tools`]).
 const TOOLS: &[ToolDoc] = &[
     ToolDoc {
         name: "agent_run",
-        description: "Delegate to a local Linggen agent; only its final reply returns, its steps show in the web UI. For code changes create a git worktree and pass its absolute path as write_dir with your permission_mode (plan = read-only, default/acceptEdits = edit, auto/bypassPermissions = admin there; other paths stay read-only). grants adds read/write folders, screened per folder. Continue with session_id, omitting write_dir, permission_mode and model. model_fallback defaults false: a failing model ends the run naming the model and reason. Watch the returned ws://…/api/agent/wait URL: permission_request (answer with agent_permit) and finished (reply, followup, error, model, and cannot_run when the run could not go on: reason, model, resets_at, line, work_kept).",
+        description: "Delegate to a local Linggen agent; only its final reply returns, its steps show in the web UI. For code changes create a git worktree and pass its absolute path as write_dir with your permission_mode ({host_modes} there; other paths stay read-only). grants adds read/write folders, screened per folder. Continue with session_id, omitting write_dir, permission_mode and model. model_fallback defaults false: a failing model ends the run naming the model and reason. Watch the returned ws://…/api/agent/wait URL: permission_request (answer with agent_permit) and finished (reply, followup, error, model, and cannot_run when the run could not go on: reason, model, resets_at, line, work_kept).",
         implicit_op: None,
     },
     ToolDoc {
@@ -499,7 +552,7 @@ const BRANCHES: &[Branch<Dispatch>] = &[
                 "agent": {"type": "string", "description": "Agent to run (default: ling). Unknown names return the available list."},
                 "model_fallback": {"type": "boolean", "description": "Default false: if the model fails the run ends naming the model and the reason, rather than switching to another model; true allows the automatic switch."},
                 "host": {"type": "string", "description": "Calling host, e.g. claude-code, codex or cursor (default claude-code)"},
-                "permission_mode": {"type": "string", "enum": ["plan", "default", "acceptEdits", "auto", "bypassPermissions"], "description": "Your current permission mode; plan is read-only, default/acceptEdits grant edit, auto/bypassPermissions grant admin in write_dir only. New sessions only."},
+                "permission_mode": {"type": "string", "enum": host_mode_words(), "description": host_mode_schema_text()},
                 "work": {"type": "string", "enum": ["code", "none"], "description": "New sessions: code adds coding guidance and lets the run run programs where it may edit without asking (outward commands still ask you); defaults to code with write_dir, otherwise none; ignored on continuation."},
                 "write_dir": {"type": "string", "description": "For code changes, create a git worktree first and pass its existing absolute path. The grant follows permission_mode; other paths stay read-only, and an action beyond that waits for your agent_permit. Omit for read-only; new sessions only (a continued session keeps its grant)."},
                 "grants": {"type": "object", "description": "New sessions only: folders the run may use without asking. read: folders to read. write: more folders at write_dir's level. Folders your level does not allow are refused; the run still starts, and the reply and agent_status (grants) list what was granted and refused, with reasons. Programs need no grant: a run with write_dir runs them where it may edit.", "properties": {
@@ -615,7 +668,7 @@ pub(super) fn memory_side() -> Side<'static, &'static str> {
 /// The engine's own side.
 pub(super) fn engine_side() -> Side<'static, Dispatch> {
     Side {
-        tools: TOOLS,
+        tools: published_tools(),
         branches: BRANCHES,
         retired: RETIRED,
     }
@@ -787,6 +840,24 @@ mod tests {
     }
 
     /// Composing refuses a name memory and the engine would both decide.
+    /// `agent_run` publishes `HostMode`'s words, and its description names
+    /// each of them, none left as a placeholder.
+    #[test]
+    fn agent_run_publishes_the_host_modes_it_takes() {
+        let words: Vec<&str> = crate::server::mcp_agent::HostMode::ALL.iter().map(|m| m.word()).collect();
+        let listed = catalog().tools_list(ling_mem::catalog::View::Local);
+        let run = listed.iter().find(|t| t["name"] == "agent_run").expect("agent_run");
+        let text = run.to_string();
+        assert!(!text.contains("{host_modes}"), "{text}");
+        let schema = BRANCHES.iter().find(|b| b.tool == "agent_run" && b.op == "run").unwrap();
+        let mode = &(schema.schema)()["properties"]["permission_mode"];
+        assert_eq!(mode["enum"], json!(words));
+        for word in words {
+            assert!(run["description"].as_str().unwrap().contains(word), "{word}");
+            assert!(mode["description"].as_str().unwrap().contains(word), "{word}");
+        }
+    }
+
     #[test]
     fn composing_refuses_a_name_both_sides_define() {
         let clash = ToolDoc {
