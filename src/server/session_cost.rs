@@ -20,13 +20,8 @@ pub(crate) struct SessionCost {
     pub usage: Option<SessionSpend>,
 }
 
-/// A session id names one folder under the sessions folder.
-fn names_a_folder(sid: &str) -> bool {
-    !sid.is_empty() && !sid.contains('/') && !sid.contains("..")
-}
-
 pub(crate) fn of(state: &ServerState, sid: &str) -> SessionCost {
-    if !names_a_folder(sid) {
+    if !crate::state_fs::sessions::safe_session_id(sid) {
         return SessionCost::default();
     }
     let sessions = &state.manager.global_sessions;
