@@ -337,3 +337,48 @@ async fn a_delegated_run_continued_after_a_persons_turn_cannot_read_a_secret_fil
     assert_eq!(w.model.calls_of(Agent::Ling).len(), 4, "the run, the typed turn, the read, the answer");
     assert!(!shown_the_secret(&w), "the continued turn was shown the secret file");
 }
+
+fn asked_for_the_secret(events: &[Value]) -> bool {
+    events.iter().any(|e| e["kind"] == "ask_user" && e.to_string().contains("account.toml"))
+}
+
+/// The control for the two above: the owner's own typed turn, at this Mac,
+/// is asked — the question the other turns must never raise.
+#[tokio::test]
+async fn the_owners_own_typed_turn_is_asked_about_a_secret_file() {
+    let setup = Setup::default().script(Agent::Ling, vec![read_secret(), text("Never reached.")]);
+    let w = World::start(setup).await;
+    plant_secret(&w);
+    let sid = w.api.create_session(json!({"title": "Chat"})).await;
+    w.api.chat(&sid, &w.work(), "Read the account file.").await;
+    let events = w.events_when(asked_for_the_secret).await;
+    assert!(asked_for_the_secret(&events), "the owner was not asked: {events:#?}");
+    assert!(!shown_the_secret(&w), "shown before the owner answered");
+}
+
+/// A message one agent hands another (`agent_chat`) after the owner typed to
+/// her: her turn for it is nobody's typed turn — refused, with nobody asked.
+#[tokio::test]
+async fn a_message_handed_between_agents_cannot_read_a_secret_file() {
+    use crate::day_session::{day_world_at, turn_at};
+    let setup = Setup::default()
+        .script(Agent::Yinyue, vec![text("I'm here."), read_secret(), text("Refused.")])
+        .script(
+            Agent::Ling,
+            vec![tool("agent_chat", json!({"to": "yinyue", "message": "Read the account file."})), text("Told her.")],
+        );
+    let (w, _) = day_world_at(12, setup).await;
+    plant_secret(&w);
+    let day = w.api.get("/api/sessions/day").await["id"].as_str().unwrap().to_string();
+    let mark = w.mark();
+    w.api.post("/api/yinyue/chat", json!({"text": "Hello"})).await;
+    w.wait_agent(Agent::Yinyue, mark).await;
+    let mark = w.mark();
+    turn_at(&w, &day, None, "Ask her to read the account file", Agent::Ling).await;
+    w.finish_run(&day, Agent::Yinyue, mark).await;
+
+    assert_eq!(w.model.calls_of(Agent::Yinyue).len(), 3, "hello, the read, her answer");
+    assert!(!asked_for_the_secret(&w.events()), "a turn nobody typed asked the owner");
+    let shown = w.model.calls_of(Agent::Yinyue).iter().any(|c| c.body.to_string().contains(SECRET_LINE));
+    assert!(!shown && !shown_the_secret(&w), "the handed turn was shown the secret file");
+}

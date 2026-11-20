@@ -449,12 +449,6 @@ async fn tell_in_place(
     let language = crate::server::resident::language_of_turn(&state, &session, origin, None).await;
     let mut engine = engine.lock().await;
     engine.set_parent_agent(None);
-    // Nobody typed this turn: it does not stand as the session's owner,
-    // whoever the turn before it was.
-    let stands = engine.session_spec().read_origin.unattended();
-    if stands != engine.session_spec().read_origin {
-        engine.respec(|spec| spec.read_origin = stands);
-    }
     let ctx = super::chat::ChatRunCtx {
         via: None,
         state: state.clone(),
@@ -473,7 +467,7 @@ async fn tell_in_place(
         place: told_at.clone(),
         turn: crate::engine::turn_place::TurnSettings { language, ..Default::default() },
     };
-    super::chat::run_session_turn(&ctx, &mut engine, &state.manager, None).await;
+    super::chat::run_session_turn(&ctx, &mut engine, &state.manager, None, super::chat::Typed::ByNobody).await;
     let ended = running.as_ref().is_some_and(crate::server::resident::RunningOrigin::was_ended);
     if origin.held() && !ended {
         let reply = engine.last_assistant_text.clone().map(|t| crate::server::resident::Turned::of(t, origin));

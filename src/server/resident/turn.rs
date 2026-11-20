@@ -300,7 +300,7 @@ async fn run_at(
             turn: turn_settings(turn, origin),
         };
         let cap = turn.home.then_some(YINYUE_MAX_LIVE_MSGS);
-        crate::server::chat::run_session_turn(&ctx, &mut engine, &state.manager, cap).await;
+        crate::server::chat::run_session_turn(&ctx, &mut engine, &state.manager, cap, crate::server::chat::Typed::ByNobody).await;
 
         if origin == Origin::AgentChat {
             state.manager.clear_agent_chat_session(session_id);

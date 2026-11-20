@@ -50,7 +50,7 @@ pub(crate) use admin::{
 pub(crate) use handler::{
     chat_handler, dequeue_and_emit, enqueue_if_busy, mark_steered, question_open_for_queued, queued_session,
     run_session_turn,
-    resend_chat, say_in_app, say_in_session, start_turn, TurnOrigin,
+    resend_chat, say_in_app, say_in_session, start_turn, TurnOrigin, Typed,
 };
 pub(crate) use light::{reply_in_session, reply_now};
 pub(crate) use plan_flow::{approve_plan_handler, edit_plan_handler, reject_plan_handler};

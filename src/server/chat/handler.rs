@@ -851,12 +851,39 @@ async fn apply_session_bound_mission(engine: &mut crate::engine::AgentEngine, ct
     .await;
 }
 
+/// Whether the owner, at this Mac, typed the turn in their own chat. Said
+/// by each door a turn comes through; the person's door is the only one that
+/// can say `ByOwnerHere`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Typed {
+    ByOwnerHere,
+    ByNobody,
+}
+
+/// What this turn stands as for reads — decided here, where every turn of a
+/// session meets, and never left over from the turn before: only a turn its
+/// owner typed stands as the owner (a secret file may be asked of them);
+/// any other keeps how freely it may look and nothing more.
+fn stand_for_reads(engine: &mut crate::engine::AgentEngine, typed: Typed) {
+    use crate::engine::permission::ReadOrigin;
+    let was = engine.session_spec().read_origin;
+    let stands = match typed {
+        Typed::ByOwnerHere => ReadOrigin::LocalOwner,
+        Typed::ByNobody => was.unattended(),
+    };
+    if stands != was {
+        engine.respec(|spec| spec.read_origin = stands);
+    }
+}
+
 pub(crate) async fn run_session_turn(
     ctx: &ChatRunCtx,
     engine: &mut crate::engine::AgentEngine,
     manager: &Arc<AgentManager>,
     max_live_msgs: Option<usize>,
+    typed: Typed,
 ) {
+    stand_for_reads(engine, typed);
     // Delegated tasks must inherit the session, regardless of the turn's driver.
     bind_turn_session(engine, ctx.session_id.clone());
     // Its place is the running one while it runs, unless whoever took the
@@ -1549,13 +1576,15 @@ pub(crate) async fn start_turn(
         // A person's turn: the session's spec typed by this policy — the
         // lead's tools, verbatim, its memory the turn's (an app's or a
         // mission's keeps less of the biography).
-        let mut spec = typed_spec(&state_clone, &session_id_for_queue, &engine, &policy, (session_creator, req_level));
-        if origin == TurnOrigin::LocalPerson && !is_consumer && sender.is_none()
+        let spec = typed_spec(&state_clone, &session_id_for_queue, &engine, &policy, (session_creator, req_level));
+        let typed = if origin == TurnOrigin::LocalPerson && !is_consumer && sender.is_none()
             && session_creator == "user" && turn_place.skill.is_none()
             && spec.preset == crate::engine::session_spec::Preset::Chat
         {
-            spec.read_origin = crate::engine::permission::ReadOrigin::LocalOwner;
-        }
+            Typed::ByOwnerHere
+        } else {
+            Typed::ByNobody
+        };
         spec.apply(&mut engine);
         // A chat turn withholds nothing and names no language of its own
         // (its message may: `(lang en)`); its surface may show the hint.
@@ -1594,7 +1623,7 @@ pub(crate) async fn start_turn(
             turn,
         };
 
-        run_session_turn(&ctx, &mut engine, &manager, None).await;
+        run_session_turn(&ctx, &mut engine, &manager, None, typed).await;
         hear_her_at_table(&state_clone, &engine, &ctx, &session_id_for_queue);
 
         // TurnComplete gives the Web UI a single finalizer.
@@ -1959,5 +1988,40 @@ mod tests {
     #[test]
     fn auto_title_empty_returns_placeholder() {
         assert_eq!(auto_session_title("   "), "New Chat");
+    }
+}
+
+#[cfg(test)]
+mod owner_standing_lock {
+    use crate::server::lock_scan::production_code;
+
+    /// A tripwire for the plain forms, not a proof: only the person's door
+    /// says a turn was typed by the owner, and only the one function every
+    /// session turn passes through writes the owner's standing.
+    #[test]
+    fn only_the_persons_door_says_the_owner_typed_a_turn() {
+        let mut said = Vec::new();
+        let mut written = Vec::new();
+        for (rel, code) in production_code(&["src", "crates/linggen-engine/src"]) {
+            // A test file is a module its parent marks as one.
+            if rel.ends_with("tests.rs") {
+                continue;
+            }
+            for _ in 0..code.matches("Typed::ByOwnerHere").count() {
+                said.push(rel.clone());
+            }
+            for _ in 0..code.matches("ReadOrigin::LocalOwner").count() {
+                written.push(rel.clone());
+            }
+        }
+        // The door, and the match in `stand_for_reads`.
+        assert_eq!(said, ["src/server/chat/handler.rs", "src/server/chat/handler.rs"], "{said:?}");
+        // `stand_for_reads` writes it; the read rule reads it.
+        let outside: Vec<_> = written
+            .iter()
+            .filter(|rel| *rel != "src/server/chat/handler.rs" && !rel.ends_with("permission/read_scope.rs"))
+            .collect();
+        assert!(outside.is_empty(), "the owner's standing is written outside its one place: {outside:?}");
+        assert_eq!(written.iter().filter(|rel| *rel == "src/server/chat/handler.rs").count(), 1, "{written:?}");
     }
 }
