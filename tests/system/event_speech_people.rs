@@ -129,8 +129,10 @@ async fn a_reply_ready_herald_without_the_envelope_says_nothing() {
     }
 }
 
+/// Said once on her stage, and never a row of the thread: the reply's row
+/// carries its mark instead (`tests/system/heralds.rs`).
 #[tokio::test]
-async fn a_reply_ready_herald_in_an_envelope_is_one_row_and_one_line() {
+async fn a_reply_ready_herald_in_an_envelope_is_one_line_and_no_row() {
     let w = ling_finishes_while_away(say("HERALD-LINE your reply is ready.")).await;
     let said: Vec<_> = w
         .events()
@@ -138,7 +140,7 @@ async fn a_reply_ready_herald_in_an_envelope_is_one_row_and_one_line() {
         .filter(|e| e["kind"] == "pet_speak" && e["text"].as_str().is_some_and(|t| t.contains("HERALD-LINE")))
         .collect();
     assert_eq!(said.len(), 1, "{said:?}");
-    assert_eq!(every_row(&w).matches("HERALD-LINE").count(), 1, "one row");
+    assert_eq!(every_row(&w).matches("HERALD-LINE").count(), 0, "a notice became a row");
 }
 
 /// A question waits in a turn of Ling's (holding the day's session) while the
