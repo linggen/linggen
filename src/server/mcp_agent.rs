@@ -33,9 +33,11 @@ use crate::engine::session_spec::delegate::tool_scope as delegate_tool_scope;
 use crate::engine::session_spec::delegate::TOOLS_PARAM;
 use crate::engine::session_spec::{Covered, PresetGrants, SessionSpec, Tools};
 
-/// The folder a write run may change: an existing directory, absolute, and
-/// never `/` or the home folder itself — a task gets a checkout, not a disk.
-pub(super) fn write_root(dir: &str) -> Result<PathBuf, String> {
+/// The folder a caller may hand a run — as `write_dir` or in a preset grant.
+/// The one place that decides it: an existing directory, absolute; never `/`
+/// or the home folder itself (a task gets a checkout, not a disk); and never
+/// Linggen's own folder, one inside it, or one holding it.
+pub(super) fn write_root(dir: &str, own_home: &std::path::Path) -> Result<PathBuf, String> {
     let path = crate::util::resolve_path(std::path::Path::new(dir.trim()));
     if !path.is_absolute() || !path.is_dir() {
         return Err(format!(
@@ -48,8 +50,16 @@ pub(super) fn write_root(dir: &str) -> Result<PathBuf, String> {
             "write_dir is too wide: {dir} — pass the task's own checkout"
         ));
     }
+    let real = |p: &std::path::Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    let (path_real, own_real) = (real(&path), real(own_home));
+    if path_real.starts_with(&own_real) || own_real.starts_with(&path_real) {
+        return Err(OWN_FOLDER_REFUSED.into());
+    }
     Ok(path)
 }
+
+/// What a caller reads when the folder it named is Linggen's own.
+pub(super) const OWN_FOLDER_REFUSED: &str = "Linggen's own folder is never granted";
 
 /// Truncate a prompt to a session title.
 fn title_from_prompt(prompt: &str) -> String {
@@ -225,7 +235,9 @@ pub async fn run(
     };
 
     let root = workspace_root();
-    let write = write_dir.map(write_root).transpose()?;
+    let write = write_dir
+        .map(|dir| write_root(dir, crate::paths::linggen_home()))
+        .transpose()?;
     let agent_id = agent
         .map(|a| a.trim().to_lowercase())
         .unwrap_or_else(|| "ling".to_string());
@@ -2519,5 +2531,33 @@ mod permit_tests {
         let write = delegate_tool_scope(true).unwrap();
         assert!(!read.contains("Bash") && write.contains("Bash") && write.contains("Edit"));
         assert!(!write.contains("Task") && !write.contains("AskUser"));
+    }
+}
+
+#[cfg(test)]
+mod write_root_tests {
+    /// The folder a write run is handed is never Linggen's own folder, one
+    /// inside it, or one holding it — the rule preset grants follow, because
+    /// both ask `write_root`.
+    #[test]
+    fn a_write_run_is_never_handed_linggens_own_folder() {
+        let home = tempfile::tempdir().unwrap();
+        let own = home.path().join(".linggen");
+        std::fs::create_dir_all(own.join("config")).unwrap();
+        let work = home.path().join("work");
+        std::fs::create_dir_all(&work).unwrap();
+        for inside in [own.clone(), own.join("config")] {
+            assert!(
+                super::write_root(&inside.to_string_lossy(), &own).is_err(),
+                "handed out: {}",
+                inside.display()
+            );
+        }
+        // A folder holding Linggen's own is refused too.
+        assert_eq!(
+            super::write_root(&home.path().to_string_lossy(), &own).unwrap_err(),
+            super::OWN_FOLDER_REFUSED
+        );
+        assert!(super::write_root(&work.to_string_lossy(), &own).is_ok());
     }
 }
