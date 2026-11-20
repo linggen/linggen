@@ -1,7 +1,6 @@
 use super::types::*;
 use crate::engine::actions::ModelAction;
 use crate::engine::render::render_tool_result;
-use crate::engine::streaming::check_context_staleness;
 use crate::engine::tools::{self, ToolCall};
 use crate::message::ChatMessage;
 use std::collections::HashSet;
@@ -376,9 +375,9 @@ impl AgentEngine {
         // the runtime directly. The staleness check is CPU-bound — moved
         // off the runtime via `spawn_blocking`.
         let cached_hash = self.cached_system_prompt.as_ref().map(|c| c.files_hash);
-        let staleness_ws_root = self.cfg.ws_root.clone();
+        let scope = self.instruction_scope();
         let staleness_task = tokio::task::spawn_blocking(move || {
-            check_context_staleness(cached_hash, &staleness_ws_root)
+            cached_hash.is_some_and(|hash| scope.load().fingerprint() != hash)
         });
 
         let tool_futures = ready.into_iter().map(|(idx, call, exec)| {

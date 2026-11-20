@@ -66,7 +66,7 @@ A `session.yaml` written before this rule with no `cwd` is read as its project, 
 
 1. **New chat** — starts in the default workspace. No project picker — just click `+` and go.
 2. **Agent or user runs `cd`** — after any bash command, the backend checks the new cwd.
-3. **Git detection** — if `.git/` exists in the cwd or any parent up to `$HOME` (never above it; home itself is never a project), the session enters **project mode** for that git root. The engine loads the project's `CLAUDE.md`, agents, permissions, and git context.
+3. **Git detection** — if `.git/` exists in the cwd or any parent up to `$HOME` (never above it; home itself is never a project), the session enters **project mode** for that git root. The engine uses that root for project agents and git context. Instruction loading does not require Git.
 4. **Leaving a project** — the project is sticky: a `cd` to a folder outside any git repo moves the working folder but keeps the last project (a shell bouncing out of the repo keeps it); a `cd` into another repo switches it. A session that has never been in a repo stays in **home mode**.
 5. **Claude sessions** — the SDK reports its main thread's `cd` (a subagent's is ignored), and the session moves the same way. The SDK conversation still resumes in the folder it started in.
 
@@ -75,7 +75,7 @@ A `session.yaml` written before this rule with no `cwd` is read as its project, 
 | Aspect | Home mode | Project mode |
 |:-------|:----------|:-------------|
 | cwd | default workspace, or any non-git folder | anywhere within the git repo |
-| CLAUDE.md | not loaded outside a git repo | loaded from git root + parents, up to `$HOME` |
+| Project instructions | workspace root and its parents | git workspace root and its parents |
 | agents/ | global only (`~/.linggen/agents/`) | global + project (`{git_root}/agents/`) |
 | Permissions | session `permission.json` path grants | session `permission.json` path grants |
 | Git context | none | branch, status, recent commits |
@@ -237,7 +237,7 @@ Each session carries:
 - **System prompt** — rebuilt each turn from current agent + skill + environment + project instructions
 - **Title** — can be renamed
 - **Working folder** — changes when agent or user runs `cd`. Triggers project detection.
-- **Project context** — loads/unloads CLAUDE.md and git info when entering/leaving a git repo. Permissions are still session-scoped and recomputed from path grants.
+- **Project context** — switching workspace roots invalidates the instruction prompt and changes git context. Permissions are still session-scoped and recomputed from path grants.
 
 ### What's fixed for the session lifetime
 
@@ -334,13 +334,41 @@ The system prompt is rebuilt each turn from layers. Which layers are included de
 [4]  Active skill body       — when session has a bound skill
 [5]  Environment             — always (platform, cwd, date; this machine is the person's own and Ling runs on it — its live state is a shell command away)
 [5a] Not available here      — owner sessions: tools the agent would have but this machine can't run, one fact line each (tool-spec.md § Offered only where it runs); stable prefix, changes on sign-in or install
-[6]  Project instructions    — when in project mode and CLAUDE.md exists at git root
+[6]  Project instructions    — native full turns with project context, even without Git
 [7]  Memory                  — global memory always; project memory when in project mode
 [8]  Tool schemas            — when effective_tools is non-empty
 [9]  Plan mode instructions  — when plan_mode is active
 [10] Delegation targets      — when Task tool is in effective_tools
 [11] Plan execution context  — when plan is approved/executing
 ```
+
+### Native project instructions
+
+Full native turns load `AGENTS.md`, `CLAUDE.md`, `.cursorrules` and
+`CLAUDE.local.md` at the workspace root and its parents, outermost first.
+A workspace under home stops at home (inclusive); one outside home can walk
+up to the filesystem root. Git is not required. Owner chat, delegates,
+missions and skill sessions get this context; consumers do not. Claude SDK
+sessions keep their own loader. Linggen does not look up `~/.claude/CLAUDE.md`
+or `.claude/rules/` here.
+
+An `@path` in rule text, outside Markdown code, inlines the named file with
+its source. Relative paths start beside the importing file. If the exact
+path does not name a file, the loader retries without trailing sentence
+punctuation and leaves that punctuation in the text. Missing paths and ordinary mentions stay as written;
+chat messages do not expand imports.
+Imports stay inside the canonical workspace, use the unattended read gate,
+and never include protected files. A refusal leaves a one-line note in the
+prompt instead. Discovered rule symlinks follow the same gate as imports.
+A discovered rule that cannot be loaded leaves a one-line reason in its
+section. The loader accepts regular UTF-8 text up to 256 KiB per file and
+512 KiB total, with five import levels and up to 128 references to existing
+files per load. It never executes what it reads.
+
+Instructions are part of the stable prompt. Each full turn reloads them;
+the parallel-tool staleness check uses the same loader and includes parent
+and imported files. Subfolder rules below the workspace are not discovered
+from tool paths yet.
 
 ### Beside the turn
 

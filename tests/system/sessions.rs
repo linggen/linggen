@@ -21,6 +21,26 @@ async fn work_create_code() {
 }
 
 #[tokio::test]
+async fn native_model_receives_imported_rules_but_not_secret_or_chat_imports() {
+    let w = World::start(Setup::default().script(Agent::Ling, vec![text("Done.")])).await;
+    let root = w.work();
+    let project = std::path::Path::new(&root);
+    let secret = w.home.linggen_home().join("account.toml");
+    std::fs::write(&secret, "INVENTED-ACCOUNT-SECRET").unwrap();
+    std::fs::write(project.join("rule.md"), "IMPORTED-COMPILER-CONVENTION").unwrap();
+    std::fs::write(project.join("chat-only.md"), "UNIMPORTED-CHAT-FILE").unwrap();
+    std::fs::write(project.join("CLAUDE.md"), format!("@rule.md\n@{}", secret.display())).unwrap();
+    let sid = w.api.create_session(json!({"title":"Rules", "project_root":root, "work":"code"})).await;
+    w.turn(&sid, &root, "The literal text is @chat-only.md", Agent::Ling).await;
+    let calls = w.model.calls_of(Agent::Ling);
+    let sent = calls.first().expect("native model request").body.to_string();
+    assert!(sent.contains("IMPORTED-COMPILER-CONVENTION") && sent.contains("Imported from"), "{sent}");
+    assert!(sent.contains("not loaded: outside the project"), "{sent}");
+    assert!(!sent.contains("INVENTED-ACCOUNT-SECRET"));
+    assert!(!sent.contains("UNIMPORTED-CHAT-FILE"));
+}
+
+#[tokio::test]
 async fn work_create_app_refused() {
     let w = World::start(Setup::default()).await;
     let dir = w.home.linggen_home().join("sessions");

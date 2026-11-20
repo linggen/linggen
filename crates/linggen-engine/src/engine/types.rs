@@ -609,8 +609,7 @@ impl CutAt {
 /// Cached system prompt with hash for quick staleness checks.
 pub struct CachedSystemPrompt {
     pub input_hash: u64,
-    /// The project files' hash when it was built (`context_files_hash`),
-    /// what the mid-turn check compares against.
+    /// Fingerprint of the instruction snapshot rendered into this prompt.
     pub files_hash: u64,
     pub content: String,
 }

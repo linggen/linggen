@@ -138,7 +138,7 @@ The system prompt is assembled from layers:
 2. **Agent body** (from agent .md) — always present, sets identity and adaptation rules
 3. **Skill frame** (from active SKILL.md) — when skill is active
 4. **Environment** — platform, workspace
-5. **Project instructions** (CLAUDE.md) — when present
+5. **Project instructions** — native full turns read workspace and parent rules, including `CLAUDE.local.md` and permitted `@path` imports; see `session-spec.md` § Native project instructions
 6. **Tool schemas + guidelines** — only when effective tools is non-empty
 7. **Delegation targets** — only when Task tool is available
 8. **Memory** — only when Write tool is available

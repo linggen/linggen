@@ -5522,10 +5522,12 @@ dependencies = [
  "image",
  "libc",
  "linggen-memory",
+ "pulldown-cmark",
  "rand 0.10.4",
  "regex",
  "reqwest 0.12.28",
  "rust-embed",
+ "rustix",
  "serde",
  "serde_json",
  "serde_norway",
@@ -7027,6 +7029,17 @@ checksum = "6f42ea446cab60335f76979ec15e12619a2165b5ae2c12166bef27d283a9fadf"
 dependencies = [
  "idna",
  "psl-types",
+]
+
+[[package]]
+name = "pulldown-cmark"
+version = "0.13.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3db2be46835f013dd3f4fa7f5f7402c537787b54ebb6fe2b94bbdd7e2669bb7b"
+dependencies = [
+ "bitflags 2.13.2",
+ "memchr",
+ "unicase",
 ]
 
 [[package]]
