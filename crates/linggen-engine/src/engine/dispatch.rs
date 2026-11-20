@@ -103,6 +103,7 @@ impl AgentEngine {
             interactive: bool,
             work: Option<crate::engine::session_spec::Work>,
             ceiling: Option<crate::engine::permission::PermissionMode>,
+            read_origin: crate::engine::permission::ReadOrigin,
             background: bool,
             started: Option<tokio::sync::oneshot::Sender<String>>,
         }
@@ -128,6 +129,7 @@ impl AgentEngine {
                         interactive: self.session_permissions.interactive,
                         work: self.tools.builtins.parent_work,
                         ceiling: self.tools.builtins.parent_ceiling,
+                        read_origin: self.read_origin().task_child(),
                         background: da.run_in_background,
                         started: None,
                     });
@@ -205,7 +207,7 @@ impl AgentEngine {
                     spawn.allowed_tools,
                     spawn.path_modes,
                     spawn.interactive,
-                    (spawn.work, spawn.ceiling),
+                    (spawn.work, spawn.ceiling, spawn.read_origin),
                     true,
                     spawn.started,
                 ))
@@ -272,7 +274,7 @@ impl AgentEngine {
                     spawn.allowed_tools,
                     spawn.path_modes,
                     spawn.interactive,
-                    (spawn.work, spawn.ceiling),
+                    (spawn.work, spawn.ceiling, spawn.read_origin),
                     false,
                     Some(started_tx),
                 ))
@@ -379,9 +381,8 @@ impl AgentEngine {
             check_context_staleness(cached_hash, &staleness_ws_root)
         });
 
-        let tools_clone = self.tools.clone();
         let tool_futures = ready.into_iter().map(|(idx, call, exec)| {
-            let tools = tools_clone.clone();
+            let tools = self.tools_for_call(&exec);
             async move {
                 let result = tools.execute(call).await;
                 (idx, exec, result)

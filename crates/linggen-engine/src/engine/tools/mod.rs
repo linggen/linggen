@@ -8,6 +8,7 @@ pub(crate) use builtin::RightNow;
 
 pub mod browser_tool;
 mod file_tools;
+pub(crate) use file_tools::glob_roots;
 mod foreground_shell;
 mod read_picture;
 pub use read_picture::human_size;
@@ -36,7 +37,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
@@ -357,6 +358,7 @@ type SeenFiles = HashMap<Option<String>, HashMap<PathBuf, write_tools::FileStamp
 #[derive(Clone)]
 pub struct Tools {
     root: PathBuf,
+    pub(crate) read_filter: Option<Arc<dyn Fn(&Path) -> bool + Send + Sync>>,
     /// Per-session working directory. Key = session_id, value = cwd.
     /// Sessions without an entry default to `root`.
     cwd_by_session: Arc<std::sync::Mutex<std::collections::HashMap<String, PathBuf>>>,
@@ -384,6 +386,7 @@ pub struct Tools {
     /// The turn's ceiling, carried to `Task` children (set by
     /// `SessionSpec::apply`).
     pub(crate) parent_ceiling: Option<super::permission::PermissionMode>,
+    pub(crate) parent_read_origin: super::permission::ReadOrigin,
     /// Effective tool set of the loop dispatching the current call.
     pub(crate) parent_allowed_tools: Option<std::collections::HashSet<String>>,
     /// Parent engine's path-mode grants, propagated to subagents via delegation.
@@ -427,6 +430,7 @@ impl Tools {
         let cwd_by_session = Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
         Ok(Self {
             root,
+            read_filter: None,
             cwd_by_session,
             seen_files: Default::default(),
             manager: None,
@@ -443,6 +447,7 @@ impl Tools {
             delegated_session: false,
             person_spoke: false,
             parent_ceiling: None,
+            parent_read_origin: Default::default(),
             parent_allowed_tools: None,
             parent_path_modes: Vec::new(),
             parent_interactive: true,
@@ -690,6 +695,16 @@ impl Tools {
         tokio::task::spawn_blocking(move || f(tools))
             .await
             .map_err(|e| anyhow::anyhow!("{label} panic: {e}"))?
+    }
+
+    pub(super) fn permits_read(&self, path: &Path) -> bool {
+        self.read_filter.as_ref().is_none_or(|filter| filter(path))
+    }
+
+    pub(super) fn filter_read_walk(&self, walker: &mut ignore::WalkBuilder) {
+        if let Some(filter) = self.read_filter.clone() {
+            walker.filter_entry(move |entry| filter(entry.path()));
+        }
     }
 
     pub async fn execute(&self, mut call: ToolCall) -> Result<ToolResult> {

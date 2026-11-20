@@ -8,6 +8,7 @@ use super::classify::{classify_bash, dequote, literal_shell_commands, reads_sed_
 use super::pattern_text::text_words;
 use super::shell_text::strip_heredoc_bodies;
 use super::store::SessionPermissions;
+use super::read_scope::{self, ReadDecision, ReadOrigin};
 use crate::util::expand_tilde;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -95,6 +96,7 @@ pub enum PromptKind {
         /// The command's effect leaves this machine (`outward`): one answer
         /// covers this one command — allow once or deny, no grant offered.
         outward: bool,
+        scoped_read: bool,
     },
 }
 
@@ -638,7 +640,7 @@ fn owners_alone(
 /// A read inside the session's own folder (its tasks' logs): allowed
 /// without a grant. Never a write, and never another session's folder —
 /// both sides are resolved, so `<own>/../<other>` is the other one.
-fn reads_own_dir(perms: &SessionPermissions, tier: PermissionMode, target: &Path) -> bool {
+pub(super) fn reads_own_dir(perms: &SessionPermissions, tier: PermissionMode, target: &Path) -> bool {
     let Some(own) = perms
         .own_dir
         .as_deref()
@@ -747,6 +749,34 @@ pub fn check_permission_for(
     coding: bool,
     ceiling: Option<PermissionMode>,
 ) -> PermissionCheckResult {
+    check_permission_at_turn(tool, bash_command, file_path, session_cwd, session_perms,
+        action_tier_override, coding, ceiling, ReadOrigin::Other, None)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn check_permission_at_turn(
+    tool: &str,
+    bash_command: Option<&str>,
+    file_path: Option<&str>,
+    session_cwd: &Path,
+    session_perms: &SessionPermissions,
+    action_tier_override: Option<PermissionMode>,
+    coding: bool,
+    ceiling: Option<PermissionMode>,
+    origin: ReadOrigin,
+    declined: Option<&super::DeclinedScopes>,
+) -> PermissionCheckResult {
+    check_permission_with_read_approvals(tool, bash_command, file_path, session_cwd, session_perms,
+        action_tier_override, coding, ceiling, origin, declined, &[])
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn check_permission_with_read_approvals(
+    tool: &str, bash_command: Option<&str>, file_path: Option<&str>, session_cwd: &Path,
+    session_perms: &SessionPermissions, action_tier_override: Option<PermissionMode>,
+    coding: bool, ceiling: Option<PermissionMode>, origin: ReadOrigin,
+    declined: Option<&super::DeclinedScopes>, approved: &[PathBuf],
+) -> PermissionCheckResult {
     // `$HOME` and `$?` are read as the shell reads them, so a command naming
     // the home folder is judged by the path it reaches (`known_vars`).
     let read_as = bash_command
@@ -768,6 +798,7 @@ pub fn check_permission_for(
         session_perms,
         (action_tier_override, ceiling),
         coding,
+        (origin, declined, approved),
     );
     let result = match bash_command.filter(|cmd| {
         tool == "Bash" && (super::outward::is_outward(cmd)
@@ -804,6 +835,7 @@ fn check_grants(
     session_perms: &SessionPermissions,
     (action_tier_override, ceiling): (Option<PermissionMode>, Option<PermissionMode>),
     coding: bool,
+    (origin, declined, approved): (ReadOrigin, Option<&super::DeclinedScopes>, &[PathBuf]),
 ) -> PermissionCheckResult {
     // 0a. Hardcoded deny floor (admin mode does not bypass).
     if tool == "Bash" {
@@ -908,7 +940,30 @@ fn check_grants(
     // file it really reaches, not cwd.
     if tool == "Bash" {
         if let Some(cmd) = bash_command {
+            if action_tier_override.is_none() {
+                if let Some(targets) = super::read_shell::targets(cmd, session_cwd, coding) {
+                    if action_tier == PermissionMode::Read || targets.has_pattern {
+                        let mut ask = None;
+                        for target in &targets.paths {
+                            match check_read_target(target, session_cwd, session_perms,
+                                &format!("Bash {cmd}"), coding, ceiling, origin, declined, approved) {
+                                PermissionCheckResult::Allowed => {},
+                                decision @ PermissionCheckResult::Blocked(_) => return decision,
+                                decision @ PermissionCheckResult::NeedsPrompt(_) => { ask.get_or_insert(decision); },
+                            }
+                        }
+                        if !targets.paths.is_empty() {
+                            return ask.unwrap_or(PermissionCheckResult::Allowed);
+                        }
+                    }
+                }
+            }
             let targets = command_target_levels(cmd, session_cwd);
+            if action_tier == PermissionMode::Read && targets.iter().any(|(path, _)| {
+                super::sensitive::protected(path).is_some() && path.is_dir()
+            }) && super::read_shell::recursive_search(cmd) {
+                return PermissionCheckResult::Blocked("Use a file search to read a protected directory.".into());
+            }
             if !targets.is_empty() {
                 let mut judged = false;
                 let mut exempt_log = false;
@@ -929,6 +984,15 @@ fn check_grants(
                     exempt_log |= own_log_read;
                     if let Some(c) = ceiling.filter(|_| owners_alone(session_perms, (tier, ceiling), arg_path)) {
                         return beyond_ceiling(PermissionMode::Admin, c);
+                    }
+                    if action_tier == PermissionMode::Read && action_tier_override.is_none() {
+                        let decision = check_read_target(arg_path, session_cwd, session_perms,
+                            &format!("Bash {cmd}"), false, ceiling, origin, declined, approved);
+                        if !matches!(decision, PermissionCheckResult::Allowed) {
+                            return decision;
+                        }
+                        judged |= full;
+                        continue;
                     }
                     // OS temp dir is always-available scratch, and a session
                     // reads its own folder — don't gate them.
@@ -983,6 +1047,11 @@ fn check_grants(
         return beyond_ceiling(PermissionMode::Admin, c);
     }
 
+    if action_tier == PermissionMode::Read && matches!(tool, "Read" | "Glob" | "Grep") {
+        return check_read_target(&target_path, session_cwd, session_perms, tool,
+            coding, ceiling, origin, declined, approved);
+    }
+
     // 3b. OS temp dir is always-available scratch (deny floor still applies);
     // a session reads its own folder.
     if is_under_temp(&target_path) || reads_own_dir(session_perms, action_tier, &target_path) {
@@ -1006,6 +1075,43 @@ fn check_grants(
         format!("{} {}", tool, summary),
         (coding && tool == "Bash").then(|| bash_grant_reason(&target_path, session_cwd, bash_reason.as_ref())),
     )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn check_read_target(
+    target: &Path, cwd: &Path, perms: &SessionPermissions, summary: &str,
+    coding: bool, ceiling: Option<PermissionMode>, origin: ReadOrigin,
+    declined: Option<&super::DeclinedScopes>, approved: &[PathBuf],
+) -> PermissionCheckResult {
+    if let Some(c) = ceiling.filter(|_| owners_alone(perms, (PermissionMode::Read, ceiling), target)) {
+        return beyond_ceiling(PermissionMode::Admin, c);
+    }
+    if declined.is_some_and(|d| d.covering(&target.to_string_lossy()).is_some()) {
+        // Return the normal request so the responder reports the prior refusal.
+        return needs_prompt(target, cwd, PermissionMode::Read, summary.into(), None);
+    }
+    match read_scope::decide(target, perms, origin, coding, ceiling.is_some()) {
+        ReadDecision::Allow => PermissionCheckResult::Allowed,
+        ReadDecision::Ask if approved.contains(&super::sensitive::resolved(target)) => PermissionCheckResult::Allowed,
+        ReadDecision::Ask => {
+            let mut request = needs_prompt(target, cwd, PermissionMode::Read, summary.into(), None);
+            if super::sensitive::protected(target).is_none() {
+                return request;
+            }
+            if let PermissionCheckResult::NeedsPrompt(PromptKind::ExceedsCeiling { scoped_read, directories, path, .. }) = &mut request {
+                *scoped_read = true;
+                directories.retain(|dir| matches!(read_scope::decide(target, &SessionPermissions {
+                    path_modes: vec![super::PathMode { path: dir.clone(), mode: PermissionMode::Read }],
+                    ..perms.clone()
+                }, origin, false, ceiling.is_some()), ReadDecision::Allow));
+                if !directories.contains(path) {
+                    directories.push(path.clone());
+                }
+            }
+            request
+        },
+        ReadDecision::Refuse => PermissionCheckResult::Blocked("This read requires the local owner's approval.".into()),
+    }
 }
 
 fn bash_grant_reason(target: &Path, cwd: &Path, class: Option<&BashReason>) -> BashReason {
@@ -1039,6 +1145,7 @@ fn needs_prompt(
         tool_summary: summary,
         reason,
         outward: false,
+        scoped_read: false,
     })
 }
 
@@ -1087,6 +1194,7 @@ fn ask_outward(
         tool_summary,
         reason,
         outward: true,
+        scoped_read: false,
     })
 }
 
@@ -1578,7 +1686,7 @@ fn shell_words(cmd: &str) -> Vec<String> {
 /// is joined onto the session cwd so its real target — including any `..`
 /// traversal, which `normalize_path` then collapses — is what gets gated,
 /// rather than the process-global cwd that `canonicalize` would otherwise use.
-fn resolve_bash_arg(path_arg: &str, session_cwd: &Path) -> PathBuf {
+pub(super) fn resolve_bash_arg(path_arg: &str, session_cwd: &Path) -> PathBuf {
     if path_arg == "~" || path_arg.starts_with("~/") || path_arg.starts_with('/') {
         expand_tilde(Path::new(path_arg), dirs::home_dir().as_deref())
     } else {

@@ -14,7 +14,8 @@ fn outcome(r: PermissionCheckResult) -> Outcome {
 }
 
 fn bash(cmd: &str, cwd: &Path, grants: &SessionPermissions) -> Outcome {
-    outcome(check_permission_for("Bash", Some(cmd), None, cwd, grants, None, true, None))
+    outcome(check_permission_at_turn("Bash", Some(cmd), None, cwd, grants, None, true, None,
+        ReadOrigin::LocalDelegate, None))
 }
 
 fn grant(root: &str, mode: PermissionMode) -> SessionPermissions {
@@ -75,12 +76,19 @@ fn read_policy_command_fixtures() {
         ("grep -r token S", Refuse),
     ];
     let failures: Vec<_> = tests.into_iter().filter_map(|(cmd, want)| {
-        let cmd = cmd.replace("C/", &format!("{}/", cargo.display()))
-            .replace("O/", &format!("{}/", own.display()))
-            .replace("X/", &format!("{}/", other.display()))
-            .replace("S/", &format!("{}/", state.display()))
-            .replace(" S", &format!(" {}", state.display()))
-            .replace(" T", &format!(" {}", tmp.display()));
+        let cmd = cmd.split(' ').map(|word| {
+            for (marker, root) in [("C/", cargo.as_path()), ("O/", own.as_path()), ("X/", other.as_path()), ("S/", state.as_path())] {
+                if let Some(suffix) = word.strip_prefix(marker) {
+                    return root.join(suffix).display().to_string();
+                }
+            }
+            match word {
+                "S" => state.display().to_string(),
+                "T" => tmp.display().to_string(),
+                "T;" => format!("{};", tmp.display()),
+                _ => word.to_owned(),
+            }
+        }).collect::<Vec<_>>().join(" ");
         let got = bash(&cmd, &cwd, &grants);
         (want != got).then(|| format!("{cmd}: expected {want:?}, got {got:?}"))
     }).collect();
@@ -119,7 +127,10 @@ fn read_policy_protected_places_require_a_specific_grant() {
 fn read_policy_account_file_requires_local_owner_or_refuses() {
     let root = crate::paths::linggen_home();
     let path = root.join("account.toml");
-    let read = |grants: &SessionPermissions| outcome(check_permission("Read", None, path.to_str(), root, grants, None));
+    let read = |grants: &SessionPermissions| outcome(check_permission_at_turn(
+        "Read", None, path.to_str(), root, grants, None, false, None,
+        if grants.interactive { ReadOrigin::LocalOwner } else { ReadOrigin::LocalDelegate }, None,
+    ));
     let broad = grant("*", PermissionMode::Admin);
     let named = grant(path.to_str().unwrap(), PermissionMode::Read);
     let parent = grant(root.to_str().unwrap(), PermissionMode::Read);

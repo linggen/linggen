@@ -146,12 +146,11 @@ impl Tools {
         let mut matches = Vec::new();
         let mut searcher = Searcher::new();
         let cwd = self.cwd();
-        let walker = WalkBuilder::new(&cwd)
-            .standard_filters(true)
-            .hidden(true)
-            .build();
+        let mut walker = WalkBuilder::new(&cwd);
+        walker.standard_filters(true).hidden(true);
+        self.filter_read_walk(&mut walker);
 
-        for entry in walker {
+        for entry in walker.build() {
             let entry = match entry {
                 Ok(v) => v,
                 Err(_) => continue,

@@ -115,6 +115,7 @@ async fn agent(deps: &McpDeps<'_>, op: AgentOp, args: Value) -> Value {
                 args.get("model_fallback").and_then(Value::as_bool),
                 field("work"),
                 args.get("grants"),
+                deps.read_origin,
             )
             .await
         }

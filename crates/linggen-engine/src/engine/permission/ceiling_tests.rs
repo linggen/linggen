@@ -89,7 +89,7 @@ fn a_turn_under_a_ceiling_reaches_nothing_in_linggens_own_folder() {
     let secret = home.join("credentials.json");
     let secret = secret.to_str().unwrap();
     let at = |tool: &str, cmd: Option<&str>, file: Option<&str>, ceiling| {
-        check_permission_for(tool, cmd, file, Path::new(WD), &perms, None, false, ceiling)
+        check_permission_at_turn(tool, cmd, file, Path::new(WD), &perms, None, false, ceiling, ReadOrigin::LocalOwner, None)
     };
     for ceiling in [Read, Edit] {
         assert!(refused(&at("Read", None, Some(secret), Some(ceiling))), "{ceiling}");
@@ -101,7 +101,7 @@ fn a_turn_under_a_ceiling_reaches_nothing_in_linggens_own_folder() {
     assert!(matches!(at("Read", None, Some(secret), None), PermissionCheckResult::NeedsPrompt(_)));
     let mut named = granted();
     named.set_path_mode(secret, Read);
-    let read = |perms| check_permission_for("Read", None, Some(secret), Path::new(WD), perms, None, false, None);
+    let read = |perms| check_permission_at_turn("Read", None, Some(secret), Path::new(WD), perms, None, false, None, ReadOrigin::LocalOwner, None);
     assert!(allowed(&read(&named)));
     let mut unattended = granted();
     unattended.interactive = false;

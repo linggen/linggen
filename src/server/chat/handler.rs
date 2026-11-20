@@ -919,15 +919,25 @@ pub(crate) enum TurnOrigin {
     /// outlived the restart (`admission::thaw`). It stamps no presence and
     /// waits behind the turn running, never interrupting it.
     Resumed,
+    /// An interactive request admitted at this machine.
+    LocalPerson,
 }
 
 pub(crate) async fn chat_handler(
     State(state): State<Arc<ServerState>>,
+    axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<std::net::SocketAddr>,
     headers: axum::http::HeaderMap,
     Json(mut req): Json<ChatRequest>,
 ) -> axum::response::Response {
     req.level = Some(crate::server::api::pair::caller_level(&headers));
-    start_turn(state, req, TurnOrigin::Person).await
+    let origin = if crate::server::api::ling_mem_connect::is_at_this_mac(peer, &headers)
+        && crate::memory_host::caller::token_from_headers(&headers).is_none()
+    {
+        TurnOrigin::LocalPerson
+    } else {
+        TurnOrigin::Person
+    };
+    start_turn(state, req, origin).await
 }
 
 /// The person's words to `agent_id` in an existing session, said somewhere
@@ -1126,7 +1136,7 @@ pub(crate) async fn start_turn(
     req: ChatRequest,
     origin: TurnOrigin,
 ) -> axum::response::Response {
-    if origin == TurnOrigin::Person {
+    if origin != TurnOrigin::Resumed {
         // Any user chat turn stamps the quiet clock — background mission work
         // (catch-up, deferrable cron fires) waits for a quiet window instead of
         // competing with the user for the model. See quiet_for_background.
@@ -1471,12 +1481,18 @@ pub(crate) async fn start_turn(
         // A person's turn: the session's spec typed by this policy — the
         // lead's tools, verbatim, its memory the turn's (an app's or a
         // mission's keeps less of the biography).
-        typed_spec(&state_clone, &session_id_for_queue, &engine, &policy, (session_creator, req_level))
-            .apply(&mut engine);
+        let mut spec = typed_spec(&state_clone, &session_id_for_queue, &engine, &policy, (session_creator, req_level));
+        if origin == TurnOrigin::LocalPerson && !is_consumer && sender.is_none()
+            && session_creator == "user" && turn_place.skill.is_none()
+            && spec.preset == crate::engine::session_spec::Preset::Chat
+        {
+            spec.read_origin = crate::engine::permission::ReadOrigin::LocalOwner;
+        }
+        spec.apply(&mut engine);
         // A chat turn withholds nothing and names no language of its own
         // (its message may: `(lang en)`); its surface may show the hint.
         let turn = crate::engine::turn_place::TurnSettings {
-            person_spoke: origin == TurnOrigin::Person && sender.is_none(),
+            person_spoke: origin != TurnOrigin::Resumed && sender.is_none(),
             followups: req_followups
                 && !is_consumer
                 && state.manager.get_config_snapshot().await.agent.suggest_followups,

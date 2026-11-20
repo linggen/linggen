@@ -120,6 +120,7 @@ fn render_data(render: Render, data: &Value) -> Value {
 struct McpDeps<'a> {
     bridge: &'a BridgeHub,
     state: Option<&'a Arc<ServerState>>,
+    read_origin: crate::engine::permission::ReadOrigin,
 }
 
 /// The view a caller gets: this machine everything, an approved computer
@@ -371,6 +372,14 @@ pub(crate) async fn post_handler(
     let deps = McpDeps {
         bridge: &state.bridge,
         state: Some(&state),
+        read_origin: if matches!(caller, Caller::Owner)
+            && crate::server::api::ling_mem_connect::is_at_this_mac(peer, &headers)
+            && caller::token_from_headers(&headers).is_none()
+        {
+            crate::engine::permission::ReadOrigin::LocalDelegate
+        } else {
+            Default::default()
+        },
     };
     match handle_rpc(&deps, view, &body).await {
         Some(response) => {

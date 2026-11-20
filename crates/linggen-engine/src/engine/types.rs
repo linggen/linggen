@@ -538,6 +538,7 @@ pub(crate) struct ReadyExec {
     pub canonical_tool: String,
     pub sig: String,
     pub original_args: JsonValue,
+    pub approved_reads: Vec<std::path::PathBuf>,
     pub tool_done_status: String,
     pub tool_failed_status: String,
     /// Unique ID for the content block (used by Web UI content-block events).

@@ -34,7 +34,10 @@ mod readable_shapes_tests;
 #[cfg(test)]
 mod read_policy_tests;
 mod scripts;
+mod sensitive;
 mod shell_text;
+mod read_scope;
+mod read_shell;
 mod store;
 #[cfg(test)]
 mod gate_copy_tests;
@@ -42,6 +45,10 @@ mod gate_copy_tests;
 mod outward_tests;
 
 pub use declined::DeclinedScopes;
+pub use read_scope::ReadOrigin;
+#[cfg(test)]
+use model::check_permission_at_turn;
+pub(crate) use model::check_permission_with_read_approvals;
 pub use manifest::{apply_grants, Grants, PathGrant};
 pub use model::{
     check_permission, check_permission_for, display_path, effective_mode_for_path, parse_skill_tier, PathMode,
