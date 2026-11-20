@@ -2138,10 +2138,10 @@ mod declined_gate_tests {
         let home = tempfile::tempdir_in(dirs::home_dir().unwrap()).unwrap();
         std::fs::create_dir_all(work.join(".claude")).unwrap();
         std::fs::write(work.join(".claude/settings.json"), serde_json::json!({"permissions": permissions}).to_string()).unwrap();
-        let mut engine = engine(work, pending, !interactive);
+        let mut engine = admin_engine(work, pending, interactive, !interactive);
+        let admin = engine.session_permissions.clone();
         crate::engine::session_spec::coding_caller_fixture().apply(&mut engine);
-        engine.session_permissions = SessionPermissions { interactive, ask_caller: !interactive, ..Default::default() };
-        engine.session_permissions.set_path_mode("*", PermissionMode::Admin);
+        engine.session_permissions = admin;
         engine.claude_rules = Arc::new(permission::ClaudeRules::load(Some(home.path()), work));
         engine
     }

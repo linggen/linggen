@@ -250,6 +250,11 @@ impl ClaudeRules {
 }
 
 impl ClaudeCall<'_> {
+    /// No rule to judge: the check is exactly as without the files.
+    pub(super) fn is_empty(&self) -> bool {
+        self.rules.rules.is_empty()
+    }
+
     /// The refusal of the first deny rule the call matches.
     pub(super) fn denies(&self, facts: &Facts<'_>) -> Option<String> {
         self.first(Kind::Deny, facts).map(|rule| {

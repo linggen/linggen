@@ -819,7 +819,8 @@ pub(crate) fn check_permission_under_rules(
     if inner.iter().any(|text| is_hardcoded_deny(text)) {
         return PermissionCheckResult::Blocked(BashReason::Floor.sentence(PermissionMode::Admin, ""));
     }
-    let facts = coding.then(|| call_facts(tool, bash_command, &inner, file_path, session_cwd));
+    let facts = (coding && !claude.is_empty())
+        .then(|| call_facts(tool, bash_command, &inner, file_path, session_cwd));
     if let Some(refusal) = facts.as_ref().and_then(|facts| claude.denies(facts)) {
         return PermissionCheckResult::Blocked(refusal);
     }
