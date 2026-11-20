@@ -1,5 +1,46 @@
 # Changelog
 
+## [2.5.2] - unreleased — the Mac app shows the web UI; rule files can import
+
+### One UI
+
+- **The Mac app's window shows the web UI itself.** Sessions, chat and every
+  settings page are the pages a browser shows; the app's separate face is
+  gone, and with it the second copy of settings.
+- **Apps are tabs in the Mac app.** Chat first, then each app. An opened app
+  stays loaded, so going from DJ to CFO and back finds both as they were. In a
+  browser nothing changes: an app opens in a new browser tab.
+- **Settings is one full page**, its sections declared once. Memory, Tools and
+  MCP, Devices, Phone and Data are now reachable from the Mac app; the Desktop
+  section shows only there.
+- **An app declares its own settings page** (`app.settings` in its `SKILL.md`)
+  and appears under Settings → Apps. No list in the engine names an app.
+- **Escape leaves settings**, never while you are typing in a field or an
+  editor.
+- **A browser opens a launched app only for the session it shows.** In the Mac
+  app a launch brings that app's tab forward and raises the window.
+
+### Rule files
+
+- **`@path` in a rule file imports that file** (`AGENTS.md`, `CLAUDE.md`,
+  `CLAUDE.local.md`, `.cursorrules`): relative to the file that names it, up
+  to five levels deep, never from a code span or block, and only when the path
+  names a file — an `@name` mention stays as written.
+- **`CLAUDE.local.md` is read** beside `CLAUDE.md`.
+- **An import is a read nobody was asked about**, so it brings in only what the
+  session may read without asking: files inside the project, never a
+  protected place. A rule file that is a link follows the same rule.
+- **A rule that is not loaded says so** in its place — refused, too large
+  (256 KiB a file, 512 KiB in all), not text.
+- **A change to a parent folder's rules or to an imported file** is picked up
+  on the next turn.
+
+### Permissions
+
+- **The folder a caller hands a run follows one rule**, for `write_dir` as for
+  a preset grant: an existing absolute folder, never `/`, the home folder, or
+  Linggen's own folder (or one inside it or holding it).
+
 ## [2.5.1] - 2026-11-20 — a coding session that asks less and says what it cost
 
 ### Permissions
