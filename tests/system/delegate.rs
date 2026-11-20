@@ -6,7 +6,7 @@ use crate::support::{error, text, tool, Setup, World};
 use serde_json::{json, Value};
 
 /// The one session an external host made.
-fn delegate_session(w: &World) -> String {
+pub(crate) fn delegate_session(w: &World) -> String {
     let dir = w.home.linggen_home().join("sessions");
     let mut made: Vec<String> = std::fs::read_dir(&dir)
         .unwrap()

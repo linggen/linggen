@@ -9,8 +9,8 @@ import { useInteractionStore } from '../../stores/interactionStore';
 import { useServerStore } from '../../stores/serverStore';
 import { useUserStore } from '../../stores/userStore';
 import { useUiStore } from '../../stores/uiStore';
-import { AskUserCard } from '../AskUserCard';
-import { ToolPermissionCard } from '../ToolPermissionCard';
+import { PendingAskCard } from '../PendingAskCard';
+import { isPermissionAsk } from '../../lib/askQueue.mts';
 import type {
   AgentInfo,
   ChatMessage,
@@ -506,9 +506,7 @@ export const ChatPanel: React.FC<{
         {pendingAskUser && onRespondToAskUser && !askUserBelongsToSubagent && (
           <div key={JSON.stringify([sessionId, pendingAskUser.questionId])} className="px-3 py-2">
             {askedAt && <div data-testid="ask-place" className="mb-1 text-[11px] text-slate-500 dark:text-slate-400">{askedFrom(askedAt)}</div>}
-            {(pendingAskUser.questions[0]?.permission || pendingAskUser.questions[0]?.header === 'Permission')
-              ? <ToolPermissionCard key={pendingAskUser.questionId} pending={pendingAskUser} onRespond={onRespondToAskUser} />
-              : <AskUserCard key={pendingAskUser.questionId} pending={pendingAskUser} onRespond={onRespondToAskUser} />}
+            <PendingAskCard pending={pendingAskUser} onRespond={onRespondToAskUser} />
           </div>
         )}
         <div ref={chatEndRef} />
@@ -570,7 +568,7 @@ export const ChatPanel: React.FC<{
         visibleQueued={visibleQueued}
         chatMessages={chatMessages}
         sessionId={sessionId}
-        openQuestion={pendingAskUser && !askUserBelongsToSubagent && !pendingAskUser.questions[0]?.permission && pendingAskUser.questions[0]?.header !== 'Permission' ? pendingAskUser : null}
+        openQuestion={pendingAskUser && !askUserBelongsToSubagent && !isPermissionAsk(pendingAskUser) ? pendingAskUser : null}
         onAnswerQuestion={onRespondToAskUser}
         overlay={overlay}
         onDismissOverlay={onDismissOverlay}

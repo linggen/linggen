@@ -73,7 +73,7 @@ pub(crate) const CALLER_ASK_WAIT: std::time::Duration = std::time::Duration::fro
 /// `None` on timeout, `Some(None)` when the question was dropped unanswered.
 pub async fn ask_on_bridge(
     bridge: &tools::AskUserBridge,
-    agent_id: String,
+    (agent_id, run_id): (String, Option<String>),
     question: tools::AskUserQuestion,
     caller_request: Option<tools::CallerPermissionRequest>,
     wait: std::time::Duration,
@@ -89,6 +89,7 @@ pub async fn ask_on_bridge(
             questions: questions.clone(),
             sender: tx,
             session_id: bridge.session_id.clone(),
+            run_id,
             caller_request,
         },
     );
@@ -160,7 +161,7 @@ impl AgentEngine {
         // The offered grants are for this level only; parse against it.
         let target_mode = question.permission.as_ref().map(|meta| meta.mode);
         let offered: Vec<String> = question.options.iter().map(|opt| opt.label.clone()).collect();
-        let response = ask_on_bridge(&bridge, agent_id, question, caller_request, wait).await;
+        let response = ask_on_bridge(&bridge, (agent_id, self.run_id.clone()), question, caller_request, wait).await;
 
         match response {
             Some(Some(answers)) => {

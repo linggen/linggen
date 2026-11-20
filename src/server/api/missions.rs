@@ -659,7 +659,7 @@ pub(crate) async fn get_mission_session_state(
         .unwrap_or_default();
 
     let running = run_calls::session_running(&state.manager, &session_id).await;
-    let mapped = run_calls::with_run_calls(
+    let mut mapped = run_calls::with_run_calls(
         messages,
         running,
         |m, calls| {
@@ -683,6 +683,8 @@ pub(crate) async fn get_mission_session_state(
         },
         |run| serde_json::json!([run.meta(), ""]),
     );
+    // A notice said aloud while the person was away marks its run's reply.
+    crate::server::resident::mark_rows(&session_id, mapped.iter_mut().filter_map(|row| row.get_mut(0)));
 
     let refs = crate::engine::answer_refs::view::refs_for(
         &state.manager.global_sessions,

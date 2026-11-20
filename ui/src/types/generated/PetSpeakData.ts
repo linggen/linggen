@@ -20,4 +20,9 @@ problem: string | null,
 /**
  * Its offers, each a button under her label.
  */
-offers: Array<OfferButton>, };
+offers: Array<OfferButton>, 
+/**
+ * A notice that a question waits: the question, whose own card her
+ * bubble carries (its approve/deny, answered as on the page).
+ */
+question_id: string | null, };

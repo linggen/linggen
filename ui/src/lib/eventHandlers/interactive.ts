@@ -8,6 +8,8 @@ import { getSessionId } from './_shared';
 import { withAgentQueue } from '../queuedList.mts';
 import { chatAgentOf, withMemberModel } from '../sessionMembers.mts';
 import { agentTracker } from '../agentTracker';
+import { toldOfEvent } from '../toldAloud.mts';
+import { withoutAnswered } from '../petCue.mts';
 
 // ---------------------------------------------------------------------------
 // AskUser — model is asking the user a structured question
@@ -40,11 +42,30 @@ export function handleWidgetResolved(item: UiEventOf<'widget_resolved'>): void {
   const interaction = useInteractionStore.getState();
   // A resolution only removes the matching question in its session.
   if (item.session_id) interaction.removeAsk(String(item.session_id), widgetId);
+  // Her bubble's card of it goes too (lib/petCue.mts).
+  useUiStore.setState((s) => ({ yinyueSpeech: withoutAnswered(s.yinyueSpeech, widgetId) }));
   // Dismiss plan widget (defensive — plan normally syncs via PlanUpdate)
   if (interaction.pendingPlanAgentId === widgetId) {
     interaction.setPendingPlan(null);
     interaction.setPendingPlanAgentId(null);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Notice told — Yinyue said a notice of Ling's work aloud while the person
+// was away: the reply or the waiting card it is about carries a folded mark
+// (lib/toldAloud.mts). The notice itself is never a row.
+// ---------------------------------------------------------------------------
+
+export function handleNoticeTold(item: UiEventOf<'notice_told'>): void {
+  const told = toldOfEvent(item.data);
+  const sid = item.session_id ? String(item.session_id) : null;
+  if (!told || !sid) return;
+  const questionId = item.data?.question_id;
+  if (questionId) useInteractionStore.getState().markAsk(sid, questionId, told);
+  const runId = item.data?.run_id;
+  // Another session's reply carries it when that session is loaded.
+  if (runId && sid === useSessionStore.getState().activeSessionId) useChatStore.getState().markToldAloud(runId, told);
 }
 
 // ---------------------------------------------------------------------------

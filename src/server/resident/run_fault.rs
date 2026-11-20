@@ -1,7 +1,7 @@
 //! A run that failed, as a fact she words — never a sentence of the engine's.
 //!
-//! Another agent's run failing is handed to her at once, as a fault
-//! ([`super::triggers::wake_fault`]). Her own run failing cannot be: waking
+//! Another agent's run failing is a notice of Ling's work, told at once or
+//! not at all (`super::herald::tell`). Her own run failing cannot be: waking
 //! her to say her mind is unreachable runs the very thing that failed, and
 //! loops. So that fact is held, one at a time, and rides the next unprompted
 //! turn on her own thread, beside whatever woke it. While her model stays

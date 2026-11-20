@@ -13,4 +13,12 @@ failure_count: number,
 /**
  * The run stopped at its step limit rather than on a final reply.
  */
-hit_limit: boolean, run_id: string, session_id: string | null, } | { "kind": "run_failed", agent_id: string, session_id: string | null, auth_required: boolean, } | { "kind": "run_completed", agent_id: string, session_id: string | null, };
+hit_limit: boolean, run_id: string, session_id: string | null, } | { "kind": "run_failed", agent_id: string, session_id: string | null, 
+/**
+ * The run that failed: its chat row is what a notice of it marks.
+ */
+run_id?: string | null, auth_required: boolean, } | { "kind": "run_completed", agent_id: string, session_id: string | null, 
+/**
+ * The run that finished: its reply is what a notice of it marks.
+ */
+run_id?: string | null, };

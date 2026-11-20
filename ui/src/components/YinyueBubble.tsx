@@ -13,6 +13,12 @@ import { useUiStore, type SpeechRaised } from '../stores/uiStore';
 import { needsConfirm, offerRequest, outcomeOf } from '../lib/petOffers.mts';
 import { openApp } from '../lib/appHost';
 import type { OfferButton } from '../types/generated/OfferButton';
+import type { AskUserAnswer, PendingAskUser } from '../types';
+import { PendingAskCard } from './PendingAskCard';
+import { useInteractionStore } from '../stores/interactionStore';
+import { sessionApi } from '../lib/endpoints';
+import { listedAsk } from '../lib/askQueue.mts';
+import { answerAsk } from '../lib/answerAsk';
 
 // Violet is her signature (silver-lavender); emotions tint from there.
 const ACCENTS: Record<string, { ring: string; dot: string }> = {
@@ -36,7 +42,7 @@ export const YinyueBubble: React.FC<{ variant?: 'overlay' | 'pet' }> = ({ varian
     : 'fixed bottom-[19rem] right-4 max-w-xs';
 
   return (
-    <div className={`${pos} z-[9998] pointer-events-none`}>
+    <div data-testid="yinyue-bubble" className={`${pos} z-[9998] pointer-events-none`}>
       <div
         onClick={clear}
         title="Dismiss"
@@ -48,10 +54,57 @@ export const YinyueBubble: React.FC<{ variant?: 'overlay' | 'pet' }> = ({ varian
         </div>
         <p className="text-[13px] leading-snug text-zinc-100">{speech.text}</p>
         {speech.raised && <Offers raised={speech.raised} done={clear} />}
+        {speech.questionId && <WaitingCard questionId={speech.questionId} done={clear} />}
       </div>
     </div>
   );
 };
+
+/** The waiting question she told of, answered here as on the page: its own
+ *  card (`PendingAskCard`) and the page's own answer (`answerAsk`), found
+ *  among this window's questions or the engine's list. Answered anywhere,
+ *  the card goes: the window's questions drop it, and the list is read
+ *  again while the card shows. A failed answer keeps the card up. */
+const WaitingCard: React.FC<{ questionId: string; done: () => void }> = ({ questionId, done }) => {
+  const queues = useInteractionStore((s) => s.askQueues);
+  const shown = React.useMemo(() => findAsk(queues, questionId), [queues, questionId]);
+  const [listed, setListed] = React.useState<{ ask: PendingAskUser; sessionId: string | null } | null>(null);
+  React.useEffect(() => {
+    if (shown) return;
+    let live = true;
+    const read = () => sessionApi.pendingAskUser()
+      .then((items) => {
+        const it = items.find((i) => i.question_id === questionId);
+        if (live) setListed(it ? { ask: listedAsk(it), sessionId: it.session_id ?? null } : null);
+      })
+      .catch(() => undefined);
+    void read();
+    const timer = window.setInterval(() => void read(), LISTED_REREAD_MS);
+    return () => { live = false; window.clearInterval(timer); };
+  }, [questionId, shown]);
+  const found = shown ?? listed;
+  if (!found) return null;
+  const respond = async (id: string, answers: AskUserAnswer[]) => {
+    if (await answerAsk(found.sessionId, id, answers)) done();
+  };
+  return (
+    <div className="mt-2 max-w-sm text-left" onClick={(e) => e.stopPropagation()}>
+      <PendingAskCard pending={{ ...found.ask, toldAloud: undefined }} onRespond={(id, answers) => void respond(id, answers)} />
+    </div>
+  );
+};
+
+/** How often a card read from the engine's list is checked still waiting. */
+const LISTED_REREAD_MS = 3000;
+
+/** A waiting question this window already holds, with its session. */
+function findAsk(queues: Record<string, PendingAskUser[]>, questionId: string): { ask: PendingAskUser; sessionId: string } | null {
+  for (const [sessionId, asks] of Object.entries(queues)) {
+    const ask = asks.find((a) => a.questionId === questionId);
+    if (ask) return { ask, sessionId };
+  }
+  return null;
+}
 
 /** The person answered: kept on the problem's record (and, for a tap, her
  *  result turn — the engine's). */

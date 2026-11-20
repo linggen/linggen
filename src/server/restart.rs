@@ -978,7 +978,7 @@ async fn tell_the_person(state: Arc<ServerState>, file: PathBuf, record: Value) 
         left.len(),
         file.display()
     );
-    crate::server::resident::wake_herald(state, kickoff, "neutral").await;
+    crate::server::resident::wake_to_tell(state, kickoff, "neutral").await;
 }
 
 /// The mark a continue turn is kept under: one per plan and agent. One

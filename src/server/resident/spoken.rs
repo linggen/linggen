@@ -241,6 +241,39 @@ pub(crate) fn end_held_turns(session: &str) -> bool {
     any
 }
 
+/// The runs of held turns, newest last — kept past their turn, so the run's
+/// last events (its outcome, its turn end) are still known as held.
+static HELD_RUNS: std::sync::Mutex<std::collections::VecDeque<String>> =
+    std::sync::Mutex::new(std::collections::VecDeque::new());
+const HELD_RUNS_KEPT: usize = 256;
+
+/// Run `run_id` is a held turn's (`chat::runtime`, as the run begins).
+pub(crate) fn hold_run(run_id: &str) {
+    let mut runs = HELD_RUNS.lock().unwrap_or_else(|p| p.into_inner());
+    runs.push_back(run_id.to_string());
+    while runs.len() > HELD_RUNS_KEPT {
+        runs.pop_front();
+    }
+}
+
+/// Whether a page draws an event of `kind` that `agent` sent in `session`
+/// for `run`: the one decision that a turn the engine started for her shows
+/// nothing on any page — no status, no run, no token count, live or after.
+/// What she says reaches the page as her stage's cue (`pet_*`) or her own
+/// row; everything her held run sends is dropped. A status sent before the
+/// run has an id is known by the held turn running in its session.
+pub(crate) fn shows_on_page(kind: &str, agent: Option<&str>, session: Option<&str>, run: Option<&str>) -> bool {
+    if agent != Some(crate::engine::agent::COMPANION_AGENT_ID) || kind.starts_with("pet_") {
+        return true;
+    }
+    if let Some(run) = run {
+        let runs = HELD_RUNS.lock().unwrap_or_else(|p| p.into_inner());
+        return !runs.iter().any(|r| r == run);
+    }
+    let before_run = kind == crate::server::ui_events::UI_KIND_ACTIVITY;
+    !(before_run && session.and_then(running_origin).is_some_and(Origin::held))
+}
+
 /// The kickoff marked hidden and with the speaking contract its origin names,
 /// in one text — for the light turn, which has no thread message to carry the
 /// contract. A full turn has it attached by `ChatRunCtx::labeled_msg`.
@@ -772,6 +805,26 @@ mod tests {
         assert!(RunningOrigin::at_lock(session, Origin::Person).is_none());
     }
 
+    /// A held run of hers reaches no page: none of its events, whatever the
+    /// kind; her stage's cues, her other runs and anyone else's pass.
+    #[test]
+    fn a_held_run_of_hers_shows_on_no_page() {
+        use super::{hold_run, shows_on_page};
+        hold_run("held-run-1");
+        for kind in ["activity", "run", "turn_complete", "token", "message", "content_block"] {
+            assert!(!shows_on_page(kind, Some("yinyue"), Some("s"), Some("held-run-1")), "{kind}");
+        }
+        assert!(shows_on_page("pet_speak", Some("yinyue"), Some("s"), Some("held-run-1")));
+        assert!(shows_on_page("activity", Some("yinyue"), Some("s"), Some("her-asked-run")));
+        assert!(shows_on_page("activity", Some("ling"), Some("s"), Some("held-run-1")));
+        // Before the run has an id: known by the held turn in the session.
+        let turn = RunningOrigin::at_lock("held-turn-session", Origin::Glance).unwrap();
+        assert!(!shows_on_page("activity", Some("yinyue"), Some("held-turn-session"), None));
+        assert!(shows_on_page("message", Some("yinyue"), Some("held-turn-session"), None), "her own row");
+        drop(turn);
+        assert!(shows_on_page("activity", Some("yinyue"), Some("held-turn-session"), None));
+    }
+
     #[test]
     fn an_asked_turn_is_not_offered_silence() {
         let event = with_contract("k".into(), Origin::Herald);
@@ -1020,7 +1073,7 @@ mod one_decision {
             }
         }
         let fin = format!("{}{}", ".fin", "alize(");
-        check(&["src/server/resident"], &fin, &[("src/server/resident/spoken.rs", 1), ("src/server/resident/triggers.rs", 3)]);
+        check(&["src/server/resident"], &fin, &[("src/server/resident/spoken.rs", 1), ("src/server/resident/triggers.rs", 1), ("src/server/resident/herald.rs", 1)]);
     }
 
     #[test]
@@ -1034,7 +1087,7 @@ mod one_decision {
             &publish,
             &[
                 ("src/server/resident/spoken.rs", 2),
-                ("src/server/resident/triggers.rs", 4),
+                ("src/server/resident/triggers.rs", 2),
                 ("src/server/mac_tools.rs", 2),
                 ("src/server/met_watch.rs", 2),
                 ("src/server/api/topic.rs", 1),

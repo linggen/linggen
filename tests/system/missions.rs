@@ -245,6 +245,10 @@ async fn a_failed_tool_in_an_unattended_run_reaches_her_as_one_fact() {
         !fact.contains("rows the model reads"),
         "stdout reached her: {fact}"
     );
+    // Her run is over before her line goes out (it is published after the
+    // turn), so the cue is waited for; a second line would still show here
+    // and in the checks below.
+    w.events_when(|e| e.iter().any(|x| x["kind"] == "pet_speak")).await;
     assert_eq!(pet_lines(&w), [HER_LINE], "a line not hers was spoken");
     // The fault is in her call once: the world block's doorbell, which
     // names the newest record, does not tell it a second time.

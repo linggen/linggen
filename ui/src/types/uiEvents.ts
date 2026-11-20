@@ -20,6 +20,7 @@ import type { DeviceTopicData } from './generated/DeviceTopicData';
 import type { FollowupsData } from './generated/FollowupsData';
 import type { MessageData } from './generated/MessageData';
 import type { ModelFallbackData } from './generated/ModelFallbackData';
+import type { NoticeToldData } from './generated/NoticeToldData';
 import type { NotificationPayload } from './generated/NotificationPayload';
 import type { OutcomeData } from './generated/OutcomeData';
 import type { PetExpressData } from './generated/PetExpressData';
@@ -86,7 +87,7 @@ export interface PageState {
   claude_default_model?: string;
   skills?: SkillInfo[];
   missions?: unknown[];
-  pending_ask_user?: Array<{ question_id: string; agent_id?: string; questions?: AskUserQuestion[]; session_id?: string | null; place?: string | null }>;
+  pending_ask_user?: Array<{ question_id: string; agent_id?: string; questions?: AskUserQuestion[]; session_id?: string | null; place?: string | null; told_aloud_at?: number; told_aloud_line?: string }>;
   busy_sessions?: Record<string, string>;
   /** The web UI build the engine serves now; a page that loaded another
    *  reloads when idle (`lib/uiBuild.mts`). */
@@ -133,6 +134,7 @@ export interface UiEventByKind {
   run: RunEvent;
   ask_user: Ev<'ask_user', AskUserData>;
   widget_resolved: Ev<'widget_resolved', WidgetResolvedData>;
+  notice_told: Ev<'notice_told', NoticeToldData>;
   notification: Ev<'notification', SessionCreatedData | NotificationPayload>;
   model_fallback: Ev<'model_fallback', ModelFallbackData>;
   tool_progress: Ev<'tool_progress', ToolProgressData>;

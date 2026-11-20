@@ -837,6 +837,12 @@ impl AgentEngine {
         self.tools.set_run_id(run_id);
     }
 
+    /// Whether this run's reply is held for the caller (`reply_held`): a
+    /// turn the engine started, of which no page shows anything.
+    pub fn reply_is_held(&self) -> bool {
+        self.reply_held
+    }
+
     pub fn get_task(&self) -> Option<String> {
         self.task.clone()
     }

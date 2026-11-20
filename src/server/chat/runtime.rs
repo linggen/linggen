@@ -20,6 +20,11 @@ pub(super) async fn run_loop_with_tracking(
         .await
         .ok();
     let _life = run_id.as_deref().map(|run| manager.run_life(run));
+    // A held run (a turn the engine started) is known by its id before any
+    // of its events goes out: no page draws it (`resident::shows_on_page`).
+    if let Some(run) = run_id.as_deref().filter(|_| engine.reply_is_held()) {
+        crate::server::resident::hold_run(run);
+    }
 
     engine.run_as(run_id.clone());
     let result = super::cloud_gate::run_gated(engine, session_id, events_tx).await;
@@ -52,6 +57,7 @@ pub(super) async fn run_loop_with_tracking(
                         crate::engine::events::NotificationPayload::RunCompleted {
                             agent_id: agent_id.to_string(),
                             session_id: session_id.map(|s| s.to_string()),
+                            run_id: Some(run_id.clone()),
                         },
                     ));
                 }
@@ -97,6 +103,7 @@ pub(super) async fn run_loop_with_tracking(
                         crate::engine::events::NotificationPayload::RunFailed {
                             agent_id: agent_id.to_string(),
                             session_id: session_id.map(|s| s.to_string()),
+                            run_id: Some(run_id.clone()),
                             auth_required: msg.contains("AUTH_REQUIRED"),
                         },
                     ));

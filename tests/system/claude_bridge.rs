@@ -51,6 +51,14 @@ case "$start" in
       break;;
     esac
   done;;
+*'"prompt":"asktwice"'*)
+  init
+  emit '{"type":"request","kind":"permission","id":1,"input":{"tool":"Bash","args":{"command":"ls one"},"suggestions":[]}}'
+  sleep 2
+  emit '{"type":"request","kind":"permission","id":2,"input":{"tool":"Bash","args":{"command":"ls two"},"suggestions":[]}}'
+  IFS= read -r reply
+  IFS= read -r reply
+  emit '{"type":"text","text":"both answered"}';;
 *'"prompt":"withdraw"'*)
   init
   emit '{"type":"request","kind":"permission","id":1,"input":{"tool":"Bash","args":{"command":"ls"},"suggestions":[]}}'
@@ -87,7 +95,7 @@ async fn world() -> (World, String) {
 }
 
 /// A world whose `bun` is the stand-in bridge.
-async fn world_with(setup: Setup) -> World {
+pub(crate) async fn world_with(setup: Setup) -> World {
     let w = World::start(Setup {
         config_append: Some(MODEL),
         ..setup
@@ -102,7 +110,7 @@ async fn world_with(setup: Setup) -> World {
     w
 }
 
-async fn session_in(w: &World, root: &str) -> String {
+pub(crate) async fn session_in(w: &World, root: &str) -> String {
     w.api
         .create_session(
             json!({"title":"Claude", "runtime":"claude_agent_sdk", "project_root":root}),

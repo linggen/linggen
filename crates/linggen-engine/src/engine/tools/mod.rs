@@ -311,6 +311,9 @@ pub struct PendingAskUser {
     pub questions: Vec<AskUserQuestion>,
     pub sender: tokio::sync::oneshot::Sender<Vec<AskUserAnswer>>,
     pub session_id: Option<String>,
+    /// The run that asked (a subagent's own run inside its turn's tree):
+    /// what a notice of the wait is keyed by, through its root run.
+    pub run_id: Option<String>,
     /// Set when the session's caller (not a person in the chat) answers this
     /// permission question — an MCP `agent_run` delegate's `agent_permit`.
     pub caller_request: Option<CallerPermissionRequest>,
@@ -792,6 +795,7 @@ impl Tools {
                 questions: questions_clone,
                 sender: tx,
                 session_id: bridge.session_id.clone(),
+                run_id: self.run_id.clone(),
                 caller_request: None,
             },
         );

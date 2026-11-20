@@ -2091,7 +2091,7 @@ mod permit_tests {
         let ask = tokio::spawn(async move {
             crate::engine::tool_exec::ask_on_bridge(
                 &b,
-                "ling".into(),
+                ("ling".into(), None),
                 question,
                 Some(req),
                 Duration::from_secs(5),
@@ -2171,7 +2171,7 @@ mod permit_tests {
             let ask = tokio::spawn(async move {
                 crate::engine::tool_exec::ask_on_bridge(
                     &b,
-                    "ling".into(),
+                    ("ling".into(), None),
                     question,
                     Some(req),
                     Duration::from_secs(5),
@@ -2212,7 +2212,7 @@ mod permit_tests {
         let b = bridge(&pending, "s1");
         let answer = crate::engine::tool_exec::ask_on_bridge(
             &b,
-            "ling".into(),
+            ("ling".into(), None),
             question(None),
             Some(request(None)),
             Duration::from_millis(30),
@@ -2236,6 +2236,7 @@ mod permit_tests {
                     questions: vec![question(None)],
                     sender: tx,
                     session_id: Some("s2".into()),
+                    run_id: None,
                     caller_request: Some(request(None)),
                 },
             );
@@ -2249,6 +2250,7 @@ mod permit_tests {
                     questions: vec![card],
                     sender: tx2,
                     session_id: Some("s1".into()),
+                    run_id: None,
                     caller_request: None,
                 },
             );

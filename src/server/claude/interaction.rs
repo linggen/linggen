@@ -193,6 +193,7 @@ impl Interaction {
                 questions: questions.clone(),
                 sender: tx,
                 session_id: Some(self.meta.id.clone()),
+                run_id: Some(self.run_id.clone()),
                 caller_request: None,
             },
         );

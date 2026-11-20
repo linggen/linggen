@@ -11,7 +11,8 @@
  */
 import type { UiEventOf } from '../../types';
 import type { SpokenChunk } from '../../types/generated/SpokenChunk';
-import { useUiStore, type SpeechRaised } from '../../stores/uiStore';
+import { useUiStore, type SpeechAbout } from '../../stores/uiStore';
+import { speechAbout } from '../petCue.mts';
 import type { OfferButton } from '../../types/generated/OfferButton';
 
 // One shared AudioContext, created lazily on first cue.
@@ -156,10 +157,8 @@ export function handlePetSpeak(item: UiEventOf<'pet_speak'>): void {
   if (!text) return;
   const emotion = (item.data?.emotion as string | undefined) ?? 'neutral';
   console.info(`[yinyue] speak (${emotion}): ${text}`);
-  const problem = item.data?.problem as string | null | undefined;
-  const raised: SpeechRaised | undefined = problem
-    ? { problem, offers: (item.data?.offers as OfferButton[] | undefined) ?? [] }
-    : undefined;
+  // Her offers, or — telling of a wait — the waiting question's card.
+  const raised: SpeechAbout | undefined = speechAbout<OfferButton>(item.data);
   // A line the person can see where it shows, or her voice muted: the words,
   // no audio fetched. Like any new line it supersedes one still sounding.
   if (item.data?.voice === false) {
@@ -181,7 +180,7 @@ export function handlePetVoice(item: UiEventOf<'pet_voice'>): void {
 }
 
 /// Her line as words only — the bubble and any held gesture, no talking loop.
-function showWords(text: string, emotion: string, raised?: SpeechRaised): void {
+function showWords(text: string, emotion: string, raised?: SpeechAbout): void {
   synthInFlight = false;
   useUiStore.getState().setPetThinking(false);
   useUiStore.getState().setPetSpeaking(false);
@@ -206,7 +205,7 @@ function estimateLineMs(chunks: SpokenChunk[]): number {
   return chunks.reduce((ms, c) => ms + c.text.length * BUBBLE_MS_PER_CHAR + c.pause_ms, 0);
 }
 
-async function play(text: string, emotion: string, chunks: SpokenChunk[], raised?: SpeechRaised): Promise<void> {
+async function play(text: string, emotion: string, chunks: SpokenChunk[], raised?: SpeechAbout): Promise<void> {
   // Speech is coming → hold any pending gesture for the voice onset (not the
   // short silent-gesture fallback), and keep her in thinking until then.
   synthInFlight = true;

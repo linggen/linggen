@@ -6,6 +6,7 @@ import { SubagentTreeView } from './SubagentTreeView';
 import { SubagentReports } from './SubagentReports';
 import { ContentBlockView, TurnSummaryFooter } from './ContentBlockView';
 import { tryRenderSpecialBlock } from './SpecialBlocks';
+import { ToldAloudMark } from './ToldAloudMark';
 import { AuthRequiredBlock } from './AuthRequiredBlock';
 import { BillingRequiredBlock } from './BillingRequiredBlock';
 import { BudgetEmptyBlock } from './BudgetEmptyBlock';
@@ -167,6 +168,7 @@ export const AgentMessage: React.FC<{
             </button>
           )}
         </div>
+        <ToldAloudMark told={msg.toldAloud} />
       </div>
     );
   }
@@ -218,6 +220,7 @@ export const AgentMessage: React.FC<{
       )}
 
       <TurnSummaryFooter msg={msg} />
+      <ToldAloudMark told={msg.toldAloud} />
 
       {msg.subagentTree && msg.subagentTree.length > 0 && (
         // Subagents fire *after* the response (encoder runs post-turn),

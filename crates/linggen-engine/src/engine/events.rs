@@ -168,6 +168,9 @@ pub enum NotificationPayload {
     RunFailed {
         agent_id: String,
         session_id: Option<String>,
+        /// The run that failed: its chat row is what a notice of it marks.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        run_id: Option<String>,
         auth_required: bool,
     },
     /// A top-level interactive run completed successfully. Yinyue may herald it,
@@ -176,6 +179,9 @@ pub enum NotificationPayload {
     RunCompleted {
         agent_id: String,
         session_id: Option<String>,
+        /// The run that finished: its reply is what a notice of it marks.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        run_id: Option<String>,
     },
 }
 #[derive(Debug, Clone, Serialize)]
@@ -214,6 +220,23 @@ pub enum ServerEvent {
         /// Its offers, each under her label: buttons the person may tap.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         offers: Vec<crate::perception::offer::Shown>,
+        /// A notice that a question waits: the question it is about, so her
+        /// bubble carries that question's own card.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        question_id: Option<String>,
+    },
+    /// A notice of Ling's work was said aloud while the person was away:
+    /// the thing it is about — a run's reply (`run_id`) or a waiting
+    /// question (`question_id`) — carries a folded mark of it, said `at`
+    /// (Unix seconds), her line kept on it.
+    NoticeTold {
+        session_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        run_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        question_id: Option<String>,
+        at: u64,
+        line: String,
     },
     /// The pet's voice on this machine was turned off or on. Global and sent
     /// to every surface, so whichever is playing her stops at once.
