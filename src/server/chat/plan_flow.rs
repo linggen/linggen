@@ -456,7 +456,7 @@ async fn run_approved_plan_task(
         session_id: session_id.clone(),
         clean_msg: String::new(),
         images: Vec::new(),
-        policy: crate::engine::session_policy::SessionPolicy::default(),
+        policy: super::policy::turn_policy(super::policy::TurnBy::Engine),
         sender: None,
         via: None,
         origin: crate::server::resident::Origin::Person,

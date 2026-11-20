@@ -1566,15 +1566,7 @@ pub(crate) async fn start_turn(
 
         promote_mission_session_to_user(&mut engine, &state_clone, session_id.as_deref()).await;
 
-        let policy =
-            crate::engine::session_policy::SessionPolicy::from_user_type(&req_user_type, || {
-                let room = crate::server::rtc::room_config::load_room_config();
-                crate::engine::session_policy::ConsumerCeiling {
-                    tools: room.allowed_tools,
-                    skills: room.allowed_skills,
-                    models: room.shared_models,
-                }
-            });
+        let policy = super::policy::turn_policy(super::policy::TurnBy::Person(&req_user_type));
         // A person's turn: the session's spec typed by this policy — the
         // lead's tools, verbatim, its memory the turn's (an app's or a
         // mission's keeps less of the biography).

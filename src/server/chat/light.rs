@@ -43,7 +43,7 @@ pub(crate) async fn reply_in_session(
         session_id: Some(session_id.to_string()),
         clean_msg: String::new(),
         images: Vec::new(),
-        policy: crate::engine::session_policy::SessionPolicy::owner(),
+        policy: super::policy::turn_policy(super::policy::TurnBy::Engine),
         sender: None,
         via: None,
         // Not a turn of hers: another agent's, answered as any is.
@@ -94,7 +94,7 @@ pub(crate) async fn reply_now(
         session_id: Some(session_id.to_string()),
         clean_msg: String::new(),
         images: Vec::new(),
-        policy: crate::engine::session_policy::SessionPolicy::owner(),
+        policy: super::policy::turn_policy(super::policy::TurnBy::Engine),
         sender: None,
         via: None,
         // Not a turn of hers: another agent's, answered as any is.

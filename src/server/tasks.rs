@@ -459,7 +459,7 @@ async fn tell_in_place(
         session_id: Some(session.clone()),
         clean_msg: notice,
         images: Vec::new(),
-        policy: crate::engine::session_policy::SessionPolicy::owner(),
+        policy: super::chat::policy::turn_policy(super::chat::policy::TurnBy::Engine),
         sender: Some(sender),
         // Told to her, the notice is an event: what she chooses to say is
         // published by the finalizer, nothing of her reply is kept as prose.

@@ -208,7 +208,7 @@ fn export_spec(
     place: &crate::engine::turn_place::TurnPlace,
 ) -> crate::engine::session_spec::SessionSpec {
     use crate::engine::session_spec::{Memory, SessionSpec};
-    let owner = crate::engine::session_policy::SessionPolicy::owner();
+    let owner = super::policy::turn_policy(super::policy::TurnBy::Export);
     let Some(meta) = meta else {
         return SessionSpec::unclaimed(None).typed(owner, Memory::Full, None);
     };

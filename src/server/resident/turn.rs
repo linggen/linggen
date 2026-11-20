@@ -504,7 +504,7 @@ fn ready_for_turn(
     // Her turn is a person's session, not a task: the owner policy's
     // profile, applied to the engine (a fresh engine's default profile
     // frames the turn as an autonomous task — a second "Task:" message).
-    let policy = crate::engine::session_policy::SessionPolicy::owner();
+    let policy = crate::server::chat::policy::turn_policy(crate::server::chat::policy::TurnBy::Engine);
     let typed = policy.clone();
     engine.respec(|spec| *spec = spec.clone().typed(typed, crate::engine::session_spec::Memory::Full, None));
 
