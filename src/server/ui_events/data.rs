@@ -114,6 +114,20 @@ pub(super) struct WidgetResolvedData {
     pub widget_id: String,
 }
 
+/// `notice_told`: a notice of Ling's work was said aloud while the person
+/// was away; what it is about — a run's reply, a waiting question's card —
+/// shows a folded mark of it.
+#[derive(Serialize)]
+#[cfg_attr(test, derive(TS), ts(export))]
+pub(super) struct NoticeToldData {
+    pub run_id: Option<String>,
+    pub question_id: Option<String>,
+    /// When it was said, Unix seconds.
+    pub at: u64,
+    /// Her line, kept on the mark.
+    pub line: String,
+}
+
 /// `followups`.
 #[derive(Serialize)]
 #[cfg_attr(test, derive(TS), ts(export))]
@@ -333,6 +347,9 @@ pub(super) struct PetSpeakData {
     pub problem: Option<String>,
     /// Its offers, each a button under her label.
     pub offers: Vec<OfferButton>,
+    /// A notice that a question waits: the question, whose own card her
+    /// bubble carries (its approve/deny, answered as on the page).
+    pub question_id: Option<String>,
 }
 
 /// One offer as a button: her label, and what a tap runs — a skill's tool

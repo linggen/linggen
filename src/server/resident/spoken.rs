@@ -1072,7 +1072,7 @@ mod one_decision {
             }
         }
         let fin = format!("{}{}", ".fin", "alize(");
-        check(&["src/server/resident"], &fin, &[("src/server/resident/spoken.rs", 1), ("src/server/resident/triggers.rs", 3)]);
+        check(&["src/server/resident"], &fin, &[("src/server/resident/spoken.rs", 1), ("src/server/resident/triggers.rs", 1), ("src/server/resident/herald.rs", 1)]);
     }
 
     #[test]
@@ -1086,7 +1086,7 @@ mod one_decision {
             &publish,
             &[
                 ("src/server/resident/spoken.rs", 2),
-                ("src/server/resident/triggers.rs", 4),
+                ("src/server/resident/triggers.rs", 2),
                 ("src/server/mac_tools.rs", 2),
                 ("src/server/met_watch.rs", 2),
                 ("src/server/api/topic.rs", 1),

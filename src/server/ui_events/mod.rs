@@ -99,6 +99,7 @@ fn map_event(event: ServerEvent, seq: u64, rooms_on: bool) -> Option<UiEvent> {
         | TurnComplete { .. }
         | AskUser { .. }
         | WidgetResolved { .. }
+        | NoticeTold { .. }
         | Followups { .. }
         | ModelFallback { .. }
         | ToolProgress { .. } => chat::map(event, ui),

@@ -42,12 +42,32 @@ pub(crate) fn emit_speak_offering(
     at: SaidAt<'_>,
     problem: Option<(String, Vec<crate::perception::offer::Shown>)>,
 ) {
+    emit(state, line, emotion, at, problem, None);
+}
+
+/// A notice of Ling's work, said on her own stage (`resident::herald`): its
+/// cue names the question a wait is about, so her bubble carries that
+/// question's own card. True when it was said aloud — a notice that was not
+/// leaves no mark.
+pub(crate) fn emit_notice(state: &Arc<ServerState>, line: Line, emotion: &str, question_id: Option<String>) -> bool {
+    emit(state, line, Some(emotion.to_string()), SaidAt::default(), None, question_id)
+}
+
+/// The one cue of her line; true when it was said aloud.
+fn emit(
+    state: &Arc<ServerState>,
+    line: Line,
+    emotion: Option<String>,
+    at: SaidAt<'_>,
+    problem: Option<(String, Vec<crate::perception::offer::Shown>)>,
+    question_id: Option<String>,
+) -> bool {
     // Not met yet: there is no one to speak.
     if !state
         .manager
         .agent_present(crate::engine::agent::COMPANION_AGENT_ID)
     {
-        return;
+        return false;
     }
     let voice = speaks_aloud(state, at.app);
     let session = at.session;
@@ -66,7 +86,9 @@ pub(crate) fn emit_speak_offering(
         session_id: session.map(str::to_string),
         problem,
         offers,
+        question_id,
     });
+    voice
 }
 
 /// The one place a line of hers is decided spoken: her words are said aloud

@@ -47,8 +47,7 @@ pub(super) fn handle_event(state: &Arc<ServerState>, event: ServerEvent) {
     }
 }
 
-/// A question waits: heralded whole — or, asked from a private app's turn,
-/// only as that the app waits.
+/// A question waits: a notice of Ling's work (`herald::tell`).
 fn on_ask(
     state: &Arc<ServerState>,
     agent_id: String,
@@ -56,175 +55,8 @@ fn on_ask(
     questions: Vec<crate::engine::tools::AskUserQuestion>,
     session_id: Option<String>,
 ) {
-    let state = state.clone();
-    tokio::spawn(async move {
-        match asked_in_private_app(&state, session_id.as_deref()).await {
-            Some(app) => herald_kept_ask(&state, app, question_id, session_id),
-            None => herald_ask(&state, agent_id, question_id, questions, session_id),
-        }
-    });
-}
-
-/// The private app a question in session `session_id` is asked from
-/// (`turn_place::question_kept_to`, the one rule).
-async fn asked_in_private_app(state: &Arc<ServerState>, session_id: Option<&str>) -> Option<String> {
-    crate::engine::turn_place::question_kept_to(&state.manager, session_id).await
-}
-
-/// An agent parked on a question or a permission prompt — Yinyue heralds
-/// "they need you" while the person is away.
-fn herald_ask(
-    state: &Arc<ServerState>,
-    agent_id: String,
-    question_id: String,
-    questions: Vec<crate::engine::tools::AskUserQuestion>,
-    session_id: Option<String>,
-) {
-    if agent_id == YINYUE_AGENT {
-        return; // she's the one asking — not a herald
-    }
-    if !state.manager.agent_present(YINYUE_AGENT) {
-        return; // not met: the prompt waits on the screen, as it does for anyone
-    }
-    if user_sees(state, Sight::Screen) {
-        return; // the question is on the screen they're looking at
-    }
-    let state = state.clone();
-    tokio::spawn(async move {
-        if !heralds_to_builder(&state.manager, session_id.as_deref()).await {
-            return;
-        }
-        let kickoff = ask_kickoff(&agent_id, &question_id, &questions);
-        // Her turn can queue behind other Yinyue runs; if the user
-        // answers the prompt meanwhile, announcing it is stale noise.
-        // Check before spending a turn and again right before speaking.
-        if !ask_still_pending(&state, &question_id).await {
-            return;
-        }
-        let Some(reply) = herald_line(&state, kickoff).await else {
-            return;
-        };
-        let Some(said) = reply.finalize() else {
-            return;
-        };
-        if !ask_still_pending(&state, &question_id).await {
-            tracing::info!(
-                "[yinyue-watch] ask {question_id} answered while heralding — dropped"
-            );
-            return;
-        }
-        if user_sees(&state, Sight::Screen) {
-            tracing::info!("[yinyue-watch] user back at the screen — herald dropped");
-            return;
-        }
-        tracing::info!(
-            "[yinyue-watch] Yinyue heralds ({} chars, neutral)",
-            said.line.text().len()
-        );
-        let stage = Stage::of(&state, None).await;
-        spoken::publish(&state, said, &stage, Some("neutral".to_string()), None).await;
-    });
-}
-
-/// A question asked in a private app's turn: she calls the person back to
-/// that app, told only that it waits for an answer — never the question,
-/// its options or anything said there; her line is made of that alone.
-fn herald_kept_ask(state: &Arc<ServerState>, app: String, question_id: String, session_id: Option<String>) {
-    if !state.manager.agent_present(YINYUE_AGENT) {
-        return;
-    }
-    if user_sees(state, Sight::Screen) {
-        return;
-    }
-    let state = state.clone();
-    tokio::spawn(async move {
-        if !heralds_to_builder(&state.manager, session_id.as_deref()).await {
-            return;
-        }
-        if !ask_still_pending(&state, &question_id).await {
-            return;
-        }
-        let Some(reply) = herald_line(&state, kept_ask_kickoff(&app)).await else {
-            return;
-        };
-        let Some(said) = reply.finalize() else {
-            return;
-        };
-        if !ask_still_pending(&state, &question_id).await || user_sees(&state, Sight::Screen) {
-            return;
-        }
-        let stage = Stage::of(&state, None).await;
-        spoken::publish(&state, said, &stage, Some("neutral".to_string()), None).await;
-    });
-}
-
-/// Her kickoff for a question asked in the private app `app`: that it
-/// waits, nothing of it.
-fn kept_ask_kickoff(app: &str) -> String {
-    format!(
-        "The app \"{app}\" is waiting for the user to answer a question there; what it \
-         asks is kept to that app. The user has stepped away from the screen. Call them back \
-         to it in your voice — one brief line."
-    )
-}
-
-/// Her reply to a herald's kickoff. A question waits inside a turn that holds
-/// her session's turn lock when that session is the day's, so a full turn of
-/// hers would wait for the very answer it is to call for: then she gives one
-/// reply now, from home's view of the thread. Elsewhere her own turn runs, as
-/// before. Either way it is only her reply: nothing is shown or kept until the
-/// caller has finalized it and checked the question is still waiting.
-async fn herald_line(state: &Arc<ServerState>, kickoff: String) -> Option<Turned> {
-    // The turn's own origin: every reading of its reply is by this value.
-    let origin = Origin::Herald;
-    let sid = super::session_roll::resolve_current_session(state).await;
-    let free = state.manager.session_turn(&sid).try_lock().is_ok();
-    if free {
-        return run_yinyue_turn(state, kickoff, origin).await;
-    }
-    let ask = super::spoken::with_contract(kickoff, origin);
-    // The person's language, set here as it is for every turn of hers.
-    let language = super::turn::language_of_turn(state, &sid, origin, None).await;
-    let text = crate::server::chat::reply_now(state.clone(), &sid, YINYUE_AGENT, (&ask, language)).await?;
-    Some(Turned::of(text, origin))
-}
-
-fn ask_kickoff(
-    agent_id: &str,
-    question_id: &str,
-    questions: &[crate::engine::tools::AskUserQuestion],
-) -> String {
-    let (summary, options) = ask_summary(questions);
-    let opts = if options.is_empty() {
-        String::new()
-    } else {
-        format!(" The options are: {options}.")
-    };
-    format!(
-        "The agent \"{agent_id}\" is blocked, waiting on the user to answer: \
-         \"{summary}\".{opts} The user has stepped away from the screen. Call them \
-         back in your voice — one brief line. When they give you their answer, relay \
-         it with `answer_prompt` (question_id \"{question_id}\") — only their actual \
-         words, never your own decision."
-    )
-}
-
-/// The first question and its options, as her kickoff names them.
-fn ask_summary(questions: &[crate::engine::tools::AskUserQuestion]) -> (String, String) {
-    let q0 = questions.first();
-    let summary = q0
-        .map(|q| q.question.clone())
-        .unwrap_or_else(|| "your input".to_string());
-    let options = q0
-        .map(|q| {
-            q.options
-                .iter()
-                .map(|o| o.label.clone())
-                .collect::<Vec<_>>()
-                .join(" / ")
-        })
-        .unwrap_or_default();
-    (summary, options)
+    let herald = super::herald::Herald::Waiting { agent: agent_id, session: session_id, question_id, questions };
+    super::herald::tell(state, herald);
 }
 
 /// A peer agent's message: to her, she answers it; to a chat agent, it
@@ -305,99 +137,26 @@ pub(super) fn handle_notification(state: &Arc<ServerState>, payload: Notificatio
             };
             mission_fact::hand_or_hold(state, run);
         }
-        // A run errored — she is handed the facts and words them, never a
-        // line of the engine's. Another agent's failure (a sign-in one too:
-        // her model may not share it) wakes her as a fault at once, and is
-        // held if that turn says nothing. Her own cannot: waking her to say
-        // her mind is unreachable runs the very thing that failed, and loops —
-        // so it is held and rides her next woken turn (`run_fault`).
-        // Rate-limited so an error storm is one fact.
+        // A run errored, or finished a reply: notices of Ling's work, each
+        // decided whole by `herald::tell` — whose, where, said or not.
         NotificationPayload::RunFailed {
             agent_id,
+            session_id,
+            run_id,
             auth_required,
-            ..
         } => {
-            if !error_announce_allowed() {
-                return; // an error storm shouldn't make her repeat herself
-            }
-            let state = state.clone();
-            tokio::spawn(async move {
-                if !state.manager.get_config_snapshot().await.pet.enabled {
-                    return;
-                }
-                let her_own = agent_id == YINYUE_AGENT;
-                let fact = super::run_fault::fact(&agent_id, auth_required, her_own);
-                tracing::info!("[yinyue-watch] run by '{agent_id}' failed; Yinyue is handed the fact");
-                if her_own {
-                    super::run_fault::hold(fact);
-                    return;
-                }
-                if wake_fault(state, fact.clone()).await.is_none() {
-                    super::run_fault::hold(fact);
-                }
-            });
+            let herald = super::herald::Herald::Failed { agent: agent_id, session: session_id, run: run_id, auth: auth_required };
+            super::herald::tell(state, herald);
         }
-        // A run finished cleanly. This fires on every reply, so only herald when
-        // the user has stepped away — otherwise they already see it on screen.
         NotificationPayload::RunCompleted {
             agent_id,
             session_id,
+            run_id,
         } => {
-            if agent_id == YINYUE_AGENT {
-                return; // never herald her own turns
-            }
-            if user_sees(state, Sight::Screen) {
-                return; // they're here; the reply is already on screen
-            }
-            let state = state.clone();
-            tokio::spawn(async move {
-                if !heralds_to_builder(&state.manager, session_id.as_deref()).await {
-                    return;
-                }
-                // A notification, not a summary: she has NOT read the reply.
-                // The kickoff carries the user's own request (for the topic)
-                // and says so, so all she can announce is that a reply is
-                // ready — never what it did. Quoting Ling's last words was
-                // tried and misfired both ways: a 300-char head read as a
-                // reply that "broke off" (2026-09-01), and a content-free
-                // "finished" once let her announce a deletion that never
-                // happened. "They need you" is the AskUser hook's job.
-                let asked = match session_id.as_deref() {
-                    Some(sid) => last_user_line(&state, sid).await,
-                    None => None,
-                }
-                .unwrap_or_default();
-                let topic_block = if asked.is_empty() {
-                    String::new()
-                } else {
-                    format!(" The user had asked: \"{asked}\".")
-                };
-                let kickoff = format!(
-                    "The agent \"{agent_id}\" just finished a reply while the user was away from \
-                     Linggen.{topic_block} You have NOT read the reply. If it's worth telling them \
-                     when they're back, say one brief line in your voice that their reply is ready \
-                     — name the topic in a few words taken from what they asked; never say what \
-                     the reply did, found, or changed, and never judge it. Right now says whether \
-                     they're back. If it's routine, say nothing. Never nag."
-                );
-                wake_herald(state, kickoff, "happy").await;
-            });
+            let herald = super::herald::Herald::ReplyReady { agent: agent_id, session: session_id, run: run_id };
+            super::herald::tell(state, herald);
         }
     }
-}
-
-/// Whether what happens in session `session_id` — a finished reply, a
-/// question — may be handed to the builder's companion: the one gate of every
-/// herald. The session is the builder's own (`day_session::is_builders`, so
-/// never another person's words in the builder's thread or voice), and not an
-/// external host's (it receives its own results and answers its own prompts).
-async fn heralds_to_builder(manager: &crate::engine::agent::AgentManager, session_id: Option<&str>) -> bool {
-    let meta = session_id.and_then(|id| manager.global_sessions.get_session_meta(id).ok().flatten());
-    !is_delegated(meta.as_ref()) && crate::server::day_session::is_builders(manager, session_id).await
-}
-
-fn is_delegated(meta: Option<&crate::state_fs::sessions::SessionMeta>) -> bool {
-    meta.is_some_and(|meta| meta.creator == "external")
 }
 
 /// The user's most recent message in a session — the topic of the reply
@@ -500,17 +259,15 @@ pub(super) async fn ask_still_pending(state: &Arc<ServerState>, question_id: &st
         .contains_key(question_id)
 }
 
-/// Wake Yinyue to herald a worker event — a finished mission/run, or an agent
-/// blocked on the user. She reads the room (the Right now block) and decides whether it's
-/// worth a word; `SILENT` means say nothing (the never-nag discipline).
-/// The line when she actually spoke — a caller that bought silence with a
-/// notice needs to know whether anyone heard it.
-pub(crate) async fn wake_herald(
+/// Wake her on her own thread to tell the person something the engine
+/// knows that is not Ling's work (a restart's notice): her line, kept as
+/// her row. Ling's work is told by `herald::tell` alone.
+pub(crate) async fn wake_to_tell(
     state: Arc<ServerState>,
     kickoff: String,
     emotion: &str,
 ) -> Option<Line> {
-    wake_and_speak(state, (kickoff, None), emotion, Origin::Herald, Reach::Open, None).await
+    wake_and_speak(state, (kickoff, None), emotion, Origin::TaskEnd, Reach::Open, None).await
 }
 
 /// The origin of an app moment's turn: asked for, from the app the person is
@@ -540,7 +297,7 @@ pub(super) fn table_page(state: &ServerState, table: &Table) -> Option<String> {
     })
 }
 
-/// Wake her to tell a mission run's fault. Unprompted: quiet hours make it
+/// Wake her to tell a mission run's fault (`mission_fact`). Unprompted: quiet hours make it
 /// wait, and the hourly ceiling neither counts nor holds it ([`Source::Fault`]).
 pub(super) async fn wake_fault(state: Arc<ServerState>, fact: String) -> Option<Line> {
     wake_and_speak(
@@ -1015,7 +772,7 @@ fn resend_agent_chat(
 
 #[cfg(test)]
 mod native_target_tests {
-    use super::{eligible_meta, is_delegated, select_handoff};
+    use super::{eligible_meta, select_handoff};
     use crate::state_fs::sessions::SessionMeta;
     use std::path::PathBuf;
 
@@ -1094,75 +851,5 @@ mod native_target_tests {
         let mut sessions = [candidate("latest", "user", true)];
         assert_eq!(route(&mut sessions), "new-own");
         assert!(sessions[0].messages.is_empty());
-    }
-
-    #[test]
-    fn only_external_sessions_are_delegated() {
-        for creator in ["user", "agent", "skill", "mission"] {
-            let meta = SessionMeta {
-                creator: creator.into(),
-                ..Default::default()
-            };
-            assert!(!is_delegated(Some(&meta)), "{creator}");
-        }
-        let meta = SessionMeta {
-            creator: "external".into(),
-            ..Default::default()
-        };
-        assert!(is_delegated(Some(&meta)));
-        assert!(!is_delegated(None));
-    }
-}
-
-#[cfg(test)]
-mod herald_gate_tests {
-    #[test]
-    fn permission_notice_keeps_the_exact_option_labels() {
-        use crate::engine::permission::{build_exceeds_ceiling_question, PermissionMode};
-
-        let question = build_exceeds_ceiling_question(
-            "Edit the notes",
-            &PermissionMode::Edit,
-            "/work/Project Notes/file.md",
-            &["/work/Project Notes".into()],
-        );
-        let notice = super::ask_kickoff("ling", "ask-1", &[question]);
-        assert!(notice.contains(
-            "The options are: grant:at:edit:/work/Project Notes / grant:all:edit / grant:all:admin / Deny."
-        ), "{notice}");
-    }
-
-    /// What reaches the builder's companion — a finished reply's topic, a
-    /// question — comes only from the builder's own sessions.
-    #[tokio::test]
-    async fn only_the_builders_sessions_reach_the_companion() {
-        let empty = || std::sync::Arc::new(crate::engine::test_registries::Empty);
-        let mut config = crate::config::Config::default();
-        config.agent.daily_session = Some(true);
-        let manager = crate::engine::agent::AgentManager::new(config, None, empty(), empty(), empty(), crate::engine::InterfaceMode::Web).0;
-        let made_for = |id: &str, user: Option<&str>| {
-            let mut meta = crate::server::claude::new_meta("t".into(), "/p".into(), None);
-            meta.id = id.into();
-            meta.user_id = user.map(str::to_string);
-            manager.global_sessions.add_session(&meta).unwrap();
-        };
-        made_for("sess-1790000201-4e4a1d01", None);
-        made_for("sess-1790000202-4e4a1d02", Some("u-friend"));
-        assert!(super::heralds_to_builder(&manager, Some("sess-1790000201-4e4a1d01")).await);
-        assert!(super::heralds_to_builder(&manager, None).await);
-        assert!(!super::heralds_to_builder(&manager, Some("sess-1790000202-4e4a1d02")).await);
-    }
-}
-
-#[cfg(test)]
-mod kept_tests {
-    /// A question kept to an app reaches her only as that the app waits:
-    /// nothing of what it asks, and no way to answer it for the person.
-    #[test]
-    fn a_kept_question_reaches_her_without_its_words() {
-        let kickoff = super::kept_ask_kickoff("zz-ledger");
-        assert!(kickoff.contains("zz-ledger"));
-        assert!(!kickoff.contains("answer_prompt"));
-        assert!(!kickoff.contains("options"));
     }
 }

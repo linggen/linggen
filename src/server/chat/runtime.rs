@@ -57,6 +57,7 @@ pub(super) async fn run_loop_with_tracking(
                         crate::engine::events::NotificationPayload::RunCompleted {
                             agent_id: agent_id.to_string(),
                             session_id: session_id.map(|s| s.to_string()),
+                            run_id: Some(run_id.clone()),
                         },
                     ));
                 }
@@ -102,6 +103,7 @@ pub(super) async fn run_loop_with_tracking(
                         crate::engine::events::NotificationPayload::RunFailed {
                             agent_id: agent_id.to_string(),
                             session_id: session_id.map(|s| s.to_string()),
+                            run_id: Some(run_id.clone()),
                             auth_required: msg.contains("AUTH_REQUIRED"),
                         },
                     ));

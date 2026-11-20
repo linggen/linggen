@@ -380,6 +380,8 @@ pub(crate) async fn get_workspace_state(
         |run| (run.meta(), String::new()),
     );
 
+    // A notice said aloud while the person was away marks its run's reply.
+    crate::server::resident::mark_rows(sid, mapped_messages.iter_mut().map(|(meta, _)| meta));
     crate::server::claude::subagents::attach(
         &state.manager.global_sessions,
         sid,

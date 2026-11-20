@@ -18,6 +18,7 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
             voice,
             problem,
             offers,
+            question_id,
             ..
         } => Some(
             pet(format!("pet-speak-{seq}"), "pet_speak")
@@ -29,6 +30,7 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
                     voice,
                     problem,
                     offers: offers.into_iter().map(Into::into).collect(),
+                    question_id,
                 }),
         ),
         ServerEvent::PetExpress {

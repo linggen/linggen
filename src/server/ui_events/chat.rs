@@ -4,7 +4,7 @@
 use super::data::{
     AskUserData, ContentBlockStartData, ContentBlockUpdateData, FollowupsData, MessageData,
     ModelFallbackData, TextSegmentData, TokenData, ToolProgressData, TurnCompleteData,
-    WidgetResolvedData,
+    NoticeToldData, WidgetResolvedData,
 };
 use super::{
     Ui, UI_KIND_CONTENT_BLOCK, UI_KIND_MESSAGE, UI_KIND_TEXT_SEGMENT, UI_KIND_TOKEN,
@@ -206,6 +206,17 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
             ui.event(format!("resolved-{widget_id}"), "widget_resolved")
                 .session(session_id)
                 .data(WidgetResolvedData { widget_id }),
+        ),
+        ServerEvent::NoticeTold {
+            session_id,
+            run_id,
+            question_id,
+            at,
+            line,
+        } => Some(
+            ui.event(format!("notice-told-{seq}"), "notice_told")
+                .session(session_id)
+                .data(NoticeToldData { run_id, question_id, at, line }),
         ),
         ServerEvent::Followups {
             agent_id,
