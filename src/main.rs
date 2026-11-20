@@ -377,6 +377,7 @@ async fn main() -> Result<()> {
             let host = global_host.clone().unwrap_or(cfg_host);
             // Captured before the config moves into the manager below.
             let migrated_legacy_addr = config.server.migrated_legacy_addr;
+            let config_problems = config.problems.clone();
 
             // Memory is hosted in this process: open its store before the
             // listener binds; the engine's own memory calls reach it
@@ -446,6 +447,10 @@ async fn main() -> Result<()> {
                     tracing::info!("Config File: {}", path.display());
                 } else {
                     tracing::info!("Config File: (default)");
+                }
+                // What the load set right instead of refusing the config.
+                for problem in &config_problems {
+                    tracing::error!("[config] {problem}");
                 }
                 tracing::info!("Workspace Root: {}", ws_root.display());
                 tracing::info!("Server Address: {host}:{port}");

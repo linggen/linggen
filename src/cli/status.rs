@@ -303,6 +303,10 @@ async fn fetch_latest_version() -> Option<String> {
 }
 
 async fn check_models(config: &Config) {
+    // What the load set right instead of refusing the config (a bad price).
+    for problem in &config.problems {
+        fail("Config", problem);
+    }
     if config.models.is_empty() {
         println!("  Models (0):");
         info("  none configured", "");

@@ -35,6 +35,12 @@ pub struct Config {
     /// `doc/mcp-client-spec.md`.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub mcp_servers: std::collections::BTreeMap<String, crate::mcp_client::McpServerConfig>,
+    /// What was wrong in the file and was set right on load rather than
+    /// refusing the whole config (a bad model `price` is dropped, that
+    /// model alone). Runtime-only — never read from or written to the file —
+    /// so the log and `ling status` can say it.
+    #[serde(skip)]
+    pub problems: Vec<String>,
 }
 
 /// Settings for Yinyue, the companion agent (`[pet]` on disk). The recall fields
@@ -492,39 +498,59 @@ impl Config {
         config.server.migrated_legacy_addr = config.server.migrate_legacy_fields();
         config.migrate_retired_chatgpt_builtins();
         config.migrate_retired_cloud_ids();
-        config.check_prices()?;
+        config.drop_bad_prices();
         Ok(config)
     }
 
-    /// A model's `price` is real money: every number finite and not
-    /// negative, and only on a model paid by the token — one that bills an
-    /// account (a ChatGPT sign-in, Linggen Cloud, a room, a subscription)
-    /// would never use it. The error names the model and the field.
-    fn check_prices(&self) -> Result<()> {
-        for model in &self.models {
-            let Some(price) = &model.price else { continue };
-            let fields = [
-                ("price.input", Some(price.input)),
-                ("price.output", Some(price.output)),
-                ("price.cache_read", price.cache_read),
-                ("price.cache_write", price.cache_write),
-            ];
-            for (field, value) in fields {
-                if let Some(n) = value.filter(|n| !n.is_finite() || *n < 0.0) {
-                    anyhow::bail!(
-                        "Model '{}': {field} must be a finite number, not negative (got {n}).",
-                        model.id
-                    );
-                }
-            }
-            if crate::provider::models::billing_of(model) == crate::provider::models::Billing::Account {
-                anyhow::bail!(
-                    "Model '{}' has a price, but it bills an account, not by the token: remove its price.",
+    /// What is wrong with a model's `price`, naming the model and the field.
+    /// A price is real money: every number finite and not negative, and only
+    /// on a model paid by the token — one that bills an account (a ChatGPT
+    /// sign-in, Linggen Cloud, a room, a subscription) would never use it.
+    fn price_problem(model: &ModelConfig) -> Option<String> {
+        let price = model.price.as_ref()?;
+        let fields = [
+            ("price.input", Some(price.input)),
+            ("price.output", Some(price.output)),
+            ("price.cache_read", price.cache_read),
+            ("price.cache_write", price.cache_write),
+        ];
+        for (field, value) in fields {
+            if let Some(n) = value.filter(|n| !n.is_finite() || *n < 0.0) {
+                return Some(format!(
+                    "Model '{}': {field} must be a finite number, not negative (got {n}).",
                     model.id
-                );
+                ));
             }
         }
-        Ok(())
+        (crate::provider::models::billing_of(model) == crate::provider::models::Billing::Account)
+            .then(|| {
+                format!(
+                    "Model '{}' has a price, but it bills an account, not by the token: remove its price.",
+                    model.id
+                )
+            })
+    }
+
+    /// Strict, for a config being written (`validate`): the first bad price
+    /// refuses the save.
+    fn check_prices(&self) -> Result<()> {
+        match self.models.iter().find_map(Self::price_problem) {
+            Some(why) => anyhow::bail!("{why}"),
+            None => Ok(()),
+        }
+    }
+
+    /// Lenient, for a config being read: one bad price must never cost the
+    /// person the rest of their file. That model loses its price (it then
+    /// shows tokens and no dollars) and the problem is kept in `problems`
+    /// for the log and `ling status`.
+    fn drop_bad_prices(&mut self) {
+        for model in &mut self.models {
+            if let Some(why) = Self::price_problem(model) {
+                model.price = None;
+                self.problems.push(format!("{why} Its price is ignored."));
+            }
+        }
     }
 
     /// Bring persisted references in line with the ChatGPT catalog in force.
@@ -762,6 +788,7 @@ impl Default for Config {
             language: None,
             pet: PetConfig::default(),
             mcp_servers: Default::default(),
+            problems: Vec::new(),
         }
     }
 }
@@ -1045,13 +1072,44 @@ mod tests {
         assert!(said.contains("'test-model'") && said.contains("price"), "{said}");
     }
 
-    /// Finding 7: the file does not load with a bad price, and says where.
+    /// Strict when writing, lenient when reading: one bad price must never
+    /// cost the person the rest of their config. At load it drops that
+    /// model's price alone and says so.
     #[test]
-    fn a_bad_price_in_the_file_does_not_load() {
-        let text = |input: f64| toml::to_string(&priced(input, 10.0)).unwrap();
-        let said = Config::from_toml(&text(-2.0)).err().expect("refused").to_string();
+    fn a_bad_price_in_the_file_drops_only_that_models_price() {
+        let mut cfg = priced(-2.0, 10.0);
+        cfg.server.url = Some("127.0.0.1:9999".into());
+        let mut second = cfg.models[0].clone();
+        second.id = "other".into();
+        second.price = Some(ModelPrice { input: 1.0, output: 2.0, cache_read: None, cache_write: None });
+        cfg.models.push(second);
+        let loaded = Config::from_toml(&toml::to_string(&cfg).unwrap()).expect("the file loads");
+        assert_eq!(loaded.server.port(), 9999, "the rest of the config is the person's own");
+        assert_eq!(loaded.models.len(), 2);
+        assert_eq!(loaded.models[0].price, None, "the bad price is dropped");
+        assert_eq!(loaded.models[1].price.as_ref().unwrap().input, 1.0, "a good price is kept");
+        assert_eq!(loaded.problems.len(), 1, "{:?}", loaded.problems);
+        let said = &loaded.problems[0];
         assert!(said.contains("'test-model'") && said.contains("price.input"), "{said}");
-        assert_eq!(Config::from_toml(&text(2.0)).unwrap().models[0].price.as_ref().unwrap().input, 2.0);
+    }
+
+    /// A price on a model that bills an account is dropped the same way.
+    #[test]
+    fn a_price_on_an_allowance_model_is_dropped_at_load() {
+        let mut cfg = priced(1.0, 1.0);
+        cfg.models[0].provider = "chatgpt".into();
+        cfg.models[0].auth_mode = Some("chatgpt_oauth".into());
+        let loaded = Config::from_toml(&toml::to_string(&cfg).unwrap()).expect("loads");
+        assert_eq!(loaded.models[0].price, None);
+        assert!(loaded.problems[0].contains("'test-model'"), "{:?}", loaded.problems);
+    }
+
+    /// A good file has nothing to say.
+    #[test]
+    fn a_good_price_loads_with_no_problem() {
+        let loaded = Config::from_toml(&toml::to_string(&priced(2.0, 10.0)).unwrap()).unwrap();
+        assert_eq!(loaded.models[0].price.as_ref().unwrap().input, 2.0);
+        assert!(loaded.problems.is_empty());
     }
 
     #[test]

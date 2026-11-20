@@ -221,15 +221,33 @@ async fn a_manual_compaction_is_a_call_in_the_ledger() {
     )
     .await;
     let sid = w.api.create_session(json!({"title": "Long"})).await;
-    w.turn(&sid, &w.work(), &format!("Ignore this filler.\n{}", crate::shared_table::filler()), Agent::Ling).await;
+    w.turn(
+        &sid,
+        &w.work(),
+        &format!("Ignore this filler.\n{}", crate::shared_table::filler()),
+        Agent::Ling,
+    )
+    .await;
     w.turn(&sid, &w.work(), "Short one.", Agent::Ling).await;
-    let file = w.home.linggen_home().join("sessions").join(&sid).join("usage.json");
+    let file = w
+        .home
+        .linggen_home()
+        .join("sessions")
+        .join(&sid)
+        .join("usage.json");
     let calls = || -> u64 {
-        let v: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap_or_default()).unwrap_or(json!({}));
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap_or_default())
+            .unwrap_or(json!({}));
         v["models"]["fake-ling"]["calls"].as_u64().unwrap_or(0)
     };
     assert_eq!(calls(), 2, "the two turns");
-    let resp = w.api.post("/api/chat/compact", json!({"session_id": sid, "project_root": w.work()})).await;
+    let resp = w
+        .api
+        .post(
+            "/api/chat/compact",
+            json!({"session_id": sid, "project_root": w.work()}),
+        )
+        .await;
     assert_eq!(resp["compacted"], true, "{resp}");
     assert_eq!(calls(), 3, "the summary is a call of the summarizing model");
 }
@@ -245,15 +263,85 @@ async fn a_local_models_calls_are_listed_but_are_no_spend() {
         "arguments": {"prompt": "Say done.", "write_dir": w.work(), "work": "none"}}});
     w.api.post("/mcp", call).await;
     let dir = w.home.linggen_home().join("sessions");
-    let sid = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name().to_string_lossy().to_string())
-        .find(|id| std::fs::read_to_string(dir.join(id).join("session.yaml")).unwrap_or_default().contains("creator: external"))
+    let sid = std::fs::read_dir(&dir)
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .find(|id| {
+            std::fs::read_to_string(dir.join(id).join("session.yaml"))
+                .unwrap_or_default()
+                .contains("creator: external")
+        })
         .expect("the delegated session");
     let usage = status(&w, &sid).await["usage"].clone();
     let m = &usage["models"][0];
     assert_eq!(m["model"], "fake-ling", "{usage}");
     assert_eq!(m["billing"], "local", "{usage}");
     assert!(m["calls"].as_u64().unwrap() >= 1);
-    assert!(m.get("cost_usd").is_none() && usage.get("cost_usd").is_none(), "{usage}");
-    assert_eq!(usage["tokens"], json!({"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}), "{usage}");
+    assert!(
+        m.get("cost_usd").is_none() && usage.get("cost_usd").is_none(),
+        "{usage}"
+    );
+    assert_eq!(
+        usage["tokens"],
+        json!({"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}),
+        "{usage}"
+    );
     assert!(usage.get("unpriced").is_none(), "{usage}");
+}
+
+/// One bad price must not cost the person their config: the engine starts
+/// on the file as written, that model without its price, every other model
+/// and setting as they were.
+#[tokio::test]
+async fn a_bad_price_in_the_file_leaves_the_rest_of_the_config_in_force() {
+    let extra = r#"
+[[models]]
+id = "bad-price"
+provider = "openai"
+url = "{{MODEL_URL}}/v1"
+model = "bad-price-1"
+api_key = "test-not-a-key"
+price = { input = -1.0, output = 2.0 }
+"#;
+    let w = World::start(Setup {
+        config_append: Some(extra),
+        ..Setup::default()
+    })
+    .await;
+    let config = w.api.get("/api/config").await;
+    let models = config["models"].as_array().unwrap();
+    let ids: Vec<&str> = models.iter().filter_map(|m| m["id"].as_str()).collect();
+    assert!(
+        ids.contains(&"fake-ling") && ids.contains(&"bad-price"),
+        "the person's models are still there: {ids:?}"
+    );
+    let bad = models.iter().find(|m| m["id"] == "bad-price").unwrap();
+    assert!(
+        bad.get("price").is_none(),
+        "the bad price is dropped: {bad}"
+    );
+    assert_eq!(
+        config["routing"]["default_models"],
+        json!(["fake-ling"]),
+        "routing is the person's own"
+    );
+}
+
+/// The other half: a config being saved with a bad price is refused and
+/// nothing is written.
+#[tokio::test]
+async fn saving_a_bad_price_is_refused_and_names_it() {
+    let w = World::start(Setup::default()).await;
+    let before = std::fs::read(w.home.config_path()).unwrap();
+    let mut config = w.api.get("/api/config").await;
+    config["models"][0]["price"] = json!({"input": -3.0, "output": 1.0});
+    let (status, _) = w.api.post_with_status("/api/config", config).await;
+    // (The refusal's words — the model and the field — are the config unit test's.)
+    assert_eq!(status, 400);
+    assert_eq!(
+        std::fs::read(w.home.config_path()).unwrap(),
+        before,
+        "nothing was written"
+    );
 }
