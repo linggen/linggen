@@ -13,16 +13,25 @@ export function watchTopDialogEscape(dialog: HTMLElement, close: () => void) {
   return watchDialogEscape(doc.defaultView!, () => topDialog(doc) === dialog, close);
 }
 
-export function watchPageEscape(doc: Document, close: () => void) {
-  return watchDialogEscape(doc.defaultView!, () => !topDialog(doc), close);
+function editingTarget(event: KeyboardEvent) {
+  const elements = event.composedPath().filter((node): node is Element => node instanceof Element);
+  const field = 'input:not([type="button"], [type="submit"], [type="reset"], [type="image"]), textarea, select, [role="textbox"]';
+  // isContentEditable includes inherited editability and honours explicit
+  // contenteditable="false" islands inside an editor.
+  const target = elements.find((node): node is HTMLElement => node instanceof HTMLElement);
+  return target?.isContentEditable || elements.some((node) => node.matches(field));
 }
 
-export function watchDialogEscape(target: KeyTarget, isTop: () => boolean, close: () => void) {
+export function watchPageEscape(doc: Document, close: () => void) {
+  return watchDialogEscape(doc.defaultView!, (key) => !editingTarget(key) && !topDialog(doc), close);
+}
+
+export function watchDialogEscape(target: KeyTarget, isTop: (key: KeyboardEvent) => boolean, close: () => void) {
   let offered: Event | undefined;
   const capture = (event: Event) => {
     const key = event as KeyboardEvent;
     // Snapshot before descendants can synchronously remove the top dialog.
-    if (key.key === 'Escape' && !key.repeat && !key.isComposing && key.keyCode !== 229 && isTop()) offered = event;
+    if (key.key === 'Escape' && !key.repeat && !key.isComposing && key.keyCode !== 229 && isTop(key)) offered = event;
   };
   const bubble = (event: Event) => {
     // Editors and menus own Escape when they handle it (preventDefault).
