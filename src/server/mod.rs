@@ -26,6 +26,7 @@ mod restart;
 mod rooms_switch;
 mod routes;
 pub(crate) mod rtc;
+mod session_cost;
 mod shared_pages;
 mod state;
 pub(crate) mod tasks;

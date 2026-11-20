@@ -125,7 +125,7 @@ frame and in `agent_status op=session`: `reason` (`no_model`, `cloud_sign_in`,
 still has what the run read). The dream's status carries the same as
 `last_run_cannot_run`.
 
-`agent_status op=session` also carries `usage`, what the session's model calls used and cost (`models.md` § What a session cost): per model `input`, `output`, `cache_read`, `cache_write` tokens and `calls`, with `cost_usd` — an estimate at list price — only for a model with a known price, a total `cost_usd` over the priced ones, and `unpriced`, the models whose tokens it leaves out. The session's total, not one run's: a continued session adds to it. A caller can tell the person what a job cost; an unpriced model has tokens and no dollars.
+`agent_status op=session` also carries `usage`, what the session's model calls used and cost (`models.md` § What a session cost): per model `input`, `output`, `cache_read`, `cache_write` tokens and `calls`, with `cost_usd` — an estimate at list price — only for a model with a known price, a total `cost_usd` over the priced ones, and `unpriced`, the models whose tokens it leaves out. The session's total, not one run's: a continued session adds to it. A caller can tell the person what a job cost; an unpriced model has tokens and no dollars. A Claude SDK session also carries `claude_usage`, the host's own figure — the same answer the chat's top bar shows.
 
 A run that ends at its step limit is not a failure: its status is `completed`
 and `cannot_run` reads `reason: "step_limit"`, `steps` (the limit it reached),

@@ -173,6 +173,11 @@ async fn session_estimate_accumulates_turns_and_clear_resets() {
             state["claude_usage"]["estimated_cost_usd"],
             0.125 * turn as f64
         );
+        // What the session cost has one answer: `agent_status` gives the
+        // figure the top bar shows (`server::session_cost`).
+        let status = agent_status(&w, &sid).await;
+        assert_eq!(status["claude_usage"], state["claude_usage"], "{status}");
+        assert_eq!(status["usage"], state["usage"], "{status}");
     }
     w.api
         .post("/api/chat/clear", json!({"session_id":sid}))
@@ -181,4 +186,16 @@ async fn session_estimate_accumulates_turns_and_clear_resets() {
     assert!(state["claude_usage"].is_null());
     assert!(trees(&state).is_empty());
     w.assert_all_scripted();
+}
+
+async fn agent_status(w: &World, session: &str) -> serde_json::Value {
+    let call = json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+        "params": {"name": "agent_status", "arguments": {"op": "session", "session_id": session}}});
+    let reply = w.api.post("/mcp", call).await;
+    serde_json::from_str(
+        reply["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{reply}")),
+    )
+    .unwrap()
 }
