@@ -62,8 +62,7 @@ pub(super) fn decide(
         let named = perms.path_modes.iter().filter(|g| g.path != "*").any(|g| {
             let grant = sensitive::resolved(Path::new(&g.path));
             g.mode >= PermissionMode::Read
-                && (sensitive::same(&grant, file)
-                    || file.parent().is_some_and(|parent| sensitive::same(&grant, parent)))
+                && sensitive::same(&grant, file)
         });
         return if named && mode >= Some(PermissionMode::Read) { ReadDecision::Allow } else { ReadDecision::Ask };
     }

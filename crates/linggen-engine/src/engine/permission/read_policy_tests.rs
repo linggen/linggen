@@ -141,7 +141,7 @@ fn read_policy_account_file_requires_local_owner_or_refuses() {
     };
     assert_eq!(
         [read(&broad), read(&named), read(&parent), read(&delegate(broad)), read(&delegate(named))],
-        [Ask, Allow, Allow, Refuse, Refuse]
+        [Ask, Allow, Ask, Refuse, Refuse]
     );
 }
 
