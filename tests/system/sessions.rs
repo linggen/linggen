@@ -40,6 +40,89 @@ async fn native_model_receives_imported_rules_but_not_secret_or_chat_imports() {
     assert!(!sent.contains("UNIMPORTED-CHAT-FILE"));
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn coding_prompt_loads_personal_rules_before_project_rules_and_refreshes_next_turn() {
+    use std::fs::{create_dir, write};
+    let w = World::start(Setup::default().script(Agent::Ling, vec![text("Done."); 3])).await;
+    let home = w.home.home();
+    let personal = home.join(".claude/CLAUDE.md");
+    let style = home.join("style.md");
+    create_dir(personal.parent().unwrap()).unwrap();
+    write(&personal, "ORIGINAL-PERSONAL-RULE\n@~/style.md").unwrap();
+    write(&style, "ORIGINAL-PERSONAL-STYLE").unwrap();
+    write(w.home.work().join("AGENTS.md"), "LOCAL-PROJECT-RULE").unwrap();
+    let root = w.work();
+    let sid = w.api.create_session(json!({"title":"Code", "project_root":root, "work":"code"})).await;
+    let mut sent = Vec::new();
+    for message in ["First turn", "Second turn", "Third turn"] {
+        w.turn(&sid, &root, message, Agent::Ling).await;
+        sent.push(w.model.calls_of(Agent::Ling).last().unwrap().body.to_string());
+        match message {
+            "First turn" => write(&personal, "UPDATED-PERSONAL-RULE\n@~/style.md").unwrap(),
+            "Second turn" => write(&style, "UPDATED-PERSONAL-STYLE").unwrap(),
+            _ => {}
+        }
+    }
+    assert!(sent[0].contains("Personal") && sent[0].contains(personal.to_str().unwrap()));
+    assert!(sent[0].find("ORIGINAL-PERSONAL-RULE").unwrap() < sent[0].find("ORIGINAL-PERSONAL-STYLE").unwrap());
+    assert!(sent[0].find("ORIGINAL-PERSONAL-STYLE").unwrap() < sent[0].find("LOCAL-PROJECT-RULE").unwrap());
+    assert!(sent[1].contains("UPDATED-PERSONAL-RULE") && sent[1].contains("ORIGINAL-PERSONAL-STYLE"));
+    assert!(sent[2].contains("UPDATED-PERSONAL-RULE") && sent[2].contains("UPDATED-PERSONAL-STYLE"));
+    assert!(!sent[2].contains("ORIGINAL-PERSONAL-STYLE"));
+}
+
+#[tokio::test]
+async fn daily_chat_app_and_yinyue_receive_neither_personal_rule_nor_import() {
+    use std::fs::{create_dir, write};
+    let w = World::start(Setup {
+        daily_session: Some(true),
+        ..Setup::default()
+    }.script(Agent::Ling, vec![text("Hi."); 2]).script(Agent::Yinyue, vec![text("Hello.")])).await;
+    let home = w.home.home();
+    let personal = home.join(".claude/CLAUDE.md");
+    create_dir(personal.parent().unwrap()).unwrap();
+    write(&personal, "PERSONAL-CHAT-CONTROL\n@~/style.md").unwrap();
+    write(home.join("style.md"), "IMPORTED-CHAT-CONTROL").unwrap();
+    let root = w.work();
+    let day = w.api.get("/api/sessions/day").await;
+    let day = day["id"].as_str().expect("daily session");
+    crate::day_session::turn_at(&w, day, None, "Hello", Agent::Ling).await;
+    let app = w.api.create_session(json!({"title":"App", "skill":"dice"})).await;
+    crate::day_session::turn_at(&w, &app, Some("dice"), "Hello", Agent::Ling).await;
+    let code = w.api.create_session(json!({"title":"Code", "project_root":root, "work":"code"})).await;
+    w.turn(&code, &root, "@银月 hello", Agent::Yinyue).await;
+    for agent in [Agent::Ling, Agent::Yinyue] {
+        let calls = w.model.calls_of(agent);
+        assert_eq!(calls.len(), if agent == Agent::Ling { 2 } else { 1 });
+        for call in calls {
+            let sent = call.body.to_string();
+            assert!(!sent.contains("PERSONAL-CHAT-CONTROL") && !sent.contains("IMPORTED-CHAT-CONTROL"));
+        }
+    }
+}
+
+#[tokio::test]
+async fn personal_import_refusal_reaches_the_provider_but_protected_contents_do_not() {
+    use std::fs::{create_dir, write};
+    let w = World::start(Setup::default().script(Agent::Ling, vec![text("Done.")])).await;
+    let home = w.home.home();
+    let personal = home.join(".claude/CLAUDE.md");
+    create_dir(personal.parent().unwrap()).unwrap();
+    create_dir(home.join(".ssh")).unwrap();
+    write(home.join(".ssh/test-key"), "INVENTED-PERSONAL-KEY").unwrap();
+    write(w.home.linggen_home().join("account.toml"), "INVENTED-PERSONAL-ACCOUNT").unwrap();
+    write(&personal, "@~/.ssh/test-key\n@~/.linggen/account.toml").unwrap();
+    let root = w.work();
+    let sid = w.api.create_session(json!({"title":"Code", "project_root":root, "work":"code"})).await;
+    w.turn(&sid, &root, "Check the rules", Agent::Ling).await;
+    let sent = w.model.calls_of(Agent::Ling).first().expect("native model request").body.to_string();
+    for token in ["~/.ssh/test-key", "~/.linggen/account.toml"] {
+        assert!(sent.contains(&format!("[Import @{token} not loaded: protected or requires approval.]")));
+    }
+    assert!(!sent.contains("INVENTED-PERSONAL-KEY") && !sent.contains("INVENTED-PERSONAL-ACCOUNT"));
+}
+
 #[tokio::test]
 async fn work_create_app_refused() {
     let w = World::start(Setup::default()).await;

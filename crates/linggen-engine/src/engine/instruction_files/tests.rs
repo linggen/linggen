@@ -15,6 +15,7 @@ fn scope(root: &Path) -> InstructionScope {
         declined: DeclinedScopes::default(),
         origin: ReadOrigin::LocalOwner,
         coding: true,
+        personal: true,
         ceiling: None,
     }
 }
@@ -292,6 +293,99 @@ fn sentence_end_imports_keep_punctuation_unless_it_names_a_file() {
     assert!(!text.contains("Wrong file"));
 }
 
+fn personal_fixture() -> (tempfile::TempDir, PathBuf, PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let root = home.join("work");
+    let personal = personal_rule_path(&home);
+    fs::create_dir_all(&root).unwrap();
+    fs::create_dir(personal.parent().unwrap()).unwrap();
+    (dir, root, personal)
+}
+
+#[test]
+#[cfg(unix)]
+fn personal_rules_precede_project_rules_and_only_they_can_import_outside() {
+    let (_dir, root, personal) = personal_fixture();
+    let home = root.parent().unwrap();
+    write(home.join("style.md"), "PERSONAL STYLE\n@details.md").unwrap();
+    write(home.join("details.md"), "PERSONAL DETAILS").unwrap();
+    write(home.join("project-escape.md"), "PROJECT ESCAPE").unwrap();
+    write(root.join("shared.md"), "SHARED RULE\n@~/project-escape.md").unwrap();
+    write(&personal, "PERSONAL RULE\n@~/style.md\n@~/work/shared.md").unwrap();
+    write(root.join(AGENTS), "PROJECT RULE\n@~/project-escape.md").unwrap();
+
+    let mut scope = scope(&root);
+    let result = scope.load_with_home(Some(home));
+    let (label, text) = &result.sections[0];
+    assert!(
+        label.contains("Personal") && label.contains(personal.to_str().unwrap()),
+        "{label}"
+    );
+    for expected in [
+        "PERSONAL RULE",
+        "PERSONAL STYLE",
+        "PERSONAL DETAILS",
+        "SHARED RULE",
+    ] {
+        assert!(text.contains(expected), "{text}");
+    }
+    assert!(text.contains("[Import @~/project-escape.md not loaded: outside the project.]"));
+    assert!(result.sections[1].1.contains("PROJECT RULE"));
+    assert!(result.sections[1]
+        .1
+        .contains("[Import @~/project-escape.md not loaded: outside the project.]"));
+    assert!(!rendered(&result).contains("PROJECT ESCAPE"));
+
+    scope.personal = false;
+    let text = rendered(&scope.load_with_home(Some(home)));
+    assert!(text.contains("PROJECT RULE"));
+    assert!(!text.contains("PERSONAL RULE") && !text.contains("PERSONAL STYLE"));
+}
+
+#[test]
+#[cfg(unix)]
+fn personal_rule_symlinks_follow_the_gate_and_missing_rules_leave_nothing() {
+    use std::os::unix::fs::symlink;
+    let (_dir, root, personal) = personal_fixture();
+    let home = root.parent().unwrap();
+    let scope = scope(&root);
+    assert!(scope.load_with_home(Some(home)).sections.is_empty());
+    write(home.join("dotfile.md"), "LINKED PERSONAL RULE").unwrap();
+    symlink("../dotfile.md", &personal).unwrap();
+    assert!(rendered(&scope.load_with_home(Some(home))).contains("LINKED PERSONAL RULE"));
+
+    fs::remove_file(&personal).unwrap();
+    write(home.join(".env"), "PROTECTED PERSONAL TARGET").unwrap();
+    symlink("../.env", &personal).unwrap();
+    let text = rendered(&scope.load_with_home(Some(home)));
+    assert!(
+        text.contains("[Rule not loaded: protected or requires approval.]"),
+        "{text}"
+    );
+    assert!(!text.contains("PROTECTED PERSONAL TARGET"));
+}
+
+#[test]
+#[cfg(unix)]
+fn changes_to_personal_rules_and_their_imports_change_the_fingerprint() {
+    let (_dir, root, personal) = personal_fixture();
+    let home = root.parent().unwrap();
+    let style = home.join("style.md");
+    write(&style, "original style").unwrap();
+    write(&personal, "original rule\n@~/style.md").unwrap();
+    let scope = scope(&root);
+    let load = || scope.load_with_home(Some(home));
+    let first = load().fingerprint();
+    write(&personal, "updated rule\n@~/style.md").unwrap();
+    let second = load().fingerprint();
+    assert_ne!(first, second);
+    write(&style, "updated style").unwrap();
+    let third = load();
+    assert_ne!(second, third.fingerprint());
+    assert!(rendered(&third).contains("updated style"));
+}
+
 #[test]
 fn native_instruction_filenames_live_in_one_place() {
     fn check(dir: &Path) {
@@ -303,7 +397,8 @@ fn native_instruction_filenames_live_in_one_place() {
                 && !path.ends_with("engine/instruction_files.rs")
             {
                 let source = fs::read_to_string(&path).unwrap();
-                for name in NAMES {
+                let personal = personal_rule_path(Path::new(""));
+                for name in NAMES.iter().copied().chain(personal.to_str()) {
                     assert!(
                         !source.contains(&format!("\"{name}\"")),
                         "{} repeats the native instruction name {name}",
