@@ -97,6 +97,16 @@ test('an old Claude session is read-only and continues in Linggen', async ({ pag
   await expect(page.getByTestId('session-list').getByText('Tram timetable (continued)')).toHaveCount(1);
   await expect(composer(page)).toHaveCount(1);
   await expect(page.getByTestId('old-claude-bar')).toHaveCount(0);
+  const carried = /Continued from the Claude session "Tram timetable"/;
+  await expect(shown(page, carried)).toHaveCount(1);
+
+  // Both are kept: after a reload the old one is still there, read-only,
+  // and the new one still opens with the carried conversation.
+  await page.reload();
+  await expectWebRtc(page, httpRequests);
+  await expect(row(page, OLD_CLAUDE)).toHaveCount(1);
+  await page.getByTestId('session-list').getByText('Tram timetable (continued)').click();
+  await expect(shown(page, carried)).toHaveCount(1);
 });
 
 // Found by the whole-code review (2026-11-19): the chat box kept what was

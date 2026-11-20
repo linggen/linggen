@@ -99,6 +99,8 @@ fn continued_meta(old: &SessionMeta, model: Option<String>) -> SessionMeta {
     };
     meta.set_cwd(&old.cwd);
     meta.settle_cwd();
+    // It goes on with coding work: a Coding session, as `work: code` makes one.
+    let _ = crate::engine::session_spec::ask_work(&mut meta, "code");
     meta
 }
 

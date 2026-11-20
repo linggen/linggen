@@ -34,13 +34,16 @@ A Claude session kept from before (`runtime: claude_agent_sdk` in its
   check every turn passes refuses it (`refuse_foreign_runtime`,
   `engine/agent/mod.rs`); an engine restart does not continue it;
 - in place of the composer the page says one line and offers **Continue in
-  Linggen**: `POST /api/sessions/continue` makes a new Linggen session in the
-  same folder (on the old session's model when this engine runs it) whose
-  first row carries the conversation — the person's messages and Claude's
-  replies, newest first kept, up to 40,000 characters; tool calls and their
-  results stay behind (the files they touched are in the folder). The row is
-  a compaction row, so every member reads it as a system note
-  (`shared-session-spec.md` § The thread). The old session is left as it was.
+  Linggen**: `POST /api/sessions/continue` makes a new Linggen Coding
+  session (`work: code`) in the same folder — on the model the old session
+  pinned when this engine runs it, else the default chain (not the retired
+  Claude sessions' default). Its first row carries the conversation: the
+  person's messages and Claude's replies, the newest kept, up to 40,000
+  characters; tool calls and their results stay behind (the files they
+  touched are in the folder). The row is a compaction row, so every member
+  reads it as a system note (`shared-session-spec.md` § The thread), and the
+  page shows its first line as a divider. The old session is left as it was.
+  A message queued in it before the upgrade is not sent.
 
 `src/server/old_claude.rs` holds this; `ui/src/lib/oldClaude.mts` is the one
 place the page tells such a session apart. A request that still names the

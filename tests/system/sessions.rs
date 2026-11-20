@@ -225,6 +225,8 @@ async fn an_old_claude_session_opens_read_only_and_continues_in_linggen() {
     let sid = made["id"].as_str().unwrap_or_else(|| panic!("no new session: {made}")).to_string();
     assert_ne!(sid, OLD_CLAUDE);
     assert_eq!(made["cwd"], w.work(), "the new session left the old one's folder");
+    let made_meta = std::fs::read_to_string(w.home.linggen_home().join("sessions").join(&sid).join("session.yaml")).unwrap();
+    assert!(made_meta.contains("work: code"), "the new session is not a Coding session: {made_meta}");
     w.turn(&sid, &w.work(), "When is the first car?", Agent::Ling).await;
     let call = w.model.calls_of(Agent::Ling).pop().expect("the new session's call");
     let opening = call.thread().first().cloned().unwrap_or_default();

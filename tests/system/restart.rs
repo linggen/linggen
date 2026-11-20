@@ -364,4 +364,11 @@ async fn a_plan_naming_an_old_claude_session_skips_it_and_retires() {
         before,
         "the old Claude session was written to"
     );
+    // Not tried and given up on: it was never a turn to give.
+    let given_up = std::fs::read_dir(w.home.linggen_home().join("restart"))
+        .unwrap()
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().starts_with("unrecovered-"))
+        .count();
+    assert_eq!(given_up, 0, "the old Claude session's turn was tried and given up on");
 }
