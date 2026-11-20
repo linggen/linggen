@@ -332,7 +332,10 @@ pub struct AgentEngine {
     // body, so the agent treats it as instructions rather than a user turn.
     pub(crate) active_mission: Option<ActiveMission>,
     /// Metadata for skills available to the model via the Skill tool: (name, description).
+    /// Written only by `read_skills_if_changed`.
     pub available_skills_metadata: Vec<(String, String, bool)>,
+    /// The change of skills that list reflects (`AgentManager::skills_generation`).
+    skills_read_at: Option<u64>,
     /// Metadata for agents available for delegation via the Task tool: (id, description).
     pub available_agents_metadata: Vec<(String, String)>,
     pub parent_agent_id: Option<String>,
@@ -700,6 +703,7 @@ impl AgentEngine {
             active_skill: Default::default(),
             active_mission: None,
             available_skills_metadata: Vec::new(),
+            skills_read_at: None,
             available_agents_metadata: Vec::new(),
             parent_agent_id: None,
             parent_run_id: None,
@@ -854,10 +858,21 @@ impl AgentEngine {
         // installed skill-declared tools); currently nothing to do.
     }
 
-    /// Populate `available_skills_metadata` with (name, description) pairs
-    /// for all locally-installed skills that are not `disable_model_invocation`.
-    pub async fn load_available_skills_metadata(&mut self, skills: &dyn SkillRegistry) {
-        self.available_skills_metadata = skills.list_metadata().await;
+    /// Read `available_skills_metadata` — (name, description, is_app) for
+    /// every installed skill the model may take up — when the skills on disk
+    /// changed since this engine last read it (`mark_skills_changed`), or
+    /// never did. The one place the listing is read: when the engine is
+    /// built and at the start of each run, so a change of skills reaches a
+    /// live session at its next turn without dropping its engine. The
+    /// generation is read before the list, so a change landing between the
+    /// two is read again next time, never missed.
+    pub async fn read_skills_if_changed(&mut self, manager: &crate::engine::agent::AgentManager) {
+        let now = manager.skills_generation();
+        if self.skills_read_at == Some(now) {
+            return;
+        }
+        self.available_skills_metadata = manager.skills.list_metadata().await;
+        self.skills_read_at = Some(now);
     }
 
     /// Populate `available_agents_metadata` with (name, description) pairs

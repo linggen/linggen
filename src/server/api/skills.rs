@@ -56,11 +56,14 @@ pub(crate) enum SkillsChange<'a> {
 }
 
 /// The one follow-up after the skills on disk changed, whoever changed them:
-/// read them again, drop every cached engine that holds the old list (the
-/// project's agents and each session's live engines, rebuilt on their next
-/// turn), pick up the missions the skills ship, and tell the pages. Every
-/// path that changes skills ends here; the test
-/// `skills_are_reloaded_only_by_the_one_follow_up` fails on a second copy.
+/// read them again, have every engine read its skill list again at its next
+/// turn (`mark_skills_changed` — no session's engine is dropped, so none
+/// loses what it holds and a running turn stays the session's), drop the
+/// project's cached agents, pick up the missions the skills ship, and tell
+/// the pages. Every path that changes skills ends here; the test
+/// `skills_are_reloaded_only_by_the_one_follow_up` fails on a second copy,
+/// and `a_change_of_skills_keeps_every_live_engine` on a follow-up that
+/// drops engines again.
 pub(crate) async fn skills_changed(
     state: &ServerState,
     project_root: Option<&std::path::Path>,
@@ -73,7 +76,7 @@ pub(crate) async fn skills_changed(
     if let Some(root) = project_root {
         let _ = state.manager.invalidate_agent_cache(&root.to_path_buf(), None).await;
     }
-    state.manager.session_engines.lock().await.clear();
+    state.manager.mark_skills_changed();
     match change {
         SkillsChange::OnDisk => state.missions.reload(),
         SkillsChange::Removed(name) => state.missions.forget_skill(name),
@@ -320,6 +323,24 @@ mod tests {
             sites,
             [("main.rs".to_string(), 2), ("server/api/skills.rs".to_string(), 1)],
             "reload skills through `skills_changed`"
+        );
+    }
+
+    /// A change of skills tells live engines to read their list again
+    /// (`AgentManager::mark_skills_changed`); it never drops them. Dropping
+    /// them took from every session what its engine held — what the person
+    /// declined, its prompt — and left a running turn on an engine no
+    /// lookup finds (engine side: `a_change_of_skills_keeps_every_live_engine`).
+    #[test]
+    fn a_change_of_skills_keeps_every_live_engine() {
+        let text = include_str!("skills.rs");
+        let start = text.find("pub(crate) async fn skills_changed(").expect("the follow-up");
+        let body = &text[start..];
+        let body = &body[..body.find("\n}\n").expect("its end")];
+        assert!(body.contains("mark_skills_changed()"), "the follow-up must mark the change");
+        assert!(
+            !body.contains(["session_", "engines"].concat().as_str()),
+            "the follow-up must not drop the session engines"
         );
     }
 }
