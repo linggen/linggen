@@ -75,7 +75,6 @@ pub mod keys {
     pub const OBSERVATION_WRAPPER: &str = "tool-result.observation_wrapper";
 
     // -- bailout.* --------------------------------------------------------
-    pub const BAILOUT_LOOP_LIMIT: &str = "bailout.loop_limit";
     pub const BAILOUT_MALFORMED_OUTPUT: &str = "bailout.malformed_output";
     pub const BAILOUT_REPETITION_LOOP: &str = "bailout.repetition_loop";
 
@@ -268,7 +267,7 @@ mod tests {
         assert!(store.get(NUDGE_INVALID_JSON).is_some());
         // New keys
         assert!(store.get(keys::SYSTEM_FALLBACK_IDENTITY).is_some());
-        assert!(store.get(keys::BAILOUT_LOOP_LIMIT).is_some());
+        assert!(store.get(keys::BAILOUT_MALFORMED_OUTPUT).is_some());
         assert!(store.get(keys::OBSERVATION_WRAPPER).is_some());
     }
 
@@ -489,7 +488,6 @@ mod tests {
             keys::PLAN_SUBMITTED,
             keys::PLAN_UPDATED,
             keys::OBSERVATION_WRAPPER,
-            keys::BAILOUT_LOOP_LIMIT,
             keys::BAILOUT_MALFORMED_OUTPUT,
             keys::BAILOUT_REPETITION_LOOP,
             keys::RESPONSE_FORMAT,

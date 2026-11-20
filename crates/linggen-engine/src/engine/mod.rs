@@ -494,7 +494,7 @@ impl AgentEngine {
         let mut state = self.initialize_loop(session_id).await?;
         let opening = unfinished::Opening::of(&state.messages, self.chat_history.len());
         let outcome = self.run_steps(&mut state, session_id).await;
-        if outcome.is_err() {
+        if outcome.is_err() || self.run_faults.hit_limit {
             self.keep_unfinished_work(&state.messages, &opening);
         }
         outcome
@@ -509,10 +509,11 @@ impl AgentEngine {
 
         let mut iterations = 0;
         let mut cut_streak = 0;
+        let step_limit = self.step_limit();
         loop {
-            if iterations >= self.cfg.max_iters {
+            if iterations >= step_limit {
                 if self.close_or_receive_run_messages(&mut state.messages, None).await {
-                    iterations = self.cfg.max_iters.saturating_sub(1);
+                    iterations = step_limit.saturating_sub(1);
                 } else {
                     break;
                 }
@@ -752,7 +753,7 @@ impl AgentEngine {
                         continue;
                     }
                     if self.close_or_receive_run_messages(&mut state.messages, None).await {
-                        iterations = iterations.min(self.cfg.max_iters.saturating_sub(1));
+                        iterations = iterations.min(step_limit.saturating_sub(1));
                         continue;
                     }
                     self.active_skill.clear();
@@ -837,7 +838,7 @@ impl AgentEngine {
                         continue;
                     }
                     if self.close_or_receive_run_messages(&mut state.messages, Some(&raw)).await {
-                        iterations = iterations.min(self.cfg.max_iters.saturating_sub(1));
+                        iterations = iterations.min(step_limit.saturating_sub(1));
                         continue;
                     }
                     self.active_skill.clear();
@@ -908,7 +909,7 @@ impl AgentEngine {
                             continue;
                         }
                         if self.close_or_receive_run_messages(&mut state.messages, Some(&raw)).await {
-                        iterations = iterations.min(self.cfg.max_iters.saturating_sub(1));
+                        iterations = iterations.min(step_limit.saturating_sub(1));
                         continue;
                     }
                         return Ok(AgentOutcome::None);
@@ -932,7 +933,7 @@ impl AgentEngine {
                             continue;
                         }
                         if self.close_or_receive_run_messages(&mut state.messages, Some(&message)).await {
-                            iterations = iterations.min(self.cfg.max_iters.saturating_sub(1));
+                            iterations = iterations.min(step_limit.saturating_sub(1));
                             continue;
                         }
                         self.active_skill.clear();
@@ -970,7 +971,7 @@ impl AgentEngine {
             }
         }
 
-        self.emit_loop_limit_bailout(session_id).await;
+        self.emit_loop_limit_bailout(step_limit, session_id).await;
         Ok(AgentOutcome::None)
     }
 
@@ -1092,23 +1093,28 @@ impl AgentEngine {
         false
     }
 
-    /// Tail of `run_agent_loop`: the loop ran out of steps — clear
-    /// `active_skill` and emit the loop-limit bailout message + context record.
-    async fn emit_loop_limit_bailout(&mut self, session_id: Option<&str>) {
+    /// Tail of `run_agent_loop`: the loop ran out of its `limit` steps — clear
+    /// `active_skill`, say so to the person in the typed reason's own words,
+    /// and note that reason on the run (`CannotRun::StepLimit`): a caller
+    /// reads that the run reached its limit and the same session continues
+    /// it, and the run's work is kept for that (`keep_unfinished_work`).
+    async fn emit_loop_limit_bailout(&mut self, limit: usize, session_id: Option<&str>) {
         self.active_skill.clear();
         self.run_faults.hit_limit = true;
-        let fallback = self
-            .prompt_store
-            .render_or_fallback(crate::prompts::keys::BAILOUT_LOOP_LIMIT, &[]);
+        let why = crate::cannot_run::CannotRun::StepLimit { steps: limit };
+        if let (Some(manager), Some(run_id)) = (self.tools.get_manager(), &self.run_id) {
+            manager.run_store.set_cannot_run(run_id, why.clone());
+        }
+        let line = why.line();
         self.push_context_record(
             ContextType::Status,
             Some("loop_limit_reached".to_string()),
             self.agent_id.clone(),
             Some("user".to_string()),
-            fallback.clone(),
-            serde_json::json!({ "max_iters": self.cfg.max_iters }),
+            line.clone(),
+            serde_json::json!({ "max_iters": limit }),
         );
-        let _ = self.persist_assistant_message(&fallback, session_id).await;
+        let _ = self.persist_assistant_message(&line, session_id).await;
     }
 
     /// A batch ended the loop with `outcome`. A Stop that landed while it

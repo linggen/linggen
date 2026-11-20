@@ -149,7 +149,9 @@ and to let it run programs in its own folder without asking
 (`permission-spec.md` § Coding sessions).
 Chat, Delegate and Handoff take this tag; all other presets ignore it.
 The guidance is in `prompts/work-code.toml`: core lines followed by the answering model family's lines when available.
-The tag does not change tools or memory, and Task children inherit it. Only
+The tag does not change tools or memory, except that a coding session's turn
+may take far more steps (`agent.coding_max_iters`, `agentic-loop.md` § Step
+limit), and Task children inherit it. Only
 a person (creating the session, or the Coding switch) or an `agent_run`
 caller sets it; no tool does.
 

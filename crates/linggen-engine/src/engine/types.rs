@@ -137,6 +137,8 @@ impl std::fmt::Display for InterfaceMode {
 pub struct EngineConfig {
     pub ws_root: PathBuf,
     pub max_iters: usize,
+    /// The step limit of a coding session (`AgentEngine::step_limit`).
+    pub coding_max_iters: usize,
     pub write_safety_mode: crate::config::WriteSafetyMode,
     /// Default permission mode (chat/read/edit/admin). See permission-spec.md.
     pub permission_mode: crate::engine::permission::PermissionMode,
@@ -185,6 +187,7 @@ impl EngineConfig {
         Self {
             ws_root,
             max_iters: config.agent.max_iters,
+            coding_max_iters: config.agent.coding_max_iters,
             write_safety_mode: config.agent.write_safety_mode,
             permission_mode: config.agent.default_permission_mode.unwrap_or_default(),
             prompt_loop_breaker: config.agent.prompt_loop_breaker.clone(),

@@ -45,6 +45,10 @@ pub enum CannotRun {
     ExtensionNotConnected,
     /// The memory store did not answer, or is not open.
     StoreUnavailable { detail: String },
+    /// The turn took every step its session allows and was not finished.
+    /// Not a refusal: the request was fine, the job long — the same session
+    /// continues it.
+    StepLimit { steps: usize },
 }
 
 impl CannotRun {
@@ -112,6 +116,12 @@ impl CannotRun {
         })
     }
 
+    /// The run ended at its step limit, not on a failure: its status is
+    /// still `completed`, and its work is held for the session's next turn.
+    pub fn is_step_limit(&self) -> bool {
+        matches!(self, Self::StepLimit { .. })
+    }
+
     /// Hit a usage limit: never retry before its reset.
     pub fn is_usage_limit(&self) -> bool {
         matches!(self, Self::UsageLimit { .. })
@@ -135,6 +145,9 @@ impl CannotRun {
             ),
             Self::ExtensionNotConnected => "Install or enable the Linggen Browser extension in Chrome, then retry.".into(),
             Self::StoreUnavailable { .. } => "Memory is unavailable; start Linggen or check `ling status`.".into(),
+            Self::StepLimit { steps } => format!(
+                "This run reached its limit of {steps} tool-call steps; it can be continued in the same session."
+            ),
         }
     }
 

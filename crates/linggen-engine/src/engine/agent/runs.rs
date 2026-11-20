@@ -146,6 +146,9 @@ impl RunStore {
         }
         let failed = run.status == AgentRunStatus::Failed;
         let error = failed.then(|| run.detail.clone()).flatten();
+        // A reason is the outcome's when the run failed on it, or ended at
+        // its step limit (a completed run that a caller continues).
+        let reason = ending.why.filter(|why| failed || why.is_step_limit());
         self.outcomes.lock_ok().insert(
             run.session_id.clone(),
             RunOutcome {
@@ -153,8 +156,8 @@ impl RunStore {
                 status: run.status,
                 error,
                 model: run.model.clone(),
-                cannot_run: ending.why.filter(|_| failed),
-                work_kept: failed && ending.work_kept,
+                work_kept: reason.is_some() && ending.work_kept,
+                cannot_run: reason,
             },
         );
     }
@@ -417,6 +420,27 @@ mod tests {
         let refused = store.outcome("s2").unwrap();
         assert_eq!((refused.status, refused.cannot_run), (AgentRunStatus::Failed, Some(CannotRun::NoModel)));
         assert!(!refused.work_kept, "no run began, no work to keep");
+    }
+
+    /// A run that ends at its step limit completed nothing it must be told
+    /// off for: its reason is still its outcome's, with its work kept.
+    #[test]
+    fn a_run_at_its_step_limit_keeps_its_reason_though_it_completed() {
+        let store = RunStore::new();
+        store.add_run(&make_run("r1", "s1", None, 1000));
+        store.set_cannot_run("r1", CannotRun::StepLimit { steps: 200 });
+        store.note_work_kept("r1");
+        let mut done = store.get_run("r1").unwrap();
+        done.status = AgentRunStatus::Completed;
+        store.record_outcome(&done);
+        let outcome = store.outcome("s1").unwrap();
+        assert_eq!(outcome.status, AgentRunStatus::Completed);
+        assert_eq!(outcome.cannot_run, Some(CannotRun::StepLimit { steps: 200 }));
+        assert!(outcome.work_kept);
+        let fact = outcome.cannot_run.unwrap().run_fact(true);
+        assert_eq!(fact["reason"], "step_limit");
+        assert_eq!(fact["steps"], 200);
+        assert!(fact["line"].as_str().unwrap().contains("limit of 200"));
     }
 
     #[test]

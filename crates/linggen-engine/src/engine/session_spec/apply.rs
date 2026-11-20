@@ -124,6 +124,17 @@ impl AgentEngine {
         }
     }
 
+    /// How many steps (a model reply and its tool calls) one turn of this
+    /// engine may take: a coding session's own limit, else the chat limit.
+    /// The one place that says so; the loop reads it once per turn.
+    pub(crate) fn step_limit(&self) -> usize {
+        if self.is_coding_session() {
+            self.cfg.coding_max_iters
+        } else {
+            self.cfg.max_iters
+        }
+    }
+
     /// After a loop loads the session's `permission.json`: a restricted
     /// session (a consumer's, a mission's, a delegate's) never prompts the
     /// person, whatever the file says.

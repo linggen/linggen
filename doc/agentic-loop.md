@@ -21,7 +21,7 @@ The kernel of linggen. Every agent run — chat, idle prompt, delegation — is 
 ## Loop iteration
 
 ```
-for iter in 0..max_iters {
+for iter in 0..step_limit {
     1. Check cancellation          → abort if cancelled
     2. Check user message queue    → inject into context if present
     3. Build context               → system prompt + history + observations
@@ -32,9 +32,11 @@ for iter in 0..max_iters {
 }
 ```
 
-**Termination**: Done (plain text answer), EnterPlanMode, cancellation, or `max_iters` reached.
+**Termination**: Done (plain text answer), EnterPlanMode, cancellation, or the step limit reached.
 
-A reply the provider cut at its output limit runs none of its tool calls; the model is told and goes on. After three cut replies in a row the turn ends as a failure of kind `output_cut` ("the model's output limit keeps cutting its answer"), noted on the run as why it could not go on.
+A reply the provider cut at its output limit runs none of its tool calls. If it was cut in words, the model is told to continue from where they stopped. If it was cut inside a tool call, the model is told so — the call was incomplete, nothing ran, make a smaller call — because "go on" cannot continue a call. After three cut replies in a row the turn ends as a failure of kind `output_cut` ("the model's output limit keeps cutting its answer"), saying which kind the last was, noted on the run as why it could not go on.
+
+**Step limit.** A step is one model reply and the tool calls in it. A turn takes at most `agent.max_iters` steps (default 200); a coding session (`work: code`) takes `agent.coding_max_iters` (default 1000, the most the config allows), because a long job is many steps. A turn that ends at its limit is not a failure and its request was fine: it says it reached its limit of N steps and can be continued in the same session, and its run carries that as the typed reason `step_limit` in `cannot_run` (`mcp-spec.md` § Model readiness), its work kept for the turn that continues it.
 
 Same loop for all execution types: user chat, idle prompt, delegation.
 
