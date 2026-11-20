@@ -276,13 +276,17 @@ pub fn ancestors(root: &Path, home: &Path) -> Vec<PathBuf> {
 }
 
 /// The session's root when a host sent none: a skill's dir, else the git
-/// root above `cwd` (stopping at `$HOME`), else `cwd` itself.
+/// root above `cwd` (stopping at `$HOME`, as given or canonical), else `cwd`
+/// itself. The engine's walk (`engine::tools::search_exec::find_git_root`)
+/// must name the same root — this crate cannot call it; a test there
+/// (`the_memory_root_walk_agrees_with_this_one`) holds the two together.
 pub fn find_root(cwd: &Path, home: &Path) -> PathBuf {
     if let Some((dir, _)) = skill_dir(cwd, home) {
         return dir;
     }
+    let real_home = home.canonicalize().ok();
     for a in cwd.ancestors() {
-        if a == home {
+        if a == home || real_home.as_deref() == Some(a) {
             break;
         }
         if a.join(".git").exists() {
