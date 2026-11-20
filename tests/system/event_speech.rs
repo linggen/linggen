@@ -227,3 +227,42 @@ async fn a_condition_she_stays_silent_on_is_not_told() {
     assert!(!every_row(&w).contains("WHY-SILENT"), "her reason reached a thread");
     assert_eq!(spoken(&w), ["Hello."]);
 }
+
+/// A condition is told only where its line and buttons are drawn: with only
+/// an app's page in front (it draws no bubble of hers) there is no model call
+/// and nothing told; with the main page in front there is one line, as text
+/// only, and it is told.
+#[tokio::test]
+async fn a_condition_is_told_only_where_her_line_is_drawn() {
+    let setup = Setup {
+        env: vec![("LINGGEN_AMBIENT_SECS", "3".to_string())],
+        ..Setup::default()
+    }
+    .script(Agent::Yinyue, vec![text("Hello."), say("Your Codex plugin is old. Update it.")]);
+    let w = World::start(setup).await;
+    let mark = w.mark();
+    w.api.post("/api/yinyue/chat", json!({"text": "/unmute"})).await;
+    w.api.post("/api/yinyue/chat", json!({"text": "Hello"})).await;
+    w.wait_agent(Agent::Yinyue, mark).await;
+    let before = w.model.calls_of(Agent::Yinyue).len();
+    an_old_plugin_calls(&w).await;
+
+    // Only an app's page is in front: nothing to draw her line on.
+    let app = json!({"surface": "dice-page", "focused": true, "typing": false, "idle_ms": 5_000, "app": "dice"});
+    for _ in 0..4 {
+        w.api.post("/api/presence", app.clone()).await;
+        tokio::time::sleep(Duration::from_secs(3)).await;
+    }
+    assert_eq!(w.model.calls_of(Agent::Yinyue).len(), before, "a model call with only an app page in front");
+    assert!(!conditions_told(&w).contains("old-plugin"), "told with no bubble to show it: {}", conditions_told(&w));
+
+    // The main page comes to the front: one line, words only, told.
+    let mark = w.mark();
+    beat_present(&w).await;
+    w.wait_agent(Agent::Yinyue, mark).await;
+    let line = "Your Codex plugin is old. Update it.";
+    let events = w.events_when(|e| e.iter().any(|x| x["kind"] == "pet_speak" && x["text"] == line)).await;
+    let cue = events.iter().find(|x| x["kind"] == "pet_speak" && x["text"] == line).unwrap();
+    assert_eq!(cue["data"]["voice"], false, "a seen line was spoken aloud: {cue}");
+    assert!(conditions_told(&w).contains("old-plugin"), "{}", conditions_told(&w));
+}

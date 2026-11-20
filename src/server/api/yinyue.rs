@@ -523,6 +523,9 @@ mod one_voice_rule {
             &front,
             &[("src/server/resident/triggers.rs", 2), ("src/server/resident/ambient.rs", 3)],
         );
+        // …and it answers through the one predicate the voice rule uses.
+        let drawn = format!("{}{}", "line_is_", "drawn(");
+        check(&drawn, &[("src/server/resident/triggers.rs", 3)]);
     }
 }
 

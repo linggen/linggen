@@ -443,11 +443,6 @@ impl AgentManager {
         self.presence.lock_ok().at_page(app, crate::util::now_ts_secs())
     }
 
-    /// Which Linggen pages read present now — `PresenceBoard::pages_present`.
-    pub fn pages_present(&self) -> presence::PagesPresent {
-        self.presence.lock_ok().pages_present(crate::util::now_ts_secs())
-    }
-
     /// A person who just typed to an agent is present, wherever they typed it.
     ///
     /// The beat above is sent by browser surfaces only, so a turn from a skill

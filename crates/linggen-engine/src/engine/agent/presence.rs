@@ -92,13 +92,6 @@ pub struct Beat {
     pub app: Option<String>,
 }
 
-/// Which Linggen pages read present: Linggen's own, an app's.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct PagesPresent {
-    pub main: bool,
-    pub app: bool,
-}
-
 /// Every surface's latest reading, keyed by surface.
 #[derive(Debug, Default)]
 pub struct PresenceBoard {
@@ -188,25 +181,6 @@ impl PresenceBoard {
             .iter()
             .filter(|(key, _)| **key != turn)
             .any(|(_, p)| p.app.as_deref() == app && p.state(now) != "away")
-    }
-
-    /// Which kind of Linggen page reads present at `now`: one of the pages' own
-    /// surfaces (a typed turn names no page, so it never counts), with the
-    /// freshness [`Presence::state`] uses. `main`: Linggen's own page; `app`:
-    /// an app's page.
-    pub fn pages_present(&self, now: u64) -> PagesPresent {
-        let turn = format!("s:{USER_TURN_SURFACE}");
-        let mut here = PagesPresent::default();
-        for (_, p) in self.surfaces.iter().filter(|(key, _)| **key != turn) {
-            if p.state(now) == "away" {
-                continue;
-            }
-            match p.app {
-                Some(_) => here.app = true,
-                None => here.main = true,
-            }
-        }
-        here
     }
 
     #[cfg(test)]
@@ -378,26 +352,6 @@ mod tests {
         assert!(!b.at_page(None, now));
         assert!(!b.at_page(Some("dj"), now));
         assert_eq!(b.snapshot(now).state(now), "typing", "yet they are present");
-    }
-
-    /// Her line shows on any focused Linggen page — the main one or an app's —
-    /// so either counts as "a page in front"; a typed turn, a blurred tab and a
-    /// long quiet read do not.
-    #[test]
-    fn an_app_page_in_front_counts_as_a_page_that_shows_her_line() {
-        let now = 1_000;
-        let mut b = PresenceBoard::default();
-        assert_eq!(b.pages_present(now), PagesPresent::default());
-        b.record(page("dj", Some("dj"), true, 30), now);
-        assert_eq!(b.pages_present(now), PagesPresent { main: false, app: true });
-        b.record(page("main", None, true, 30), now);
-        assert_eq!(b.pages_present(now), PagesPresent { main: true, app: true });
-        // A typed turn names no page; a page long quiet reads away.
-        let mut b = PresenceBoard::default();
-        b.record(page(USER_TURN_SURFACE, None, true, 0), now);
-        b.record(page("dj", Some("dj"), true, 30), now);
-        assert_eq!(b.pages_present(now + 200), PagesPresent::default());
-        assert_eq!(b.pages_present(now), PagesPresent { main: false, app: true });
     }
 
     #[test]

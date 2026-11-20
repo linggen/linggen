@@ -462,20 +462,29 @@ pub(crate) fn user_sees(state: &ServerState, sight: Sight<'_>) -> bool {
                 .state(crate::util::now_ts_secs())
                 != "away"
         }
-        Sight::Line(app) => state.manager.presence_at_page(app),
+        Sight::Line(app) => line_is_drawn(state, app),
     }
 }
 
-/// Whether a Linggen page that will show a line of hers is in front: any
-/// focused, live page — Linggen's own or an app's — since her bubble is drawn
-/// by whichever surface holds her (the main page, the pet window, a stage on
-/// an app page) and her row by the chat. The one evidence a condition is
-/// published on (`wake_and_offer`) and waits for (`ambient`); the freshness
-/// is the presence board's own. Audio alone never counts; the phone and a
-/// long quiet read are not told apart (`doc/perception-spec.md`).
+/// Whether the line `app`'s place says is DRAWN where the person is looking:
+/// the page of the place (`None`: Linggen's main page) is in front, read by
+/// the presence board's own freshness. The one judgement both the voice rule
+/// ("seen, so words only") and a condition ("publish, and mark it told")
+/// take. Her bubble and its offer buttons are drawn only by the surface that
+/// holds her — the main page's dock (`MainApp.tsx`, `useYinyuePresenter`)
+/// and the pet window (`PetApp.tsx`); an app's page draws none of a home
+/// line (`LauncherApp.tsx` holds her there as a bodyless stage), and a
+/// private app's page never carries one. Audio alone never counts.
+fn line_is_drawn(state: &ServerState, app: Option<&str>) -> bool {
+    state.manager.presence_at_page(app)
+}
+
+/// Whether a condition's line — said at home, on Linggen's main page — is
+/// drawn where the person is looking: the one evidence it is published on
+/// (`wake_and_offer`) and waits for (`ambient`). The phone and a long quiet
+/// read are not told apart (`doc/perception-spec.md`).
 pub(crate) fn a_page_is_in_front(state: &ServerState) -> bool {
-    let here = state.manager.pages_present();
-    here.main || here.app
+    line_is_drawn(state, None)
 }
 
 /// Whether an AskUser question (or permission prompt) is still awaiting the
