@@ -2,6 +2,7 @@
 
 use crate::support::model::Agent;
 use crate::support::rows::calls_by;
+use crate::support::engine::RunEnd;
 use crate::support::{text, tool, Setup, World};
 use serde_json::json;
 
@@ -65,7 +66,8 @@ async fn zero_tool_skill_offers_no_tools() {
 /// A skill written, deleted or uninstalled through the API reaches a chat
 /// already under way: its next turn lists exactly the skills on disk. Every
 /// "skills changed" path ends in one follow-up (`api/skills.rs`
-/// `skills_changed`), which drops the live engines holding the old list.
+/// `skills_changed`), which has each live engine read its skill list again
+/// at its next turn.
 #[tokio::test]
 async fn a_change_of_skills_reaches_a_live_session() {
     let ling = (1..=4).map(|n| text(&format!("Turn {n}."))).collect();
@@ -107,5 +109,45 @@ async fn a_change_of_skills_reaches_a_live_session() {
         .await;
     w.turn(&sid, &root, "Four.", Agent::Ling).await;
     assert!(!last_call(&w).contains("PROBE-GLOBAL"), "the uninstalled skill is still listed");
+    w.assert_all_scripted();
+}
+
+/// A skill saved while a turn waits on the person: the turn goes on with
+/// what it holds — the folder the person then declines stays closed for the
+/// rest of the run, no second prompt — and the session's next turn lists the
+/// new skill. The follow-up never drops a session's engine
+/// (`a_change_of_skills_keeps_every_live_engine`).
+#[tokio::test]
+async fn a_skill_saved_mid_turn_reaches_the_next_turn_and_keeps_the_decline() {
+    let ling = vec![
+        tool("Write", json!({"path": "first.txt", "content": "one"})),
+        tool("Write", json!({"path": "second.txt", "content": "two"})),
+        text("Left them."),
+        text("Next."),
+    ];
+    let w = World::start(Setup::default().script(Agent::Ling, ling)).await;
+    let root = w.work();
+    let sid = w.api.create_session(json!({"title": "chat", "project_root": root})).await;
+
+    let mark = w.mark();
+    w.api.chat(&sid, &root, "Write two files.").await;
+    let RunEnd::Asked(ask) = w.wait_run(&sid, Agent::Ling, mark).await else {
+        panic!("the Write ran without a permission prompt");
+    };
+    let file = json!({
+        "project_root": root,
+        "path": "probe-midturn/SKILL.md",
+        "content": "---\nname: probe-midturn\ndescription: PROBE-MIDTURN skill.\n---\n\nBody.\n",
+    });
+    w.api.post("/api/skill-file", file).await;
+    w.api.answer(&ask, "deny").await;
+    // The second Write is refused without asking: the decline is still held.
+    w.finish_run(&sid, Agent::Ling, mark).await;
+    assert!(!w.home.work().join("first.txt").exists());
+    assert!(!w.home.work().join("second.txt").exists());
+
+    w.turn(&sid, &root, "And now?", Agent::Ling).await;
+    let call = w.model.calls_of(Agent::Ling).pop().expect("his call");
+    assert!(call.text().contains("PROBE-MIDTURN"), "the saved skill is not listed");
     w.assert_all_scripted();
 }

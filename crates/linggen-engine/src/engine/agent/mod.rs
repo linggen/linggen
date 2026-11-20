@@ -102,6 +102,10 @@ pub struct AgentManager {
     /// `config.agent.daily_session`, readable without the config lock —
     /// her voice's fan-out, which is sync, reads it per line.
     daily_session: AtomicBool,
+    /// How many times the skills on disk have changed since boot. Only
+    /// [`Self::mark_skills_changed`] moves it; each engine compares it at its
+    /// next turn and reads its skill list again (`read_skills_if_changed`).
+    skills_generation: std::sync::atomic::AtomicU64,
     /// Which agents appear only once met, and which have been
     /// (`met.rs`) — the one gate every surface asks.
     pub met: met::MetGate,
@@ -309,9 +313,7 @@ impl AgentManager {
             engine.set_delegation_depth(0, config.agent.max_delegation_depth);
         }
         engine.load_skill_tools(self.skills.as_ref()).await;
-        engine
-            .load_available_skills_metadata(self.skills.as_ref())
-            .await;
+        engine.read_skills_if_changed(self).await;
         engine
             .load_available_agents_metadata(self.agents.as_ref(), project_root)
             .await;
@@ -365,6 +367,7 @@ impl AgentManager {
                 latest_session_by_agent: std::sync::Mutex::new(HashMap::new()),
                 pet_muted,
                 daily_session,
+                skills_generation: Default::default(),
                 met: met::MetGate::new(crate::paths::met_dir()),
                 background: Default::default(),
                 run_messages: Default::default(),
@@ -372,6 +375,22 @@ impl AgentManager {
             }),
             rx,
         )
+    }
+
+    /// The skills on disk changed: every engine, live or cached, reads its
+    /// skill list again at its next turn. No engine is dropped and none is
+    /// waited on — a running turn keeps its engine and all it holds (what the
+    /// person declined, its prompt, its plan) and stays the session's.
+    /// Called only from the server's one follow-up, `skills_changed`.
+    pub fn mark_skills_changed(&self) {
+        self.skills_generation
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Which change of skills an engine's list reflects (`mark_skills_changed`).
+    pub(crate) fn skills_generation(&self) -> u64 {
+        self.skills_generation
+            .load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// Whether the pet's voice is off on this machine.
