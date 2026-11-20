@@ -116,7 +116,9 @@ A dollar figure is worked out for each call when it is made, and only for a mode
 - **No price, no figure.** The tokens are shown and nothing is guessed. The figure is an estimate at list price; the bill can differ.
 - **An account or local model has no per-token price** (the ChatGPT sign-in, Linggen Cloud, a room's model, a Claude subscription, a model on this machine's network): it shows its allowance meter or nothing, and a session's spend leaves its tokens out. The Claude SDK runtime's own cost figure (`claude_usage`) is the host's and stays as it is.
 
-One answer serves both readers: `GET /api/workspace/state` (`usage`, for the session's top bar — `ui/src/lib/spend.mts` is the one place that decides what it says) and `agent_status` (`usage`, for a caller telling the person what a delegated job cost). It lists each model's counts and `cost_usd` (only when priced), the tokens of the models that count as spend, a total `cost_usd` over the priced ones, and `unpriced`, the models whose tokens are not in that total.
+One answer serves both readers (`server/session_cost.rs`): `GET /api/workspace/state` (for the session's top bar — `ui/src/lib/spend.mts` only words it) and `agent_status` (for a caller telling the person what a delegated job cost) both carry `usage`, the engine's ledger, and for a Claude SDK session `claude_usage`, the host's own figure. `usage` lists each model's counts and `cost_usd` (only when priced), the tokens of the models that count as spend (each count block also carries its `prompt`), the part of them that was priced (`priced_tokens`) and the part that was not (`unpriced_tokens`), `spent` (any of them used at all), a total `cost_usd` over the priced ones, and `unpriced`, the models whose tokens are not in that total.
+
+The Linggen Cloud meter (a skill's `cloud.meter`) counts a call from the same four counts: `input + cache_write + output` — everything but the cache read. Only a full report is read that way; a report missing its prompt or its output meters its `total_tokens` (else nothing), and a failed call meters nothing, while the ledger keeps what such a call reported.
 
 ## Output limit (Anthropic)
 

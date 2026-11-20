@@ -7,9 +7,15 @@ import { translateFrom } from '../src/lib/i18nMatch.mts';
 import { compactTokens, dollars, spendView, type SessionSpend } from '../src/lib/spend.mts';
 import { loadOutcome } from '../src/lib/sessionLoad.mts';
 
+const zero = { input: 0, output: 0, cache_read: 0, cache_write: 0, prompt: 0 };
+const counts = (input: number, output: number, cache_read = 0, cache_write = 0) =>
+  ({ input, output, cache_read, cache_write, prompt: input + cache_read + cache_write });
 const used = (over: Partial<SessionSpend> = {}): SessionSpend => ({
   models: [],
-  tokens: { input: 1_200_000, output: 100_000, cache_read: 5_000_000, cache_write: 300_000 },
+  tokens: counts(1_200_000, 100_000, 5_000_000, 300_000),
+  priced_tokens: zero,
+  unpriced_tokens: zero,
+  spent: true,
   ...over,
 });
 
@@ -30,13 +36,10 @@ test('an unpriced model shows tokens and no dollars', () => {
 });
 
 test('a partly priced session marks its amount and says what is not in it', () => {
-  const model = (name: string, input: number, cost?: number) => ({
-    model: name, billing: 'metered' as const, calls: 1, unreported: 0, input, output: 10, cache_read: 0, cache_write: 0,
-    ...(cost === undefined ? {} : { cost_usd: cost }),
-  });
+  // The split is the engine's (`spend_of`): the page only words it.
   const view = spendView({
     claude: false, onChatGpt: false,
-    usage: used({ cost_usd: 1, unpriced: ['gem'], models: [model('sonnet', 2000, 1), model('gem', 500)] }),
+    usage: used({ cost_usd: 1, unpriced: ['gem'], priced_tokens: counts(2000, 10), unpriced_tokens: counts(500, 10) }),
   });
   assert.equal(view.estimate?.text, '≈ $1.00+', 'the figure carries a visible mark');
   const title = view.estimate!.title;
@@ -44,15 +47,8 @@ test('a partly priced session marks its amount and says what is not in it', () =
   // The breakdown tells the priced tokens from the unpriced ones.
   assert.match(title, /priced models: 2\.0k in, 10 out, 0 cached/);
   assert.match(title, /gem \(500 in, 10 out, 0 cached\)/);
-  // The same model before it had a price: its earlier tokens are the unpriced ones.
-  const earlier = spendView({
-    claude: false, onChatGpt: false,
-    usage: used({ cost_usd: 1, unpriced: ['sonnet'], models: [model('sonnet', 2000, 1), model('sonnet', 40)] }),
-  }).estimate!.title;
-  assert.match(earlier, /priced models: 2\.0k in/);
-  assert.match(earlier, /sonnet \(40 in, 10 out, 0 cached\)/);
   // A fully priced session has no mark.
-  assert.equal(spendView({ claude: false, onChatGpt: false, usage: used({ cost_usd: 1, models: [model('sonnet', 2000, 1)] }) }).estimate?.text, '≈ $1.00');
+  assert.equal(spendView({ claude: false, onChatGpt: false, usage: used({ cost_usd: 1, priced_tokens: counts(2000, 10) }) }).estimate?.text, '≈ $1.00');
 });
 
 test('the Claude SDK session keeps its own figure, whatever the engine ledger says', () => {
@@ -62,8 +58,7 @@ test('the Claude SDK session keeps its own figure, whatever the engine ledger sa
 
 test('a ChatGPT-account chat shows its allowance; a session with no spend tokens shows no spend', () => {
   assert.deepEqual(spendView({ claude: false, onChatGpt: true, usage: null }), { allowance: true });
-  const none = { input: 0, output: 0, cache_read: 0, cache_write: 0 };
-  assert.deepEqual(spendView({ claude: false, onChatGpt: false, usage: used({ tokens: none }) }), {});
+  assert.deepEqual(spendView({ claude: false, onChatGpt: false, usage: used({ tokens: zero, spent: false }) }), {});
   assert.deepEqual(spendView({ claude: false, onChatGpt: false }), {});
 });
 
@@ -86,13 +81,9 @@ const ZH: Record<string, string> = new Function(
 )();
 
 test('every sentence the bar builds is put into Chinese by the page\'s own matcher, every slot filled', () => {
-  const model = (name: string, input: number, cost?: number) => ({
-    model: name, billing: 'metered' as const, calls: 1, unreported: 0, input, output: 10, cache_read: 3, cache_write: 0,
-    ...(cost === undefined ? {} : { cost_usd: cost }),
-  });
   const said = [
-    spendView({ claude: false, onChatGpt: false, usage: used({ cost_usd: 4.4, models: [model('a', 1000, 4.4)] }) }).estimate!.title,
-    spendView({ claude: false, onChatGpt: false, usage: used({ cost_usd: 1, unpriced: ['gem', 'zed'], models: [model('a', 2000, 1), model('gem', 500), model('zed', 70)] }) }).estimate!.title,
+    spendView({ claude: false, onChatGpt: false, usage: used({ cost_usd: 4.4, priced_tokens: counts(1000, 10, 3) }) }).estimate!.title,
+    spendView({ claude: false, onChatGpt: false, usage: used({ cost_usd: 1, unpriced: ['gem', 'zed'], priced_tokens: counts(2000, 10, 3), unpriced_tokens: counts(570, 20, 6) }) }).estimate!.title,
     spendView({ claude: false, onChatGpt: false, usage: used() }).tokens!.title,
     spendView({ claude: false, onChatGpt: false, usage: used() }).tokens!.text,
   ];

@@ -40,12 +40,15 @@ impl TokenUsage {
         }
     }
 
-    /// What the call cost the caller: the prompt not served from cache, plus
-    /// the output. Falls back to `total_tokens` when the parts are unknown.
-    /// A pace should count what the player did, not the cached world.
+    /// What the Linggen Cloud meter bills for the call: [`Tokens::metered`]
+    /// of a full report. A partial one keeps the meter's own rule — the
+    /// total, else nothing — which is not the ledger's (it keeps a
+    /// prompt-only report's prompt): the test
+    /// `the_cloud_meter_counts_what_the_ledger_holds_bar_the_cache_read`
+    /// pins both numbers.
     pub fn metered(&self) -> u64 {
         match (self.prompt_tokens, self.completion_tokens) {
-            (Some(p), Some(c)) => (p.saturating_sub(self.cached_tokens.unwrap_or(0)) + c) as u64,
+            (Some(_), Some(_)) => Tokens::of(self).map_or(0, |t| t.metered()),
             _ => self.total_tokens.unwrap_or(0) as u64,
         }
     }
@@ -58,7 +61,9 @@ pub const LONG_PROMPT_TOKENS: usize = 100_000;
 
 /// What model calls used, in the four kinds a provider bills apart. `input`
 /// is the prompt not served from the provider's cache and not written to it;
-/// the prompt is `input + cache_read + cache_write`.
+/// the prompt is `input + cache_read + cache_write`. [`Tokens::of`] is the
+/// one reading of a provider's report: the ledger, a run's `RunUsage` and
+/// the cloud meter all take their counts from it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Tokens {
     pub input: u64,
@@ -86,6 +91,12 @@ impl Tokens {
 
     pub fn prompt(&self) -> u64 {
         self.input + self.cache_read + self.cache_write
+    }
+
+    /// What a pace counts: everything but the cache read — what the player
+    /// did, not the cached world. A cache write is counted like fresh input.
+    pub fn metered(&self) -> u64 {
+        self.input + self.cache_write + self.output
     }
 
     pub fn add(&mut self, other: &Tokens) {
@@ -161,15 +172,14 @@ impl RunUsage {
         if !self.models.iter().any(|m| m == model) {
             self.models.push(model.to_string());
         }
-        let Some(u) = usage.filter(|u| u.prompt_tokens.is_some() || u.completion_tokens.is_some())
-        else {
+        let Some(t) = usage.and_then(Tokens::of) else {
             self.unreported += 1;
             return;
         };
-        self.prompt += u.prompt_tokens.unwrap_or(0);
-        self.cached += u.cached_tokens.unwrap_or(0);
-        self.cache_write += u.cache_write_tokens.unwrap_or(0);
-        self.output += u.completion_tokens.unwrap_or(0);
+        self.prompt += t.prompt() as usize;
+        self.cached += t.cache_read as usize;
+        self.cache_write += t.cache_write as usize;
+        self.output += t.output as usize;
     }
 
     pub fn is_empty(&self) -> bool {
@@ -244,6 +254,57 @@ mod tests {
         assert_eq!(total.metered(), 77);
     }
 
+    /// One real Anthropic call (the frames `tests/system/spend.rs` scripts:
+    /// 1,200 fresh input, 3,000 written to the cache, 5,000 read from it,
+    /// 400 out), as `anthropic.rs` parses it: the prompt is all three.
+    fn anthropic_call() -> TokenUsage {
+        TokenUsage {
+            prompt_tokens: Some(1_200 + 3_000 + 5_000),
+            cached_tokens: Some(5_000),
+            cache_write_tokens: Some(3_000),
+            ..Default::default()
+        }
+        .merged(TokenUsage {
+            completion_tokens: Some(400),
+            ..Default::default()
+        })
+    }
+
+    /// The Linggen Cloud meter and the cost ledger read one call through
+    /// `Tokens::of`: the meter's count is the ledger's fresh input, cache
+    /// write and output (4,600 here); the ledger keeps the cache write in a
+    /// column of its own (1,200 input + 3,000 cache_write). Where the meter
+    /// falls back (a part of the report missing) the two still differ, and
+    /// the meter's numbers are pinned here unchanged: the prompt alone
+    /// meters 0 while the ledger keeps 9,200 prompt tokens; a total alone
+    /// meters 77 while the ledger counts an unreported call.
+    #[test]
+    fn the_cloud_meter_counts_what_the_ledger_holds_bar_the_cache_read() {
+        let u = anthropic_call();
+        let t = Tokens::of(&u).unwrap();
+        assert_eq!(
+            (t.input, t.cache_write, t.cache_read, t.output),
+            (1_200, 3_000, 5_000, 400)
+        );
+        assert_eq!(t.metered(), 4_600);
+        assert_eq!(u.metered(), t.metered());
+
+        let prompt_only = TokenUsage {
+            prompt_tokens: Some(9_200),
+            cached_tokens: Some(5_000),
+            cache_write_tokens: Some(3_000),
+            ..Default::default()
+        };
+        assert_eq!(prompt_only.metered(), 0);
+        assert_eq!(Tokens::of(&prompt_only).unwrap().prompt(), 9_200);
+        let total_only = TokenUsage {
+            total_tokens: Some(77),
+            ..Default::default()
+        };
+        assert_eq!(total_only.metered(), 77);
+        assert_eq!(Tokens::of(&total_only), None);
+    }
+
     #[test]
     fn run_usage_sums_calls_and_names_each_model_once() {
         let mut run = RunUsage::default();
@@ -266,5 +327,43 @@ mod tests {
         assert_eq!(run.unreported, 2);
         assert_eq!(run.models, vec!["flash", "fallback"]);
         assert!(RunUsage::default().is_empty());
+    }
+
+    fn rust_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                rust_files(&path, out);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                out.push(path);
+            }
+        }
+    }
+
+    /// Lock: what a provider reported about its cache is read into
+    /// [`Tokens`] by `Tokens::of` and nowhere else outside the providers
+    /// that write it — the ledger, a run's usage, the cloud meter and the
+    /// logs all count a cache read and a cache write from there.
+    #[test]
+    fn a_reports_cache_counts_are_read_only_through_tokens_of() {
+        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut files = Vec::new();
+        rust_files(&manifest.join("src"), &mut files);
+        rust_files(&manifest.join("../../src"), &mut files);
+        let mut found = Vec::new();
+        for path in files {
+            let name = path.to_string_lossy().replace('\\', "/");
+            if name.contains("/provider/") || name.contains("test") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).unwrap();
+            let code = text.split("#[cfg(test)]").next().unwrap_or("");
+            for (n, line) in code.lines().enumerate() {
+                if line.contains(".cached_tokens") || line.contains(".cache_write_tokens") {
+                    found.push(format!("{}:{}: {}", name, n + 1, line.trim()));
+                }
+            }
+        }
+        assert!(found.is_empty(), "read Tokens::of instead:\n{}", found.join("\n"));
     }
 }

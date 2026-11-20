@@ -11,7 +11,7 @@
 use crate::account::cloud::{meter_reading, meter_report};
 use crate::account::cloud_save::{push, target};
 use crate::engine::AgentEngine;
-use crate::provider::models::TokenUsage;
+use crate::provider::models::{TokenUsage, Tokens};
 
 fn meter_of(engine: &AgentEngine) -> Option<String> {
     engine.active_skill.as_ref()?.cloud.as_ref()?.meter.clone()
@@ -43,12 +43,7 @@ pub(crate) fn after_call(engine: &AgentEngine, usage: Option<&TokenUsage>) {
     let meter = meter_of(engine);
     let tokens = usage.map(|u| u.metered()).unwrap_or(0);
     match usage {
-        Some(u) => tracing::debug!(
-            "meter: {tokens} tokens this call (prompt {:?}, cached {:?}, output {:?})",
-            u.prompt_tokens,
-            u.cached_tokens,
-            u.completion_tokens
-        ),
+        Some(u) => tracing::debug!("meter: {tokens} tokens this call ({:?})", Tokens::of(u)),
         None => tracing::debug!("meter: the provider reported no usage for this call"),
     }
     let save = target(skill);

@@ -597,10 +597,8 @@ impl AgentEngine {
                     self.last_token_usage = result.token_usage.clone();
                     if let Some(u) = result.token_usage.as_ref() {
                         tracing::debug!(
-                            "model call {model_id}: prompt {:?}, cached {:?}, output {:?}",
-                            u.prompt_tokens,
-                            u.cached_tokens,
-                            u.completion_tokens
+                            "model call {model_id}: {:?}",
+                            crate::provider::models::Tokens::of(u)
                         );
                     }
                     crate::provider::models::note_healthy(&model_id);
