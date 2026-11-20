@@ -18,7 +18,7 @@ import { PendingAskCard } from './PendingAskCard';
 import { useInteractionStore } from '../stores/interactionStore';
 import { sessionApi } from '../lib/endpoints';
 import { listedAsk } from '../lib/askQueue.mts';
-import { getTransport } from '../lib/transport';
+import { answerAsk } from '../lib/answerAsk';
 
 // Violet is her signature (silver-lavender); emotions tint from there.
 const ACCENTS: Record<string, { ring: string; dot: string }> = {
@@ -42,7 +42,7 @@ export const YinyueBubble: React.FC<{ variant?: 'overlay' | 'pet' }> = ({ varian
     : 'fixed bottom-[19rem] right-4 max-w-xs';
 
   return (
-    <div className={`${pos} z-[9998] pointer-events-none`}>
+    <div data-testid="yinyue-bubble" className={`${pos} z-[9998] pointer-events-none`}>
       <div
         onClick={clear}
         title="Dismiss"
@@ -61,8 +61,10 @@ export const YinyueBubble: React.FC<{ variant?: 'overlay' | 'pet' }> = ({ varian
 };
 
 /** The waiting question she told of, answered here as on the page: its own
- *  card (`PendingAskCard`), found among this window's questions or the
- *  engine's list. Gone once answered, anywhere. */
+ *  card (`PendingAskCard`) and the page's own answer (`answerAsk`), found
+ *  among this window's questions or the engine's list. Answered anywhere,
+ *  the card goes: the window's questions drop it, and the list is read
+ *  again while the card shows. A failed answer keeps the card up. */
 const WaitingCard: React.FC<{ questionId: string; done: () => void }> = ({ questionId, done }) => {
   const queues = useInteractionStore((s) => s.askQueues);
   const shown = React.useMemo(() => findAsk(queues, questionId), [queues, questionId]);
@@ -70,24 +72,20 @@ const WaitingCard: React.FC<{ questionId: string; done: () => void }> = ({ quest
   React.useEffect(() => {
     if (shown) return;
     let live = true;
-    sessionApi.pendingAskUser()
+    const read = () => sessionApi.pendingAskUser()
       .then((items) => {
         const it = items.find((i) => i.question_id === questionId);
         if (live) setListed(it ? { ask: listedAsk(it), sessionId: it.session_id ?? null } : null);
       })
       .catch(() => undefined);
-    return () => { live = false; };
+    void read();
+    const timer = window.setInterval(() => void read(), LISTED_REREAD_MS);
+    return () => { live = false; window.clearInterval(timer); };
   }, [questionId, shown]);
   const found = shown ?? listed;
   if (!found) return null;
   const respond = async (id: string, answers: AskUserAnswer[]) => {
-    try {
-      await getTransport().sendAskUserResponse({ question_id: id, answers, session_id: found.sessionId ?? undefined });
-      if (found.sessionId) useInteractionStore.getState().removeAsk(found.sessionId, id);
-    } catch (e) {
-      console.warn('[yinyue] answer from her bubble failed', e);
-    }
-    done();
+    if (await answerAsk(found.sessionId, id, answers)) done();
   };
   return (
     <div className="mt-2 max-w-sm text-left" onClick={(e) => e.stopPropagation()}>
@@ -95,6 +93,9 @@ const WaitingCard: React.FC<{ questionId: string; done: () => void }> = ({ quest
     </div>
   );
 };
+
+/** How often a card read from the engine's list is checked still waiting. */
+const LISTED_REREAD_MS = 3000;
 
 /** A waiting question this window already holds, with its session. */
 function findAsk(queues: Record<string, PendingAskUser[]>, questionId: string): { ask: PendingAskUser; sessionId: string } | null {

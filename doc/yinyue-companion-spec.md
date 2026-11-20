@@ -120,7 +120,8 @@ kind:
   thing it is about carries one folded mark, "Yinyue said this while you were
   away · HH:MM", her line inside: the run's last row (its reply, or its
   failure line) and the waiting question's card. The mark is set only when
-  the line was said aloud — a notice never spoken leaves none — and reaches
+  the line was heard — said aloud to a surface that holds her
+  (`yinyue_line_holder`); muted, or with no such surface, it leaves none — and reaches
   the page live (`notice_told`) and on load (`told_aloud_at` /
   `told_aloud_line` on the row's meta and the listed question). The marks
   live in memory: a restart drops them, never the reply or the card.
@@ -128,20 +129,31 @@ kind:
   the question (`question_id`), and her bubble then carries that question's
   own card — `PendingAskCard`, the one implementation of its buttons on the
   page, in a subagent's pane and in her bubble — answered through the same
-  endpoint as the page (§ Interactive loop-back). A question kept to a
+  action as the page (`ui/src/lib/answerAsk.ts`: one tap at a time, a failure
+  shown and the card kept) (§ Interactive loop-back). Answered anywhere, the
+  card leaves her bubble. A question kept to a
   private app is told only as that the app waits, and her bubble shows no
   card for it.
-- **No repeat.** One telling per session while any question in it waits: a
-  second question there (a subagent's prompt seconds after its parent's) is
-  folded into the first telling and wakes no one; its card carries the same
-  mark. A telling that came to nothing (silence, the answer came first, the
-  person came back) leaves no wait behind it. Once a wait is over nothing
-  about it is said or written. A failure keeps its 90 s storm cooldown, and is
+- **No repeat.** One telling per waiting turn — the root run of the turn
+  tree that asked (`herald/waits.rs`) — while any question of it waits: a
+  second question of that turn (a subagent's prompt seconds after its
+  parent's) is folded into the first telling and wakes no one; its card
+  carries the same mark. Another turn's or another app's question, in the
+  same session too, is its own wait, told on its own, and a mark lands only
+  on the cards of the wait it was said for. A telling that came to nothing
+  (silence, the answer came first, the person came back) hands the wait to
+  its next question still waiting, once each; a late end of an old telling
+  changes nothing newer. Once a wait is over nothing about it is said or
+  written. A failure keeps its 90 s storm cooldown, and is
   told at once or not at all: held, it would ride a later turn of hers as a row.
+  A fact of her own held for the person (`run_fault`) never rides a notice:
+  a notice leaves no row, so the fact would be used up unrecorded.
 
 Locks: `herald::tests::one_entry` (the notice's cue, its mark, the turn of a
 wait and the gate of whose are made in `herald.rs` alone; the bus's notices
-are built and handed to `tell` in `triggers.rs` only), `whose` is private to
+are built and handed to `tell` in `triggers.rs` only; the general doors —
+`wake_to_tell`, `wake_and_speak`, `emit_speak`, her own turn — list every
+caller; no glob import; every history view marks its rows), `whose` is private to
 `herald.rs`, and the system tests in `tests/system/heralds.rs`.
 
 A mission run's fault (§ below), a restart's notice (`wake_to_tell`, kept as

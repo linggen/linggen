@@ -9,6 +9,7 @@ import { withAgentQueue } from '../queuedList.mts';
 import { chatAgentOf, withMemberModel } from '../sessionMembers.mts';
 import { agentTracker } from '../agentTracker';
 import { toldOfEvent } from '../toldAloud.mts';
+import { withoutAnswered } from '../petCue.mts';
 
 // ---------------------------------------------------------------------------
 // AskUser — model is asking the user a structured question
@@ -41,6 +42,8 @@ export function handleWidgetResolved(item: UiEventOf<'widget_resolved'>): void {
   const interaction = useInteractionStore.getState();
   // A resolution only removes the matching question in its session.
   if (item.session_id) interaction.removeAsk(String(item.session_id), widgetId);
+  // Her bubble's card of it goes too (lib/petCue.mts).
+  useUiStore.setState((s) => ({ yinyueSpeech: withoutAnswered(s.yinyueSpeech, widgetId) }));
   // Dismiss plan widget (defensive — plan normally syncs via PlanUpdate)
   if (interaction.pendingPlanAgentId === widgetId) {
     interaction.setPendingPlan(null);

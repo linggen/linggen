@@ -38,7 +38,6 @@ pub(super) enum Herald {
         agent: String,
         session: Option<String>,
         question_id: String,
-        questions: Vec<crate::engine::tools::AskUserQuestion>,
     },
     /// A run failed.
     Failed {
@@ -103,14 +102,7 @@ async fn tell_now(state: &Arc<ServerState>, herald: Herald) {
             let about = About::Run { session, run };
             wake(state, (kickoff, Origin::Herald, "happy"), about).await;
         }
-        Herald::Waiting {
-            agent,
-            session,
-            question_id,
-            questions,
-        } => {
-            tell_wait(state, (agent, session), question_id, questions).await;
-        }
+        Herald::Waiting { question_id, .. } => tell_wait(state, question_id).await,
         Herald::Failed {
             agent,
             session,
@@ -164,44 +156,43 @@ enum About {
     },
     /// A waiting question. `card`: her bubble carries its card — not for a
     /// question kept to a private app, whose words stay on its page.
-    Wait {
-        session: Option<String>,
-        question_id: String,
-        card: bool,
-    },
+    Wait { question_id: String, card: bool },
 }
 
 /// Wake her own turn for a notice and say what she chose to, if anything.
+/// A fact of hers held for the person (`run_fault`) does not ride it: a
+/// notice leaves no row behind, so it would be used up unrecorded.
 async fn wake(
     state: &Arc<ServerState>,
     (kickoff, origin, emotion): (String, Origin, &str),
     about: About,
-) -> Option<Line> {
-    // A failure of hers held for a turn that can carry it rides this one.
-    let (kickoff, rode) = super::run_fault::ride(kickoff);
+) -> Option<Said> {
     let reply = run_yinyue_turn(state, kickoff, origin).await;
-    let said = reply.as_ref().and_then(Turned::finalize);
-    let line = match said {
-        Some(said) if !user_sees(state, Sight::Screen) => Some(say(state, said, emotion, about)),
-        _ => None,
-    };
-    if line.is_none() {
-        if let Some(f) = rode {
-            super::run_fault::hold(f);
-        }
+    let said = reply.as_ref().and_then(Turned::finalize)?;
+    if user_sees(state, Sight::Screen) {
+        return None;
     }
-    line
+    let said = say(state, said, emotion, &about);
+    if let (About::Run { session, run }, Some(told)) = (&about, &said.told) {
+        mark_reply(state, (session.clone(), run.clone()), told);
+    }
+    Some(said)
 }
 
-/// The one publication of a notice: her stage's cue, never a row — and,
-/// when it was said aloud, the mark on the thing it is about.
-fn say(state: &Arc<ServerState>, said: Event, emotion: &str, about: About) -> Line {
+/// What a notice came to: her line, and the mark when it was heard.
+struct Said {
+    told: Option<Told>,
+}
+
+/// The one publication of a notice: her stage's cue, never a row. Heard —
+/// said aloud to a surface that holds her — it is the mark's.
+fn say(state: &Arc<ServerState>, said: Event, emotion: &str, about: &About) -> Said {
     let line = said.line;
     tracing::info!(
         "[yinyue-watch] Yinyue heralds ({} chars, {emotion})",
         line.text().len()
     );
-    let card = match &about {
+    let card = match about {
         About::Wait {
             question_id,
             card: true,
@@ -209,11 +200,12 @@ fn say(state: &Arc<ServerState>, said: Event, emotion: &str, about: About) -> Li
         } => Some(question_id.clone()),
         _ => None,
     };
-    let aloud = crate::server::api::yinyue::emit_notice(state, line.clone(), emotion, card);
-    if aloud {
-        mark(state, about, line.text());
-    }
-    line
+    let heard = crate::server::api::yinyue::emit_notice(state, line.clone(), emotion, card);
+    let told = heard.then(|| Told {
+        at: crate::util::now_ts_secs(),
+        line: line.text().to_string(),
+    });
+    Said { told }
 }
 
 /// A notice said aloud, `at` (Unix seconds), with her line.
@@ -228,44 +220,35 @@ pub(crate) struct Told {
 static REPLIES: Mutex<Vec<((String, String), Told)>> = Mutex::new(Vec::new());
 const REPLIES_KEPT: usize = 200;
 
-/// One telling per waiting session: the questions folded into it, and its
-/// mark once said aloud.
-struct Wait {
-    questions: Vec<String>,
-    told: Option<Told>,
-}
-static WAITS: Mutex<Option<HashMap<String, Wait>>> = Mutex::new(None);
+/// The tellings of waits, one per waiting turn (`waits.rs`).
+static WAITS: Mutex<Option<waits::Waits>> = Mutex::new(None);
 
-fn mark(state: &Arc<ServerState>, about: About, line: &str) {
-    let told = Told {
-        at: crate::util::now_ts_secs(),
-        line: line.to_string(),
-    };
-    let (session, run, question) = match about {
-        About::Run { session, run } => {
-            if let (Some(s), Some(r)) = (&session, &run) {
-                let mut all = REPLIES.lock().unwrap_or_else(|p| p.into_inner());
-                all.push(((s.clone(), r.clone()), told.clone()));
-                let over = all.len().saturating_sub(REPLIES_KEPT);
-                all.drain(..over);
-            }
-            (session, run, None)
-        }
-        About::Wait {
-            session,
-            question_id,
-            ..
-        } => {
-            let mut waits = WAITS.lock().unwrap_or_else(|p| p.into_inner());
-            if let Some(wait) = waits
-                .get_or_insert_with(HashMap::new)
-                .get_mut(&wait_key(session.as_deref()))
-            {
-                wait.told = Some(told.clone());
-            }
-            (session, None, Some(question_id))
-        }
-    };
+fn with_waits<R>(f: impl FnOnce(&mut waits::Waits) -> R) -> R {
+    let mut waits = WAITS.lock().unwrap_or_else(|p| p.into_inner());
+    f(waits.get_or_insert_with(Default::default))
+}
+
+fn mark_reply(
+    state: &Arc<ServerState>,
+    (session, run): (Option<String>, Option<String>),
+    told: &Told,
+) {
+    if let (Some(s), Some(r)) = (&session, &run) {
+        let mut all = REPLIES.lock().unwrap_or_else(|p| p.into_inner());
+        all.push(((s.clone(), r.clone()), told.clone()));
+        let over = all.len().saturating_sub(REPLIES_KEPT);
+        all.drain(..over);
+    }
+    send_mark(state, session, (run, None), told);
+}
+
+/// The live mark: one event per thing marked.
+fn send_mark(
+    state: &Arc<ServerState>,
+    session: Option<String>,
+    (run, question): (Option<String>, Option<String>),
+    told: &Told,
+) {
     let _ = state
         .events_tx
         .send(crate::engine::events::ServerEvent::NoticeTold {
@@ -273,7 +256,7 @@ fn mark(state: &Arc<ServerState>, about: About, line: &str) {
             run_id: run,
             question_id: question,
             at: told.at,
-            line: told.line,
+            line: told.line.clone(),
         });
 }
 
@@ -287,21 +270,15 @@ pub(crate) fn reply_told(session: &str, run: &str) -> Option<Told> {
         .map(|(_, t)| t.clone())
 }
 
-/// The mark on waiting question `question_id`'s card: the telling of its
-/// session's wait, when it was said aloud and the question is one of it.
-pub(crate) fn wait_told(session: Option<&str>, question_id: &str) -> Option<Told> {
-    let waits = WAITS.lock().unwrap_or_else(|p| p.into_inner());
-    let wait = waits.as_ref()?.get(&wait_key(session))?;
-    wait.questions
-        .iter()
-        .any(|q| q == question_id)
-        .then(|| wait.told.clone())
-        .flatten()
+/// The mark on waiting question `question_id`'s card: its own wait's
+/// telling, when that was heard.
+pub(crate) fn wait_told(question_id: &str) -> Option<Told> {
+    with_waits(|w| w.told_for(question_id))
 }
 
 /// Every mark of `session` on a page's rows (each row's meta, in order): one
 /// per told run, on that run's last row, as `told_aloud_at` and
-/// `told_aloud_line`. The history views call this once each.
+/// `told_aloud_line`. Every history view calls this (the lock in `tests.rs`).
 pub(crate) fn mark_rows<'a>(
     session: &str,
     metas: impl DoubleEndedIterator<Item = &'a mut serde_json::Value>,
@@ -326,99 +303,105 @@ pub(crate) fn mark_rows<'a>(
     }
 }
 
-fn wait_key(session: Option<&str>) -> String {
-    session.unwrap_or("").to_string()
+/// A waiting question as the herald reads it from the pending list.
+struct Asked {
+    agent: String,
+    session: Option<String>,
+    run: Option<String>,
+    questions: Vec<crate::engine::tools::AskUserQuestion>,
 }
 
-/// Whether `question_id` opens a telling of its session's wait: true when
-/// no question of an earlier telling there still waits. Otherwise it is
-/// folded into that telling — told nothing new — and false.
-fn claim_wait(session: Option<&str>, question_id: &str, pending: &[String]) -> bool {
-    let mut waits = WAITS.lock().unwrap_or_else(|p| p.into_inner());
-    let waits = waits.get_or_insert_with(HashMap::new);
-    // A wait whose every question is answered is over: forgotten.
-    waits.retain(|_, w| {
-        w.questions
-            .iter()
-            .any(|q| pending.contains(q) && q != question_id)
+/// Every question waiting now, and `question_id`'s own entry.
+async fn pending_now(state: &Arc<ServerState>, question_id: &str) -> (Vec<String>, Option<Asked>) {
+    let pending = state.pending_ask_user.lock().await;
+    let asked = pending.get(question_id).map(|e| Asked {
+        agent: e.agent_id.clone(),
+        session: e.session_id.clone(),
+        run: e.run_id.clone(),
+        questions: e.questions.clone(),
     });
-    let key = wait_key(session);
-    if let Some(wait) = waits.get_mut(&key) {
-        wait.questions.push(question_id.to_string());
-        return false;
-    }
-    waits.insert(
-        key,
-        Wait {
-            questions: vec![question_id.to_string()],
-            told: None,
-        },
-    );
-    true
+    (pending.keys().cloned().collect(), asked)
 }
 
-/// A telling that came to nothing — silence, the answer came first, the
-/// person came back — leaves no wait behind it: a later question there may
-/// be told.
-fn release_wait(session: Option<&str>) {
-    let mut waits = WAITS.lock().unwrap_or_else(|p| p.into_inner());
-    if let Some(waits) = waits.as_mut() {
-        let key = wait_key(session);
-        if waits.get(&key).is_some_and(|w| w.told.is_none()) {
-            waits.remove(&key);
+/// The wait a question belongs to: the root run of the turn tree that asked
+/// it (a subagent's question is its turn's), else the question alone.
+fn wait_key(
+    manager: &crate::engine::agent::AgentManager,
+    run: Option<&str>,
+    question_id: &str,
+) -> String {
+    let Some(mut id) = run.map(str::to_string) else {
+        return format!("q:{question_id}");
+    };
+    for _ in 0..32 {
+        match manager.run_store.get_run(&id).and_then(|r| r.parent_run_id) {
+            Some(parent) => id = parent,
+            None => break,
         }
     }
+    format!("run:{id}")
 }
 
-/// The question ids waiting now.
-async fn pending_questions(state: &Arc<ServerState>) -> Vec<String> {
-    state
-        .pending_ask_user
-        .lock()
-        .await
-        .keys()
-        .cloned()
-        .collect()
-}
-
-/// A run waits on the person: once per waiting session, the question whole
-/// — or, asked from a private app's turn, only that the app waits.
-async fn tell_wait(
-    state: &Arc<ServerState>,
-    (agent, session): (String, Option<String>),
-    question_id: String,
-    questions: Vec<crate::engine::tools::AskUserQuestion>,
-) {
-    let pending = pending_questions(state).await;
-    if !pending.contains(&question_id) {
+/// A run waits on the person: once per waiting turn, the question whole —
+/// or, asked from a private app's turn, only that the app waits. A telling
+/// that came to nothing hands the wait to its next question still waiting.
+async fn tell_wait(state: &Arc<ServerState>, question_id: String) {
+    let (pending, Some(asked)) = pending_now(state, &question_id).await else {
         return; // answered before she could be woken
-    }
-    if !claim_wait(session.as_deref(), &question_id, &pending) {
-        tracing::info!("[yinyue-watch] ask {question_id} folded into its session's telling");
-        return;
-    }
-    let told = tell_wait_once(
-        state,
-        (&agent, session.as_deref()),
-        &question_id,
-        &questions,
-    )
-    .await;
-    if told.is_none() {
-        release_wait(session.as_deref());
+    };
+    let key = wait_key(&state.manager, asked.run.as_deref(), &question_id);
+    let mut token = match with_waits(|w| w.claim(&key, &question_id, &pending)) {
+        waits::Claim::Tell(token) => token,
+        waits::Claim::Folded { told } => {
+            tracing::info!("[yinyue-watch] ask {question_id} folded into its turn's telling");
+            // Its card carries the wait's mark, live as on load.
+            if let Some(told) = told {
+                send_mark(
+                    state,
+                    asked.session.clone(),
+                    (None, Some(question_id)),
+                    &told,
+                );
+            }
+            return;
+        }
+    };
+    let (mut question_id, mut asked) = (question_id, asked);
+    loop {
+        if let Some(said) = tell_wait_once(state, &asked, &question_id).await {
+            let marked = with_waits(|w| w.said(&key, token, said.told.clone()));
+            if let Some(told) = said.told {
+                for q in marked {
+                    send_mark(state, asked.session.clone(), (None, Some(q)), &told);
+                }
+            }
+            return;
+        }
+        let (pending, _) = pending_now(state, &question_id).await;
+        let Some((next, next_token)) = with_waits(|w| w.came_to_nothing(&key, token, &pending))
+        else {
+            return;
+        };
+        let (_, Some(next_asked)) = pending_now(state, &next).await else {
+            return;
+        };
+        (question_id, asked, token) = (next, next_asked, next_token);
     }
 }
 
 async fn tell_wait_once(
     state: &Arc<ServerState>,
-    (agent, session): (&str, Option<&str>),
+    asked: &Asked,
     question_id: &str,
-    questions: &[crate::engine::tools::AskUserQuestion],
-) -> Option<Line> {
+) -> Option<Said> {
+    if user_sees(state, Sight::Screen) {
+        return None;
+    }
+    let session = asked.session.as_deref();
     let kept = crate::engine::turn_place::question_kept_to(&state.manager, session).await;
     let kickoff = match &kept {
         Some(app) => kept_ask_kickoff(app),
-        None => ask_kickoff(agent, question_id, questions),
+        None => ask_kickoff(&asked.agent, question_id, &asked.questions),
     };
     let reply = herald_line(state, kickoff).await?;
     let said = reply.finalize()?;
@@ -432,11 +415,10 @@ async fn tell_wait_once(
         return None;
     }
     let about = About::Wait {
-        session: session.map(str::to_string),
         question_id: question_id.to_string(),
         card: kept.is_none(),
     };
-    Some(say(state, said, "neutral", about))
+    Some(say(state, said, "neutral", &about))
 }
 
 /// Her reply to a wait's kickoff. A question waits inside a turn that holds
@@ -537,6 +519,8 @@ fn kept_ask_kickoff(app: &str) -> String {
          to it in your voice — one brief line."
     )
 }
+
+mod waits;
 
 #[cfg(test)]
 mod tests;

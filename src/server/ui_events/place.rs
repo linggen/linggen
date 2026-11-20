@@ -60,7 +60,7 @@ pub(crate) fn pending_ask(
         item["place"] = serde_json::json!(place);
     }
     // Said aloud while the person was away: the card carries the mark.
-    if let Some(told) = crate::server::resident::wait_told(entry.session_id.as_deref(), question_id) {
+    if let Some(told) = crate::server::resident::wait_told(question_id) {
         item["told_aloud_at"] = told.at.into();
         item["told_aloud_line"] = told.line.into();
     }

@@ -47,10 +47,12 @@ pub(crate) fn emit_speak_offering(
 
 /// A notice of Ling's work, said on her own stage (`resident::herald`): its
 /// cue names the question a wait is about, so her bubble carries that
-/// question's own card. True when it was said aloud — a notice that was not
-/// leaves no mark.
+/// question's own card. True when it was heard: said aloud, to a surface
+/// that holds her (the one her cue reaches, `yinyue_line_holder`) — a
+/// notice nobody heard leaves no mark.
 pub(crate) fn emit_notice(state: &Arc<ServerState>, line: Line, emotion: &str, question_id: Option<String>) -> bool {
-    emit(state, line, Some(emotion.to_string()), SaidAt::default(), None, question_id)
+    let held = state.yinyue_line_holder(None).is_some();
+    emit(state, line, Some(emotion.to_string()), SaidAt::default(), None, question_id) && held
 }
 
 /// The one cue of her line; true when it was said aloud.

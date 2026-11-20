@@ -9,7 +9,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { markRun, toldLabel, toldOf, toldOfEvent } from '../src/lib/toldAloud.mts';
 import { isPermissionAsk, listedAsk, markAsk } from '../src/lib/askQueue.mts';
-import { speechAbout } from '../src/lib/petCue.mts';
+import { speechAbout, withoutAnswered } from '../src/lib/petCue.mts';
 
 test('a told reply marks its run\'s last row, and nothing else', () => {
   const told = { atMs: 1_000, line: 'Your shelf plan is ready.' };
@@ -65,4 +65,20 @@ test('a waiting question\'s buttons are drawn by one card, in every place it sho
   assert.deepEqual(drawn, ['components/PendingAskCard.tsx']);
   const bubble = readFileSync(join(root, 'components/YinyueBubble.tsx'), 'utf8');
   assert.match(bubble, /<PendingAskCard\b/, 'her bubble carries the waiting card');
+});
+
+test('a waiting question is answered through one action, wherever its card shows', () => {
+  const callers = files(root)
+    .filter((path) => /\.sendAskUserResponse\(/.test(readFileSync(path, 'utf8')))
+    .map((path) => relative(root, path));
+  assert.deepEqual(callers, ['lib/answerAsk.ts']);
+  const bubble = readFileSync(join(root, 'components/YinyueBubble.tsx'), 'utf8');
+  assert.match(bubble, /answerAsk\(/, 'her bubble answers as the page does');
+});
+
+test('a question answered anywhere takes its card out of her bubble, not her words', () => {
+  const speech = { id: 's', text: 'They need you.', questionId: 'q-1' };
+  assert.deepEqual(withoutAnswered(speech, 'q-1'), { id: 's', text: 'They need you.' });
+  assert.equal(withoutAnswered(speech, 'q-2'), speech);
+  assert.equal(withoutAnswered(null, 'q-1'), null);
 });

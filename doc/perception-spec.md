@@ -446,7 +446,7 @@ happened, with no level — waved off is quiet for 6 hours. The phone's older
 stores (the sweep's `condition.fired.*`, the resident's `yinyue.declined.*`,
 the weekly Mac-disk check's told weeks) are read once into it and removed.
 Three stores stay apart because they are not about problems: a notice of
-Ling's work is told once per waiting session and marked on what it is about
+Ling's work is told once per waiting turn and marked on what it is about
 (`resident::herald`, in memory), the herald's ledger is a daily delivery
 budget, and the push told keys
 ([phone-push-spec.md](phone-push-spec.md)) are delivery receipts for

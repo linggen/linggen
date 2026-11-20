@@ -77,61 +77,6 @@ fn a_kept_question_reaches_her_without_its_words() {
     assert!(!kickoff.contains("options"));
 }
 
-/// One telling per session while any question in it waits: a second
-/// question there is folded into the first telling; once every question of
-/// it is answered, the next question is a new wait.
-#[test]
-fn one_telling_per_waiting_session() {
-    let s = Some("sess-one-telling");
-    let pending = |ids: &[&str]| ids.iter().map(|i| i.to_string()).collect::<Vec<_>>();
-    assert!(
-        claim_wait(s, "q1", &pending(&["q1"])),
-        "the first question is told"
-    );
-    assert!(
-        !claim_wait(s, "q2", &pending(&["q1", "q2"])),
-        "a second, while the first waits, is folded"
-    );
-    // Another session's wait is its own.
-    assert!(claim_wait(
-        Some("sess-other-telling"),
-        "q9",
-        &pending(&["q1", "q2", "q9"])
-    ));
-    // q1 answered, q2 still waits: still the same wait.
-    assert!(!claim_wait(s, "q3", &pending(&["q2", "q3", "q9"])));
-    // All answered: a new question is a new wait.
-    assert!(claim_wait(s, "q4", &pending(&["q4", "q9"])));
-    // A telling that came to nothing leaves no wait behind.
-    release_wait(s);
-    assert!(claim_wait(s, "q5", &pending(&["q4", "q5", "q9"])));
-}
-
-/// A told wait marks every question folded into it; nothing is marked
-/// before it was said aloud.
-#[test]
-fn a_told_wait_marks_its_questions_cards() {
-    let s = Some("sess-told-wait");
-    let pending = vec!["w1".to_string(), "w2".to_string()];
-    assert!(claim_wait(s, "w1", &pending[..1]));
-    assert!(wait_told(s, "w1").is_none(), "not said yet");
-    assert!(!claim_wait(s, "w2", &pending));
-    {
-        let mut waits = WAITS.lock().unwrap();
-        let wait = waits.as_mut().unwrap().get_mut("sess-told-wait").unwrap();
-        wait.told = Some(Told {
-            at: 7,
-            line: "They need you.".into(),
-        });
-    }
-    assert_eq!(wait_told(s, "w1").map(|t| t.at), Some(7));
-    assert_eq!(wait_told(s, "w2").map(|t| t.at), Some(7));
-    assert!(wait_told(s, "w3").is_none());
-    // A told wait is not released by a later silence.
-    release_wait(s);
-    assert!(wait_told(s, "w1").is_some());
-}
-
 /// The mark of a told reply lands on its run's last row, once.
 #[test]
 fn a_told_reply_marks_its_runs_last_row() {
@@ -218,5 +163,101 @@ mod one_entry {
                 ("src/server/resident/triggers.rs", 1),
             ],
         );
+    }
+
+    /// The general doors her lines go through are listed by every caller:
+    /// telling Ling's work through any of them (a restart's wake, a plain
+    /// wake, a bare cue, her own turn) is a new call site, and fails here.
+    #[test]
+    fn no_general_door_tells_lings_work() {
+        let p = |a: &str, b: &str| format!("{a}{b}");
+        only_in(
+            &p("wake_to_", "tell("),
+            &[
+                ("src/server/restart.rs", 1),
+                ("src/server/resident/triggers.rs", 1),
+            ],
+        );
+        only_in(
+            &p("wake_and_", "speak("),
+            &[
+                ("src/server/resident/ambient.rs", 1),
+                ("src/server/resident/look_again.rs", 1),
+                ("src/server/resident/triggers.rs", 4),
+                ("src/server/resident/offer_outcome.rs", 1),
+            ],
+        );
+        only_in(
+            &p("wake_and_", "offer("),
+            &[
+                ("src/server/resident/ambient.rs", 1),
+                ("src/server/resident/triggers.rs", 2),
+            ],
+        );
+        only_in(
+            &p("emit_", "speak("),
+            &[
+                ("src/server/resident/spoken.rs", 1),
+                ("src/server/api/yinyue.rs", 1),
+            ],
+        );
+        only_in(
+            &p("emit_speak_", "offering("),
+            &[
+                ("src/server/resident/spoken.rs", 1),
+                ("src/server/api/yinyue.rs", 2),
+            ],
+        );
+        only_in(
+            &p("run_yinyue_", "turn("),
+            &[
+                ("src/server/resident/triggers.rs", 2),
+                ("src/server/resident/turn.rs", 1),
+                ("src/server/resident/herald.rs", 2),
+                ("src/server/api/yinyue.rs", 1),
+            ],
+        );
+        // The notice's event by any name, a glob import too.
+        only_in(
+            &p("Notice", "Told"),
+            &[
+                ("crates/linggen-engine/src/engine/events.rs", 1),
+                ("src/server/resident/herald.rs", 1),
+                ("src/server/ui_events/chat.rs", 3),
+                ("src/server/ui_events/mod.rs", 1),
+                ("src/server/ui_events/data.rs", 1),
+            ],
+        );
+    }
+
+    /// A glob import would let a variant be named bare, past every count
+    /// above: none in production, but the one event router's.
+    #[test]
+    fn no_glob_import_hides_a_notice() {
+        let p = |a: &str, b: &str| format!("{a}{b}");
+        only_in(
+            &p("ServerEvent::", "*"),
+            &[("src/server/ui_events/mod.rs", 1)],
+        );
+        for glob in [
+            p("Origin::", "*"),
+            p("NotificationPayload::", "*"),
+            p("Herald::", "*"),
+        ] {
+            only_in(&glob, &[]);
+        }
+    }
+
+    /// Every history view marks its rows: a file that builds a page's rows
+    /// (`with_run_calls`) calls `mark_rows` as often.
+    #[test]
+    fn every_history_view_carries_the_marks() {
+        let p = |a: &str, b: &str| format!("{a}{b}");
+        let mut views: Vec<(String, usize)> = count(&p("run_calls::with_", "run_calls("));
+        let mut marks: Vec<(String, usize)> = count(&p("resident::mark_", "rows("));
+        views.sort();
+        marks.sort();
+        assert!(views.len() >= 3, "{views:?}");
+        assert_eq!(marks, views, "a history view without the marks");
     }
 }

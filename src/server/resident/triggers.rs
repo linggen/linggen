@@ -29,9 +29,9 @@ pub(super) fn handle_event(state: &Arc<ServerState>, event: ServerEvent) {
         ServerEvent::AskUser {
             agent_id,
             question_id,
-            questions,
             session_id,
-        } => on_ask(state, agent_id, question_id, questions, session_id),
+            ..
+        } => on_ask(state, agent_id, question_id, session_id),
         // A peer agent sent a message. TO YINYUE → she receives it in her own
         // voice (herald). TO A CHAT AGENT (Ling, …) → it shows in that agent's
         // chat as a message from the sender, and that agent responds. Either way
@@ -52,10 +52,10 @@ fn on_ask(
     state: &Arc<ServerState>,
     agent_id: String,
     question_id: String,
-    questions: Vec<crate::engine::tools::AskUserQuestion>,
     session_id: Option<String>,
 ) {
-    let herald = super::herald::Herald::Waiting { agent: agent_id, session: session_id, question_id, questions };
+    // What it asks is read from the pending list when it is told.
+    let herald = super::herald::Herald::Waiting { agent: agent_id, session: session_id, question_id };
     super::herald::tell(state, herald);
 }
 

@@ -10,6 +10,7 @@ import { useUiStore } from '../stores/uiStore';
 import { useSuggestionStore } from '../stores/suggestionStore';
 import { useInteractionStore } from '../stores/interactionStore';
 import { getTransport } from '../lib/transport';
+import { answerAsk } from '../lib/answerAsk';
 import { contentBlockSummary } from '../components/chat/utils/content-block';
 import type { AskUserAnswer, ChatMessage, ContentBlock } from '../types';
 import { appConfig, sessionApi, workspaceApi } from '../lib/endpoints';
@@ -50,7 +51,6 @@ function addUnavailableLine(agentId: string): void {
   });
 }
 
-const answeringQuestions = new Set<string>();
 
 export function useChatActions(
   scrollToBottom: () => void,
@@ -402,24 +402,7 @@ export function useChatActions(
   const respondToAskUser = useCallback(async (questionId: string, answers: AskUserAnswer[]) => {
     const sid = useSessionStore.getState().activeSessionId;
     if (!sid || !useInteractionStore.getState().askQueues[sid]?.some((ask) => ask.questionId === questionId)) return;
-    const key = JSON.stringify([sid, questionId]);
-    if (answeringQuestions.has(key)) return;
-    answeringQuestions.add(key);
-    try {
-      await getTransport().sendAskUserResponse({ question_id: questionId, answers, session_id: sid });
-      useInteractionStore.getState().removeAsk(sid, questionId);
-    } catch (e) {
-      const reason = String((e as Error)?.message ?? e);
-      if (/unknown question|already expired/i.test(reason)) {
-        useInteractionStore.getState().removeAsk(sid, questionId);
-        useUiStore.getState().addToast({ message: 'This question has expired or was already answered.', variant: 'error' });
-        return;
-      }
-      useUiStore.getState().addToast({ message: `Answer failed to send — ${reason}`, variant: 'error' });
-      console.error('Error responding to AskUser:', e);
-    } finally {
-      answeringQuestions.delete(key);
-    }
+    await answerAsk(sid, questionId, answers);
   }, []);
 
   /**

@@ -13,3 +13,12 @@ export function speechAbout<O>(data: { problem?: string | null; offers?: O[] | n
   if (!raised && !questionId) return undefined;
   return { ...(raised ? { raised } : {}), ...(questionId ? { questionId } : {}) };
 }
+
+/** Her speech once question `widgetId` is answered anywhere: its card goes,
+ *  her words stay. Unchanged for any other question. */
+export function withoutAnswered<S extends { questionId?: string }>(speech: S | null, widgetId: string): S | null {
+  if (!speech || speech.questionId !== widgetId) return speech;
+  const { questionId: _gone, ...rest } = speech;
+  void _gone;
+  return rest as S;
+}

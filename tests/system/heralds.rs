@@ -159,10 +159,11 @@ async fn until(what: &str, w: &World, ok: impl Fn() -> bool) {
 const READY_LINE: &str = "READY-LINE your answer is waiting.";
 
 /// A reply finished while the person was away: she says so aloud, and the
-/// thread gets no row of hers for it — the reply's own row carries the
-/// folded mark, live and on reload.
+/// thread gets no row of hers for it. No surface holds her here, so nobody
+/// heard it: nothing is marked, live or on reload (a page that holds her
+/// sees the mark — `tests/e2e/specs/heralds.spec.ts`).
 #[tokio::test]
-async fn a_notice_is_never_a_row_of_its_own_and_marks_the_reply() {
+async fn a_notice_no_surface_heard_is_no_row_and_no_mark() {
     let setup = Setup::default()
         .script(
             Agent::Ling,
@@ -186,10 +187,9 @@ async fn a_notice_is_never_a_row_of_its_own_and_marks_the_reply() {
     w.finish_run(&sid, Agent::Ling, mark).await;
     let spoke = |e: &Value| e["kind"] == "pet_speak" && e["text"] == READY_LINE;
     until("her notice", &w, || w.events().iter().any(spoke)).await;
-    let told = w
-        .events_when(|e| e.iter().any(|x| x["kind"] == "notice_told"))
-        .await;
     tokio::time::sleep(Duration::from_secs(2)).await;
+    let cue = w.events().into_iter().find(|e| spoke(e)).unwrap();
+    assert_eq!(cue["data"]["voice"], true, "said aloud: {cue}");
     assert_eq!(
         w.events().iter().filter(|e| spoke(e)).count(),
         1,
@@ -199,27 +199,16 @@ async fn a_notice_is_never_a_row_of_its_own_and_marks_the_reply() {
         !every_row(&w).contains("READY-LINE"),
         "the notice became a row"
     );
-    let mark_event = told
-        .iter()
-        .find(|x| x["kind"] == "notice_told")
-        .expect("a live mark");
-    assert_eq!(mark_event["session_id"], sid.as_str(), "{mark_event}");
-    assert_eq!(mark_event["data"]["line"], READY_LINE);
-    // On reload: Ling's reply row carries the mark, once.
+    assert!(
+        !w.events().iter().any(|e| e["kind"] == "notice_told"),
+        "marked though no surface heard it"
+    );
     let url = format!(
         "/api/workspace/state?session_id={sid}&project_root={}",
         urlencoding::encode(&w.work())
     );
     let page = w.api.get(&url).await;
-    let marked: Vec<&Value> = page["messages"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|r| r[0].get("told_aloud_at").is_some())
-        .collect();
-    assert_eq!(marked.len(), 1, "{page}");
-    assert_eq!(marked[0][0]["from"], "ling");
-    assert_eq!(marked[0][0]["told_aloud_line"], READY_LINE);
+    assert!(!page.to_string().contains("told_aloud_at"), "{page}");
 }
 
 /// Her voice muted: the notice is words only, and a notice never said aloud
@@ -435,18 +424,166 @@ async fn one_telling_per_waiting_session() {
         "the notice became a row"
     );
     for ask in asks().await {
-        assert!(
-            ask.get("told_aloud_at").is_some(),
-            "the card carries no mark: {ask}"
-        );
-    }
-    for ask in asks().await {
         w.api.answer(&ask, "Allow once").await;
     }
-    // The wait is over: nothing about it is written late.
-    tokio::time::sleep(Duration::from_secs(3)).await;
+}
+
+/// Two prompts of one turn wait; the first telling comes to nothing (she
+/// writes no line): the second, still waiting, is told.
+#[tokio::test]
+async fn a_question_folded_into_a_telling_that_came_to_nothing_is_told() {
+    let setup = Setup::default().script(
+        Agent::Yinyue,
+        vec![
+            text("I'm here."),
+            // Slow: the second prompt comes while this telling still runs.
+            crate::support::model::slow(text("He is away, so no line from me now.")),
+            crate::support::say("SECOND-TOLD they need you."),
+        ],
+    );
+    let w = crate::claude_bridge::world_with(setup).await;
+    let sid = crate::claude_bridge::session_in(&w, &w.work()).await;
+    meet_then_away(&w).await;
+    w.api.chat(&sid, &w.work(), "asktwice").await;
+    away(&w).await;
+    let cue = |e: &Value| e["kind"] == "pet_speak" && e["text"] == "SECOND-TOLD they need you.";
+    until("the folded question's telling", &w, || {
+        w.events().iter().any(cue)
+    })
+    .await;
+    let said = w.events().into_iter().find(|e| cue(e)).unwrap();
+    let pending = w.api.pending(&sid, None).await;
+    assert_eq!(pending.len(), 2, "{pending:?}");
+    assert_eq!(
+        said["data"]["question_id"],
+        pending
+            .iter()
+            .find(|a| a["questions"][0]["question"] == "Bash ls two")
+            .unwrap()["question_id"],
+        "{said}"
+    );
+    assert_eq!(her_wakes(&w, "waiting on the user"), 2);
+    for ask in pending {
+        w.api.answer(&ask, "Allow once").await;
+    }
+}
+
+/// The wait is answered while her line is being made: nothing of it is
+/// said, marked or written — then or later.
+#[tokio::test]
+async fn a_wait_answered_while_her_line_is_made_leaves_nothing() {
+    let setup = Setup::default().script(
+        Agent::Yinyue,
+        vec![
+            text("I'm here."),
+            crate::support::model::slow(crate::support::say("LATE-WAIT they need you.")),
+        ],
+    );
+    let w = crate::claude_bridge::world_with(setup).await;
+    let sid = crate::claude_bridge::session_in(&w, &w.work()).await;
+    meet_then_away(&w).await;
+    w.api.chat(&sid, &w.work(), "ask").await;
+    away(&w).await;
+    until("her notice's turn", &w, || {
+        her_wakes(&w, "waiting on the user") == 1
+    })
+    .await;
+    let ask = w
+        .api
+        .pending(&sid, None)
+        .await
+        .into_iter()
+        .next()
+        .expect("the wait");
+    w.api.answer(&ask, "Deny").await;
+    // Past her slow line, and a while after.
+    tokio::time::sleep(Duration::from_secs(10)).await;
+    let late = |e: &Value| e.to_string().contains("LATE-WAIT");
     assert!(
-        !every_row(&w).contains("WAIT-LINE"),
+        !w.events()
+            .iter()
+            .any(|e| e["kind"] == "pet_speak" && late(e)),
+        "a stale notice was said"
+    );
+    assert!(
+        !w.events().iter().any(|e| e["kind"] == "notice_told"),
+        "a stale notice was marked"
+    );
+    assert!(
+        !every_row(&w).contains("LATE-WAIT"),
         "a row about the wait was written after it ended"
+    );
+}
+
+/// A fact of hers held for the person (her own failed turn) does not ride a
+/// notice, which leaves no row: it waits, and her next woken turn that is
+/// kept (a mission's fault) carries it.
+#[tokio::test]
+async fn her_held_fact_is_not_used_up_by_a_notice() {
+    let setup = Setup::default()
+        .script(
+            Agent::Ling,
+            vec![
+                crate::support::model::slow(text("Here is the plan for the shelf.")),
+                tool("Ping", serde_json::json!({})),
+                text("The lamp check did not complete. DONE"),
+            ],
+        )
+        .script(
+            Agent::Yinyue,
+            vec![
+                text("I'm here."),
+                crate::support::error(400, "her model refused"),
+                crate::support::say(READY_LINE),
+                crate::support::say("FAULT-LINE the beacon failed."),
+            ],
+        );
+    let w = World::start(setup).await;
+    crate::missions::install_beacon(&w.home.linggen_home().join("skills"));
+    w.api
+        .post("/api/skills/reload", serde_json::json!({}))
+        .await;
+    meet_then_away(&w).await;
+    // Her own turn fails: the fact is held for her.
+    let mark = w.mark();
+    w.api
+        .post(
+            "/api/yinyue/chat",
+            serde_json::json!({"text": "Still there?"}),
+        )
+        .await;
+    w.wait_agent(Agent::Yinyue, mark).await;
+    away(&w).await;
+    let sid = w
+        .api
+        .create_session(serde_json::json!({"title": "Shelf"}))
+        .await;
+    let mark = w.mark();
+    w.api.chat(&sid, &w.work(), "Plan the shelf").await;
+    away(&w).await;
+    w.finish_run(&sid, Agent::Ling, mark).await;
+    until("her notice", &w, || {
+        w.events()
+            .iter()
+            .any(|e| e["kind"] == "pet_speak" && e["text"] == READY_LINE)
+    })
+    .await;
+    let calls = w.model.calls_of(Agent::Yinyue);
+    let notice = calls.last().unwrap().text();
+    assert!(notice.contains("just finished a reply"), "{notice}");
+    assert!(
+        !notice.contains("one of your own turns"),
+        "her held fact rode a notice: {notice}"
+    );
+    // A mission's fault, someone back: the held fact rides that turn.
+    crate::missions::set_exit(&w, 3);
+    crate::missions::beat_present(&w).await;
+    let mark = w.mark();
+    crate::missions::run_once(&w).await;
+    w.wait_agent(Agent::Yinyue, mark).await;
+    let fault = w.model.calls_of(Agent::Yinyue).last().unwrap().text();
+    assert!(
+        fault.contains("one of your own turns"),
+        "her held fact was lost: {fault}"
     );
 }
