@@ -1,5 +1,5 @@
 /**
- * The page that frames this one — a skill page, the launcher — is one of the
+ * The page that frames this one — a skill page, the desktop app's tabs — is one of the
  * engine's own, served from this same origin (through the linggen.dev tunnel,
  * a blob of the site's origin: still the same as ours). Messages go only to
  * that origin, never '*', and only its messages are acted on: another site

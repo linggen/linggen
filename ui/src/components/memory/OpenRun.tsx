@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import { useSessionStore } from '../../stores/sessionStore';
+import { showChatHome } from '../../lib/appHost';
 
 /** Open a mission run using the main session list's selection state. */
 export function OpenRun({ sessionId }: { sessionId: string }) {
@@ -13,6 +14,7 @@ export function OpenRun({ sessionId }: { sessionId: string }) {
     store.setActiveSkillName(null);
     store.setActiveMissionId(session?.mission_id ?? null);
     if (session) store.setSelectedProjectRoot(session.project || session.cwd || session.repo_path || '~');
+    showChatHome();
     navigate('/');
   };
   return <button className="text-xs text-blue-600 underline dark:text-blue-400" onClick={open}>Open the run</button>;

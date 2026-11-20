@@ -1,6 +1,6 @@
 /**
  * Usage meter chip — the fuel gauge for the account's LLM allowance, shown
- * in the top bar of both shells (LauncherApp header, dev-console HeaderBar).
+ * in Settings → Models.
  *
  * Reads GET /api/account?app=linggen (the engine caches entitlement 60s):
  * one chip "6.8M left" for whichever allowance the account runs on — the

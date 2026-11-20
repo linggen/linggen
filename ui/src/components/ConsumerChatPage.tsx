@@ -10,6 +10,7 @@ import React, { useCallback, useState } from 'react';
 import { ShieldAlert, Menu, LogOut } from 'lucide-react';
 import type { SessionInfo, SkillInfo } from '../types';
 import { getTransport } from '../lib/transport';
+import { appPage, openApp } from '../lib/appHost';
 import { ChatWidget } from './chat/ChatWidget';
 import { SessionList } from './SessionList';
 import { SkillsCard } from './SkillsCard';
@@ -31,20 +32,8 @@ export const ConsumerChatPage: React.FC = () => {
   const filteredSkills = skills;
 
   const handleClickSkill = useCallback((skill: SkillInfo) => {
-    if (skill.app) {
-      if (skill.app.launcher === 'web') {
-        const appUrl = `/apps/${skill.name}/${skill.app.entry}`;
-        const instanceId = document.querySelector('meta[name="linggen-instance"]')?.getAttribute('content') || '';
-        const relayOrigin = document.querySelector('meta[name="linggen-relay-origin"]')?.getAttribute('content') || '';
-        if (instanceId && relayOrigin) {
-          window.open(`${relayOrigin}/app/connect/${instanceId}?app=${encodeURIComponent(appUrl)}`, '_blank');
-        } else {
-          window.open(appUrl, '_blank');
-        }
-      } else if (skill.app.launcher === 'url') {
-        window.open(skill.app.entry, '_blank');
-      }
-    }
+    const page = appPage(skill);
+    if (page) openApp({ skill: skill.name, url: page });
   }, []);
 
   const handleSelectSession = (session: SessionInfo) => {

@@ -43,7 +43,7 @@ function pageFacts(): PageFacts {
   return {
     replying: isSessionBusy(useServerStore.getState(), sid),
     awaitingAnswer: !!pendingPlan || (!!sid && (askQueues[sid]?.length ?? 0) > 0),
-    dialogOpen: ui.modelPickerOpen || ui.showAgentSpecEditor || !!ui.openApp || !!ui.selectedFilePath,
+    dialogOpen: ui.modelPickerOpen || ui.showAgentSpecEditor || !!ui.selectedFilePath,
   };
 }
 

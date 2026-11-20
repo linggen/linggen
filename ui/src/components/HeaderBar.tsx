@@ -62,12 +62,18 @@ const UserAvatar: React.FC = () => {
 };
 
 export const HeaderBar: React.FC<{
+  /** The desktop app's tab bar, after the brand (apps/AppTabs.tsx); none in a browser. */
+  tabs?: React.ReactNode;
+  /** A page covers the shell (settings): the account re-reads when it comes back. */
+  covered?: boolean;
   onOpenSettings?: () => void;
   onToggleMobileMenu?: () => void;
   onToggleInfoPanel?: () => void;
   /** The side panel ✦ opens is showing: the icon is lit. */
   infoPanelOpen?: boolean;
 }> = ({
+  tabs,
+  covered = false,
   onOpenSettings,
   onToggleMobileMenu,
   onToggleInfoPanel,
@@ -126,8 +132,8 @@ export const HeaderBar: React.FC<{
 
   return (
     <header className="flex items-center justify-between px-4 md:px-6 py-2.5 border-b border-slate-200 dark:border-white/5 bg-white/90 dark:bg-[#0f0f0f]/90 backdrop-blur-md z-50">
-      {/* Left: Hamburger (mobile) + Logo */}
-      <div className="flex items-center gap-2 md:gap-3">
+      {/* Left: Hamburger (mobile) + Logo (+ the desktop app's tabs) */}
+      <div className={cn('flex items-center gap-2 md:gap-3', tabs && 'min-w-0')}>
         {onToggleMobileMenu && (
           <button onClick={onToggleMobileMenu} className="md:hidden p-1 rounded hover:bg-slate-100 dark:hover:bg-white/5 text-slate-500">
             <Menu size={18} />
@@ -167,6 +173,7 @@ export const HeaderBar: React.FC<{
             <span className="text-[8px] opacity-60">consumer</span>
           </button>
         )}
+        {tabs}
       </div>
 
       {/* Right: Status + Info + Settings + Avatar */}
@@ -206,7 +213,8 @@ export const HeaderBar: React.FC<{
         {/* Remote (relay) sessions keep the relay identity flow; a local
             daemon shows the billing account (account.toml) — the identity
             every app's LLM spend is metered against. */}
-        {isRemoteUi ? <UserAvatar /> : <AccountAvatar />}
+        {/* Remounts when settings close, so a sign in/out done there shows at once. */}
+        {isRemoteUi ? <UserAvatar /> : <AccountAvatar key={String(covered)} />}
       </div>
     </header>
   );

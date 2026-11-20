@@ -22,15 +22,6 @@ export interface Toast {
   onClick?: () => void;
 }
 
-export interface AppPanelState {
-  skill: string;
-  launcher: string;
-  url: string;
-  title: string;
-  width?: number;
-  height?: number;
-}
-
 /** Yinyue's current spoken line — shown as a transient in-character bubble,
  *  driven by the `yinyue_speak` event (paired with her voice). */
 export interface YinyueSpeech {
@@ -68,7 +59,6 @@ interface UiState {
   overlay: string | null;
   modelPickerOpen: boolean;
   showAgentSpecEditor: boolean;
-  openApp: AppPanelState | null;
 
   // File preview
   selectedFileContent: string | null;
@@ -135,7 +125,6 @@ interface UiState {
   setSessionMode: (mode: string | null) => void;
   setSessionAllMode: (mode: string | null) => void;
   setShowAgentSpecEditor: (show: boolean) => void;
-  setOpenApp: (app: AppPanelState | null) => void;
 
   setSelectedFileContent: (content: string | null) => void;
   setSelectedFilePath: (path: string | null) => void;
@@ -160,7 +149,6 @@ export const useUiStore = create<UiState>((set) => ({
   sessionMode: null,
   sessionAllMode: null,
   showAgentSpecEditor: false,
-  openApp: null,
   selectedFileContent: null,
   selectedFilePath: null,
   verboseMode: typeof window !== 'undefined' ? window.localStorage.getItem(VERBOSE_MODE_STORAGE_KEY) === 'true' : false,
@@ -256,7 +244,6 @@ export const useUiStore = create<UiState>((set) => ({
   setSessionMode: (mode: string | null) => set({ sessionMode: mode }),
   setSessionAllMode: (mode: string | null) => set({ sessionAllMode: mode }),
   setShowAgentSpecEditor: (show) => set({ showAgentSpecEditor: show }),
-  setOpenApp: (app) => set({ openApp: app }),
 
   setSelectedFileContent: (content) => set({ selectedFileContent: content }),
   setSelectedFilePath: (path) => set({ selectedFilePath: path }),

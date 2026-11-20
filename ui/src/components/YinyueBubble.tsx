@@ -11,6 +11,7 @@
 import React from 'react';
 import { useUiStore, type SpeechRaised } from '../stores/uiStore';
 import { needsConfirm, offerRequest, outcomeOf } from '../lib/petOffers.mts';
+import { openApp } from '../lib/appHost';
 import type { OfferButton } from '../types/generated/OfferButton';
 
 // Violet is her signature (silver-lavender); emotions tint from there.
@@ -75,19 +76,19 @@ async function runOffer(o: OfferButton): Promise<{ ok: boolean; result: unknown 
     const text = await resp.text();
     let result: unknown = text;
     try { result = JSON.parse(text); } catch { /* plain text refusal */ }
-    if (resp.ok && o.kind === 'open') openLaunched(result);
+    if (resp.ok && o.kind === 'open') openLaunched(o.skill, result);
     return { ok: resp.ok, result };
   } catch (e) {
     return { ok: false, result: String(e) };
   }
 }
 
-/** A launch the desktop launcher brings up itself; a plain browser tab opens
- *  the page it names. */
-function openLaunched(result: unknown): void {
-  const view = (window as { __LINGGEN_VIEW__?: string }).__LINGGEN_VIEW__ || 'main';
+/** The page an offer launched, opened where this window opens apps (lib/appHost.ts).
+ *  In the desktop app her bubble is in her own window, which leaves it to the
+ *  main window's `app_launched`. */
+function openLaunched(skill: string, result: unknown): void {
   const url = (result as { url?: string } | null)?.url;
-  if (view === 'main' && url) window.open(url, '_blank');
+  if (url) openApp({ skill, url });
 }
 
 /** Her offers as buttons under her labels, and ours: "Not now". A tool that

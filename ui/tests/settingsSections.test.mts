@@ -107,9 +107,9 @@ test('app settings href keeps paths and URL syntax inside the app route', () => 
 
 const panel = 'pages/Settings/SettingsPanel.tsx';
 const frames = new Set(['pages/Settings/SettingsHome.tsx', 'pages/Settings/BareSection.tsx']);
-const faceReader = 'lib/launcherFace.mts';
-const faceMark = 'linggen:launcher-face';
-const launcher = 'apps/LauncherApp.tsx';
+// The desktop app's tab bar: it lists apps by name for its order, and draws
+// no settings of its own (the face lock is tests/oneShell.test.mts).
+const launcher = 'apps/AppTabs.tsx';
 const moduleOptions = { moduleResolution: ts.ModuleResolutionKind.Bundler, allowJs: true };
 const moduleCache = ts.createModuleResolutionCache(root, (file) => file);
 
@@ -213,18 +213,6 @@ function duplicateDispatch(node: ts.Node, file: string): boolean {
     (isId(node.left) || isId(node.right));
 }
 
-function readsLauncherFace(node: ts.Node) {
-  if (ts.isStringLiteralLike(node) || ts.isTemplateLiteralToken(node)) {
-    return node.text.includes(faceMark) || /(?:^|[?&])launcher=/.test(node.text);
-  }
-  if (ts.isCallExpression(node) && node.arguments[0]) {
-    const [key] = node.arguments;
-    return ts.isStringLiteralLike(key) && key.text === 'launcher' &&
-      /(?:\.|\[['"])(get|getAll|has)(?:['"]\])?$/.test(node.expression.getText());
-  }
-  return ts.isRegularExpressionLiteral(node) && node.getText().includes('launcher=');
-}
-
 const desktop = 'components/settings/DesktopSection.tsx';
 const flagFile = /\b(?:start-at-login|pet-disabled|pet-always-on)\b/;
 
@@ -234,9 +222,6 @@ function inspect(tree: ts.SourceFile, file: string) {
   const scoped = drawsSettings(file);
   walk(tree, (node) => {
     const line = () => tree.getLineAndCharacterOfPosition(node.getStart()).line + 1;
-    if (file !== faceReader && readsLauncherFace(node)) {
-      violations.push(`${file}:${line()}: launcher face belongs in ${faceReader}`);
-    }
     const access = importViolation(node, file);
     if (access) violations.push(`${file}:${line()}: ${access}`);
     if (file !== desktop && (ts.isStringLiteralLike(node) || ts.isTemplateLiteralToken(node)) && flagFile.test(node.text)) {
@@ -323,19 +308,6 @@ for (const [name, file, code] of [
     assert.match(fixture(code, file).join('\n'), /second settings dispatch/);
   });
 }
-
-test('only the face module reads the launcher query or window mark', () => {
-  for (const code of [
-    "new URLSearchParams(location.search).get('launcher')",
-    "new URLSearchParams(location.search)['has']('launcher')",
-    "location.search.includes('launcher=1')",
-    "sessionStorage.getItem('linggen:launcher-face')",
-  ]) {
-    assert.match(fixture(code).join('\n'), /launcher face belongs in/);
-    assert.deepEqual(fixture(code, faceReader), []);
-  }
-  assert.deepEqual(fixture("apps.filter((app) => app.launcher === 'web')"), []);
-});
 
 test('the lock rejects all three flag paths outside DesktopSection', () => {
   for (const flag of ['start-at-login', 'pet-disabled', 'pet-always-on']) {

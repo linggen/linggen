@@ -4,7 +4,7 @@
  * 「试用期到期后, 要有消息提示用户订阅或者添加自己的模型」.
  *
  * `openModelsSettings` opens Settings → Models from wherever the chat runs:
- * the launcher's settings modal, the dev console's /settings, or — from a
+ * the UI's /settings (in the browser or the desktop app), or — from a
  * page no host frames — a new tab. `waitForOwnModel` resolves the first
  * usable model that was not there when it began, so the refused turn can be
  * sent again on it.
@@ -21,15 +21,15 @@ import type { SettingsTab } from './settingsSections.mts';
 /** The Linggen Cloud model (provider/models/catalog.rs LINGGEN_CLOUD_MODEL_ID). */
 export const CLOUD_MODEL_ID = 'deepseek-flash';
 
-/** A host that can open its settings on a tab: the launcher and the dev
- *  console set it on their window (same origin, so a framed chat reaches it). */
+/** A host that can open its settings on a tab: the main shell sets it on its
+ *  window (same origin, so a chat framed in an app's tab reaches it). */
 type SettingsHost = (tab: SettingsTab) => void;
 declare global {
   interface Window { __linggenOpenSettings?: SettingsHost }
 }
 
 function host(): SettingsHost | undefined {
-  // Nearest first: a chat inside a skill page inside the launcher asks the launcher.
+  // Nearest first: a chat inside a skill page inside the desktop app's tab asks the shell.
   const frames: Window[] = [];
   try {
     let w: Window = window;

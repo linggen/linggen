@@ -32,7 +32,6 @@ export const ZH: Record<string, string> = {
   'Not signed in. Deterministic features work offline; AI needs an account.': '未登录。确定性功能可以离线使用；AI 需要账户。',
   'Sign in to linggen.dev': '登录 linggen.dev',
   'Dashboard': '控制台',
-  'Account settings': '账户设置',
   'Info': '信息',
   'General': '通用',
   'How Linggen runs on your Mac.': 'Linggen 在你的 Mac 上如何运行。',

@@ -1,10 +1,13 @@
 /**
  * Single UI entry: the hidden `?channel=1` host renders no UI. Otherwise Root
- * serves the pet, launcher, embed, consumer, or main view, in that order.
+ * serves the pet, embed, consumer, or main view, in that order.
  *
- * /settings covers either the launcher or the main shell without unmounting it.
- * /missions/edit covers only the main shell. Bare routes (/settings/:section,
- * /chat, /sessions, /info-panel) render without the main shell.
+ * The desktop app's window is the main view too — one shell (apps/MainApp.tsx);
+ * what differs inside the desktop app asks `inShell()` (lib/appHost.ts). The
+ * shell still opens `/?launcher=1`; that query means nothing now.
+ *
+ * /settings and /missions/edit cover the main shell without unmounting it. Bare
+ * routes (/settings/:section, /chat, /sessions, /info-panel) render without it.
  *
  * Root reports the view and active session to the server.
  */
@@ -19,21 +22,19 @@ import { BareChat } from '../pages/Bare/BareChat';
 import { BareSessions } from '../pages/Bare/BareSessions';
 import { BareInfoPanel } from '../pages/Bare/BareInfoPanel';
 import { ErrorBoundary } from '../components/ErrorBoundary';
-import { SkyOverlay } from '../components/SkyOverlay';
 import { useUiStore } from '../stores/uiStore';
 import { useSessionStore } from '../stores/sessionStore';
 import { useTransport, sendViewContext } from '../hooks/useTransport';
 import '../index.css';
 import { installFetchProxy } from '../lib/fetchProxy';
 import { installChannelHost, startChannelView } from '../lib/channelHost';
-import { isEmbedLocation, isLauncherWindow } from '../lib/launcherFace.mts';
 
 installFetchProxy();
 // The skill pages this page frames ride its data channel (channelHost.ts).
 installChannelHost();
 
-// Code-split: surfaces most loads never reach (the pet window, the desktop
-// launcher, settings, the mission editor) load on demand, so the chat shell
+// Code-split: surfaces most loads never reach (the pet window, settings, the
+// mission editor) load on demand, so the chat shell
 // doesn't pay for their tabs and editors up front.
 // A page left open across an engine update still names the old build's chunks,
 // which no longer exist. One reload fetches the new build; a second failure
@@ -53,7 +54,6 @@ function lazyChunk<Props>(load: () => Promise<React.ComponentType<Props>>) {
 }
 
 const PetApp = lazyChunk(() => import('../apps/PetApp').then((m) => m.PetApp));
-const LauncherApp = lazyChunk(() => import('../apps/LauncherApp').then((m) => m.LauncherApp));
 const SettingsHome = lazyChunk(() => import('../pages/Settings/SettingsHome').then((m) => m.SettingsHome));
 const BareSection = lazyChunk(() => import('../pages/Settings/BareSection').then((m) => m.BareSection));
 const MissionEditorPage = lazyChunk(() => import('../pages/Mission/MissionEditorPage').then((m) => m.MissionEditorPage));
@@ -68,15 +68,13 @@ const path = window.location.pathname;
 const urlParams = new URLSearchParams(window.location.search);
 // Remotely the chat is booted by the relay's connect page, at
 // /app/connect/<id>; the skill page's chat bridge marks it `entry=embed`.
-const isEmbedPath = isEmbedLocation(path, urlParams);
+const isEmbedPath = path === '/embed' || path.startsWith('/embed/')
+  || urlParams.get('mode') === 'compact' || urlParams.get('entry') === 'embed';
 // The desktop shell's transparent pet window loads `?pet=1` — render only the
 // avatar (PetApp), but still let Root mount the transport so her events flow.
 const isPetView = urlParams.get('pet') === '1';
-// The desktop Linggen app opens `?launcher=1` — the app-host (tabview + app
-// pages), NOT the dev console (MainApp), which stays web-UI-only.
-const isLauncherView = isLauncherWindow(window);
 
-type View = 'main' | 'embed' | 'consumer' | 'pet' | 'launcher';
+type View = 'main' | 'embed' | 'consumer' | 'pet';
 
 const Root: React.FC = () => {
   const currentPage = useUiStore((s) => s.currentPage);
@@ -90,15 +88,13 @@ const Root: React.FC = () => {
   // otherwise tear down the connection.
   useTransport({ sessionId });
 
-  const view: View = isLauncherView
-    ? 'launcher'
-    : isPetView
-      ? 'pet'
-      : isEmbedPath
-        ? 'embed'
-        : currentPage === 'consumer'
-          ? 'consumer'
-          : 'main';
+  const view: View = isPetView
+    ? 'pet'
+    : isEmbedPath
+      ? 'embed'
+      : currentPage === 'consumer'
+        ? 'consumer'
+        : 'main';
 
   // The server scopes what this surface receives by its view context — an
   // embed is pinned to one session — so it follows the active session too: a
@@ -113,25 +109,20 @@ const Root: React.FC = () => {
   if (view === 'embed') return <EmbedApp />;
   if (view === 'consumer') return <ConsumerApp />;
 
-  const launcher = view === 'launcher';
   // Skills compose bare pages without a shell. Full-page overlays hide the
-  // shell instead: neither the launcher iframes nor the main chat unmount.
+  // shell instead: neither the app tabs' pages nor the main chat unmount.
   const isBareRoute = location.pathname.startsWith('/settings/') || BARE_PATHS.has(location.pathname);
 
   return (
     <>
-      {launcher && <Suspense fallback={null}><LauncherApp covered={settingsOpen} /></Suspense>}
-      {!launcher && !isBareRoute && <SkyOverlay />}
-      {!launcher && !isBareRoute && <MainApp covered={settingsOpen || location.pathname === '/missions/edit'} />}
+      {!isBareRoute && <MainApp covered={settingsOpen || location.pathname === '/missions/edit'} />}
       <Routes>
-        <Route path="/settings" element={<Suspense fallback={<PageFallback />}><SettingsHome launcher={launcher} /></Suspense>} />
-        {!launcher && <>
-          <Route path="/settings/:section" element={<Suspense fallback={<PageFallback />}><BareSection /></Suspense>} />
-          <Route path="/missions/edit" element={<Suspense fallback={<PageFallback />}><MissionEditorPage /></Suspense>} />
-          <Route path="/chat" element={<BareChat />} />
-          <Route path="/sessions" element={<BareSessions />} />
-          <Route path="/info-panel" element={<BareInfoPanel />} />
-        </>}
+        <Route path="/settings" element={<Suspense fallback={<PageFallback />}><SettingsHome /></Suspense>} />
+        <Route path="/settings/:section" element={<Suspense fallback={<PageFallback />}><BareSection /></Suspense>} />
+        <Route path="/missions/edit" element={<Suspense fallback={<PageFallback />}><MissionEditorPage /></Suspense>} />
+        <Route path="/chat" element={<BareChat />} />
+        <Route path="/sessions" element={<BareSessions />} />
+        <Route path="/info-panel" element={<BareInfoPanel />} />
         <Route path="*" element={null} />
       </Routes>
     </>
@@ -142,7 +133,7 @@ const BARE_PATHS: ReadonlySet<string> = new Set(['/chat', '/sessions', '/info-pa
 
 // A standalone skill page's hidden channel frame (`?channel=1`): one peer
 // for its calls, nothing rendered.
-if (!isLauncherView && urlParams.get('channel') === '1') {
+if (urlParams.get('channel') === '1') {
   startChannelView();
 } else {
   // The language first, so the page's English is put into it as it renders.
