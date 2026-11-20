@@ -29,6 +29,7 @@ mod missions;
 mod notes;
 mod person_lan;
 mod pictures;
+mod place_rules;
 mod plan;
 mod presence;
 mod private_app;

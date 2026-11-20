@@ -23,6 +23,11 @@ fn personal_rule_path(home: &Path) -> PathBuf {
     home.join(".claude").join(CLAUDE)
 }
 
+/// Where a project keeps its path-scoped rules (Markdown, any depth).
+fn rules_dir(root: &Path) -> PathBuf {
+    root.join(".claude").join("rules")
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum RuleSource {
     Project,
@@ -54,6 +59,39 @@ pub(super) struct InstructionScope {
     coding: bool,
     personal: bool,
     ceiling: Option<PermissionMode>,
+    /// The place rules this session has met, in the order met.
+    place_rules: Vec<PathBuf>,
+}
+
+/// Rules written for one part of a project — a sub-folder's rule file, or a
+/// rule under `.claude/rules/` whose `paths:` globs match — that a coding
+/// session's file tools have met. Once met, a rule renders in the stable
+/// prompt with the others, so a rebuild or a compaction keeps it and a change
+/// to it is picked up like any rule file's. Held on the engine; an engine
+/// dropped forgets them and the next file tool there meets them again.
+#[derive(Default)]
+pub(super) struct PlaceRules {
+    met: Vec<PathBuf>,
+    /// Met while the tools of the model's current reply ran: the reply was
+    /// written without them.
+    this_reply: BTreeSet<PathBuf>,
+}
+
+impl PlaceRules {
+    /// A new model reply's tools begin: what was met before, it has seen.
+    pub(super) fn new_reply(&mut self) {
+        self.this_reply.clear();
+    }
+}
+
+/// What one file tool call met (see [`AgentEngine::meet_place_rules`]).
+#[derive(Default)]
+pub(super) struct PlaceMeeting {
+    /// New rules joined the prompt: the system message is built again.
+    pub added: bool,
+    /// A change the model wrote before its rules reached it: refused with
+    /// this line, once.
+    pub wait: Option<String>,
 }
 
 impl AgentEngine {
@@ -73,8 +111,161 @@ impl AgentEngine {
             coding,
             personal,
             ceiling: self.session_spec.ceiling,
+            place_rules: self.place_rules.met.clone(),
         }
     }
+
+    /// A file tool (Read, Write, Edit) is about to touch a path: the rules
+    /// written for that path's place join the session's prompt. A Write or
+    /// Edit the model asked for before those rules reached it is refused
+    /// once, so the change is made with them in view.
+    pub(super) fn meet_place_rules(
+        &mut self,
+        tool: &str,
+        args: &serde_json::Value,
+    ) -> PlaceMeeting {
+        if !matches!(tool, "Read" | "Write" | "Edit") {
+            return PlaceMeeting::default();
+        }
+        let cwd = self.tools.builtins.cwd();
+        let Some(path) = super::render::normalize_tool_path_arg(&cwd, args) else {
+            return PlaceMeeting::default();
+        };
+        let rules = self.instruction_scope().place_rules_for(&cwd.join(path));
+        let mut meeting = PlaceMeeting::default();
+        for rule in &rules {
+            if !self.place_rules.met.contains(rule) {
+                self.place_rules.met.push(rule.clone());
+                self.place_rules.this_reply.insert(rule.clone());
+                meeting.added = true;
+            }
+        }
+        let unseen: Vec<String> = rules
+            .iter()
+            .filter(|rule| self.place_rules.this_reply.contains(*rule))
+            .map(|rule| relative_label(&self.cfg.ws_root, rule))
+            .collect();
+        if tool != "Read" && !unseen.is_empty() {
+            meeting.wait = Some(format!(
+                "Not changed yet: rules for this place were just added to your instructions ({}). Check the change against them, then make it again.",
+                unseen.join(", ")
+            ));
+        }
+        meeting
+    }
+}
+
+fn relative_label(root: &Path, path: &Path) -> String {
+    let root = root.canonicalize().unwrap_or_else(|_| root.to_owned());
+    path.strip_prefix(&root)
+        .unwrap_or(path)
+        .display()
+        .to_string()
+}
+
+/// Where a path rule applies, from its front matter.
+enum RuleReach {
+    Everywhere,
+    Paths(Vec<String>),
+}
+
+/// Split a rule's YAML front matter from its body. No front matter, or no
+/// `paths:` in it, means the rule applies everywhere.
+fn split_front_matter(text: &str) -> Result<(RuleReach, &str), &'static str> {
+    let Some(rest) = text
+        .strip_prefix("---\n")
+        .or_else(|| text.strip_prefix("---\r\n"))
+    else {
+        return Ok((RuleReach::Everywhere, text));
+    };
+    let mut offset = 0;
+    let mut end = None;
+    for line in rest.split_inclusive('\n') {
+        if line.trim_end() == "---" {
+            end = Some((offset, offset + line.len()));
+            break;
+        }
+        offset += line.len();
+    }
+    let (yaml_end, body_start) = end.ok_or("front matter not closed")?;
+    #[derive(serde::Deserialize)]
+    #[serde(untagged)]
+    enum Paths {
+        One(String),
+        Many(Vec<String>),
+    }
+    #[derive(serde::Deserialize)]
+    struct Front {
+        paths: Option<Paths>,
+    }
+    let yaml = &rest[..yaml_end];
+    let front: Option<Front> = if yaml.trim().is_empty() {
+        None
+    } else {
+        Some(serde_norway::from_str(yaml).map_err(|_| "unreadable front matter")?)
+    };
+    let globs: Vec<String> = match front.and_then(|f| f.paths) {
+        None => Vec::new(),
+        Some(Paths::One(list)) => list.split(',').map(|g| g.trim().to_owned()).collect(),
+        Some(Paths::Many(list)) => list.into_iter().map(|g| g.trim().to_owned()).collect(),
+    };
+    let globs: Vec<String> = globs.into_iter().filter(|g| !g.is_empty()).collect();
+    let reach = if globs.is_empty() {
+        RuleReach::Everywhere
+    } else {
+        RuleReach::Paths(globs)
+    };
+    Ok((reach, &rest[body_start..]))
+}
+
+fn globs_match(globs: &[String], relative: &Path) -> bool {
+    globs.iter().any(|glob| {
+        globset::GlobBuilder::new(glob)
+            .literal_separator(true)
+            .build()
+            .is_ok_and(|glob| glob.compile_matcher().is_match(relative))
+    })
+}
+
+/// The canonical form of a path that may not exist yet (a Write of a new
+/// file): its nearest existing ancestor, canonical, with the rest joined on.
+fn canonical_place(path: &Path) -> Option<PathBuf> {
+    let mut missing = Vec::new();
+    let mut existing = path;
+    loop {
+        if let Ok(canonical) = existing.canonicalize() {
+            let mut out = canonical;
+            out.extend(missing.iter().rev());
+            return Some(out);
+        }
+        missing.push(existing.file_name()?);
+        existing = existing.parent()?;
+    }
+}
+
+/// The Markdown files under `.claude/rules/`, any depth, sorted. Symlinks
+/// are listed, not followed: the loader's gate decides on them.
+fn rule_files(dir: &Path) -> Vec<PathBuf> {
+    fn walk(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            if kind.is_dir() && depth < MAX_DEPTH {
+                walk(&path, depth + 1, out);
+            } else if !kind.is_dir() && path.extension().is_some_and(|ext| ext == "md") {
+                out.push(path);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(dir, 0, &mut out);
+    out.sort();
+    out
 }
 
 impl InstructionScope {
@@ -89,14 +280,7 @@ impl InstructionScope {
         let Ok(root) = self.root.canonicalize() else {
             return Instructions::default();
         };
-        let mut loader = Loader {
-            scope: self,
-            project: &root,
-            home,
-            result: Instructions::default(),
-            bytes_left: MAX_TOTAL,
-            imports_left: MAX_IMPORTS,
-        };
+        let mut loader = self.loader(&root, home);
         let personal = home.filter(|_| self.personal).and_then(|home| {
             let path = personal_rule_path(home);
             let label = format!("Personal instructions (from {})", path.display());
@@ -122,7 +306,109 @@ impl InstructionScope {
         for entry in personal.into_iter().chain(entries.into_iter().rev()) {
             loader.render(entry);
         }
+        // Coding sessions only, the personal rule's boundary: the project's
+        // rules for everywhere, then the place rules met, in that order.
+        if self.personal {
+            for path in self.everywhere_rules(&root, home) {
+                if let Some(entry) = loader.discover_place_rule(path) {
+                    loader.render(entry);
+                }
+            }
+            for path in self
+                .place_rules
+                .iter()
+                .filter(|path| path.starts_with(&root))
+            {
+                if let Some(entry) = loader.discover_place_rule(path.clone()) {
+                    loader.render(entry);
+                }
+            }
+        }
         loader.result
+    }
+
+    fn loader<'a>(&'a self, project: &'a Path, home: Option<&'a Path>) -> Loader<'a> {
+        Loader {
+            scope: self,
+            project,
+            home,
+            result: Instructions::default(),
+            bytes_left: MAX_TOTAL,
+            imports_left: MAX_IMPORTS,
+        }
+    }
+
+    /// Each rule under `.claude/rules/` with its reach, read through the
+    /// loader's own gate and limits (a rule it cannot read is `Err`).
+    fn path_rules(
+        &self,
+        root: &Path,
+        home: Option<&Path>,
+    ) -> Vec<(PathBuf, Result<RuleReach, &'static str>)> {
+        let mut probe = self.loader(root, home);
+        rule_files(&rules_dir(root))
+            .into_iter()
+            .filter_map(|path| {
+                let reach = match probe.discover(&path, RuleSource::Project) {
+                    Ok(None) => return None,
+                    Ok(Some((_, text))) => split_front_matter(&text).map(|(reach, _)| reach),
+                    Err(reason) => Err(reason),
+                };
+                Some((path, reach))
+            })
+            .collect()
+    }
+
+    /// The path rules with no `paths:` — and any that cannot be read, so
+    /// their refusal line shows where every rule shows.
+    fn everywhere_rules(&self, root: &Path, home: Option<&Path>) -> Vec<PathBuf> {
+        self.path_rules(root, home)
+            .into_iter()
+            .filter(|(_, reach)| !matches!(reach, Ok(RuleReach::Paths(_))))
+            .map(|(path, _)| path)
+            .collect()
+    }
+
+    /// The rules written for `target`'s place: rule files in each folder
+    /// below the project root down to the target's own, outermost first,
+    /// then the path rules whose globs match it. Coding sessions only.
+    pub(super) fn place_rules_for(&self, target: &Path) -> Vec<PathBuf> {
+        if !self.enabled || !self.personal {
+            return Vec::new();
+        }
+        let (Ok(root), Some(target)) = (self.root.canonicalize(), canonical_place(target)) else {
+            return Vec::new();
+        };
+        let Ok(relative) = target.strip_prefix(&root) else {
+            return Vec::new();
+        };
+        let mut found = Vec::new();
+        let folders: Vec<&Path> = relative
+            .parent()
+            .map(|folder| {
+                folder
+                    .ancestors()
+                    .filter(|dir| !dir.as_os_str().is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
+        for folder in folders.into_iter().rev() {
+            for &name in NAMES {
+                let path = root.join(folder).join(name);
+                if path.symlink_metadata().is_ok() {
+                    found.push(path);
+                }
+            }
+        }
+        let home = dirs::home_dir();
+        for (path, reach) in self.path_rules(&root, home.as_deref()) {
+            if let Ok(RuleReach::Paths(globs)) = reach {
+                if globs_match(&globs, relative) {
+                    found.push(path);
+                }
+            }
+        }
+        found
     }
 }
 
@@ -160,6 +446,37 @@ impl Loader<'_> {
             source,
             text,
         })
+    }
+
+    /// A place rule — a sub-folder's rule file or a path rule — labelled
+    /// with where it applies; a path rule's front matter is not rule text.
+    fn discover_place_rule(&mut self, path: PathBuf) -> Option<RuleEntry> {
+        let relative = path.strip_prefix(self.project).ok()?.to_owned();
+        let mut entry = self.discover_entry(String::new(), path, RuleSource::Project)?;
+        if !relative.starts_with(rules_dir(Path::new(""))) {
+            let folder = relative.parent().unwrap_or(Path::new(""));
+            entry.label = format!(
+                "{} (for files under {}/)",
+                relative.display(),
+                folder.display()
+            );
+            return Some(entry);
+        }
+        entry.label = relative.display().to_string();
+        let split = match &entry.text {
+            Ok(text) => split_front_matter(text).map(|(reach, body)| (reach, body.to_owned())),
+            Err(reason) => Err(*reason),
+        };
+        match split {
+            Ok((reach, body)) => {
+                if let RuleReach::Paths(globs) = reach {
+                    entry.label = format!("{} (for {})", entry.label, globs.join(", "));
+                }
+                entry.text = Ok(body);
+            }
+            Err(reason) => entry.text = Err(reason),
+        }
+        Some(entry)
     }
 
     fn render(&mut self, entry: RuleEntry) {

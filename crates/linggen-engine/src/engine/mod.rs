@@ -1167,6 +1167,8 @@ impl AgentEngine {
         session_id: Option<&str>,
     ) -> Result<Option<AgentOutcome>> {
         let mut actions = actions;
+        // This reply was written without the place rules its tools meet now.
+        self.place_rules.new_reply();
 
         while !actions.is_empty() {
             // Check cancellation before dispatching each tool/batch. Same
@@ -1644,6 +1646,154 @@ mod member_tests {
         let results: Vec<&str> = state.messages[before..].iter().map(|m| m.content.as_str()).collect();
         assert!(results.iter().all(|r| r.contains("a.txt")), "{results:?}");
         assert_eq!(state.messages[0].content, opened.replace("the old rules", "the new rules"));
+    }
+
+    /// A coding session at `root` that may edit it, its first turn opened.
+    fn coding_turn(root: &std::path::Path) -> (AgentEngine, super::LoopState) {
+        let mut engine = engine_at(root);
+        crate::engine::session_spec::coding_caller_fixture().apply(&mut engine);
+        let mut perms = SessionPermissions::default();
+        perms.set_path_mode(&root.to_string_lossy(), PermissionMode::Edit);
+        engine.session_permissions = perms;
+        engine.native_tool_mode = true;
+        let (messages, allowed_tools, read_paths) =
+            engine.prepare_loop_messages("work", true, super::prompt::PromptPurpose::Turn);
+        let (_tx, progress_rx) = tokio::sync::mpsc::unbounded_channel();
+        let state = super::LoopState {
+            messages,
+            allowed_tools,
+            read_paths,
+            tool_cache: Default::default(),
+            empty_search_streak: 0,
+            redundant_tool_streak: 0,
+            last_tool_sig: String::new(),
+            invalid_json_streak: 0,
+            last_assistant_response: String::new(),
+            identical_response_streak: 0,
+            loop_nudge_count: 0,
+            empty_response_streak: 0,
+            progress_rx,
+        };
+        (engine, state)
+    }
+
+    fn file_call(tool: &str, path: &str) -> super::ToolUse {
+        let args = match tool {
+            "Write" => serde_json::json!({ "path": path, "content": "made" }),
+            _ => serde_json::json!({ "path": path }),
+        };
+        super::ToolUse { action: super::ModelAction { tool: tool.into(), args }, id: Some(format!("{tool}-{path}")) }
+    }
+
+    /// One model reply's calls; what they got back.
+    async fn reply(engine: &mut AgentEngine, state: &mut super::LoopState, calls: Vec<super::ToolUse>) -> Vec<String> {
+        let before = state.messages.len();
+        engine.execute_action_loop(calls, state, None).await.unwrap();
+        state.messages[before..].iter().map(|m| m.content.clone()).collect()
+    }
+
+    fn place_project() -> tempfile::TempDir {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join(CLAUDE), "ROOT RULE").unwrap();
+        std::fs::create_dir_all(root.path().join("ui/src")).unwrap();
+        std::fs::write(root.path().join("ui").join(CLAUDE), "UI RULE").unwrap();
+        std::fs::write(root.path().join("ui/src/a.txt"), "a").unwrap();
+        std::fs::write(root.path().join("notes.txt"), "n").unwrap();
+        root
+    }
+
+    /// A Write under a sub-folder's rule, asked for before that rule reached
+    /// the model, waits one round with the rule now in the system message;
+    /// the same Write in the next reply goes through.
+    #[tokio::test]
+    async fn a_sub_folder_rule_reaches_the_model_before_the_first_change_under_it() {
+        let root = place_project();
+        let (mut engine, mut state) = coding_turn(root.path());
+        assert!(!state.messages[0].content.contains("UI RULE"));
+        let new_file = root.path().join("ui/src/new.txt");
+
+        let first = reply(&mut engine, &mut state, vec![file_call("Write", "ui/src/new.txt")]).await;
+        assert!(first.iter().any(|r| r.contains("Not changed yet")), "{first:?}");
+        assert!(!new_file.exists(), "the change waited for the rule");
+        assert_eq!(state.messages[0].content.matches("UI RULE").count(), 1);
+
+        let second = reply(&mut engine, &mut state, vec![file_call("Write", "ui/src/new.txt")]).await;
+        assert!(!second.iter().any(|r| r.contains("Not changed yet")), "{second:?}");
+        assert!(new_file.exists());
+        assert_eq!(state.messages[0].content.matches("UI RULE").count(), 1, "once, not per call");
+    }
+
+    /// A `.claude/rules/` rule scoped by `paths:` holds a change under its
+    /// glob the same way, and sits beside a sub-folder's rule, each once.
+    #[tokio::test]
+    async fn a_path_scoped_rule_reaches_the_model_before_the_first_change_it_matches() {
+        let root = place_project();
+        std::fs::create_dir_all(root.path().join(".claude/rules")).unwrap();
+        std::fs::write(root.path().join(".claude/rules/api.md"), "---\npaths: [\"src/api/**/*.ts\"]\n---\nAPI RULE").unwrap();
+        let (mut engine, mut state) = coding_turn(root.path());
+        assert!(!state.messages[0].content.contains("API RULE"));
+        let other = reply(&mut engine, &mut state, vec![file_call("Write", "src/other.ts")]).await;
+        assert!(!other.iter().any(|r| r.contains("Not changed yet")), "{other:?}");
+        assert!(!state.messages[0].content.contains("API RULE"), "no match, no rule");
+
+        let first = reply(&mut engine, &mut state, vec![file_call("Write", "src/api/v1/users.ts")]).await;
+        assert!(first.iter().any(|r| r.contains("Not changed yet")), "{first:?}");
+        assert!(!root.path().join("src/api/v1/users.ts").exists());
+        reply(&mut engine, &mut state, vec![file_call("Write", "src/api/v1/users.ts")]).await;
+        assert!(root.path().join("src/api/v1/users.ts").exists());
+        reply(&mut engine, &mut state, vec![file_call("Read", "ui/src/a.txt")]).await;
+        let system = &state.messages[0].content;
+        assert_eq!((system.matches("API RULE").count(), system.matches("UI RULE").count()), (1, 1));
+    }
+
+    /// A Read and a Write in one reply: the reply was written without the
+    /// rule the Read brings, so the Write still waits.
+    #[tokio::test]
+    async fn a_change_in_the_reply_that_met_the_rule_still_waits() {
+        let root = place_project();
+        let (mut engine, mut state) = coding_turn(root.path());
+        let got = reply(&mut engine, &mut state, vec![file_call("Read", "ui/src/a.txt"), file_call("Write", "ui/src/b.txt")]).await;
+        assert!(got.iter().any(|r| r.contains("Not changed yet")), "{got:?}");
+        assert!(!root.path().join("ui/src/b.txt").exists());
+        assert!(state.messages[0].content.contains("UI RULE"));
+    }
+
+    /// Work elsewhere in the project never carries the sub-folder's rule.
+    #[tokio::test]
+    async fn work_outside_a_sub_folder_does_not_carry_its_rule() {
+        let root = place_project();
+        let (mut engine, mut state) = coding_turn(root.path());
+        let opened = state.messages[0].content.clone();
+        reply(&mut engine, &mut state, vec![file_call("Read", "notes.txt")]).await;
+        reply(&mut engine, &mut state, vec![file_call("Write", "other.txt")]).await;
+        assert!(root.path().join("other.txt").exists());
+        assert_eq!(state.messages[0].content, opened);
+    }
+
+    /// A met rule stays in force when the next turn builds its prompt again.
+    #[tokio::test]
+    async fn a_met_place_rule_survives_a_prompt_rebuild() {
+        let root = place_project();
+        let (mut engine, mut state) = coding_turn(root.path());
+        reply(&mut engine, &mut state, vec![file_call("Read", "ui/src/a.txt")]).await;
+        engine.cached_system_prompt = None;
+        let (again, _, _) = engine.prepare_loop_messages("next", true, super::prompt::PromptPurpose::Turn);
+        assert_eq!(again[0].content.matches("UI RULE").count(), 1);
+    }
+
+    /// A project with no sub-folder or path rules: its prompt stays byte for
+    /// byte the same through reads and changes.
+    #[tokio::test]
+    async fn a_project_without_place_rules_keeps_its_prompt_byte_for_byte() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join(CLAUDE), "ROOT RULE").unwrap();
+        std::fs::create_dir_all(root.path().join("ui/src")).unwrap();
+        std::fs::write(root.path().join("ui/src/a.txt"), "a").unwrap();
+        let (mut engine, mut state) = coding_turn(root.path());
+        let opened = state.messages[0].content.clone();
+        let got = reply(&mut engine, &mut state, vec![file_call("Read", "ui/src/a.txt"), file_call("Write", "ui/src/b.txt")]).await;
+        assert!(!got.iter().any(|r| r.contains("Not changed yet")), "{got:?}");
+        assert_eq!(state.messages[0].content, opened);
     }
 
     /// What the person sent during the turn joins it as user messages, with

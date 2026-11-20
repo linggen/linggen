@@ -393,13 +393,9 @@ impl AgentEngine {
 
         // If context files changed, build the system message again, the one
         // way it is built.
-        if prompt_stale && !state.messages.is_empty() {
+        if prompt_stale {
             debug!("Context files changed; rebuilding system prompt");
-            self.cached_system_prompt = None;
-            let task = self.task.clone().unwrap_or_default();
-            let native = self.native_tool_mode;
-            let system = self.system_message(&task, native, state.allowed_tools.as_ref());
-            state.messages[0] = ChatMessage::new("system", system);
+            self.rebuild_system_message(&mut state.messages, state.allowed_tools.as_ref());
         }
 
         // Phase 3: post-execute each result sequentially, checking cancellation.

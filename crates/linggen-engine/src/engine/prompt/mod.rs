@@ -715,6 +715,24 @@ impl AgentEngine {
         (stable, hash)
     }
 
+    /// Build the thread's system message again, the one way it is built:
+    /// after parallel tools found the project files changed, and when a file
+    /// tool met new place rules (`instruction_files::PlaceRules`).
+    pub(crate) fn rebuild_system_message(
+        &mut self,
+        messages: &mut [crate::message::ChatMessage],
+        allowed_tools: Option<&HashSet<String>>,
+    ) {
+        if messages.first().is_none_or(|first| first.role != "system") {
+            return;
+        }
+        self.cached_system_prompt = None;
+        let task = self.task.clone().unwrap_or_default();
+        let native = self.native_tool_mode;
+        let system = self.system_message(&task, native, allowed_tools);
+        messages[0] = crate::message::ChatMessage::new("system", system);
+    }
+
     /// The turn's system message: the cached stable prefix, then every part
     /// built per turn — the language line, the response format, the MCP
     /// servers' instructions, plan mode, delegation, an approved plan. The
