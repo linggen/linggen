@@ -12,6 +12,7 @@
  * change. The server derives the three-state read in the `sense` tool.
  */
 import { connection } from './transport';
+import { presenceBeat } from './presenceBeat.mts';
 
 const BEAT_MS = 4000; // steady cadence
 const TYPING_WINDOW_MS = 1500; // counts as "typing" if a key landed this recently
@@ -26,7 +27,6 @@ const SURFACE = `ui-${Math.random().toString(36).slice(2, 10)}${Date.now().toStr
 // app page); none on the main page.
 let app: string | null = null;
 let covered = false;
-let reportedFocus = false;
 
 /** The shell's app tab covers this surface. Withdraw the last focused
  * reading now; while covered, only a pending withdrawal may beat. */
@@ -52,17 +52,21 @@ function snapshot(): { surface: string; focused: boolean; typing: boolean; idle_
   };
 }
 
+// When a beat goes and when it counts as told: `presenceBeat.mts`.
+const sendBeat = presenceBeat({
+  isOpen: () => connection.isOpen(),
+  covered: () => covered,
+  read: snapshot,
+  send: (reading) =>
+    fetch('/api/presence', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(reading),
+    }).then((res) => res.ok),
+});
+
 function beat(): void {
-  if (!connection.isOpen() || (covered && !reportedFocus)) return;
-  const reading = snapshot();
-  reportedFocus = reading.focused;
-  fetch('/api/presence', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(reading),
-  }).catch(() => {
-    /* no surface connected / offline — nothing to do */
-  });
+  void sendBeat();
 }
 
 /**
