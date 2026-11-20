@@ -53,7 +53,7 @@ impl TokenUsage {
 
 /// A prompt longer than this many tokens (cache reads and writes counted) is
 /// a "long" call: Anthropic's Haiku 5.5 prices such a call at higher rates,
-/// each request on its own, so a ledger that adds calls up keeps them apart.
+/// each request on its own — so a call is priced when it is made.
 pub const LONG_PROMPT_TOKENS: usize = 100_000;
 
 /// What model calls used, in the four kinds a provider bills apart. `input`
@@ -109,9 +109,8 @@ impl Tokens {
     }
 }
 
-/// What one model used in one session, summed over its calls — the session
-/// ledger's record (`state_fs::session_usage`), the one place usage is kept
-/// per session and model.
+/// What a model used in a session, summed over its calls of one kind — the
+/// session ledger's record (`state_fs::session_usage`).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelTally {
     pub calls: u64,
@@ -119,27 +118,14 @@ pub struct ModelTally {
     #[serde(default)]
     pub unreported: u64,
     pub tokens: Tokens,
-    /// How the model's use was paid for when its latest call was made — kept
-    /// with the call, so what it cost does not change when the config does.
-    /// Absent in a ledger from before classes were recorded.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub billing: Option<super::Billing>,
-    /// The part of `tokens` that came from long-prompt calls
-    /// ([`LONG_PROMPT_TOKENS`]).
-    #[serde(default)]
-    pub long: Tokens,
 }
 
 impl ModelTally {
     pub fn add(&mut self, usage: Option<&TokenUsage>) {
         self.calls += 1;
-        let Some(used) = usage.and_then(Tokens::of) else {
-            self.unreported += 1;
-            return;
-        };
-        self.tokens.add(&used);
-        if used.prompt() > LONG_PROMPT_TOKENS as u64 {
-            self.long.add(&used);
+        match usage.and_then(Tokens::of) {
+            Some(used) => self.tokens.add(&used),
+            None => self.unreported += 1,
         }
     }
 }

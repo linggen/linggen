@@ -74,13 +74,13 @@ function breakdown(t: SessionSpend['tokens']): string {
   return `${compactTokens(sent)} in, ${compactTokens(t.output)} out, ${compactTokens(cached)} cached`;
 }
 
-/** The tokens of the session's models that have a price (`priced`) or are named unpriced. */
+/** The tokens of the ledger rows that were priced (`priced`), or the metered rows that were not. */
 function tokensOfModels(u: SessionSpend, priced: boolean): SessionSpend['tokens'] {
   const sum = { input: 0, output: 0, cache_read: 0, cache_write: 0 };
   for (const m of u.models ?? []) {
     const has = m.cost_usd !== undefined;
-    const named = (u.unpriced ?? []).includes(m.model);
-    if (priced ? !has : !named) continue;
+    const skip = priced ? !has : has || m.billing !== 'metered';
+    if (skip) continue;
     sum.input += m.input; sum.output += m.output; sum.cache_read += m.cache_read; sum.cache_write += m.cache_write;
   }
   return sum;

@@ -110,13 +110,17 @@ pub(crate) struct Case {
 }
 
 impl Case {
-    pub fn ledger(&self, model: &str) -> Option<crate::provider::models::ModelTally> {
-        self.manager
+    pub fn ledger(&self, model: &str) -> Option<crate::state_fs::session_usage::LedgerEntry> {
+        let mut entries = self
+            .manager
             .global_sessions
             .session_usage(&self.session)
-            .models
-            .get(model)
-            .cloned()
+            .entries
+            .into_iter()
+            .filter(|e| e.model == model);
+        let first = entries.next();
+        assert!(entries.next().is_none(), "one entry expected for {model}");
+        first
     }
 }
 
@@ -188,16 +192,19 @@ async fn a_call_that_finished_is_recorded_once() {
     let mut c = case("ok").await;
     c.engine.stream_with_fallback(&hi(), None).await.unwrap();
     let spent = c.ledger("spend-ok").expect("recorded");
-    assert_eq!(spent.calls, 1);
+    assert_eq!(spent.tally.calls, 1);
     assert_eq!(
-        spent.tokens,
+        spent.tally.tokens,
         Tokens {
             output: 400,
             ..PROMPT
         }
     );
     // The class the call had when it was made, kept with it.
-    assert_eq!(spent.billing, Some(crate::provider::models::Billing::Metered));
+    assert_eq!(
+        spent.billing,
+        Some(crate::provider::models::Billing::Metered)
+    );
 }
 
 /// Finding 1: the provider counted the prompt, then failed mid-stream — the
@@ -215,9 +222,9 @@ async fn a_call_that_failed_half_way_is_recorded_with_what_was_counted() {
     let spent = c
         .ledger("spend-fails")
         .expect("the failed call is in the ledger");
-    assert_eq!((spent.calls, spent.unreported), (1, 0));
+    assert_eq!((spent.tally.calls, spent.tally.unreported), (1, 0));
     assert_eq!(
-        spent.tokens, PROMPT,
+        spent.tally.tokens, PROMPT,
         "the prompt as counted; output was never reported"
     );
 }
@@ -241,8 +248,8 @@ async fn a_call_the_person_stopped_is_recorded_with_what_was_counted() {
     let spent = c
         .ledger("spend-hangs")
         .expect("the stopped call is in the ledger");
-    assert_eq!((spent.calls, spent.unreported), (1, 0));
-    assert_eq!(spent.tokens, PROMPT);
+    assert_eq!((spent.tally.calls, spent.tally.unreported), (1, 0));
+    assert_eq!(spent.tally.tokens, PROMPT);
 }
 
 /// Finding 1: a call that was opened and ended before any usage arrived is
@@ -261,6 +268,133 @@ async fn a_call_stopped_before_any_usage_counts_as_one_unreported_call() {
         .err()
         .expect("stopped");
     let spent = c.ledger("spend-silent").expect("counted");
-    assert_eq!((spent.calls, spent.unreported), (1, 1));
-    assert!(spent.tokens.is_zero());
+    assert_eq!((spent.tally.calls, spent.tally.unreported), (1, 1));
+    assert!(spent.tally.tokens.is_zero());
+}
+
+// ---------------------------------------------------------------------------
+// What a call cost is fixed when the call is made: a later change of config
+// or price re-prices nothing already made.
+// ---------------------------------------------------------------------------
+
+use crate::config::ModelPrice;
+
+/// One scripted call (1,200 fresh, 3,000 written, 5,000 read, 400 out) at
+/// 2 / 10 / 0.10 / 2.50 per million.
+const CALL_AT_2: f64 = 0.0144;
+/// The same call at 4 / 20 / 0.20 / 5.
+const CALL_AT_4: f64 = 0.0288;
+
+fn price(input: f64, output: f64, read: f64, write: f64) -> ModelPrice {
+    ModelPrice {
+        input,
+        output,
+        cache_read: Some(read),
+        cache_write: Some(write),
+    }
+}
+
+/// Swap the model's config — the engine's and the manager's, as a saved
+/// config does — to one with `price` (or none), or to no such model at all.
+async fn reconfigure(c: &mut Case, id: &str, url: &str, price: Option<ModelPrice>, present: bool) {
+    let configs = if present {
+        let mut m = anthropic(id, url);
+        m.price = price;
+        vec![m]
+    } else {
+        Vec::new()
+    };
+    let models = Arc::new(ModelManager::new_with_credentials(
+        configs,
+        &crate::credentials::Credentials::default(),
+    ));
+    c.engine.model_manager = models.clone();
+    *c.manager.models.write().await = models;
+}
+
+async fn spent(c: &Case) -> crate::provider::models::SessionSpend {
+    c.manager.session_spend(&c.session).expect("a ledger")
+}
+
+fn near(a: Option<f64>, b: f64) -> bool {
+    a.is_some_and(|a| (a - b).abs() < 1e-9)
+}
+
+/// Calls made before a price existed stay free when one is configured.
+#[tokio::test]
+async fn a_price_configured_later_prices_only_the_calls_made_after() {
+    let mut c = case("ok").await;
+    let url = format!("{}/ok", host().await);
+    c.engine.stream_with_fallback(&hi(), None).await.unwrap();
+    reconfigure(
+        &mut c,
+        "spend-ok",
+        &url,
+        Some(price(2.0, 10.0, 0.1, 2.5)),
+        true,
+    )
+    .await;
+    c.engine.stream_with_fallback(&hi(), None).await.unwrap();
+    let s = spent(&c).await;
+    assert!(
+        near(s.cost_usd, CALL_AT_2),
+        "only the second call has a cost: {:?}",
+        s.cost_usd
+    );
+    assert_eq!(s.tokens.output, 800, "both calls' tokens are counted");
+}
+
+/// A price changed between two calls: each call at its own price.
+#[tokio::test]
+async fn a_changed_price_does_not_reprice_earlier_calls() {
+    let mut c = case("ok").await;
+    let url = format!("{}/ok", host().await);
+    reconfigure(
+        &mut c,
+        "spend-ok",
+        &url,
+        Some(price(2.0, 10.0, 0.1, 2.5)),
+        true,
+    )
+    .await;
+    c.engine.stream_with_fallback(&hi(), None).await.unwrap();
+    reconfigure(
+        &mut c,
+        "spend-ok",
+        &url,
+        Some(price(4.0, 20.0, 0.2, 5.0)),
+        true,
+    )
+    .await;
+    c.engine.stream_with_fallback(&hi(), None).await.unwrap();
+    let s = spent(&c).await;
+    assert!(
+        near(s.cost_usd, CALL_AT_2 + CALL_AT_4),
+        "each at its own price: {:?}",
+        s.cost_usd
+    );
+}
+
+/// A model that leaves the config keeps the figure its calls already had.
+#[tokio::test]
+async fn a_model_removed_from_the_config_keeps_its_earlier_figure() {
+    let mut c = case("ok").await;
+    let url = format!("{}/ok", host().await);
+    reconfigure(
+        &mut c,
+        "spend-ok",
+        &url,
+        Some(price(2.0, 10.0, 0.1, 2.5)),
+        true,
+    )
+    .await;
+    c.engine.stream_with_fallback(&hi(), None).await.unwrap();
+    reconfigure(&mut c, "spend-ok", &url, None, false).await;
+    let s = spent(&c).await;
+    assert!(
+        near(s.cost_usd, CALL_AT_2),
+        "the figure stays: {:?}",
+        s.cost_usd
+    );
+    assert!(s.unpriced.is_empty(), "{:?}", s.unpriced);
 }

@@ -44,6 +44,13 @@ test('a partly priced session marks its amount and says what is not in it', () =
   // The breakdown tells the priced tokens from the unpriced ones.
   assert.match(title, /priced models: 2\.0k in, 10 out, 0 cached/);
   assert.match(title, /gem \(500 in, 10 out, 0 cached\)/);
+  // The same model before it had a price: its earlier tokens are the unpriced ones.
+  const earlier = spendView({
+    claude: false, onChatGpt: false,
+    usage: used({ cost_usd: 1, unpriced: ['sonnet'], models: [model('sonnet', 2000, 1), model('sonnet', 40)] }),
+  }).estimate!.title;
+  assert.match(earlier, /priced models: 2\.0k in/);
+  assert.match(earlier, /sonnet \(40 in, 10 out, 0 cached\)/);
   // A fully priced session has no mark.
   assert.equal(spendView({ claude: false, onChatGpt: false, usage: used({ cost_usd: 1, models: [model('sonnet', 2000, 1)] }) }).estimate?.text, '≈ $1.00');
 });

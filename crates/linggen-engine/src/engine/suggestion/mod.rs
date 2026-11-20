@@ -458,8 +458,8 @@ mod spend_tests {
     async fn a_fork_that_finished_is_recorded_once() {
         let c = forked("ok", None).await;
         let spent = c.ledger("spend-ok").expect("recorded");
-        assert_eq!(spent.calls, 1);
-        assert_eq!(spent.tokens, Tokens { input: 1_200, output: 400, cache_read: 5_000, cache_write: 3_000 });
+        assert_eq!(spent.tally.calls, 1);
+        assert_eq!(spent.tally.tokens, Tokens { input: 1_200, output: 400, cache_read: 5_000, cache_write: 3_000 });
     }
 
     /// Finding 3: the person types again while the fork is still being read.
@@ -467,8 +467,8 @@ mod spend_tests {
     async fn a_fork_dropped_by_the_next_turn_is_recorded_with_what_was_counted() {
         let c = forked("hangs", Some(700)).await;
         let spent = c.ledger("spend-hangs").expect("the dropped fork is in the ledger");
-        assert_eq!((spent.calls, spent.unreported), (1, 0));
-        assert_eq!(spent.tokens, Tokens { input: 1_200, output: 0, cache_read: 5_000, cache_write: 3_000 });
+        assert_eq!((spent.tally.calls, spent.tally.unreported), (1, 0));
+        assert_eq!(spent.tally.tokens, Tokens { input: 1_200, output: 0, cache_read: 5_000, cache_write: 3_000 });
     }
 
     /// Finding 3: dropped before its provider counted anything.
@@ -476,6 +476,6 @@ mod spend_tests {
     async fn a_fork_dropped_before_any_usage_is_one_unreported_call() {
         let c = forked("silent", Some(700)).await;
         let spent = c.ledger("spend-silent").expect("counted");
-        assert_eq!((spent.calls, spent.unreported), (1, 1));
+        assert_eq!((spent.tally.calls, spent.tally.unreported), (1, 1));
     }
 }

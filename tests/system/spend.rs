@@ -238,7 +238,7 @@ async fn a_manual_compaction_is_a_call_in_the_ledger() {
     let calls = || -> u64 {
         let v: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap_or_default())
             .unwrap_or(json!({}));
-        v["models"]["fake-ling"]["calls"].as_u64().unwrap_or(0)
+        v["entries"].as_array().into_iter().flatten().filter(|e| e["model"] == "fake-ling").filter_map(|e| e["calls"].as_u64()).sum()
     };
     assert_eq!(calls(), 2, "the two turns");
     let resp = w

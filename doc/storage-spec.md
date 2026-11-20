@@ -69,7 +69,7 @@ Project path encoding: `/Users/foo/project` → `-Users-foo-project` (same conve
 │   └── {session_id}/
 │       ├── session.yaml              # Session metadata (includes creator, cwd, project)
 │       ├── messages.jsonl            # Chat messages, append-only (JSONL)
-│       ├── usage.json                # What each model used in this session: calls and input/output/cache tokens per model (the session ledger, models.md § What a session cost)
+│       ├── usage.json                # What each model used in this session, one entry per model and billing class: calls, input/output/cache tokens and the estimate added up per call at record time (the session ledger, models.md § What a session cost)
 │       ├── claude.json               # Claude SDK session ID and working folder (Claude sessions only)
 │       ├── claude-trust-declined.json # The folder this Claude session was told not to trust (until Clear)
 │       ├── refs.jsonl                # Numbered sources, pictures and videos tools returned (append-only)

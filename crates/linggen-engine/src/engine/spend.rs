@@ -6,20 +6,19 @@
 
 use crate::engine::agent::AgentManager;
 use crate::engine::AgentEngine;
-use crate::provider::models::{billing_of, ModelManager, SessionSpend, TokenUsage};
+use crate::provider::models::{spend_of, CallRecord, ModelManager, SessionSpend, TokenUsage};
 
 impl AgentManager {
     /// What the session's model calls used and, for the models with a price,
     /// cost — the one answer the chat's top bar and `agent_status` both
     /// give. `None` when no call has been noted (a Claude SDK session never
     /// is: its cost figure is the host's own).
-    pub async fn session_spend(&self, session_id: &str) -> Option<SessionSpend> {
+    pub fn session_spend(&self, session_id: &str) -> Option<SessionSpend> {
         let ledger = self.global_sessions.session_usage(session_id);
         if ledger.is_empty() {
             return None;
         }
-        let models = self.models.read().await.clone();
-        Some(models.spend_of(&ledger))
+        Some(spend_of(&ledger))
     }
 }
 
@@ -77,11 +76,12 @@ pub(crate) fn record_call(
     if !spent.is_opened() {
         return;
     }
-    // The model's billing class now goes in with the call.
-    let billing = models.config_of(model_id).map(billing_of);
+    // The call's class and cost are worked out now, from the config as it
+    // is now, and kept: nothing later re-derives them.
+    let rec = CallRecord::of(models.config_of(model_id), spent.usage());
     manager
         .global_sessions
-        .record_usage(&Seal(()), session_id, model_id, billing, spent.usage());
+        .record_usage(&Seal(()), session_id, model_id, &rec, spent.usage());
 }
 
 /// A summary of the context (`/compact`, outside any engine) is a call too.

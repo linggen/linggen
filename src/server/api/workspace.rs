@@ -398,7 +398,7 @@ pub(crate) async fn get_workspace_state(
     };
     let usage = match sid.is_empty() || sid.contains('/') || sid.contains("..") {
         true => None,
-        false => state.manager.session_spend(sid).await,
+        false => state.manager.session_spend(sid),
     };
     Json(WorkspaceStateResponse {
         claude_usage,

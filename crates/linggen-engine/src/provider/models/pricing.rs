@@ -9,9 +9,9 @@
 //! runs on this machine has no per-token price: it is `Billing::Account` or
 //! `Billing::Local`, and a session's spend leaves it out.
 
-use super::{signs_in_with_chatgpt, ModelManager, ModelTally, Tokens};
+use super::{signs_in_with_chatgpt, ModelManager, TokenUsage, Tokens};
 use crate::config::{ModelConfig, ModelPrice};
-use crate::state_fs::session_usage::SessionUsage;
+use crate::state_fs::session_usage::{LedgerEntry, SessionUsage};
 use serde::Serialize;
 
 /// USD per million tokens.
@@ -120,10 +120,62 @@ pub enum PriceSource {
 }
 
 impl Priced {
-    /// What `tally` cost at this price.
-    pub fn cost(&self, tally: &ModelTally) -> f64 {
-        let short = tally.tokens.minus(&tally.long);
-        self.price.cost(&short) + self.long.cost(&tally.long)
+    /// What one call cost at this price: a prompt over
+    /// [`super::LONG_PROMPT_TOKENS`] at the long-prompt rates, each request on
+    /// its own.
+    pub fn cost_of_call(&self, used: &Tokens) -> f64 {
+        let rates = if used.prompt() > super::LONG_PROMPT_TOKENS as u64 {
+            &self.long
+        } else {
+            &self.price
+        };
+        rates.cost(used)
+    }
+}
+
+/// What a call is kept as in the session ledger, worked out when the call is
+/// made from the model's config as it is then: its billing class, and — when
+/// a price is known — what it cost. Never re-derived afterwards.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct CallRecord {
+    /// Absent when the model was not in the config (it claims nothing).
+    pub billing: Option<Billing>,
+    pub priced: bool,
+    pub cost_usd: Option<f64>,
+    pub source: Option<String>,
+    pub as_of: Option<String>,
+}
+
+impl CallRecord {
+    pub fn of(config: Option<&ModelConfig>, usage: Option<&TokenUsage>) -> CallRecord {
+        let Some(config) = config else {
+            return CallRecord::default();
+        };
+        let billing = billing_of(config);
+        let priced = Some(billing)
+            .filter(|b| *b == Billing::Metered)
+            .and_then(|_| price_of(config));
+        let Some(priced) = priced else {
+            return CallRecord {
+                billing: Some(billing),
+                ..Default::default()
+            };
+        };
+        // A call that reported no usage had a price and cost nothing we know.
+        let cost = usage
+            .and_then(Tokens::of)
+            .map_or(0.0, |used| priced.cost_of_call(&used));
+        let (source, as_of) = match priced.source {
+            PriceSource::BuiltIn(day) => ("built-in", Some(day.to_string())),
+            PriceSource::Config => ("config", None),
+        };
+        CallRecord {
+            billing: Some(billing),
+            priced: true,
+            cost_usd: Some(cost),
+            source: Some(source.to_string()),
+            as_of,
+        }
     }
 }
 
@@ -210,7 +262,8 @@ pub fn billing_of(cfg: &ModelConfig) -> Billing {
     }
 }
 
-/// What one model used in a session, and what that cost if it can be said.
+/// What a model used in a session under one billing class, and what that
+/// cost if it can be said — one row of the ledger's entries.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ModelSpend {
     pub model: String,
@@ -221,27 +274,31 @@ pub struct ModelSpend {
     pub output: u64,
     pub cache_read: u64,
     pub cache_write: u64,
-    /// An estimate at list price; absent without a price.
+    /// An estimate at list price, added up when each call was made; absent
+    /// without a price.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cost_usd: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none", flatten)]
-    pub price_source: Option<PriceSource>,
+    /// "built-in" or "config", and for a built-in price the day it was true.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub as_of: Option<String>,
 }
 
-/// What a session spent: per model, and in all for the models whose use is
-/// paid by the token. The one answer the chat's top bar and `agent_status`
-/// both give.
+/// What a session spent: per model and class, and in all for the models
+/// whose use is paid by the token. The one answer the chat's top bar and
+/// `agent_status` both give.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct SessionSpend {
     pub models: Vec<ModelSpend>,
     /// The tokens of every model whose use is spend (not an account's, not
     /// local).
     pub tokens: Tokens,
-    /// The estimate over the priced models among them; absent when none has
+    /// The estimate over the priced calls among them; absent when none had
     /// a price.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cost_usd: Option<f64>,
-    /// Spend models with tokens but no price — their cost is not in
+    /// Metered models with tokens but no price — their cost is not in
     /// `cost_usd`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub unpriced: Vec<String>,
@@ -258,50 +315,46 @@ impl ModelManager {
     pub(crate) fn config_of(&self, id: &str) -> Option<&ModelConfig> {
         self.models.get(self.key(id).as_ref()).map(|m| &m.config)
     }
+}
 
-    /// What the ledger's models used and cost, by their configs now.
-    pub fn spend_of(&self, ledger: &SessionUsage) -> SessionSpend {
-        let mut out = SessionSpend::default();
-        for (id, tally) in &ledger.models {
-            // The class the calls had when they were made; a price is the
-            // config's now, and only a metered model has one.
-            let billing = tally.billing.unwrap_or(Billing::Unknown);
-            let priced = self
-                .config_of(id)
-                .and_then(price_of)
-                .filter(|_| billing == Billing::Metered);
-            let cost = priced.map(|p| p.cost(tally));
-            if billing.is_spend() {
-                out.tokens.add(&tally.tokens);
-                match cost {
-                    Some(c) => *out.cost_usd.get_or_insert(0.0) += c,
-                    None if billing == Billing::Metered && !tally.tokens.is_zero() => {
-                        out.unpriced.push(id.clone())
-                    }
-                    None => {}
-                }
+/// What the ledger's models used and cost. Only sums what the ledger holds:
+/// the class and the amount of each call were fixed when it was made, so no
+/// config, price or table is read here.
+pub fn spend_of(ledger: &SessionUsage) -> SessionSpend {
+    let mut out = SessionSpend::default();
+    for e in &ledger.entries {
+        let billing = e.billing.unwrap_or(Billing::Unknown);
+        if billing.is_spend() {
+            out.tokens.add(&e.tally.tokens);
+            if let Some(c) = e.cost_usd {
+                *out.cost_usd.get_or_insert(0.0) += c;
             }
-            out.models.push(ModelSpend {
-                model: id.clone(),
-                billing,
-                calls: tally.calls,
-                unreported: tally.unreported,
-                input: tally.tokens.input,
-                output: tally.tokens.output,
-                cache_read: tally.tokens.cache_read,
-                cache_write: tally.tokens.cache_write,
-                cost_usd: cost,
-                price_source: priced.map(|p| p.source),
-            });
+            let named = out.unpriced.contains(&e.model);
+            if billing == Billing::Metered && !e.priced && !e.tally.tokens.is_zero() && !named {
+                out.unpriced.push(e.model.clone());
+            }
         }
-        out
+        out.models.push(ModelSpend {
+            model: e.model.clone(),
+            billing,
+            calls: e.tally.calls,
+            unreported: e.tally.unreported,
+            input: e.tally.tokens.input,
+            output: e.tally.tokens.output,
+            cache_read: e.tally.tokens.cache_read,
+            cache_write: e.tally.tokens.cache_write,
+            cost_usd: e.cost_usd,
+            source: e.source.clone(),
+            as_of: e.as_of.clone(),
+        });
     }
+    out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::provider::models::TokenUsage;
+    use crate::provider::models::ModelTally;
 
     fn model(provider: &str, url: &str, name: &str) -> ModelConfig {
         serde_json::from_value(serde_json::json!({
@@ -320,12 +373,12 @@ mod tests {
         }
     }
 
-    fn tally(calls: &[TokenUsage]) -> ModelTally {
-        let mut t = ModelTally::default();
-        for c in calls {
-            t.add(Some(c));
-        }
-        t
+    /// What the calls cost at `p`, each priced on its own.
+    fn cost(p: &Priced, calls: &[TokenUsage]) -> f64 {
+        calls
+            .iter()
+            .map(|c| p.cost_of_call(&Tokens::of(c).unwrap()))
+            .sum()
     }
 
     const API: &str = "https://api.anthropic.com";
@@ -335,17 +388,21 @@ mod tests {
         // 1,000,000 fresh input, 200,000 cache read, 400,000 cache write,
         // 100,000 output on Sonnet 5.5 (2 / 10 / 0.10 / 2.50):
         // 2.00 + 0.02 + 1.00 + 1.00 = 4.02.
-        let t = tally(&[call(1_600_000, 200_000, 400_000, 100_000)]);
+        let t = [call(1_600_000, 200_000, 400_000, 100_000)];
         // One call over 100K prompt tokens: Sonnet has no long tier.
         let sonnet = price_of(&model("anthropic", API, "claude-sonnet-5-5")).unwrap();
-        assert!((sonnet.cost(&t) - 4.02).abs() < 1e-9, "{}", sonnet.cost(&t));
+        assert!(
+            (cost(&sonnet, &t) - 4.02).abs() < 1e-9,
+            "{}",
+            cost(&sonnet, &t)
+        );
         assert_eq!(sonnet.source, PriceSource::BuiltIn("2026-11-03"));
         // Opus 5.5 (4 / 20 / 0.20 / 5): 4 + 0.04 + 2 + 2 = 8.04.
         let opus = price_of(&model("anthropic", API, "claude-opus-5-5")).unwrap();
-        assert!((opus.cost(&t) - 8.04).abs() < 1e-9);
+        assert!((cost(&opus, &t) - 8.04).abs() < 1e-9);
         // Fable 5.2 (8 / 40 / 0.20 / 10): 8 + 0.04 + 4 + 4 = 16.04.
         let fable = price_of(&model("anthropic", API, "claude-fable-5-2")).unwrap();
-        assert!((fable.cost(&t) - 16.04).abs() < 1e-9);
+        assert!((cost(&fable, &t) - 16.04).abs() < 1e-9);
     }
 
     #[test]
@@ -357,15 +414,19 @@ mod tests {
         // higher rates: 50,000 × 0.50 + 100,000 × 0.05 + 2,000 × 2.50 per M
         // = 0.025 + 0.005 + 0.005 = 0.035.
         let long = call(150_000, 100_000, 0, 2_000);
-        let both = tally(&[short.clone(), long]);
+        let both = [short, long];
         let expected = 0.0055 + 0.035;
         assert!(
-            (haiku.cost(&both) - expected).abs() < 1e-9,
+            (cost(&haiku, &both) - expected).abs() < 1e-9,
             "{}",
-            haiku.cost(&both)
+            cost(&haiku, &both)
         );
         // The same two calls with the long one priced short would be cheaper.
-        assert!(haiku.cost(&both) > haiku.price.cost(&both.tokens));
+        let all = both.iter().fold(Tokens::default(), |mut a, c| {
+            a.add(&Tokens::of(c).unwrap());
+            a
+        });
+        assert!(cost(&haiku, &both) > haiku.price.cost(&all));
     }
 
     #[test]
@@ -404,8 +465,8 @@ mod tests {
         assert_eq!(priced.source, PriceSource::Config);
         assert_eq!(priced.price, price(1.0, 3.0, 1.0, 1.5));
         // A configured price is flat: a long-prompt call costs the same.
-        let t = tally(&[call(200_000, 50_000, 0, 1_000)]);
-        assert!((priced.cost(&t) - (0.15 + 0.05 + 0.003)).abs() < 1e-9);
+        let t = [call(200_000, 50_000, 0, 1_000)];
+        assert!((cost(&priced, &t) - (0.15 + 0.05 + 0.003)).abs() < 1e-9);
         // It prices a model the table has never heard of, too.
         let mut gemini = model(
             "gemini",
@@ -463,90 +524,98 @@ mod tests {
         assert_eq!(billing_of(&plan), Billing::Account);
     }
 
+    /// The record of a call: class and cost fixed from the config as it is
+    /// when the call is made.
     #[test]
-    fn a_session_spend_counts_priced_models_and_names_the_unpriced() {
-        let mut priced = model("anthropic", API, "claude-sonnet-5-5");
-        priced.id = "sonnet".into();
-        let mut unpriced = model("gemini", "https://example.com/v1", "g");
-        unpriced.id = "gem".into();
-        let mut account = model("chatgpt", "", "gpt");
-        account.id = "gpt".into();
-        let models = ModelManager::new_with_credentials(
-            vec![priced, unpriced, account],
-            &crate::credentials::Credentials::default(),
+    fn a_call_is_recorded_with_its_class_and_its_cost() {
+        let used = call(9_200, 5_000, 3_000, 400); // 1,200 in, 3,000 written, 5,000 read, 400 out
+        let sonnet = model("anthropic", API, "claude-sonnet-5-5");
+        let rec = CallRecord::of(Some(&sonnet), Some(&used));
+        assert_eq!(rec.billing, Some(Billing::Metered));
+        assert!(rec.priced);
+        // 1,200 x 2 + 3,000 x 2.5 + 5,000 x 0.1 + 400 x 10, per million.
+        assert!((rec.cost_usd.unwrap() - 0.0144).abs() < 1e-9, "{rec:?}");
+        assert_eq!(
+            (rec.source.as_deref(), rec.as_of.as_deref()),
+            (Some("built-in"), Some("2026-11-03"))
         );
-        let with = |billing: Option<Billing>, t: ModelTally| ModelTally { billing, ..t };
-        let mut ledger = SessionUsage::default();
-        let metered = Some(Billing::Metered);
-        ledger.models.insert(
-            "sonnet".into(),
-            with(metered, tally(&[call(1_000_000, 0, 0, 100_000)])),
+        // A call that reported nothing had a price and cost nothing known.
+        let none = CallRecord::of(Some(&sonnet), None);
+        assert_eq!((none.priced, none.cost_usd), (true, Some(0.0)));
+        // No price: the class, no amount.
+        let gateway = model("anthropic", "https://gw.example.com", "claude-sonnet-5-5");
+        let rec = CallRecord::of(Some(&gateway), Some(&used));
+        assert_eq!(
+            (rec.billing, rec.priced, rec.cost_usd),
+            (Some(Billing::Metered), false, None)
         );
-        ledger
-            .models
-            .insert("gem".into(), with(metered, tally(&[call(500, 0, 0, 20)])));
-        ledger.models.insert(
-            "gpt".into(),
-            with(Some(Billing::Account), tally(&[call(9_000, 0, 0, 90)])),
+        // An account model: its class, never an amount (a price is a config error).
+        let rec = CallRecord::of(Some(&model("chatgpt", "", "gpt")), Some(&used));
+        assert_eq!(
+            (rec.billing, rec.priced, rec.cost_usd),
+            (Some(Billing::Account), false, None)
         );
-        ledger
-            .models
-            .insert("gone".into(), with(metered, tally(&[call(7, 0, 0, 1)])));
-        let spend = models.spend_of(&ledger);
-        // 1M in × 2 + 0.1M out × 10 = 3.00; the ChatGPT account has no price.
-        assert!((spend.cost_usd.unwrap() - 3.0).abs() < 1e-9);
-        assert_eq!(spend.unpriced, vec!["gem".to_string(), "gone".to_string()]);
-        assert_eq!(spend.tokens.input, 1_000_000 + 500 + 7);
-        let by = |m: &str| spend.models.iter().find(|s| s.model == m).unwrap();
-        assert_eq!(by("gpt").billing, Billing::Account);
-        assert_eq!(by("gpt").cost_usd, None);
-        assert_eq!(by("gem").cost_usd, None);
-        assert_eq!(by("gone").billing, Billing::Metered);
+        // A model not in the config claims nothing.
+        assert_eq!(CallRecord::of(None, Some(&used)), CallRecord::default());
     }
 
-    /// Finding 5: the class a call had when it was made is what it keeps —
-    /// an allowance model that left the config later is still no spend, and
-    /// a call from before classes were recorded makes no claim.
-    #[test]
-    fn a_calls_billing_class_does_not_change_with_the_config() {
-        let models = ModelManager::new_with_credentials(
-            Vec::new(),
-            &crate::credentials::Credentials::default(),
-        );
-        let mut ledger = SessionUsage::default();
-        ledger.models.insert(
-            "old-chatgpt".into(),
-            ModelTally {
-                billing: Some(Billing::Account),
-                ..tally(&[call(9_000, 0, 0, 90)])
+    fn entry(
+        model: &str,
+        billing: Option<Billing>,
+        priced: bool,
+        input: u64,
+        cost: Option<f64>,
+    ) -> LedgerEntry {
+        LedgerEntry {
+            model: model.into(),
+            billing,
+            priced,
+            tally: ModelTally {
+                calls: 1,
+                unreported: 0,
+                tokens: Tokens {
+                    input,
+                    output: 10,
+                    cache_read: 0,
+                    cache_write: 0,
+                },
             },
-        );
-        ledger
-            .models
-            .insert("legacy".into(), tally(&[call(70, 0, 0, 1)]));
-        let spend = models.spend_of(&ledger);
-        assert_eq!(
-            spend.tokens.input, 70,
-            "an allowance model's tokens are no spend, gone or not"
-        );
-        assert!(
-            spend.unpriced.is_empty(),
-            "no claim about a call of unknown class: {:?}",
-            spend.unpriced
-        );
-        assert_eq!(spend.cost_usd, None);
-        let legacy = spend.models.iter().find(|m| m.model == "legacy").unwrap();
-        assert_eq!(
-            (legacy.billing, legacy.input, legacy.cost_usd),
-            (Billing::Unknown, 70, None)
-        );
+            cost_usd: cost,
+            ..Default::default()
+        }
     }
 
-    /// A ledger written before classes were recorded still reads.
+    /// The total only sums what the ledger holds.
     #[test]
-    fn an_older_ledger_entry_without_a_class_reads() {
-        let old = r#"{"calls":1,"unreported":0,"tokens":{"input":5,"output":1,"cache_read":0,"cache_write":0}}"#;
-        let tally: ModelTally = serde_json::from_str(old).unwrap();
-        assert_eq!(tally.billing, None);
+    fn a_session_spend_sums_the_stored_amounts_and_names_the_unpriced() {
+        let metered = Some(Billing::Metered);
+        let ledger = SessionUsage::of_entries(vec![
+            entry("sonnet", metered, true, 1_000_000, Some(3.0)),
+            entry("gem", metered, false, 500, None),
+            entry("gpt", Some(Billing::Account), false, 9_000, None),
+            entry("gone", metered, false, 7, None),
+            // The same model before it had a price: tokens, no amount.
+            entry("sonnet", metered, false, 40, None),
+            // From before classes were recorded: tokens, no claim.
+            entry("legacy", None, false, 70, None),
+        ]);
+        let spend = spend_of(&ledger);
+        assert!((spend.cost_usd.unwrap() - 3.0).abs() < 1e-9);
+        assert_eq!(
+            spend.unpriced,
+            ["gem", "gone", "sonnet"].map(String::from).to_vec()
+        );
+        // The account's tokens are no spend; the legacy entry's are shown.
+        assert_eq!(spend.tokens.input, 1_000_000 + 500 + 7 + 40 + 70);
+        let by = |m: &str, priced: bool| {
+            spend
+                .models
+                .iter()
+                .find(|s| s.model == m && s.cost_usd.is_some() == priced)
+                .unwrap()
+        };
+        assert_eq!(by("gpt", false).billing, Billing::Account);
+        assert_eq!(by("legacy", false).billing, Billing::Unknown);
+        assert_eq!(by("sonnet", true).cost_usd, Some(3.0));
     }
 }
