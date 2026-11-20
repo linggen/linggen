@@ -2,6 +2,7 @@ pub mod day_session;
 pub mod devices;
 pub mod running_places;
 pub mod session_images;
+pub mod session_usage;
 pub mod sessions;
 #[cfg(test)]
 mod row_place_tests;

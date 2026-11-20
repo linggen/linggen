@@ -20,6 +20,7 @@ fn engine() -> AgentEngine {
             id: id.into(), provider: provider.into(), url: "http://localhost:1".into(), model: id.into(),
             api_key: None, keep_alive: None, context_window: None, tags: vec![], supports_tools: Some(true),
             auth_mode: None, reasoning_effort: None, max_output_tokens: None, provided_by: None, is_builtin: false,
+            price: None,
         }).collect(),
         &crate::credentials::Credentials::default(),
     ));

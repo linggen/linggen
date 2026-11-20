@@ -213,6 +213,7 @@ impl Stream for ProxyInferenceStream {
                             Poll::Ready(Some(Ok(StreamChunk::Token(text))))
                         }
                         "usage" => Poll::Ready(Some(Ok(StreamChunk::Usage(TokenUsage {
+                            cache_write_tokens: None,
                             prompt_tokens: chunk
                                 .get("prompt_tokens")
                                 .and_then(|v| v.as_u64())

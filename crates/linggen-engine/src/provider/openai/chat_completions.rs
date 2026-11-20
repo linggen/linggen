@@ -76,6 +76,7 @@ pub(super) fn tool_request(
 
 fn usage_chunk(usage: OaiUsage) -> StreamChunk {
     StreamChunk::Usage(TokenUsage {
+        cache_write_tokens: None,
         prompt_tokens: usage.prompt_tokens.map(|v| v as usize),
         completion_tokens: usage.completion_tokens.map(|v| v as usize),
         total_tokens: usage.total_tokens.map(|v| v as usize),

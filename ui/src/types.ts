@@ -164,6 +164,8 @@ export interface PersistedMeta {
 
 export interface SessionState {
   claude_usage?: { estimated_cost_usd: number };
+  /** What the session's model calls used and cost (lib/spend.mts). */
+  usage?: import('./lib/spend.mts').SessionSpend;
   active_task: [PersistedMeta, string] | null;
   user_stories: [PersistedMeta, string] | null;
   tasks: [PersistedMeta, string][];

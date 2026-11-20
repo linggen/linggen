@@ -15,6 +15,11 @@ pub struct TokenUsage {
     /// `prompt_tokens`, not an addition to it.
     #[serde(default)]
     pub cached_tokens: Option<usize>,
+    /// Prompt tokens the provider wrote to its cache on this call — also a
+    /// part of `prompt_tokens`. Only a provider that bills the write reports
+    /// it (Anthropic's `cache_creation_input_tokens`).
+    #[serde(default)]
+    pub cache_write_tokens: Option<usize>,
 }
 
 impl TokenUsage {
@@ -31,6 +36,7 @@ impl TokenUsage {
                 .or(self.total_tokens)
                 .or(prompt_tokens.zip(completion_tokens).map(|(p, c)| p + c)),
             cached_tokens: later.cached_tokens.or(self.cached_tokens),
+            cache_write_tokens: later.cache_write_tokens.or(self.cache_write_tokens),
         }
     }
 
@@ -45,6 +51,94 @@ impl TokenUsage {
     }
 }
 
+/// A prompt longer than this many tokens (cache reads and writes counted) is
+/// a "long" call: Anthropic's Haiku 5.5 prices such a call at higher rates,
+/// each request on its own, so a ledger that adds calls up keeps them apart.
+pub const LONG_PROMPT_TOKENS: usize = 100_000;
+
+/// What model calls used, in the four kinds a provider bills apart. `input`
+/// is the prompt not served from the provider's cache and not written to it;
+/// the prompt is `input + cache_read + cache_write`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Tokens {
+    pub input: u64,
+    pub output: u64,
+    pub cache_read: u64,
+    pub cache_write: u64,
+}
+
+impl Tokens {
+    /// What one call used, or `None` when its provider reported no usage.
+    pub fn of(u: &TokenUsage) -> Option<Tokens> {
+        if u.prompt_tokens.is_none() && u.completion_tokens.is_none() {
+            return None;
+        }
+        let prompt = u.prompt_tokens.unwrap_or(0) as u64;
+        let read = u.cached_tokens.unwrap_or(0) as u64;
+        let write = u.cache_write_tokens.unwrap_or(0) as u64;
+        Some(Tokens {
+            input: prompt.saturating_sub(read + write),
+            output: u.completion_tokens.unwrap_or(0) as u64,
+            cache_read: read,
+            cache_write: write,
+        })
+    }
+
+    pub fn prompt(&self) -> u64 {
+        self.input + self.cache_read + self.cache_write
+    }
+
+    pub fn add(&mut self, other: &Tokens) {
+        self.input += other.input;
+        self.output += other.output;
+        self.cache_read += other.cache_read;
+        self.cache_write += other.cache_write;
+    }
+
+    pub fn minus(&self, other: &Tokens) -> Tokens {
+        Tokens {
+            input: self.input.saturating_sub(other.input),
+            output: self.output.saturating_sub(other.output),
+            cache_read: self.cache_read.saturating_sub(other.cache_read),
+            cache_write: self.cache_write.saturating_sub(other.cache_write),
+        }
+    }
+
+    pub fn is_zero(&self) -> bool {
+        *self == Tokens::default()
+    }
+}
+
+/// What one model used in one session, summed over its calls — the session
+/// ledger's record (`state_fs::session_usage`), the one place usage is kept
+/// per session and model.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelTally {
+    pub calls: u64,
+    /// Calls whose provider reported no usage — the sums miss those.
+    #[serde(default)]
+    pub unreported: u64,
+    pub tokens: Tokens,
+    /// The part of `tokens` that came from long-prompt calls
+    /// ([`LONG_PROMPT_TOKENS`]).
+    #[serde(default)]
+    pub long: Tokens,
+}
+
+impl ModelTally {
+    pub fn add(&mut self, usage: Option<&TokenUsage>) {
+        self.calls += 1;
+        let Some(used) = usage.and_then(Tokens::of) else {
+            self.unreported += 1;
+            return;
+        };
+        self.tokens.add(&used);
+        if used.prompt() > LONG_PROMPT_TOKENS as u64 {
+            self.long.add(&used);
+        }
+    }
+}
+
 /// What a run spent, summed over its model calls. A mission's run history
 /// keeps it, so a skill can see what a night of its mission costs.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -53,6 +147,9 @@ pub struct RunUsage {
     pub prompt: usize,
     /// A part of `prompt`, not an addition to it.
     pub cached: usize,
+    /// A part of `prompt` too: what the call wrote to the provider's cache.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub cache_write: usize,
     pub output: usize,
     /// Calls whose provider reported no usage — the sums miss those.
     #[serde(default, skip_serializing_if = "is_zero")]
@@ -80,6 +177,7 @@ impl RunUsage {
         };
         self.prompt += u.prompt_tokens.unwrap_or(0);
         self.cached += u.cached_tokens.unwrap_or(0);
+        self.cache_write += u.cache_write_tokens.unwrap_or(0);
         self.output += u.completion_tokens.unwrap_or(0);
     }
 

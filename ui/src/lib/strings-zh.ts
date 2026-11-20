@@ -731,4 +731,9 @@ export const ZH: Record<string, string> = {
   'Search memory': '搜索记忆',
   'Clear search': '清除搜索',
   'Sort': '排序',
+  // ── Session spend (lib/spend.mts) — the longer entry first ──
+  "Estimate at list price from this session's tokens: {a} in, {b} out, {c} cached. Your bill may differ. No price is known for {names}: those tokens are not in the amount.": '按标价根据本会话的令牌数估算：输入 {a}，输出 {b}，缓存命中 {c}。实际账单可能不同。{names} 没有已知价格：其令牌未计入金额。',
+  "Estimate at list price from this session's tokens: {a} in, {b} out, {c} cached. Your bill may differ.": '按标价根据本会话的令牌数估算：输入 {a}，输出 {b}，缓存命中 {c}。实际账单可能不同。',
+  'Tokens used: {a} in, {b} out, {c} cached. No price is known for this model, so no cost is shown.': '已用令牌：输入 {a}，输出 {b}，缓存命中 {c}。该模型没有已知价格，因此不显示费用。',
+  '{a} in · {b} out': '输入 {a} · 输出 {b}',
 };

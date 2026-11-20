@@ -39,6 +39,7 @@ mod sessions;
 mod shared_table;
 mod step_limit;
 mod skills;
+mod spend;
 mod support;
 mod unprompted;
 mod voice_seen;

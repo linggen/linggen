@@ -14,21 +14,13 @@ import { suppressPermissionSync } from '../../lib/eventDispatcher';
 import { apiPatch, apiErrorMessage } from '../../lib/api';
 import { sessionApi } from '../../lib/endpoints';
 import type { SessionInfo } from '../../types';
-import { CodexUsage } from '../CodexUsage';
+import { SessionSpend } from './SessionSpend';
 
 
 /** Compact context usage display for the session top bar. */
 export const SessionStats: React.FC = () => {
   const sessionId = useSessionStore((s) => s.activeSessionId) || '';
   const ctx = useServerStore((s) => s.agentContext[sessionId]);
-  const claude = useSessionStore((s) => s.allSessions.find((item) => item.id === sessionId)?.runtime === 'claude_agent_sdk');
-  const cost = useChatStore((s) => s._sessionStateLoad?.sessionId === sessionId ? s.sessionState?.claude_usage?.estimated_cost_usd : undefined);
-  // The Codex allowance is the ChatGPT account's: shown only while this chat runs on a ChatGPT model.
-  const chosen = useUiStore((s) => s.sessionModel);
-  const fallback = useServerStore((s) => s.defaultModels[0]);
-  const modelId = chosen || fallback;
-  const onCodex = useServerStore((s) => s.models.find((m) => m.id === modelId)?.provider === 'chatgpt');
-
   const tokens = ctx?.tokens || 0;
   const limit = ctx?.tokenLimit && ctx.tokenLimit > 0 ? ctx.tokenLimit : 0;
   const pct = limit ? Math.round((tokens / limit) * 100) : 0;
@@ -38,10 +30,7 @@ export const SessionStats: React.FC = () => {
       {tokens > 0 && <><span className={pct > 80 ? 'text-red-400' : pct > 50 ? 'text-amber-400' : ''}>{fmt(tokens)}</span>
       {limit > 0 && <span className="text-slate-300 dark:text-slate-600">/{fmt(limit)}</span>}
       {limit > 0 && <span className={pct > 80 ? 'text-red-400' : pct > 50 ? 'text-amber-400' : ''}> {pct}%</span>}</>}
-      {claude && <span className="text-[11px] text-slate-600 dark:text-slate-300" data-no-i18n title="Estimated USD cost recorded for this Claude conversation. Includes subagents; final charges follow Anthropic billing.">
-        {tokens > 0 ? ' · ' : ''}≈ ${cost === undefined ? '—' : cost.toFixed(2)}
-      </span>}
-      {!claude && onCodex && <CodexUsage />}
+      <SessionSpend leading={tokens > 0} />
     </span>
   );
 };

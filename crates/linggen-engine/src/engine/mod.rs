@@ -27,6 +27,7 @@ pub mod run_faults;
 mod run_scope;
 pub mod session_policy;
 pub mod session_spec;
+mod spend;
 #[cfg(test)]
 mod session_lock_tests;
 pub mod shown_images;

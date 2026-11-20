@@ -247,6 +247,7 @@ impl OllamaClient {
             // When done==true, Ollama includes token usage stats.
             if payload.done.unwrap_or(false) {
                 let usage = TokenUsage {
+                    cache_write_tokens: None,
                     prompt_tokens: payload.prompt_eval_count.map(|v| v as usize),
                     completion_tokens: payload.eval_count.map(|v| v as usize),
                     cached_tokens: None,
@@ -403,6 +404,7 @@ impl OllamaClient {
                     let prompt_eval = payload.get("prompt_eval_count").and_then(|v| v.as_u64());
                     let eval = payload.get("eval_count").and_then(|v| v.as_u64());
                     let usage = TokenUsage {
+                        cache_write_tokens: None,
                         prompt_tokens: prompt_eval.map(|v| v as usize),
                         completion_tokens: eval.map(|v| v as usize),
                         cached_tokens: None,

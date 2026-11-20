@@ -153,6 +153,7 @@ fn completed_usage(val: &Value) -> Option<StreamChunk> {
         .and_then(|v| v.as_u64())
         .map(|v| v as usize);
     Some(StreamChunk::Usage(TokenUsage {
+        cache_write_tokens: None,
         prompt_tokens: input,
         completion_tokens: output,
         total_tokens: input.zip(output).map(|(a, b)| a + b),

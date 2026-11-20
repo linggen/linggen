@@ -20,6 +20,8 @@ export type LoadSnapshot = {
   sessionId: string;
   messageCount: number;
   estimatedCost?: number;
+  /** How much the session's models have used: calls and tokens, summed. */
+  spend?: number;
   agentStatus?: unknown;
   planStatus?: unknown;
 };
@@ -44,6 +46,7 @@ export function loadOutcome(
     && previous.sessionId === loaded.sessionId
     && previous.messageCount === loaded.messageCount
     && previous.estimatedCost === loaded.estimatedCost
+    && previous.spend === loaded.spend
     && previous.agentStatus === loaded.agentStatus
     && previous.planStatus === loaded.planStatus
   ) return 'unchanged';

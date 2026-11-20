@@ -59,6 +59,7 @@ fn model(id: &str, url: &str) -> crate::config::ModelConfig {
         max_output_tokens: None,
         provided_by: None,
         is_builtin: false,
+            price: None,
     }
 }
 

@@ -132,6 +132,21 @@ fn default_pet_recall_min_score() -> f32 {
     0.8
 }
 
+/// A model's price in USD per million tokens (`[[models]] price = { … }`).
+/// `cache_read` and `cache_write` default to `input`: a provider that does
+/// not discount or bill its cache costs the plain input price. The price is
+/// flat — it holds for every prompt size.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[cfg_attr(any(test, feature = "test-support"), derive(ts_rs::TS), ts(export))]
+pub struct ModelPrice {
+    pub input: f64,
+    pub output: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_read: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_write: Option<f64>,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[cfg_attr(any(test, feature = "test-support"), derive(ts_rs::TS), ts(export))]
 pub struct ModelConfig {
@@ -170,6 +185,12 @@ pub struct ModelConfig {
     /// (`provider/output_limit.rs`). Other providers ignore it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_output_tokens: Option<u32>,
+    /// What this model's tokens cost, in USD per million tokens, when the
+    /// built-in table (`provider/models/pricing.rs`) has no price for it or
+    /// you pay another one (a gateway, a negotiated rate). Wins over the
+    /// table. Unset and unlisted: the session shows tokens and no dollars.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub price: Option<ModelPrice>,
     /// Display name of the proxy room owner providing this model.
     /// Only set for proxy models (provider = "proxy").
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -803,6 +824,7 @@ mod tests {
             max_output_tokens: None,
             provided_by: None,
             is_builtin: false,
+            price: None,
         });
         cfg
     }

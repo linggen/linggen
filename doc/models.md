@@ -87,6 +87,7 @@ Optional fields:
 | `context_window` | Override context size when provider API doesn't report it |
 | `supports_tools` | Force enable/disable native function calling (`true`/`false`) |
 | `reasoning_effort` | Reasoning effort hint (provider-specific) |
+| `price` | `{ input, output, cache_read, cache_write }` in USD per million tokens. Wins over the built-in table (§ What a session cost). `cache_read` and `cache_write` default to `input`. Flat: it holds for every prompt size |
 | `max_output_tokens` | Output limit (`max_tokens`) sent to an Anthropic model; clamped to the model's cap when the Models API gives it. Other providers ignore it |
 
 ### Web UI setup
@@ -103,6 +104,19 @@ A provider bills a repeated beginning of a request at a fraction of the price, s
 - Anthropic caches only what a request marks: the engine sends the top-level `cache_control` (automatic caching) to api.anthropic.com only; a compatible gateway may not take it.
 - A capped session (Yinyue) trims its history in chunks, so the beginning holds between cuts.
 - OpenAI API keys, Gemini, DeepSeek and Ollama cache a repeated beginning on their own.
+
+## What a session cost
+
+The engine records what every model call used, per session and per model, in one place: `usage.json` in the session's folder (`storage-spec.md`), written by `AgentEngine::note_call` after each call (and by the next-prompt fork, which is a paid call too). A record is four counts: `input` (the prompt not served from the provider's cache and not written to it), `output`, `cache_read`, `cache_write`; the prompt is the first and the last two together. Anthropic reports all four (`usage.input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`); the OpenAI wires, Gemini and Ollama report the prompt, the reply and, where they have it, the cached part (no write); a call whose provider reports nothing counts as a call with `unreported`. Calls with a prompt over 100,000 tokens are also kept apart (`long`), because one model prices them differently.
+
+A dollar figure is derived from those counts when the page asks, and only for a model with a price:
+
+- **The built-in table** (`provider/models/pricing.rs`) lists models of Anthropic's own API (provider `anthropic`, `api.anthropic.com`, a key — not a gateway, not a Claude subscription), each with the day the price was checked. USD per million tokens, input / output / cache read / cache write (the 5-minute write, 1.25x input — the engine sets no 1-hour ttl), as of 2026-11-03: claude-opus-5-5 4 / 20 / 0.20 / 5; claude-sonnet-5-5 2 / 10 / 0.10 / 2.50; claude-haiku-5-5 0.10 / 0.50 / 0.01 / 0.125 for a prompt up to 100,000 tokens and 0.50 / 2.50 / 0.05 / 0.625 above it, each request on its own; claude-fable-5-2 8 / 40 / 0.20 / 10.
+- **`price` in the model's config** replaces the table's row, and prices a model the table does not list.
+- **No price, no figure.** The tokens are shown and nothing is guessed. The figure is an estimate at list price; the bill can differ.
+- **An account or local model has no per-token price** (the ChatGPT sign-in, Linggen Cloud, a room's model, a Claude subscription, a model on this machine's network): it shows its allowance meter or nothing, and a session's spend leaves its tokens out. The Claude SDK runtime's own cost figure (`claude_usage`) is the host's and stays as it is.
+
+One answer serves both readers: `GET /api/workspace/state` (`usage`, for the session's top bar — `ui/src/lib/spend.mts` is the one place that decides what it says) and `agent_status` (`usage`, for a caller telling the person what a delegated job cost). It lists each model's counts and `cost_usd` (only when priced), the tokens of the models that count as spend, a total `cost_usd` over the priced ones, and `unpriced`, the models whose tokens are not in that total.
 
 ## Output limit (Anthropic)
 

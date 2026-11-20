@@ -641,7 +641,7 @@ impl AgentEngine {
                     }
                     crate::provider::models::note_healthy(&model_id);
                     self.remember_call(&model_id, attempt_messages, tools.as_ref(), &result);
-                    self.run_usage.add(&model_id, result.token_usage.as_ref());
+                    self.note_call(&model_id, result.token_usage.as_ref());
                     self.note_run_model(&model_id);
                     crate::engine::cloud_meter::after_call(self, result.token_usage.as_ref());
                     if model_id != preferred {
@@ -969,6 +969,7 @@ mod fallback_window_tests {
             max_output_tokens: None,
             provided_by: None,
             is_builtin: false,
+            price: None,
         }
     }
 

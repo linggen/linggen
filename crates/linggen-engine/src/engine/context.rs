@@ -806,7 +806,8 @@ impl AgentEngine {
         )
         .await;
         let (result, usage) = summary?;
-        self.run_usage.add(&self.model_id, usage.as_ref());
+        let model_id = self.model_id.clone();
+        self.note_call(&model_id, usage.as_ref());
         Some(format!(
             "[Context compacted — {} messages summarized]\n\n{}",
             dropped.len(),
@@ -898,6 +899,7 @@ mod window_tests {
             max_output_tokens: None,
             provided_by: None,
             is_builtin: false,
+            price: None,
         }
     }
 

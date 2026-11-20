@@ -278,6 +278,9 @@ pub(crate) async fn read_file_api(
 struct WorkspaceStateResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     claude_usage: Option<crate::server::claude::usage::Usage>,
+    /// What the session's model calls used and cost (`AgentManager::session_spend`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    usage: Option<crate::provider::models::SessionSpend>,
     active_task: Option<(crate::state_fs::StateFile, String)>,
     user_stories: Option<(crate::state_fs::StateFile, String)>,
     tasks: Vec<(crate::state_fs::StateFile, String)>,
@@ -393,8 +396,13 @@ pub(crate) async fn get_workspace_state(
     } else {
         None
     };
+    let usage = match sid.is_empty() || sid.contains('/') || sid.contains("..") {
+        true => None,
+        false => state.manager.session_spend(sid).await,
+    };
     Json(WorkspaceStateResponse {
         claude_usage,
+        usage,
         active_task,
         user_stories,
         tasks,

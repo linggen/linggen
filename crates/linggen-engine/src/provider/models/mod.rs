@@ -15,6 +15,7 @@ use tokio::sync::Semaphore;
 mod catalog;
 pub mod chatgpt_catalog;
 mod health;
+mod pricing;
 mod providers;
 mod readiness;
 mod usage;
@@ -23,6 +24,7 @@ pub use catalog::*;
 pub use health::*;
 pub use readiness::{NotReady, Readiness, NONE_READY};
 pub(crate) use readiness::{cloud_sign_in, rfc3339, usage_limit_line, usage_limit_until};
+pub use pricing::*;
 pub use usage::*;
 
 use providers::{ChunkStream, Provider, TurnOptions};
@@ -361,6 +363,7 @@ impl ModelManager {
                 max_output_tokens: None,
                 provided_by: owner_name.clone(),
                 is_builtin: false,
+            price: None,
             };
 
             self.models.insert(
@@ -606,6 +609,7 @@ mod tests {
             max_output_tokens: None,
             provided_by: None,
             is_builtin: false,
+            price: None,
         }
     }
 

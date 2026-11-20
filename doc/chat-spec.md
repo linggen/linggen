@@ -290,6 +290,10 @@ never writes its own image URL.
 
 A session is a single conversation thread scoped to a project. Each session has its own message history, context, and state — completely isolated from other sessions.
 
+### The top bar's spend
+
+The session top bar shows the context tokens for every session, and beside them one thing about spend, decided in one place (`ui/src/lib/spend.mts`) for every runtime: a Claude SDK session shows the SDK's own "≈ $" figure; a session whose models are paid by the token shows "≈ $x" when the engine knows a price (the tokens in, out and cached on hover), else "in · out" tokens and no dollars; a ChatGPT-account model shows its five-hour and seven-day allowance. The facts come from `usage` in `GET /api/workspace/state` — the same answer `agent_status` gives a delegated run's caller (`models.md` § What a session cost).
+
 ### Session lifecycle
 
 - **Creation**: auto-created on first chat when `session_id` is not provided. Format: `sess-{timestamp}-{uuid8}`.

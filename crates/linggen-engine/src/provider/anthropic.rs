@@ -678,6 +678,7 @@ fn handle_event(event: SseEvent, state: &mut BlockState) -> Option<Result<Stream
                 completion_tokens: None,
                 total_tokens: None,
                 cached_tokens: Some(read),
+                cache_write_tokens: Some(created),
             })))
         }
         "message_delta" => {
@@ -697,6 +698,7 @@ fn handle_event(event: SseEvent, state: &mut BlockState) -> Option<Result<Stream
                 completion_tokens: Some(output_tokens),
                 total_tokens: None,
                 cached_tokens: None,
+                cache_write_tokens: None,
             })))
         }
         "message_stop" => state.cut.then_some(Ok(StreamChunk::Cut)),
@@ -732,7 +734,7 @@ pub fn http_client() -> Client {
 
 /// Whether this endpoint is Anthropic's own API, the one that takes the
 /// request-level `cache_control`.
-fn takes_top_level_cache_control(base_url: &str) -> bool {
+pub(crate) fn takes_top_level_cache_control(base_url: &str) -> bool {
     reqwest::Url::parse(base_url)
         .ok()
         .and_then(|u| {

@@ -18,6 +18,8 @@ pub mod openai;
 pub mod output_limit;
 #[cfg(test)]
 mod anthropic_limit_tests;
+#[cfg(test)]
+mod anthropic_usage_tests;
 pub mod proxy_provider;
 
 /// Render a mid-stream body read error with a truthful name: reqwest wraps

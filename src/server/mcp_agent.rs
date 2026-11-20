@@ -872,6 +872,10 @@ pub async fn status(state: &Arc<ServerState>, session: &str) -> Result<String, S
     if let Some(grants) = grants {
         out["grants"] = grants;
     }
+    // What the session's model calls used, and cost where a price is known.
+    if let Some(spend) = state.manager.session_spend(session).await {
+        out["usage"] = serde_json::to_value(spend).unwrap_or_default();
+    }
     Ok(out.to_string())
 }
 

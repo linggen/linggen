@@ -153,13 +153,20 @@ impl AgentEngine {
         };
         let models = self.model_manager.clone();
         let session_id = self.session_id.clone();
+        let model_id = call.model_id.clone();
         let agent_id = self
             .agent_id
             .clone()
             .unwrap_or_else(|| "unknown".to_string());
         let run_id = run_id.to_string();
         let fork = tokio::spawn(async move {
-            match predict(&models, call).await {
+            let (guess, spent) = predict(&models, call).await;
+            // The fork is a paid call on the session's model: its tokens
+            // belong in the session's ledger, whatever it answered.
+            if let (Some(sid), Some(spent)) = (session_id.as_deref(), spent.as_ref()) {
+                manager.global_sessions.record_usage(sid, &model_id, Some(spent));
+            }
+            match guess {
                 Ok(Some(text)) => {
                     let event = crate::engine::agent::AgentEvent::Followups {
                         agent_id,
@@ -213,7 +220,22 @@ fn uncached_tokens(usage: Option<&TokenUsage>) -> u64 {
 
 /// The fork: the turn's own request, its reply, and the ask. Same tools, so
 /// the prefix matches the cached one; a tool call back means no suggestion.
-async fn predict(models: &Arc<ModelManager>, call: LastCall) -> anyhow::Result<Option<String>> {
+async fn predict(
+    models: &Arc<ModelManager>,
+    call: LastCall,
+) -> (anyhow::Result<Option<String>>, Option<TokenUsage>) {
+    let mut spent = None;
+    let guess = ask(models, call, &mut spent).await;
+    (guess, spent)
+}
+
+/// [`predict`]'s ask; `spent` is what the provider reported, kept even when
+/// the fork is dropped half-read.
+async fn ask(
+    models: &Arc<ModelManager>,
+    call: LastCall,
+    spent: &mut Option<TokenUsage>,
+) -> anyhow::Result<Option<String>> {
     let mut messages = call.messages;
     messages.push(message("assistant", &call.reply));
     messages.push(message("user", PROMPT));
@@ -235,12 +257,18 @@ async fn predict(models: &Arc<ModelManager>, call: LastCall) -> anyhow::Result<O
         match chunk? {
             StreamChunk::Token(t) => text.push_str(&t),
             StreamChunk::ToolCall(_) | StreamChunk::Cut => return Ok(None),
-            StreamChunk::Usage(u) => tracing::debug!(
-                "next-prompt suggestion: prompt {:?}, cached {:?}, output {:?}",
-                u.prompt_tokens,
-                u.cached_tokens,
-                u.completion_tokens
-            ),
+            StreamChunk::Usage(u) => {
+                tracing::debug!(
+                    "next-prompt suggestion: prompt {:?}, cached {:?}, output {:?}",
+                    u.prompt_tokens,
+                    u.cached_tokens,
+                    u.completion_tokens
+                );
+                *spent = Some(match spent.take() {
+                    Some(earlier) => earlier.merged(u),
+                    None => u,
+                });
+            }
         }
     }
     let suggestion = clean(&crate::engine::streaming::strip_think_tags(&text));
@@ -298,6 +326,7 @@ mod tests {
                 completion_tokens: Some(output),
                 total_tokens: Some(prompt + output),
                 cached_tokens: Some(cached),
+                cache_write_tokens: None,
             }),
             first_action: None,
             tool_calls: Vec::new(),
