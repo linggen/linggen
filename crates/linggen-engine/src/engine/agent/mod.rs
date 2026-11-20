@@ -60,7 +60,7 @@ pub struct AgentManager {
     /// engine consults it whenever an agent needs to be resolved by id.
     pub agents: Arc<dyn AgentRegistry>,
     /// Global flat session store at `~/.linggen/sessions/`.
-    pub global_sessions: SessionStore,
+    pub global_sessions: &'static SessionStore,
     /// Live engines, one per (session, member agent).
     pub session_engines: Mutex<HashMap<(String, String), Arc<Mutex<AgentEngine>>>>,
     /// Each session's turn lock: one agent speaks at a time in a session,
@@ -356,9 +356,7 @@ impl AgentManager {
                 run_store: Arc::new(crate::engine::agent::RunStore::new()),
                 last_activity: Mutex::new(HashMap::new()),
                 interface_mode,
-                global_sessions: SessionStore::with_sessions_dir(
-                    crate::paths::global_sessions_dir(),
-                ),
+                global_sessions: SessionStore::global(),
                 session_engines: Mutex::new(HashMap::new()),
                 session_turns: std::sync::Mutex::new(HashMap::new()),
                 run_id_counters: std::sync::Mutex::new(HashMap::new()),

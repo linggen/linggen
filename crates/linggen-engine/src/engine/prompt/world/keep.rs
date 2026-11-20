@@ -18,7 +18,7 @@ use regex::Regex;
 use std::sync::LazyLock;
 
 /// The pseudo-sender of a kept block's row in the session's file.
-pub const WORLD_SENDER: &str = "world";
+pub use crate::state_fs::row_author::WORLD_SENDER;
 /// How every world block begins (the `world_block` template's first line).
 pub const WORLD_HEADING: &str = "# World\n";
 
@@ -29,7 +29,7 @@ pub fn is_world_note(m: &ChatMessage) -> bool {
 
 /// A kept world block's row in the session's file.
 pub fn is_world_row(r: &ChatMsg) -> bool {
-    r.from_id == WORLD_SENDER
+    r.author() == crate::state_fs::RowAuthor::World
 }
 
 impl AgentEngine {

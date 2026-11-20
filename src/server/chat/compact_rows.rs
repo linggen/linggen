@@ -12,6 +12,7 @@
 //! and on `/compact`. The session's default member's model writes it. Where
 //! the summary row goes and how the tail is shortened is `engine::compaction`.
 
+use crate::state_fs::RowAuthor;
 use super::ChatRunCtx;
 use crate::engine::agent::AgentManager;
 use crate::engine::compaction::{since_compaction, tail_cut, with_summary, COMPACTION_SENDER};
@@ -55,10 +56,10 @@ pub(crate) fn transcript(rows: &[ChatMsg]) -> String {
         .filter(|r| !r.content.trim().is_empty())
         .filter(|r| !crate::engine::prompt::world::is_world_row(r))
         .map(|r| {
-            let who = match (r.is_observation, r.from_id.as_str()) {
-                (true, "system") => format!("tool result for {}", r.to_id),
-                (true, from) => format!("{from} tool call"),
-                (false, from) => from.to_string(),
+            let who = match (r.is_observation, r.author()) {
+                (true, RowAuthor::System) => format!("tool result for {}", r.to_id),
+                (true, from) => format!("{} tool call", from.id()),
+                (false, from) => from.id().to_string(),
             };
             format!("[{who}] {}", cut(&r.content, ROW_CHARS))
         })

@@ -733,7 +733,7 @@ impl ClaudeSession {
             run_id: Some(self.run_id.clone()),
             agent_id: AGENT_ID.into(),
             from_id: from.into(),
-            to_id: if from == "system" { AGENT_ID } else { "user" }.into(),
+            to_id: if crate::state_fs::RowAuthor::of(from).is_system() { AGENT_ID } else { "user" }.into(),
             content,
             timestamp: crate::util::now_ts_secs(),
             is_observation: observation,

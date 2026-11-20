@@ -836,7 +836,7 @@ const USER_WORDS_CHARS: usize = 500;
 /// a hidden row (a page's report, a nudge) nor empty. `LINGGEN_USER_TURNS`
 /// counts these and `LINGGEN_USER_WORDS` quotes them.
 fn said_by_person(m: &crate::state_fs::sessions::ChatMsg) -> bool {
-    m.from_id == "user"
+    m.author().is_person()
         && !m.is_observation
         && !m.content.contains("[HIDDEN]")
         && !m.content.trim().is_empty()
@@ -911,7 +911,7 @@ mod tests {
             crate::engine::InterfaceMode::Web,
         );
         Arc::get_mut(&mut manager).expect("a fresh manager").global_sessions =
-            crate::state_fs::SessionStore::with_sessions_dir(dir.path().join("sessions"));
+            crate::state_fs::SessionStore::leaked(dir.path().join("sessions"));
         let row = |from: &str, content: &str, obs: bool| crate::state_fs::sessions::ChatMsg {
             run_id: None,
             via: None,

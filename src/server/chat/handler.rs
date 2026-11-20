@@ -1308,7 +1308,9 @@ pub(crate) async fn start_turn(
         .sender
         .as_deref()
         .map(|s| s.trim().to_lowercase())
-        .filter(|s| via.is_none() && !s.is_empty() && s != "user" && *s != target_id);
+        .filter(|s| {
+            via.is_none() && !s.is_empty() && !crate::state_fs::RowAuthor::of(s).is_person() && *s != target_id
+        });
     let from_id = sender.clone().unwrap_or_else(|| "user".to_string());
     let client_id = req.client_id.as_deref().and_then(client_id_of);
 
