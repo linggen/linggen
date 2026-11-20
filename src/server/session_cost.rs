@@ -49,39 +49,24 @@ pub(crate) fn of(state: &ServerState, sid: &str) -> SessionCost {
 
 #[cfg(test)]
 mod tests {
-    use std::path::{Path, PathBuf};
-
-    fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
-        for entry in std::fs::read_dir(dir).unwrap().flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                rust_files(&path, out);
-            } else if path.extension().is_some_and(|e| e == "rs") {
-                out.push(path);
-            }
-        }
-    }
-
     /// Lock: only this file asks what a session cost; the routes ask it.
     #[test]
     fn a_sessions_cost_is_read_only_here() {
-        let server = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-        let mut files = Vec::new();
-        rust_files(&server, &mut files);
         let mut found = Vec::new();
-        for path in files {
-            let name = path.to_string_lossy();
-            if name.ends_with("server/session_cost.rs") {
+        let mut scanned = false;
+        for (rel, code) in crate::server::lock_scan::production_code(&["src"]) {
+            let rel = rel.replace('\\', "/");
+            scanned |= rel == "src/server/mcp_agent.rs";
+            if rel == "src/server/session_cost.rs" {
                 continue;
             }
-            let text = std::fs::read_to_string(&path).unwrap();
-            let code = text.split("#[cfg(test)]").next().unwrap_or("");
             for (n, line) in code.lines().enumerate() {
                 if line.contains(".session_spend(") || line.contains("usage::read(") {
-                    found.push(format!("{}:{}: {}", name, n + 1, line.trim()));
+                    found.push(format!("{rel}:{}: {}", n + 1, line.trim()));
                 }
             }
         }
+        assert!(scanned, "the scan did not reach the server");
         assert!(
             found.is_empty(),
             "ask server::session_cost::of instead:\n{}",

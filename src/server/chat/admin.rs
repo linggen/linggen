@@ -297,7 +297,7 @@ fn export_prompt(mut engine: crate::engine::AgentEngine) -> axum::response::Resp
     let canonical_tools = engine.offered_tool_definitions(allowed_tools.as_ref());
     let provider = engine
         .model_manager
-        .provider_kind(&engine.model_id)
+        .provider_name(&engine.model_id)
         .unwrap_or("ollama");
     let tools: Vec<serde_json::Value> = canonical_tools
         .iter()

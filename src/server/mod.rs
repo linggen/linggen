@@ -16,6 +16,8 @@ mod mac_tools;
 mod mcp;
 mod mcp_agent;
 mod mcp_grants;
+#[cfg(test)]
+mod model_locks;
 mod met_watch;
 pub(crate) mod milestones;
 pub(crate) mod person;

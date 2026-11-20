@@ -64,7 +64,7 @@ impl AgentEngine {
             Work::Code => {}
         }
         let mut section = self.prompt_store.render_or_fallback(keys::WORK_CODE_CORE, &[]);
-        let provider = self.model_manager.provider_kind(model_id);
+        let provider = self.model_manager.provider_name(model_id);
         if let Some(family) = family_of(provider, model_id) {
             section.push_str("\n\n");
             section.push_str(&self.prompt_store.render_or_fallback(family.key(), &[]));

@@ -1816,7 +1816,7 @@ mod tests {
         assert_eq!(selected["default"], true);
         assert_eq!(
             selected["provider"],
-            manager.provider_kind(&builtin).unwrap()
+            manager.provider_name(&builtin).unwrap()
         );
         assert_eq!(rows.iter().filter(|m| m["default"] == true).count(), 1);
         assert!(rows.iter().any(|m| m["id"] == "deepseek-flash"));

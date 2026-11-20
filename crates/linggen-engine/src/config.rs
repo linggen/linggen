@@ -718,7 +718,7 @@ impl Config {
                 );
             }
             // Validate provider is known.
-            if !KNOWN_PROVIDERS.contains(&model.provider.as_str()) {
+            if !KNOWN_PROVIDERS.contains(&model.provider_name()) {
                 anyhow::bail!(
                     "Model '{}' has unknown provider '{}'. Known providers: {}",
                     model.id,

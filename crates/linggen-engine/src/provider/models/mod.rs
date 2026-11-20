@@ -549,10 +549,10 @@ impl ModelManager {
     /// debug/export surfaces to render tool-defs in the wire shape that
     /// model's provider actually receives — so what you copy from the
     /// system-prompt panel matches what gets sent on the wire.
-    pub fn provider_kind(&self, model_id: &str) -> Option<&str> {
+    pub fn provider_name(&self, model_id: &str) -> Option<&str> {
         self.models
             .get(self.key(model_id).as_ref())
-            .map(|m| m.config.provider.as_str())
+            .map(|m| m.config.provider_name())
     }
 
     /// Return the first OllamaClient found among configured models.
@@ -670,7 +670,7 @@ mod tests {
         assert!(m.has_model("gpt-6-sol"));
         assert_eq!(m.resolve_id("gpt-6-sol").as_deref(), Some("gpt-6.2-sol"));
         assert_eq!(m.resolve_id("gpt-6.1-sol").as_deref(), Some("gpt-6.2-sol"));
-        assert_eq!(m.provider_kind("gpt-6-sol"), Some("chatgpt"));
+        assert_eq!(m.provider_name("gpt-6-sol"), Some("chatgpt"));
         assert_eq!(
             m.resolve_id("gpt-5.5"),
             Some(chatgpt_catalog::primary_id())
@@ -700,7 +700,7 @@ mod tests {
         ids.sort();
         assert_eq!(ids, want);
         assert_eq!(m.resolve_id("gpt-6.1-sol").as_deref(), Some("gpt-6.1-sol"));
-        assert_eq!(m.provider_kind("gpt-5.6-luna"), Some("chatgpt"));
+        assert_eq!(m.provider_name("gpt-5.6-luna"), Some("chatgpt"));
         assert_eq!(m.resolve_id("gpt-5.5"), Some(snap.primary_id()));
 
         // Once the backend stops listing it, a pin moves to its family.
@@ -716,7 +716,7 @@ mod tests {
         let mut snap = chatgpt_catalog::Snapshot::seed();
         snap.listed = chatgpt_catalog::tests::measured_list();
         let m = ModelManager::new_with_catalog(vec![byok("gpt-6-sol")], &Credentials::default(), &snap);
-        assert_eq!(m.provider_kind("gpt-6-sol"), Some("openai"));
+        assert_eq!(m.provider_name("gpt-6-sol"), Some("openai"));
         assert!(m.list_models().iter().any(|c| c.id == "gpt-6-sol"));
     }
 
@@ -725,7 +725,7 @@ mod tests {
         let m =
             ModelManager::new_with_credentials(vec![byok("gpt-6-sol")], &Credentials::default());
         assert_eq!(m.resolve_id("gpt-6-sol").as_deref(), Some("gpt-6-sol"));
-        assert_eq!(m.provider_kind("gpt-6-sol"), Some("openai"));
+        assert_eq!(m.provider_name("gpt-6-sol"), Some("openai"));
     }
 
     #[test]

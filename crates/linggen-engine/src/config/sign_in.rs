@@ -5,8 +5,8 @@
 //! OpenAI-compatible host); only a few names change what the engine does,
 //! and those are [`ProviderKind`]. The sign-in is a closed set,
 //! [`AuthMode`], and what the two say together is [`SignIn`]. Every other
-//! module matches on these enums; a test at the end fails when code outside
-//! this file compares the raw strings again.
+//! module matches on these enums; a lock (`server/model_locks.rs`) fails
+//! when code outside this file compares the raw strings again.
 
 use super::ModelConfig;
 use serde::{Deserialize, Serialize};
@@ -112,6 +112,11 @@ pub enum SignIn {
 }
 
 impl ModelConfig {
+    /// The provider's name as configured (`deepseek`, `my-gateway`, …).
+    pub fn provider_name(&self) -> &str {
+        &self.provider
+    }
+
     pub fn provider_kind(&self) -> ProviderKind {
         ProviderKind::of(&self.provider)
     }
@@ -135,7 +140,6 @@ impl ModelConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::{Path, PathBuf};
 
     fn model(provider: &str, auth: Option<&str>) -> ModelConfig {
         let mut v = serde_json::json!({
@@ -218,58 +222,5 @@ mod tests {
                 ProviderKind::OpenAiCompatible
             );
         }
-    }
-
-    fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
-        for entry in std::fs::read_dir(dir).unwrap().flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                rust_files(&path, out);
-            } else if path.extension().is_some_and(|e| e == "rs") {
-                out.push(path);
-            }
-        }
-    }
-
-    /// Lock: a model's provider and auth mode are read here, and nowhere
-    /// else compares their strings. A test module inside a file, and a file
-    /// of tests, may name them freely.
-    #[test]
-    fn provider_and_auth_mode_strings_are_compared_only_here() {
-        let engine = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-        let server = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src");
-        let mut files = Vec::new();
-        rust_files(&engine, &mut files);
-        rust_files(&server, &mut files);
-        let forbidden = [
-            "provider == \"",
-            "provider != \"",
-            "provider.as_str() {",
-            "\"chatgpt_oauth\"",
-            "\"claude_oauth\"",
-            "\"linggen_account\"",
-        ];
-        let mut found = Vec::new();
-        for path in files {
-            let name = path.to_string_lossy();
-            if name.ends_with("config/sign_in.rs") || name.contains("test") {
-                continue;
-            }
-            let text = std::fs::read_to_string(&path).unwrap();
-            let code = text.split("#[cfg(test)]").next().unwrap_or("");
-            for (n, line) in code.lines().enumerate() {
-                if line.trim_start().starts_with("//") {
-                    continue;
-                }
-                if forbidden.iter().any(|f| line.contains(f)) {
-                    found.push(format!("{}:{}: {}", name, n + 1, line.trim()));
-                }
-            }
-        }
-        assert!(
-            found.is_empty(),
-            "match on ModelConfig::provider_kind() / sign_in() instead:\n{}",
-            found.join("\n")
-        );
     }
 }
