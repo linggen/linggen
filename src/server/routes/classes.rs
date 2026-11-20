@@ -230,23 +230,66 @@ pub(crate) const CLASSES: &[(&str, &str, RouteClass)] = &[
 /// consumer uses this policy instead of the device route classes; other
 /// peers must still pass `person::send_judged`. Match the raw tunnel URL:
 /// exact entries do not accept a query, while prefixes do.
+///
+/// A room reaches only what [`ROOM`] lists, and a listed route needs its own
+/// class from [`CLASSES`] (at least chat) — the class is decided there, not
+/// here. Everything else needs admin.
 pub(crate) fn tunnel_allows(level: PermissionMode, method: &str, url: &str) -> bool {
-    let needs = match (method, url) {
-        ("GET", "/index.html" | "/api/user/language")
-        | ("POST", "/api/sessions")
-        | ("DELETE", "/api/sessions/all") => Chat,
-        ("GET", _) if TUNNEL_GET_PREFIXES.iter().any(|prefix| url.starts_with(prefix)) => Chat,
-        _ => Admin,
+    let Some((_, _, reach)) = ROOM.iter().find(|entry| room_admits(entry, method, url)) else {
+        return level >= Admin;
+    };
+    let needs = match reach {
+        RoomReach::AsItsClass => class_of(method, url).needs().max(Chat),
+        RoomReach::AtChatBelowItsClass => Chat,
     };
     level >= needs
 }
 
-const TUNNEL_GET_PREFIXES: &[&str] = &[
-    "/assets/",
-    "/apps/",
-    "/shared/",
-    "/api/workspace/state",
-    "/api/skill-sessions/state",
+/// How a room entry names the URL it admits.
+#[derive(Debug, Clone, Copy)]
+enum RoomPath {
+    /// This path exactly, no query.
+    Exact(&'static str),
+    /// Any URL that starts with this (a query too).
+    Prefix(&'static str),
+}
+
+/// What a room needs for a listed route.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RoomReach {
+    /// The route's own class ([`class_of`]), at least chat.
+    AsItsClass,
+    /// Chat, though the route's class asks more. Kept as it was when the two
+    /// tables became one; a lock test names each such entry, so a new one
+    /// fails until it is looked at.
+    AtChatBelowItsClass,
+}
+
+/// Whether `method` on `url` (raw, its query kept) is what a room entry
+/// admits.
+fn room_admits((m, path, _): &(&str, RoomPath, RoomReach), method: &str, url: &str) -> bool {
+    *m == method
+        && match path {
+            RoomPath::Exact(path) => url == *path,
+            RoomPath::Prefix(prefix) => url.starts_with(prefix),
+        }
+}
+
+use RoomPath::{Exact, Prefix};
+use RoomReach::{AsItsClass, AtChatBelowItsClass};
+
+/// What a room consumer reaches over the tunnel: the page shell and its
+/// files, a skill app's page, and the few calls the shared page makes.
+const ROOM: &[(&str, RoomPath, RoomReach)] = &[
+    ("GET", Exact("/index.html"), AsItsClass),
+    ("GET", Exact("/api/user/language"), AsItsClass),
+    ("POST", Exact("/api/sessions"), AsItsClass),
+    ("DELETE", Exact("/api/sessions/all"), AtChatBelowItsClass),
+    ("GET", Prefix("/assets/"), AsItsClass),
+    ("GET", Prefix("/apps/"), AtChatBelowItsClass),
+    ("GET", Prefix("/shared/"), AsItsClass),
+    ("GET", Prefix("/api/workspace/state"), AsItsClass),
+    ("GET", Prefix("/api/skill-sessions/state"), AsItsClass),
 ];
 
 /// The way in, all a peer that has named no device reaches (no one,
@@ -475,6 +518,90 @@ mod tests {
             "give these routes a class in routes/classes.rs: {missing:#?}"
         );
         assert!(stale.is_empty(), "these classes name no route: {stale:#?}");
+    }
+
+    /// URLs to judge the room gate on: every declared route with its
+    /// segments filled, with and without a query, and the page-file edges.
+    fn room_corpus() -> Vec<(String, String)> {
+        let methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"];
+        let mut urls: Vec<String> = CLASSES
+            .iter()
+            .map(|(_, pattern, _)| {
+                pattern
+                    .split('/')
+                    .map(|s| match s {
+                        s if s.starts_with("{*") => "a/b",
+                        s if s.starts_with('{') => "x",
+                        s => s,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("/")
+            })
+            .collect();
+        urls.extend(
+            [
+                "/index.html", "/logo.svg", "/assets/app.js", "/assets/../api/config",
+                "/assets/a..b.js", "/shared/a/b", "/shared/", "/apps/", "/apps/x",
+                "/apps/x/capability/y", "/api/workspace/stateX", "/api/workspace/state/x",
+                "/api/skill-sessions/stateX",
+            ]
+            .map(String::from),
+        );
+        let mut out = Vec::new();
+        for url in urls {
+            for suffix in ["", "?", "?x=1"] {
+                for m in methods {
+                    out.push((m.to_string(), format!("{url}{suffix}")));
+                }
+            }
+        }
+        out
+    }
+
+    /// A room reaches a route at no less than its class, except the entries
+    /// marked [`RoomReach::AtChatBelowItsClass`] — and those are exactly the
+    /// two named here, so a third fails until it is looked at.
+    #[test]
+    fn a_room_reaches_a_route_at_its_class_unless_named() {
+        let mut below: Vec<(String, String)> = Vec::new();
+        for (method, url) in room_corpus() {
+            let needs = class_of(&method, &url).needs().max(Chat);
+            if tunnel_allows(Chat, &method, &url) && needs > Chat {
+                below.push((method, url));
+            }
+        }
+        let named = |m: &str, u: &str| {
+            (m == "DELETE" && u == "/api/sessions/all") || (m == "GET" && u.starts_with("/apps/"))
+        };
+        let unnamed: Vec<_> = below.iter().filter(|(m, u)| !named(m, u)).collect();
+        assert!(unnamed.is_empty(), "a room reaches these below their class: {unnamed:#?}");
+        let marked: Vec<_> = ROOM
+            .iter()
+            .filter(|(_, _, reach)| *reach == AtChatBelowItsClass)
+            .map(|(m, p, _)| format!("{m} {p:?}"))
+            .collect();
+        assert_eq!(
+            marked,
+            vec![
+                r#"DELETE Exact("/api/sessions/all")"#.to_string(),
+                r#"GET Prefix("/apps/")"#.to_string(),
+            ],
+            "a room entry below its class is named in this test"
+        );
+    }
+
+    /// Every room entry names a declared route or a page file.
+    #[test]
+    fn a_room_entry_names_a_route() {
+        for (method, path, _) in ROOM {
+            let (Exact(path) | Prefix(path)) = *path;
+            let stem = path.trim_end_matches('/');
+            let declared = CLASSES
+                .iter()
+                .any(|(m, pattern, _)| (m == method || *m == "*") && pattern.starts_with(stem));
+            let page = *method == "GET" && is_page_file(path);
+            assert!(declared || page, "room entry {method} {path} names no route");
+        }
     }
 
     /// The lock reads every route call, including one split over lines.
