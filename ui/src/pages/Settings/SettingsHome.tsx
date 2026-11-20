@@ -19,7 +19,7 @@ export function SettingsHome() {
 
   return (
     <div className="h-screen">
-      <SettingsPanel initial={initial} onBack={onBack} heading={
+      <SettingsPanel initial={initial} canOpenRun heading={
         <button onClick={onBack} className="flex items-center gap-1.5 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:text-blue-600 transition-colors shrink-0">
           <ArrowLeft size={16} /> Back
         </button>

@@ -15,14 +15,15 @@ import { appConfig, sessionApi } from './endpoints';
 import { useChatStore } from '../stores/chatStore';
 import { useSessionStore } from '../stores/sessionStore';
 import { stillOn } from './sessionLoad.mts';
-import type { ChatMessage, ManagementTab } from '../types';
+import type { ChatMessage } from '../types';
+import type { SettingsTab } from './settingsSections.mts';
 
 /** The Linggen Cloud model (provider/models/catalog.rs LINGGEN_CLOUD_MODEL_ID). */
 export const CLOUD_MODEL_ID = 'deepseek-flash';
 
 /** A host that can open its settings on a tab: the launcher and the dev
  *  console set it on their window (same origin, so a framed chat reaches it). */
-type SettingsHost = (tab: ManagementTab) => void;
+type SettingsHost = (tab: SettingsTab) => void;
 declare global {
   interface Window { __linggenOpenSettings?: SettingsHost }
 }

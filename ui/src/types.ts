@@ -414,8 +414,6 @@ export interface BuiltInSkillInfo {
   installed: boolean;
 }
 
-export type { SettingsTab as ManagementTab } from './lib/settingsSections.mts';
-
 // --- Mission types (cron-based) ---
 
 /** Permission block — mirrors SkillPermission. See doc/mission-spec.md.

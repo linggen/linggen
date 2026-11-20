@@ -6,7 +6,8 @@ import { RefreshCw, Settings, Sparkles, Zap } from 'lucide-react';
 import { CollapsibleCard } from './CollapsibleCard';
 import { ModelsCard } from './ModelsCard';
 import { SkillsCard } from './SkillsCard';
-import type { AgentInfo, ManagementTab, ModelInfo, OllamaPsResponse, SkillInfo } from '../types';
+import type { AgentInfo, ModelInfo, OllamaPsResponse, SkillInfo } from '../types';
+import type { SettingsTab } from '../lib/settingsSections.mts';
 
 export interface InfoPanelProps {
   models: ModelInfo[];
@@ -23,7 +24,7 @@ export interface InfoPanelProps {
   onToggleDefault: (id: string) => void;
   onChangeReasoningEffort: (modelId: string, effort: string | null) => void;
   onReloadSkills: () => void;
-  onOpenSettings: (tab: ManagementTab) => void;
+  onOpenSettings: (tab: SettingsTab) => void;
   onClickSkill: (skill: SkillInfo) => void;
 }
 

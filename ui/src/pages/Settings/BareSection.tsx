@@ -20,7 +20,7 @@ export function BareSection() {
         </div>
       )}
       <div className="flex-1 overflow-hidden">
-        {entry ? <SettingsSectionBody id={entry.id} save={save} requirements={requirements} /> : (
+        {entry ? <SettingsSectionBody id={entry.id} save={save} requirements={requirements} canOpenRun={false} /> : (
           <div className="flex items-center justify-center h-full text-slate-500">
             <p>Unknown settings section: <code>{section}</code></p>
           </div>

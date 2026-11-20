@@ -13,6 +13,8 @@ type SectionDeclaration = {
 /** Sidebar order and availability. Labels are translated in strings-zh.ts. */
 export const SETTINGS_SECTIONS = [
   { id: 'general', label: 'General', group: null, bare: true, needsConfig: true, requires: [] },
+  { id: 'account', label: 'Account', group: null, bare: false, needsConfig: false, requires: [] },
+  { id: 'desktop', label: 'Desktop', group: null, bare: false, needsConfig: false, requires: ['shell'] },
   { id: 'agents', label: 'Agents', group: null, bare: true, needsConfig: true, requires: [] },
   { id: 'models', label: 'Models', group: null, bare: true, needsConfig: true, requires: [] },
   { id: 'session', label: 'Session', group: null, bare: true, needsConfig: true, requires: [] },
@@ -23,8 +25,6 @@ export const SETTINGS_SECTIONS = [
   { id: 'room', label: 'Room', group: 'Devices', bare: true, needsConfig: false, requires: ['rooms'] },
   { id: 'memory', label: 'Memory', group: 'Data', bare: false, needsConfig: false, requires: [] },
   { id: 'storage', label: 'Storage', group: 'Data', bare: false, needsConfig: false, requires: [] },
-  { id: 'account', label: 'Account', group: null, bare: false, needsConfig: false, requires: [] },
-  { id: 'desktop', label: 'Desktop', group: null, bare: false, needsConfig: false, requires: ['shell'] },
 ] as const satisfies readonly SectionDeclaration[];
 
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];

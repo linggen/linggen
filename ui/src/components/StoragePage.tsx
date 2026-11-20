@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
-  ArrowLeft,
   ChevronDown,
   ChevronRight,
   File,
@@ -102,10 +101,7 @@ const FileTreeNode: React.FC<{
 // StoragePage
 // ---------------------------------------------------------------------------
 
-export const StoragePage: React.FC<{
-  onBack?: () => void;
-  embedded?: boolean;
-}> = ({ onBack, embedded }) => {
+export const StoragePage: React.FC = () => {
   const [roots, setRoots] = useState<StorageRoot[]>([]);
   const [activeRoot, setActiveRoot] = useState('');
   const [childrenCache, setChildrenCache] = useState<Map<string, StorageEntry[]>>(new Map());
@@ -243,85 +239,11 @@ export const StoragePage: React.FC<{
     </div>
   );
 
-  if (embedded) {
-    return (
-      <div className="flex flex-col h-full text-slate-900 dark:text-slate-200">
-        {/* Toolbar for embedded mode */}
-        <div className="flex items-center justify-end px-4 py-2 border-b border-slate-200 dark:border-white/5 shrink-0">
-          {fileActions}
-        </div>
-        <div className="flex flex-1 overflow-hidden">
-          {/* Sidebar */}
-          <aside className="w-60 border-r border-slate-200 dark:border-white/5 flex flex-col bg-white dark:bg-[#0f0f0f] shrink-0 overflow-hidden">
-            <div className="px-3 py-2 border-b border-slate-200 dark:border-white/5">
-              <select
-                value={activeRoot}
-                onChange={(e) => setActiveRoot(e.target.value)}
-                className="w-full text-xs bg-slate-100 dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded px-2 py-1.5 outline-none focus:ring-1 focus:ring-blue-500"
-              >
-                {roots.map((r) => (
-                  <option key={r.path} value={r.path}>
-                    {r.label} — {r.path.replace(/^\/Users\/[^/]+/, '~')}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="flex-1 overflow-y-auto py-1">
-              {topEntries.map((entry) => (
-                <FileTreeNode
-                  key={entry.path}
-                  entry={entry}
-                  root={activeRoot}
-                  depth={0}
-                  expanded={expandedDirs}
-                  childrenCache={childrenCache}
-                  selected={selectedFile}
-                  onToggleDir={toggleDir}
-                  onSelectFile={selectFile}
-                />
-              ))}
-              {topEntries.length === 0 && (
-                <div className="text-xs text-slate-400 text-center py-6">Empty</div>
-              )}
-            </div>
-          </aside>
-          {/* Editor panel */}
-          <div className="flex-1 flex flex-col overflow-hidden">
-            {selectedFile ? (
-              <>
-                <div className="px-4 py-1.5 text-[12px] text-slate-400 border-b border-slate-200 dark:border-white/5 bg-white dark:bg-[#0f0f0f] truncate shrink-0">
-                  {selectedFile}
-                  {isDirty && <span className="ml-2 text-amber-500 font-medium">modified</span>}
-                </div>
-                <div className="flex-1 overflow-y-auto">
-                  {loading ? (
-                    <div className="flex items-center justify-center h-full text-sm text-slate-400">Loading...</div>
-                  ) : (
-                    <CM6Editor value={fileContent} onChange={setFileContent} livePreview={isMarkdown} filePath={selectedFile ?? undefined} />
-                  )}
-                </div>
-              </>
-            ) : (
-              <div className="flex items-center justify-center h-full text-sm text-slate-400">Select a file to view</div>
-            )}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="flex flex-col h-screen bg-slate-50 dark:bg-[#0a0a0a] text-slate-900 dark:text-slate-200">
-      {/* Header */}
-      <header className="flex items-center justify-between px-4 py-2.5 border-b border-slate-200 dark:border-white/5 bg-white/90 dark:bg-[#0f0f0f]/90 backdrop-blur-md shrink-0">
-        <div className="flex items-center gap-3">
-          {onBack && <button onClick={onBack} className="p-1 hover:bg-slate-100 dark:hover:bg-white/5 rounded transition-colors text-slate-500">
-            <ArrowLeft size={16} />
-          </button>}
-          <h1 className="text-sm font-bold tracking-tight">Storage</h1>
-        </div>
+    <div className="flex flex-col h-full text-slate-900 dark:text-slate-200">
+      <div className="flex items-center justify-end px-4 py-2 border-b border-slate-200 dark:border-white/5 shrink-0">
         {fileActions}
-      </header>
+      </div>
 
       {/* Body */}
       <div className="flex flex-1 overflow-hidden">

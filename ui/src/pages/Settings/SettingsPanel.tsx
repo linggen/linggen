@@ -12,16 +12,16 @@ import { useAutoSaveConfig } from './useAutoSaveConfig';
 type Entry = { id: string; label: string; group: string | null; section: SettingsSection } |
   { id: string; label: string; group: typeof APPS_GROUP; skill: string };
 
-function useAppSettings(): Entry[] {
-  const [apps, setApps] = useState<Entry[]>([]);
+function useAppSettings() {
+  const [apps, setApps] = useState<Entry[] | null>(null);
   useEffect(() => {
     let mounted = true;
     skillsApi.list().then((data) => {
-      if (!mounted || !Array.isArray(data)) return;
-      setApps((data as SkillInfoFull[])
+      if (!mounted) return;
+      setApps((Array.isArray(data) ? data as SkillInfoFull[] : [])
         .filter((s) => s.app?.launcher === 'web' && appHasSettings(s.name))
         .map((s) => ({ id: `app-${s.name}`, label: appLabel({ name: s.name, app: s.app ?? undefined }), group: APPS_GROUP, skill: s.name })));
-    }).catch(() => {});
+    }).catch(() => { if (mounted) setApps([]); });
     return () => { mounted = false; };
   }, []);
   return apps;
@@ -38,23 +38,26 @@ function groupEntries(entries: Entry[]) {
 }
 
 type Props = {
-  initial?: string | null;
-  fallback?: SettingsSection['id'];
+  initial?: string | null | { section?: string };
   heading: ReactNode;
   trailing?: ReactNode;
-  onBack?: () => void;
+  canOpenRun: boolean;
 };
 
-export function SettingsPanel({ initial, fallback = 'general', heading, trailing, onBack }: Props) {
+export function SettingsPanel({ initial, heading, trailing, canOpenRun }: Props) {
   const requirements = useSettingsRequirements();
-  const [picked, setPicked] = useState(() => resolveSettingsTab(initial));
-  useEffect(() => { setPicked(resolveSettingsTab(initial)); }, [initial]);
+  const requested = typeof initial === 'object' ? initial?.section : initial;
+  const [selection, setSelection] = useState(() => ({ initial, picked: resolveSettingsTab(requested) }));
+  if (selection.initial !== initial) setSelection({ initial, picked: resolveSettingsTab(requested) });
+  const { picked } = selection;
+  const setPicked = (id: string) => setSelection({ initial, picked: id });
   const save = useAutoSaveConfig();
   const apps = useAppSettings();
   const entries: Entry[] = SETTINGS_SECTIONS.filter((section) => sectionAvailable(section, requirements))
     .map((section) => ({ id: section.id, label: section.label, group: section.group, section }));
-  entries.push(...apps);
-  const active = entries.find((entry) => entry.id === picked) ?? entries.find((entry) => entry.id === fallback);
+  entries.push(...(apps ?? []));
+  const waitingForApp = apps === null && picked?.startsWith('app-');
+  const active = waitingForApp ? undefined : entries.find((entry) => entry.id === picked) ?? entries[0];
 
   return (
     <div className="flex flex-col h-full min-h-0 bg-slate-100/70 dark:bg-[#0a0a0a] text-slate-900 dark:text-slate-200">
@@ -80,8 +83,9 @@ export function SettingsPanel({ initial, fallback = 'general', heading, trailing
           ))}
         </aside>
         <div className="flex-1 min-w-0 overflow-hidden">
+          {waitingForApp && <p role="status" className="p-4 text-sm text-slate-500">Loading…</p>}
           {active && ('section' in active
-            ? <SettingsSectionBody id={active.section.id} save={save} requirements={requirements} onBack={onBack} />
+            ? <SettingsSectionBody id={active.section.id} save={save} requirements={requirements} canOpenRun={canOpenRun} />
             : <iframe className="block h-full w-full border-0" src={`/apps/${active.skill}/scripts/settings.html?embed=1`} title={active.label} />)}
         </div>
       </div>

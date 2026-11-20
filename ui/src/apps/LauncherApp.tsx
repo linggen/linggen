@@ -51,8 +51,10 @@ export const LauncherApp: React.FC = () => {
   const [apps, setApps] = useState<AppSkill[]>([]);
   const [activeName, setActiveName] = useState<string | null>(null);
   const [opened, setOpened] = useState<string[]>([]);
-  // true, or the section to open on (the weather chip opens General).
-  const [settingsOpen, setSettingsOpen] = useState<boolean | string>(false);
+  const [settings, setSettings] = useState<{ section?: string } | null>(null);
+  const openSettings = React.useCallback((section?: string) => {
+    setSettings((open) => section ? { section } : open ?? {});
+  }, []);
   // What each app page last said about the companion's body (skill-spec
   // § App-mode: `linggen:companion`). Honoured only for the active tab; a
   // page that reloads starts again from `shown`.
@@ -107,7 +109,7 @@ export const LauncherApp: React.FC = () => {
   // {type:'linggen:show-settings'} to the main window — open the merged settings.
   useEffect(() => {
     const onMsg = (e: MessageEvent) => {
-      if (e.data && e.data.type === 'linggen:show-settings') setSettingsOpen(typeof e.data.section === 'string' ? e.data.section : true);
+      if (e.data?.type === 'linggen:show-settings') openSettings(typeof e.data.section === 'string' ? e.data.section : undefined);
       if (e.data?.type === 'linggen:companion' && e.origin === window.location.origin) {
         const name = [...frames.current].find(([, f]) => f.contentWindow === e.source)?.[0];
         const want = e.data.companion === 'hidden' ? 'hidden' : 'shown';
@@ -116,12 +118,12 @@ export const LauncherApp: React.FC = () => {
     };
     window.addEventListener('message', onMsg);
     // A chat framed under the launcher opens Settings → Models here.
-    window.__linggenOpenSettings = setSettingsOpen;
+    window.__linggenOpenSettings = openSettings;
     return () => {
       window.removeEventListener('message', onMsg);
       delete window.__linggenOpenSettings;
     };
-  }, []);
+  }, [openSettings]);
 
   // The view each app's frame was last asked to land on (a tapped offer's `open`).
   const [views, setViews] = useState<Record<string, string>>({});
@@ -186,9 +188,9 @@ export const LauncherApp: React.FC = () => {
               reflects immediately. */}
           <TermChip />
           <WeatherChip />
-          <AccountAvatar key={String(settingsOpen)} onManage={() => setSettingsOpen('account')} />
+          <AccountAvatar key={String(!!settings)} onManage={() => openSettings('account')} />
           <button
-            onClick={() => setSettingsOpen(true)}
+            onClick={() => openSettings()}
             title="Settings"
             className="flex items-center justify-center w-8 h-8 rounded-md text-slate-400 hover:bg-slate-100 dark:hover:bg-white/10 hover:text-slate-600 dark:hover:text-slate-200 transition-colors"
           >
@@ -233,7 +235,7 @@ export const LauncherApp: React.FC = () => {
         })}
       </div>
 
-      {settingsOpen && <LauncherSettings initial={settingsOpen === true ? undefined : settingsOpen} onClose={() => setSettingsOpen(false)} />}
+      {settings && <LauncherSettings request={settings} onClose={() => setSettings(null)} />}
     </div>
   );
 };
