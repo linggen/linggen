@@ -149,7 +149,7 @@ pub(crate) async fn case(mode: &str) -> Case {
     Arc::get_mut(&mut manager)
         .expect("a fresh manager")
         .global_sessions =
-        crate::state_fs::SessionStore::with_sessions_dir(root.path().join("sessions"));
+        crate::state_fs::SessionStore::leaked(root.path().join("sessions"));
     let session = format!("s-spend-{mode}");
     manager
         .global_sessions

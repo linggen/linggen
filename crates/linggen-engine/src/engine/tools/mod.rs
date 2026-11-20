@@ -911,7 +911,7 @@ mod tests {
             crate::engine::InterfaceMode::Web,
         );
         Arc::get_mut(&mut manager).expect("a fresh manager").global_sessions =
-            crate::state_fs::SessionStore::with_sessions_dir(dir.path().join("sessions"));
+            crate::state_fs::SessionStore::leaked(dir.path().join("sessions"));
         let row = |from: &str, content: &str, obs: bool| crate::state_fs::sessions::ChatMsg {
             run_id: None,
             via: None,

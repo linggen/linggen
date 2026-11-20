@@ -83,13 +83,11 @@ fn workspace_root() -> PathBuf {
 }
 
 /// The reply to the caller's latest prompt (see [`turn_replies`]).
-fn final_reply(session_id: &str) -> Option<String> {
-    session_replies(session_id).reply
+fn final_reply(store: &crate::state_fs::SessionStore, session_id: &str) -> Option<String> {
+    session_replies(store, session_id).reply
 }
 
-fn session_replies(session_id: &str) -> TurnReplies {
-    let store =
-        crate::state_fs::SessionStore::with_sessions_dir(crate::paths::global_sessions_dir());
+fn session_replies(store: &crate::state_fs::SessionStore, session_id: &str) -> TurnReplies {
     store
         .get_chat_history(session_id)
         .map(turn_replies)
@@ -204,7 +202,7 @@ pub async fn run(
             }
             Ok(with_denials(
                 &sid,
-                final_reply(&sid).unwrap_or_else(|| NO_REPLY.into()),
+                final_reply(manager.global_sessions, &sid).unwrap_or_else(|| NO_REPLY.into()),
             ))
         });
         return await_run(state, session, task).await;
@@ -289,8 +287,7 @@ pub async fn run(
         .unwrap_or(&root)
         .to_string_lossy()
         .to_string();
-    let store =
-        crate::state_fs::SessionStore::with_sessions_dir(crate::paths::global_sessions_dir());
+    let store = state.manager.global_sessions;
     let mut meta = delegate_meta(
         &session_id,
         &title,
@@ -698,7 +695,7 @@ async fn drive(
     match result {
         Ok(_) => Ok(with_denials(
             &session_id,
-            final_reply(&session_id).unwrap_or_else(|| NO_REPLY.to_string()),
+            final_reply(state.manager.global_sessions, &session_id).unwrap_or_else(|| NO_REPLY.to_string()),
         )),
         Err(e) => {
             let model = state
@@ -877,7 +874,7 @@ pub async fn status(state: &Arc<ServerState>, session: &str) -> Result<String, S
     let replies = if work.turn {
         TurnReplies::default()
     } else {
-        session_replies(session)
+        session_replies(state.manager.global_sessions, session)
     };
     let mut out = serde_json::json!({"running": work.turn, "tasks": work.tasks,
         "subagents": work.subagents, "pending": pending_requests(state, session).await,
@@ -1121,7 +1118,7 @@ pub(crate) async fn wait_socket(
                 frame = rx.recv() => match frame {
                     Some(WatchFrame::Permission(frame)) => if socket.send(axum::extract::ws::Message::Text(frame.to_string().into())).await.is_err() { break; },
                     Some(WatchFrame::Finished) => {
-                        let frame = finished_frame(session, last_run(&state.manager, session), session_replies(session), denials(session));
+                        let frame = finished_frame(session, last_run(&state.manager, session), session_replies(state.manager.global_sessions, session), denials(session));
                         let _ = socket.send(axum::extract::ws::Message::Text(frame.to_string().into())).await;
                         let _ = socket.send(axum::extract::ws::Message::Close(None)).await;
                         break;

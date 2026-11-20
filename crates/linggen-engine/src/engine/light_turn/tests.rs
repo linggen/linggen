@@ -86,7 +86,7 @@ fn manager_in(dir: &std::path::Path) -> Arc<AgentManager> {
     );
     Arc::get_mut(&mut manager)
         .expect("a fresh manager")
-        .global_sessions = crate::state_fs::SessionStore::with_sessions_dir(dir.to_path_buf());
+        .global_sessions = crate::state_fs::SessionStore::leaked(dir.to_path_buf());
     manager
 }
 

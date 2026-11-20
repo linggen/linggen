@@ -81,8 +81,7 @@ pub(crate) fn own_chat(manager: &AgentManager, app: &str, asker: &Person) -> Opt
 /// session not kept yet is theirs to make. No one (a peer that named no
 /// device) enters no kept session. The one rule every check point asks.
 pub(crate) fn may_enter(session_id: &str, asker: &Person) -> bool {
-    let store = crate::state_fs::SessionStore::with_sessions_dir(crate::paths::global_sessions_dir());
-    may_enter_in(&store, session_id, asker)
+    may_enter_in(crate::state_fs::SessionStore::global(), session_id, asker)
 }
 
 /// [`may_enter`] against the sessions kept in `store`.

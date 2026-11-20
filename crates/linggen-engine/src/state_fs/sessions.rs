@@ -448,6 +448,22 @@ impl ChatMsg {
 }
 
 impl SessionStore {
+    /// The one store on the global sessions folder (`paths::global_sessions_dir`),
+    /// for the whole process: every writer shares its locks and running places.
+    /// The manager holds it as `global_sessions`; code with no manager at hand
+    /// asks here. Never build a second one (`structure_lock_tests.rs`).
+    pub fn global() -> &'static SessionStore {
+        static GLOBAL: std::sync::OnceLock<SessionStore> = std::sync::OnceLock::new();
+        GLOBAL.get_or_init(|| Self::with_sessions_dir(crate::paths::global_sessions_dir()))
+    }
+
+    /// A store kept for the rest of the process, for a test that puts its
+    /// own sessions folder in the manager's place.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn leaked(sessions_dir: PathBuf) -> &'static SessionStore {
+        Box::leak(Box::new(Self::with_sessions_dir(sessions_dir)))
+    }
+
     /// Create a store rooted at the given sessions directory.
     pub fn with_sessions_dir(sessions_dir: PathBuf) -> Self {
         Self {

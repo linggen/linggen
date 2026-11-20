@@ -1,6 +1,8 @@
 mod cli;
 #[cfg(test)]
 mod permission_lock_tests;
+#[cfg(test)]
+mod structure_lock_tests;
 mod server;
 
 // The engine's modules, by the names the server and the CLI use for them
