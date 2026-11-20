@@ -309,7 +309,10 @@ export const PhoneTab: React.FC<{
                         onKeyDown={(e) => {
                           if (e.nativeEvent.isComposing || e.keyCode === 229) return;
                           if (e.key === 'Enter') saveEdit(d.id);
-                          if (e.key === 'Escape') setEditingId(null);
+                          if (e.key === 'Escape') {
+                            e.preventDefault();
+                            setEditingId(null);
+                          }
                         }}
                         maxLength={64}
                         className="flex-1 min-w-0 bg-slate-100 dark:bg-white/5 border border-slate-300 dark:border-white/15 rounded px-2 py-1 text-sm outline-none focus:ring-1 focus:ring-blue-500/50"

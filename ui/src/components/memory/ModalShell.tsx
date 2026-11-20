@@ -1,17 +1,16 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
+import { watchTopDialogEscape } from '../../lib/dialogEscape.mts';
 
 /** The frame the Memory dialogs share: a dimmed overlay and one card.
  *  Escape or a click outside closes it. */
 export const ModalShell: React.FC<{ title: string; onClose: () => void; children: React.ReactNode }> = ({ title, onClose, children }) => {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  const dialog = useRef<HTMLDivElement>(null);
+  useEffect(() => watchTopDialogEscape(dialog.current!, onClose), [onClose]);
   return createPortal(
-    <div data-settings-dialog className="fixed inset-0 z-[900] flex items-center justify-center bg-black/40 p-3" onClick={onClose}>
+    <div className="fixed inset-0 z-[900] flex items-center justify-center bg-black/40 p-3" onClick={onClose}>
       <div
+        ref={dialog}
         role="dialog"
         aria-modal="true"
         aria-label={title}

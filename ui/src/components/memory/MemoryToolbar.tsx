@@ -102,8 +102,13 @@ const MoreMenu: React.FC<Props> = (p) => {
   const [open, setOpen] = useState(false);
   const pick = (fn: () => void) => () => { setOpen(false); fn(); };
   return (
-    <div className="relative">
-      <button className={`${ghostBtn} min-w-11 justify-center md:min-w-0`} aria-label="More actions" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+    <div className="relative" onKeyDown={(e) => {
+      if (!open || e.key !== 'Escape' || e.defaultPrevented || e.nativeEvent.isComposing) return;
+      e.preventDefault();
+      e.currentTarget.querySelector('button')?.focus();
+      setOpen(false);
+    }}>
+      <button className={`${ghostBtn} min-w-11 justify-center md:min-w-0`} aria-label="More actions" aria-haspopup="menu" aria-expanded={open} onClick={(e) => { e.currentTarget.focus(); setOpen((o) => !o); }}>
         <MoreHorizontal size={14} />
       </button>
       {open && (
