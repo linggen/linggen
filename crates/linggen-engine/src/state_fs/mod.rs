@@ -1,5 +1,6 @@
 pub mod day_session;
 pub mod devices;
+pub mod row_author;
 pub mod running_places;
 pub mod session_images;
 pub mod session_usage;
@@ -12,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
+pub use row_author::RowAuthor;
 pub use sessions::SessionStore;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

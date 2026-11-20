@@ -271,7 +271,7 @@ pub(crate) fn run_calls(history: &[ChatMsg], running: bool) -> RunCalls {
             if m.from_id == agent {
                 let calls = open.take().map(|o| o.run.calls).unwrap_or_default();
                 out.answered.insert(i, calls);
-            } else if m.from_id == "user" || m.to_id == agent {
+            } else if m.author().is_person() || m.to_id == agent {
                 // A message the run took in mid-turn: the same run has rows
                 // after it, so it went on rather than stopping here.
                 if let Some(o) = open.as_mut() {
@@ -282,7 +282,7 @@ pub(crate) fn run_calls(history: &[ChatMsg], running: bool) -> RunCalls {
                 close(&mut open, &mut out);
             }
         }
-        if m.from_id == "user" {
+        if m.author().is_person() {
             hidden_turn = crate::server::resident::is_engine_prompt(&m.from_id, &m.content);
         }
     }

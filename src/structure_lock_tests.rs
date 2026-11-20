@@ -17,6 +17,8 @@ use syn::{Attribute, BinOp, Expr, ItemMod, Lit, Meta};
 
 /// The one place the store on the global sessions folder is made.
 const STORE_MAKER: &str = "crates/linggen-engine/src/state_fs/sessions.rs::global";
+/// The one place a row's sender is read.
+const AUTHOR_DECIDER: &str = "crates/linggen-engine/src/state_fs/row_author.rs";
 
 fn test_only(attrs: &[Attribute]) -> bool {
     attrs.iter().any(|attr| {
@@ -244,6 +246,19 @@ fn the_global_sessions_folder_has_one_store() {
         production().stores,
         [STORE_MAKER],
         "use the manager's `global_sessions` (or `SessionStore::global()`), never a second store with its own locks"
+    );
+}
+
+#[test]
+fn who_wrote_a_row_is_read_only_through_row_author() {
+    let found: Vec<String> = production()
+        .sender_literals
+        .into_iter()
+        .filter(|at| !at.starts_with(AUTHOR_DECIDER))
+        .collect();
+    assert!(
+        found.is_empty(),
+        "ask `RowAuthor::of` / `ChatMsg::author` instead of comparing a sender with a fixed name: {found:#?}"
     );
 }
 

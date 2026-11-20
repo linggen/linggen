@@ -345,7 +345,7 @@ pub fn sanitize_message_for_ui(from: &str, content: &str) -> Option<String> {
     if content.contains("[HIDDEN]") {
         return None;
     }
-    if from == "user" {
+    if crate::state_fs::RowAuthor::of(from).is_person() {
         return Some(content.to_string());
     }
 

@@ -19,7 +19,7 @@ pub use crate::state_fs::sessions::COMPACTION_SENDER;
 pub fn since_compaction(rows: &[ChatMsg]) -> &[ChatMsg] {
     let start = rows
         .iter()
-        .rposition(|r| !r.is_observation && r.from_id == COMPACTION_SENDER)
+        .rposition(|r| !r.is_observation && r.author() == crate::state_fs::RowAuthor::Compaction)
         .unwrap_or(0);
     &rows[start..]
 }
@@ -44,13 +44,13 @@ pub fn tail_cut(rows: &[ChatMsg], tail_budget: usize) -> Option<usize> {
         kept += t;
         cut -= 1;
     }
-    let opens = |r: &ChatMsg| !r.is_observation && r.from_id == "user";
+    let opens = |r: &ChatMsg| !r.is_observation && r.author().is_person();
     while cut < rows.len() && !opens(&rows[cut]) {
         cut += 1;
     }
     let summarized = rows[base..cut.min(rows.len())]
         .iter()
-        .filter(|r| r.from_id != COMPACTION_SENDER)
+        .filter(|r| r.author() != crate::state_fs::RowAuthor::Compaction)
         .count();
     (cut < rows.len() && summarized > 0).then_some(cut)
 }
@@ -73,13 +73,13 @@ fn summary_cut(rows: &[ChatMsg], tail_budget: usize) -> Option<usize> {
     let base = rows.len() - since_compaction(rows).len();
     let last_user = rows
         .iter()
-        .rposition(|r| !r.is_observation && r.from_id == "user")?;
+        .rposition(|r| !r.is_observation && r.author().is_person())?;
     if last_user <= base {
         return None;
     }
     let summarized = rows[base..last_user]
         .iter()
-        .filter(|r| r.from_id != COMPACTION_SENDER)
+        .filter(|r| r.author() != crate::state_fs::RowAuthor::Compaction)
         .count();
     (summarized > 0).then_some(last_user)
 }
@@ -254,7 +254,7 @@ mod tests {
         let out = commit_compaction(rows, Some("S".into()), "ling", 100, 500);
         let summary_at = out
             .iter()
-            .position(|r| r.from_id == COMPACTION_SENDER)
+            .position(|r| r.author() == crate::state_fs::RowAuthor::Compaction)
             .expect("summary row");
         assert_eq!(out[0].content, long, "scrollback before the summary stays");
         assert!(out[summary_at].content.contains('S'));

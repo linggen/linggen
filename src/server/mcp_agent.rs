@@ -22,6 +22,7 @@
 //! `agent_status.pending` until `agent_permit` answers it, or counts as
 //! denied after [`CALLER_ASK_WAIT`](crate::engine::tool_exec::CALLER_ASK_WAIT).
 
+use crate::state_fs::RowAuthor;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -120,19 +121,17 @@ fn turn_replies(msgs: Vec<crate::state_fs::sessions::ChatMsg>) -> TurnReplies {
             .client_id
             .as_deref()
             .is_some_and(super::restart::continues_a_turn);
-        match m.from_id.as_str() {
-            "user" | "claude-code" => {
+        match m.author() {
+            RowAuthor::Person | RowAuthor::Agent("claude-code") => {
                 out = TurnReplies::default();
                 callers_turn = true;
             }
-            "system" if continues => {}
-            "system" => callers_turn = false,
-            "memory-recall"
-            | crate::engine::compaction::COMPACTION_SENDER
-            | crate::engine::prompt::world::WORLD_SENDER => {}
-            _ if m.content.trim().is_empty() => {}
-            _ if callers_turn => out.reply = Some(m.content),
-            _ => out.followup = Some(m.content),
+            RowAuthor::System if continues => {}
+            RowAuthor::System => callers_turn = false,
+            RowAuthor::MemoryRecall | RowAuthor::Compaction | RowAuthor::World => {}
+            RowAuthor::Agent(_) if m.content.trim().is_empty() => {}
+            RowAuthor::Agent(_) if callers_turn => out.reply = Some(m.content),
+            RowAuthor::Agent(_) => out.followup = Some(m.content),
         }
     }
     out
