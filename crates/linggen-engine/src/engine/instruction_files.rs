@@ -23,7 +23,7 @@ fn personal_rule_path(home: &Path) -> PathBuf {
 }
 
 /// Where a project keeps its path-scoped rules (Markdown, any depth).
-fn rules_dir(root: &Path) -> PathBuf {
+pub(super) fn rules_dir(root: &Path) -> PathBuf {
     root.join(".claude").join("rules")
 }
 

@@ -1750,8 +1750,9 @@ mod member_tests {
     #[tokio::test]
     async fn a_path_scoped_rule_reaches_the_model_before_the_first_change_it_matches() {
         let root = place_project();
-        std::fs::create_dir_all(root.path().join(".claude/rules")).unwrap();
-        std::fs::write(root.path().join(".claude/rules/api.md"), "---\npaths: [\"src/api/**/*.ts\"]\n---\nAPI RULE").unwrap();
+        let rules = super::instruction_files::rules_dir(root.path());
+        std::fs::create_dir_all(&rules).unwrap();
+        std::fs::write(rules.join("api.md"), "---\npaths: [\"src/api/**/*.ts\"]\n---\nAPI RULE").unwrap();
         let (mut engine, mut state) = coding_turn(root.path());
         assert!(!state.messages[0].content.contains("API RULE"));
         let other = reply(&mut engine, &mut state, vec![file_call("Write", "src/other.ts")]).await;
