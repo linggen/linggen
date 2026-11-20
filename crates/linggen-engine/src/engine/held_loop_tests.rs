@@ -37,6 +37,7 @@ async fn engine_without_native_tools() -> (AgentEngine, tempfile::TempDir) {
         api_key: Some("k".into()),
         keep_alive: None,
         context_window: Some(32_000),
+        max_output_tokens: None,
         tags: vec![],
         supports_tools: Some(false),
         auth_mode: None,
