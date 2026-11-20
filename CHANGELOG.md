@@ -1,6 +1,6 @@
 # Changelog
 
-## [2.5.1] - unreleased — a coding session that asks less and says what it cost
+## [2.5.1] - 2026-11-20 — a coding session that asks less and says what it cost
 
 ### Permissions
 
