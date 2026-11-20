@@ -1,7 +1,7 @@
 //! What Yinyue tells a person about Ling's work (doc/yinyue-companion-spec.md
 //! § Herald): one notice per thing, told by voice only while the person is
 //! away, never a row of its own; the thing it is about carries a folded mark;
-//! one telling per waiting session; a run another tool started is never told;
+//! one telling per waiting turn; a run another tool started is never told;
 //! and a turn the engine started for her that ends without words leaves
 //! nothing on any page.
 
@@ -365,124 +365,42 @@ async fn an_external_runs_wait_is_never_told() {
     w.api.answer(&ask, "Deny").await;
 }
 
-/// Two permission prompts waiting in one session, 2 s apart, while the
-/// person is away: one telling. The cue names the first question, so her
-/// bubble carries its card; both cards carry the mark.
-#[tokio::test]
-async fn one_telling_per_waiting_session() {
-    let setup = Setup::default().script(
-        Agent::Yinyue,
-        vec![
-            text("I'm here."),
-            crate::support::say("WAIT-LINE they need you."),
-            crate::support::say("SECOND-TELLING"),
-        ],
-    );
-    let w = crate::claude_bridge::world_with(setup).await;
-    let sid = crate::claude_bridge::session_in(&w, &w.work()).await;
-    meet_then_away(&w).await;
-    w.api.chat(&sid, &w.work(), "asktwice").await;
-    away(&w).await;
-    let asks = || async {
-        w.api
-            .get("/api/pending-ask-user")
-            .await
-            .as_array()
-            .cloned()
-            .unwrap_or_default()
-    };
-    let deadline = std::time::Instant::now() + Duration::from_secs(30);
-    let pending = loop {
-        let now = asks().await;
-        if now.len() == 2 {
-            break now;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "two asks never waited; log:\n{}",
-            w.engine.log()
-        );
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    };
-    let cue = |e: &Value| e["kind"] == "pet_speak" && e["text"] == "WAIT-LINE they need you.";
-    until("her notice", &w, || w.events().iter().any(cue)).await;
-    tokio::time::sleep(Duration::from_secs(4)).await;
-    assert_eq!(
-        her_wakes(&w, "waiting on the user"),
-        1,
-        "one waiting session, told more than once"
-    );
-    assert!(!w.events().iter().any(|e| e["text"] == "SECOND-TELLING"));
-    let said = w.events().into_iter().find(|e| cue(e)).unwrap();
-    let ids: Vec<&Value> = pending.iter().map(|a| &a["question_id"]).collect();
-    assert!(
-        ids.contains(&&said["data"]["question_id"]),
-        "the cue names a waiting question: {said}"
-    );
-    assert!(
-        !every_row(&w).contains("WAIT-LINE"),
-        "the notice became a row"
-    );
-    for ask in asks().await {
-        w.api.answer(&ask, "Allow once").await;
-    }
-}
-
-/// Two prompts of one turn wait; the first telling comes to nothing (she
-/// writes no line): the second, still waiting, is told.
-#[tokio::test]
-async fn a_question_folded_into_a_telling_that_came_to_nothing_is_told() {
-    let setup = Setup::default().script(
-        Agent::Yinyue,
-        vec![
-            text("I'm here."),
-            // Slow: the second prompt comes while this telling still runs.
-            crate::support::model::slow(text("He is away, so no line from me now.")),
-            crate::support::say("SECOND-TOLD they need you."),
-        ],
-    );
-    let w = crate::claude_bridge::world_with(setup).await;
-    let sid = crate::claude_bridge::session_in(&w, &w.work()).await;
-    meet_then_away(&w).await;
-    w.api.chat(&sid, &w.work(), "asktwice").await;
-    away(&w).await;
-    let cue = |e: &Value| e["kind"] == "pet_speak" && e["text"] == "SECOND-TOLD they need you.";
-    until("the folded question's telling", &w, || {
-        w.events().iter().any(cue)
-    })
-    .await;
-    let said = w.events().into_iter().find(|e| cue(e)).unwrap();
-    let pending = w.api.pending(&sid, None).await;
-    assert_eq!(pending.len(), 2, "{pending:?}");
-    assert_eq!(
-        said["data"]["question_id"],
-        pending
-            .iter()
-            .find(|a| a["questions"][0]["question"] == "Bash ls two")
-            .unwrap()["question_id"],
-        "{said}"
-    );
-    assert_eq!(her_wakes(&w, "waiting on the user"), 2);
-    for ask in pending {
-        w.api.answer(&ask, "Allow once").await;
-    }
-}
+// Two questions of one turn waiting at once — one telling, and the folded one
+// told when the first telling came to nothing — are held by the unit tests of
+// `src/server/resident/herald/waits.rs`
+// (`a_wait_is_one_turn_not_one_session`,
+// `a_folded_question_is_told_when_the_first_telling_came_to_nothing`): a
+// native turn asks one question at a time, so no system path makes two wait.
 
 /// The wait is answered while her line is being made: nothing of it is
 /// said, marked or written — then or later.
 #[tokio::test]
 async fn a_wait_answered_while_her_line_is_made_leaves_nothing() {
-    let setup = Setup::default().script(
-        Agent::Yinyue,
-        vec![
-            text("I'm here."),
-            crate::support::model::slow(crate::support::say("LATE-WAIT they need you.")),
-        ],
-    );
-    let w = crate::claude_bridge::world_with(setup).await;
-    let sid = crate::claude_bridge::session_in(&w, &w.work()).await;
+    let setup = Setup::default()
+        .script(
+            Agent::Ling,
+            vec![
+                tool(
+                    "Write",
+                    serde_json::json!({"path": "~/outside.txt", "content": "x"}),
+                ),
+                text("Could not."),
+            ],
+        )
+        .script(
+            Agent::Yinyue,
+            vec![
+                text("I'm here."),
+                crate::support::model::slow(crate::support::say("LATE-WAIT they need you.")),
+            ],
+        );
+    let w = World::start(setup).await;
     meet_then_away(&w).await;
-    w.api.chat(&sid, &w.work(), "ask").await;
+    let sid = w
+        .api
+        .create_session(serde_json::json!({"title": "Outside"}))
+        .await;
+    w.api.chat(&sid, &w.work(), "Write outside").await;
     away(&w).await;
     until("her notice's turn", &w, || {
         her_wakes(&w, "waiting on the user") == 1
