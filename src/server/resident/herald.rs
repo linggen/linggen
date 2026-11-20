@@ -122,14 +122,11 @@ async fn tell_now(state: &Arc<ServerState>, herald: Herald) {
                 return;
             }
             tracing::info!("[yinyue-watch] run by '{agent}' failed; Yinyue is handed the fact");
+            // Said now or not at all: held, it would ride a later turn of
+            // hers and land as a row — a notice is never one.
             let fact = super::run_fault::fact(&agent, auth, false);
             let about = About::Run { session, run };
-            if wake(state, (fact.clone(), Origin::Fault, "neutral"), about)
-                .await
-                .is_none()
-            {
-                super::run_fault::hold(fact);
-            }
+            wake(state, (fact, Origin::Fault, "neutral"), about).await;
         }
     }
 }

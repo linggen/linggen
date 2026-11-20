@@ -136,7 +136,8 @@ kind:
   folded into the first telling and wakes no one; its card carries the same
   mark. A telling that came to nothing (silence, the answer came first, the
   person came back) leaves no wait behind it. Once a wait is over nothing
-  about it is said or written. A failure keeps its 90 s storm cooldown.
+  about it is said or written. A failure keeps its 90 s storm cooldown, and is
+  told at once or not at all: held, it would ride a later turn of hers as a row.
 
 Locks: `herald::tests::one_entry` (the notice's cue, its mark, the turn of a
 wait and the gate of whose are made in `herald.rs` alone; the bus's notices

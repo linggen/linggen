@@ -807,6 +807,8 @@ async fn herald_while_away(app: &str, private: bool, question: &str) -> String {
     let mark = w.mark();
     w.api.post("/api/yinyue/chat", json!({"text": "Hello"})).await;
     w.wait_agent(Agent::Yinyue, mark).await;
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    let greeted = w.events().len();
     let day = w.api.create_session(json!({"title": "App", "skill": app})).await;
     say(&w, &day, Some(app), "Move the box").await;
     grant_until(&w, app, 2).await;
@@ -835,8 +837,22 @@ async fn herald_while_away(app: &str, private: bool, question: &str) -> String {
         assert!(std::time::Instant::now() < deadline, "she never heralded; log:\n{}", w.engine.log());
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     };
-    let spoke = w.events_when(|e| e.iter().any(|x| x["kind"] == "pet_speak")).await;
+    let spoke = w.events_when(|e| e.iter().skip(greeted).any(|x| x["kind"] == "pet_speak")).await;
     assert!(spoke.iter().any(|x| x["kind"] == "pet_speak"), "her line was not spoken");
+    // Her bubble carries the waiting card — never for a question kept to a
+    // private app, whose words stay on its page.
+    let cue = spoke.iter().skip(greeted).find(|x| x["kind"] == "pet_speak").expect("her notice's cue");
+    assert_eq!(cue["data"]["question_id"].is_string(), !private, "{cue}");
+    // Her notice, a light turn while the day's turn waits, draws nothing on
+    // a page: no status, no run, no row of hers.
+    let drawn: Vec<String> = w
+        .events()
+        .into_iter()
+        .skip(greeted)
+        .filter(|e| e["agent_id"] == "yinyue" && !e["kind"].as_str().unwrap_or("").starts_with("pet_"))
+        .map(|e| format!("{} {}", e["kind"], e["phase"]))
+        .collect();
+    assert!(drawn.is_empty(), "her notice reached a page: {drawn:?}");
     w.api.answer(&asked, "Red").await;
     told
 }

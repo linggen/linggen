@@ -323,6 +323,59 @@ async fn an_external_run_is_never_told() {
         .any(|e| e["kind"] == "pet_speak" && e["text"] == "EXTERNAL-LINE"));
 }
 
+/// A run waiting on a permission in a session another tool started is not
+/// told either: its caller answers its own prompts.
+#[tokio::test]
+async fn an_external_runs_wait_is_never_told() {
+    let setup = Setup::default()
+        .script(
+            Agent::Ling,
+            vec![
+                text("Done."),
+                tool(
+                    "Write",
+                    serde_json::json!({"path": "~/outside.txt", "content": "x"}),
+                ),
+                text("Could not."),
+            ],
+        )
+        .script(
+            Agent::Yinyue,
+            vec![text("I'm here."), crate::support::say("EXTERNAL-WAIT")],
+        );
+    let w = World::start(setup).await;
+    meet_then_away(&w).await;
+    let inner = format!("{}/inner", w.work());
+    std::fs::create_dir_all(&inner).unwrap();
+    let call = serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": {"name": "agent_run", "arguments": {"prompt": "Say done.", "write_dir": inner}}});
+    let done = w.api.post("/mcp", call).await;
+    assert!(done.to_string().contains("Done."), "{done}");
+    let sid = crate::delegate::delegate_session(&w);
+    w.api.chat(&sid, &inner, "Write outside").await;
+    away(&w).await;
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    let ask = loop {
+        if let Some(ask) = w.api.pending(&sid, None).await.into_iter().next() {
+            break ask;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "no wait in the external session; log:\n{}",
+            w.engine.log()
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    };
+    tokio::time::sleep(Duration::from_secs(4)).await;
+    assert_eq!(
+        w.model.calls_of(Agent::Yinyue).len() - 1,
+        0,
+        "an external wait was told"
+    );
+    assert!(ask.get("told_aloud_at").is_none(), "{ask}");
+    w.api.answer(&ask, "Deny").await;
+}
+
 /// Two permission prompts waiting in one session, 2 s apart, while the
 /// person is away: one telling. The cue names the first question, so her
 /// bubble carries its card; both cards carry the mark.
