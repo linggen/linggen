@@ -670,7 +670,9 @@ impl Config {
             fs::create_dir_all(parent)?;
         }
         set_aside_if_unloadable(&path)?;
-        fs::write(&path, toml::to_string_pretty(self)?)?;
+        // Whole or not at all: a save beside this one, or a start after a
+        // crash, never reads half a file (and so never sets a good one aside).
+        crate::state_fs::devices::write_atomic(&path, toml::to_string_pretty(self)?.as_bytes())?;
         Ok(path)
     }
 
