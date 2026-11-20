@@ -151,10 +151,17 @@ impl SessionStore {
         }
         let path = dir.join(FILE);
         let mut ledger = match read_ledger(&path) {
-            Ok(ledger) => ledger,
-            Err(why) => {
-                set_aside(&path, &why);
+            Read::Ledger(ledger) => ledger,
+            // Read, and it did not parse: kept under a new name, a fresh one
+            // started. If it cannot be kept, nothing is written.
+            Read::NotParsed(why) => {
+                set_aside(&path, &why)?;
                 SessionUsage::default()
+            }
+            // Not read (a transient error, say): this call is skipped and
+            // nothing is moved or written — never write over what was not read.
+            Read::NotRead(why) => {
+                anyhow::bail!("the ledger could not be read ({why}); nothing written")
             }
         };
         ledger.add(model_id, rec, usage);
@@ -168,34 +175,49 @@ impl SessionStore {
         if !valid(session_id) {
             return SessionUsage::default();
         }
-        read_ledger(&self.session_dir(session_id).join(FILE)).unwrap_or_default()
-    }
-}
-
-/// A missing file is an empty ledger; anything unreadable is an error.
-fn read_ledger(path: &std::path::Path) -> Result<SessionUsage, String> {
-    match std::fs::read(path) {
-        Ok(bytes) => serde_json::from_slice::<SessionUsage>(&bytes)
-            .map(SessionUsage::normalized)
-            .map_err(|e| e.to_string()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(SessionUsage::default()),
-        Err(e) => Err(e.to_string()),
-    }
-}
-
-/// An unreadable ledger is kept under a new name and logged, never written
-/// over: what it held may be recovered by hand.
-fn set_aside(path: &std::path::Path, why: &str) {
-    let aside = path.with_extension(format!("json.corrupt-{}", chrono::Utc::now().timestamp()));
-    match std::fs::rename(path, &aside) {
-        Ok(()) => tracing::warn!(
-            "usage ledger unreadable ({why}); kept as {}",
-            aside.display()
-        ),
-        Err(e) => {
-            tracing::warn!("usage ledger unreadable ({why}) and not set aside ({e}); replaced")
+        match read_ledger(&self.session_dir(session_id).join(FILE)) {
+            Read::Ledger(ledger) => ledger,
+            Read::NotParsed(_) | Read::NotRead(_) => SessionUsage::default(),
         }
     }
+}
+
+/// What reading the ledger's file came to.
+enum Read {
+    /// Read and parsed (a missing file is an empty ledger).
+    Ledger(SessionUsage),
+    /// Read, and what was read is not a ledger.
+    NotParsed(String),
+    /// Not read: the file is there and could not be read.
+    NotRead(String),
+}
+
+fn read_ledger(path: &std::path::Path) -> Read {
+    match std::fs::read(path) {
+        Ok(bytes) => match serde_json::from_slice::<SessionUsage>(&bytes) {
+            Ok(ledger) => Read::Ledger(ledger.normalized()),
+            Err(e) => Read::NotParsed(e.to_string()),
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Read::Ledger(SessionUsage::default()),
+        Err(e) => Read::NotRead(e.to_string()),
+    }
+}
+
+/// A ledger that was read and did not parse is kept under a new name and
+/// logged, never written over: what it held may be recovered by hand. An
+/// error when it cannot be moved — the caller then writes nothing.
+fn set_aside(path: &std::path::Path, why: &str) -> anyhow::Result<()> {
+    let aside = path.with_extension(format!("json.corrupt-{}", chrono::Utc::now().timestamp()));
+    std::fs::rename(path, &aside).map_err(|e| {
+        anyhow::anyhow!(
+            "the ledger does not parse ({why}) and could not be set aside ({e}); nothing written"
+        )
+    })?;
+    tracing::warn!(
+        "usage ledger unreadable ({why}); kept as {}",
+        aside.display()
+    );
+    Ok(())
 }
 
 #[cfg(test)]
@@ -294,6 +316,47 @@ mod tests {
         assert_eq!(aside.len(), 1, "the unreadable file is kept: {aside:?}");
         let kept = std::fs::read_to_string(dir.path().join("s1").join(&aside[0])).unwrap();
         assert_eq!(kept, "{ not json");
+    }
+
+    /// A read error is not a bad file: nothing is moved, nothing written. (A
+    /// directory where the file should be reads as an error, not "not found".)
+    #[test]
+    fn a_ledger_that_cannot_be_read_is_left_alone() {
+        let (dir, store) = store();
+        let path = dir.path().join("s1").join("usage.json");
+        std::fs::create_dir(&path).unwrap();
+        store.record_usage(&TestKey, "s1", "m", &none(), Some(&call(10, 0, 0, 1)));
+        assert!(
+            path.is_dir(),
+            "the unreadable thing was not moved or replaced"
+        );
+        let names: Vec<_> = std::fs::read_dir(dir.path().join("s1"))
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(
+            names,
+            ["usage.json"],
+            "nothing set aside, nothing else written: {names:?}"
+        );
+    }
+
+    /// A bad file whose set-aside fails is never written over.
+    #[test]
+    fn a_bad_ledger_that_cannot_be_set_aside_is_not_written_over() {
+        use std::os::unix::fs::PermissionsExt;
+        let (dir, store) = store();
+        let folder = dir.path().join("s1");
+        std::fs::write(folder.join("usage.json"), "{ not json").unwrap();
+        // No renaming, no new files in the folder.
+        std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o555)).unwrap();
+        store.record_usage(&TestKey, "s1", "m", &none(), Some(&call(10, 0, 0, 1)));
+        std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(folder.join("usage.json")).unwrap(),
+            "{ not json"
+        );
     }
 
     /// Finding 8: a session removed while calls are being written is not an
