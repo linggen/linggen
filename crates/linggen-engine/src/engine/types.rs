@@ -137,6 +137,8 @@ impl std::fmt::Display for InterfaceMode {
 pub struct EngineConfig {
     pub ws_root: PathBuf,
     pub max_iters: usize,
+    /// The step limit of a coding session (`AgentEngine::step_limit`).
+    pub coding_max_iters: usize,
     pub write_safety_mode: crate::config::WriteSafetyMode,
     /// Default permission mode (chat/read/edit/admin). See permission-spec.md.
     pub permission_mode: crate::engine::permission::PermissionMode,
@@ -185,6 +187,7 @@ impl EngineConfig {
         Self {
             ws_root,
             max_iters: config.agent.max_iters,
+            coding_max_iters: config.agent.coding_max_iters,
             write_safety_mode: config.agent.write_safety_mode,
             permission_mode: config.agent.default_permission_mode.unwrap_or_default(),
             prompt_loop_breaker: config.agent.prompt_loop_breaker.clone(),
@@ -577,8 +580,29 @@ pub(crate) struct StreamResult {
     /// tool call it began is kept.
     pub steered: bool,
     /// The provider cut the reply at its output limit: `full_text` is what
-    /// came, and no tool call it began is kept.
-    pub cut: bool,
+    /// came, and no tool call it began is kept. Says what was being written.
+    pub cut: Option<CutAt>,
+}
+
+/// What a reply cut at the model's output limit was still writing. A cut
+/// text can go on; a cut tool call cannot (its arguments are incomplete and
+/// it never ran), so the model must make a smaller one instead.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CutAt {
+    Text,
+    /// A tool call, by name when the stream had named it.
+    ToolCall(Option<String>),
+}
+
+impl CutAt {
+    /// What was cut, for the words of a turn that ends on it.
+    pub(crate) fn words(&self) -> String {
+        match self {
+            Self::Text => "in the middle of text".to_string(),
+            Self::ToolCall(Some(name)) => format!("in the middle of a call to {name}"),
+            Self::ToolCall(None) => "in the middle of a tool call".to_string(),
+        }
+    }
 }
 
 /// Cached system prompt with hash for quick staleness checks.

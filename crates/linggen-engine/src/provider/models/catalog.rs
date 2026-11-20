@@ -61,6 +61,7 @@ pub(super) fn inject_linggen_cloud(configs: &mut Vec<ModelConfig>) {
         supports_tools: Some(true),
         auth_mode: Some("linggen_account".to_string()),
         reasoning_effort: None,
+        max_output_tokens: None,
         provided_by: Some("Linggen Cloud".to_string()),
         is_builtin: true,
     });
@@ -105,6 +106,7 @@ fn chatgpt_config(id: &str, snap: &Snapshot) -> ModelConfig {
         supports_tools: Some(true),
         auth_mode: Some("chatgpt_oauth".to_string()),
         reasoning_effort: None,
+        max_output_tokens: None,
         provided_by: Some("ChatGPT".to_string()),
         is_builtin: true,
     }

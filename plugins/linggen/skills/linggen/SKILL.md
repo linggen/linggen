@@ -525,7 +525,8 @@ Use the Linggen engine's MCP agent tools for delegated coding work:
 7. A run that cannot go on says why in `cannot_run` (`reason`, `model`,
    `resets_at`, `line`). On a usage limit, read the reset time, then pick a
    ready model (`agent_status {op:"models"}`) or come back after it — never
-   retry before.
+   retry before. A run that reached its step limit says `step_limit`: the job
+   was long, not the request wrong — continue with the same `session_id`.
 
 ## Browser control (via the same MCP server)
 

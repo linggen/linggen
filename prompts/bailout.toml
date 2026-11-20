@@ -1,8 +1,5 @@
 # Loop termination messages (assistant-visible bailout text).
-
-[loop_limit]
-description = "Message when the agent loop hits max_iters"
-text = "I couldn't complete this automatically within the current tool loop limit. Please refine the request and try again."
+# The step limit's words are `CannotRun::StepLimit` (cannot_run.rs), not a prompt.
 
 [malformed_output]
 description = "Message after 4 consecutive invalid JSON responses"

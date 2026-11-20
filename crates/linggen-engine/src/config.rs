@@ -164,6 +164,12 @@ pub struct ModelConfig {
     /// - Others: ignored (no-op)
     #[serde(default)]
     pub reasoning_effort: Option<String>,
+    /// The output limit (`max_tokens`) to send an Anthropic model, whatever
+    /// the Models API says it can do. Clamped to the model's cap when that
+    /// is known. Unset: the engine sends a working limit that fits the model
+    /// (`provider/output_limit.rs`). Other providers ignore it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<u32>,
     /// Display name of the proxy room owner providing this model.
     /// Only set for proxy models (provider = "proxy").
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -295,7 +301,14 @@ fn default_server_host() -> String {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[cfg_attr(any(test, feature = "test-support"), derive(ts_rs::TS), ts(export))]
 pub struct AgentConfig {
+    /// Most steps (a model reply and the tool calls in it) one turn may take.
+    /// A coding session has [`coding_max_iters`](Self::coding_max_iters).
     pub max_iters: usize,
+    /// The same limit for a coding session (`work: code`): a long job is
+    /// many steps, and a limit tuned for chat ends it half done. Defaults to
+    /// the most the config allows ([`MAX_ITERS_CEILING`]).
+    #[serde(default = "default_coding_max_iters")]
+    pub coding_max_iters: usize,
     #[serde(default)]
     pub write_safety_mode: WriteSafetyMode,
     /// Default permission for new sessions (chat/read/edit/admin). Defaults to read.
@@ -368,6 +381,13 @@ fn default_memory_inject_min_score() -> Option<f32> {
 
 fn default_memory_recall_count() -> usize {
     3
+}
+
+/// The most steps any limit may be set to.
+pub const MAX_ITERS_CEILING: usize = 1000;
+
+fn default_coding_max_iters() -> usize {
+    MAX_ITERS_CEILING
 }
 
 fn default_max_delegation_depth() -> usize {
@@ -589,8 +609,14 @@ impl Config {
         if self.agent.max_iters == 0 {
             anyhow::bail!("Agent max_iters must be greater than 0");
         }
-        if self.agent.max_iters > 1000 {
-            anyhow::bail!("Agent max_iters must not exceed 1000");
+        if self.agent.max_iters > MAX_ITERS_CEILING {
+            anyhow::bail!("Agent max_iters must not exceed {MAX_ITERS_CEILING}");
+        }
+        if self.agent.coding_max_iters == 0 {
+            anyhow::bail!("Agent coding_max_iters must be greater than 0");
+        }
+        if self.agent.coding_max_iters > MAX_ITERS_CEILING {
+            anyhow::bail!("Agent coding_max_iters must not exceed {MAX_ITERS_CEILING}");
         }
         // A 0-day TTL would evict episodic rows immediately on the next
         // dream pass, before the user has had a chance to inspect them.
@@ -645,6 +671,7 @@ impl Default for Config {
             },
             agent: AgentConfig {
                 max_iters: 200,
+                coding_max_iters: default_coding_max_iters(),
                 write_safety_mode: WriteSafetyMode::default(),
                 default_permission_mode: None,
                 prompt_loop_breaker: None,
@@ -773,6 +800,7 @@ mod tests {
             supports_tools: None,
             auth_mode: None,
             reasoning_effort: None,
+            max_output_tokens: None,
             provided_by: None,
             is_builtin: false,
         });
@@ -974,6 +1002,25 @@ mod tests {
         cfg.agent.max_iters = 0;
         let err = cfg.validate().unwrap_err();
         assert!(err.to_string().contains("max_iters must be greater than 0"));
+    }
+
+    /// A chat turn keeps its 200 steps; a coding session has its own key,
+    /// at the most the config allows, which an older config file without it
+    /// gets too.
+    #[test]
+    fn a_coding_session_has_its_own_step_limit_key() {
+        let cfg = Config::default();
+        assert_eq!((cfg.agent.max_iters, cfg.agent.coding_max_iters), (200, 1000));
+        let old: AgentConfig = toml::from_str("max_iters = 5").unwrap();
+        assert_eq!(old.coding_max_iters, 1000);
+        let set: AgentConfig = toml::from_str("max_iters = 5\ncoding_max_iters = 300").unwrap();
+        assert_eq!(set.coding_max_iters, 300);
+
+        let mut cfg = valid_config();
+        cfg.agent.coding_max_iters = 0;
+        assert!(cfg.validate().unwrap_err().to_string().contains("coding_max_iters must be greater than 0"));
+        cfg.agent.coding_max_iters = 1001;
+        assert!(cfg.validate().unwrap_err().to_string().contains("coding_max_iters must not exceed 1000"));
     }
 
     #[test]

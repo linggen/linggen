@@ -125,6 +125,12 @@ frame and in `agent_status op=session`: `reason` (`no_model`, `cloud_sign_in`,
 still has what the run read). The dream's status carries the same as
 `last_run_cannot_run`.
 
+A run that ends at its step limit is not a failure: its status is `completed`
+and `cannot_run` reads `reason: "step_limit"`, `steps` (the limit it reached),
+`line` and `work_kept`. The request was fine and the job long; continue with
+the same `session_id`. A coding session's limit is far higher than a chat's
+(`agentic-loop.md` § Step limit).
+
 ## The old plugin
 
 `/mcp/memory` is retired. Every request there gets HTTP 410 with

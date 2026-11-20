@@ -35,9 +35,10 @@ use futures_util::{Stream, StreamExt};
 use reqwest::Client;
 use std::collections::HashMap;
 
-/// Default `max_tokens` when none is configured per-model. Anthropic requires
-/// this field; 8192 matches the Claude 4.x SDK default.
-const DEFAULT_MAX_TOKENS: u32 = 8192;
+/// How long the Models API lookup of a model's output cap may take: a
+/// request waits for it once per model, and a gateway that answers nothing
+/// must not hold a turn.
+const MODEL_LOOKUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Auth mode for an `AnthropicClient`.
 #[derive(Debug, Clone)]
@@ -151,22 +152,48 @@ impl AnthropicClient {
     // Public API
     // -----------------------------------------------------------------
 
+    /// What the Models API says `model` can write in one reply
+    /// (`GET /v1/models/{id}` → `max_tokens`). `Ok(None)`: this host does
+    /// not describe the model (another host behind the same wire, an
+    /// unknown id) — a final answer. `Err`: no answer yet (no network, a
+    /// busy or failing host, a refused key) — worth asking again.
+    pub async fn output_cap(&self, model: &str) -> Result<Option<u32>> {
+        let url = format!("{}/v1/models/{}", self.base_url, model);
+        let rb = self.apply_auth(self.http.get(&url).timeout(MODEL_LOOKUP_TIMEOUT))?;
+        let resp = rb.send().await.context("Anthropic model lookup failed")?;
+        let status = resp.status();
+        if status.is_success() {
+            let model: serde_json::Value = resp.json().await.unwrap_or_default();
+            return Ok(crate::provider::output_limit::cap_in(&model));
+        }
+        let asks_again = status.is_server_error()
+            || matches!(status.as_u16(), 401 | 408 | 429);
+        if asks_again {
+            anyhow::bail!("Anthropic model lookup answered {status}");
+        }
+        Ok(None)
+    }
+
+    /// A text-only request; `max_tokens` is the output limit it carries.
     pub async fn chat_text_stream(
         &self,
         model: &str,
         messages: &[ChatMessage],
+        max_tokens: u32,
     ) -> Result<impl Stream<Item = Result<StreamChunk>> + Send> {
-        self.stream_messages(model, messages, vec![]).await
+        self.stream_messages(model, messages, vec![], max_tokens).await
     }
 
+    /// A request with tools; `max_tokens` is the output limit it carries.
     pub async fn chat_tool_stream(
         &self,
         model: &str,
         messages: &[ChatMessage],
         tools: Vec<serde_json::Value>,
+        max_tokens: u32,
     ) -> Result<impl Stream<Item = Result<StreamChunk>> + Send> {
         let anthro_tools: Vec<serde_json::Value> = tools.iter().filter_map(wire_tool_def).collect();
-        self.stream_messages(model, messages, anthro_tools).await
+        self.stream_messages(model, messages, anthro_tools, max_tokens).await
     }
 
     // -----------------------------------------------------------------
@@ -178,13 +205,14 @@ impl AnthropicClient {
         model: &str,
         messages: &[ChatMessage],
         anthro_tools: Vec<serde_json::Value>,
+        max_tokens: u32,
     ) -> Result<impl Stream<Item = Result<StreamChunk>> + Send> {
         let url = format!("{}/v1/messages", self.base_url);
         let translated = translate_messages(messages);
 
         let mut req = serde_json::json!({
             "model": model,
-            "max_tokens": DEFAULT_MAX_TOKENS,
+            "max_tokens": max_tokens,
             "messages": translated.messages,
             "stream": true,
         });
@@ -213,18 +241,7 @@ impl AnthropicClient {
             messages.iter().map(|m| m.content.len()).sum::<usize>(),
         );
 
-        let rb = self.apply_auth(self.http.post(&url).json(&req))?;
-        let first = crate::provider::FirstEvent::start(&self.base_url);
-        let resp = first
-            .within(rb.send())
-            .await?
-            .context("Anthropic request failed")?;
-        let status = resp.status();
-        if !status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            let message = format!("anthropic error ({}): {}", status, body);
-            return Err(crate::provider::error::ProviderError::http(status, &body, message).into());
-        }
+        let (resp, first) = self.send_within_window(&url, &mut req).await?;
 
         // Single unfold owns: (pinned byte stream, rolling byte buffer,
         // per-turn block-index→tool state). On each poll it either parses
@@ -270,6 +287,45 @@ impl AnthropicClient {
         );
 
         Ok(stream)
+    }
+}
+
+impl AnthropicClient {
+    /// Send the request. A model's window counts input + `max_tokens`
+    /// together, and the engine fills a context nearly to the window before
+    /// it compacts, so a large limit can overflow it: the refusal names the
+    /// exact input it counted, and the request is sent once more with the
+    /// room that is left. Any other refusal is the caller's. Returns the
+    /// answer with the first-event window its send began.
+    async fn send_within_window(
+        &self,
+        url: &str,
+        req: &mut serde_json::Value,
+    ) -> Result<(reqwest::Response, crate::provider::FirstEvent)> {
+        let mut retried = false;
+        loop {
+            let rb = self.apply_auth(self.http.post(url).json(&*req))?;
+            let first = crate::provider::FirstEvent::start(&self.base_url);
+            let resp = first
+                .within(rb.send())
+                .await?
+                .context("Anthropic request failed")?;
+            let status = resp.status();
+            if status.is_success() {
+                return Ok((resp, first));
+            }
+            let body = resp.text().await.unwrap_or_default();
+            let room = crate::provider::output_limit::room_after_overflow(&body);
+            let asked = req["max_tokens"].as_u64().unwrap_or(0);
+            if let Some(room) = room.filter(|room| !retried && u64::from(*room) < asked) {
+                tracing::info!("Anthropic: input + max_tokens over the window; asking again with max_tokens={room}");
+                req["max_tokens"] = serde_json::json!(room);
+                retried = true;
+                continue;
+            }
+            let message = format!("anthropic error ({}): {}", status, body);
+            return Err(crate::provider::error::ProviderError::http(status, &body, message).into());
+        }
     }
 }
 

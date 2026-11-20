@@ -40,6 +40,7 @@ fn model(url: &str) -> crate::config::ModelConfig {
         supports_tools: Some(true),
         auth_mode: None,
         reasoning_effort: None,
+        max_output_tokens: None,
         provided_by: None,
         is_builtin: false,
     }

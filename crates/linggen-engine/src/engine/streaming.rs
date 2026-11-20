@@ -119,6 +119,21 @@ fn extract_first_json_object(s: &str) -> Option<serde_json::Value> {
 }
 
 // ---------------------------------------------------------------------------
+/// What a reply cut at the output limit was writing: the last tool call it
+/// had begun (an empty name with empty arguments is a phantom, not a call),
+/// else text.
+fn cut_at_of(names: &[Option<String>], args: &[String]) -> CutAt {
+    let begun = names
+        .iter()
+        .zip(args)
+        .rev()
+        .find(|(name, args)| name.as_deref().is_some_and(|n| !n.is_empty()) || !args.is_empty());
+    match begun {
+        Some((name, _)) => CutAt::ToolCall(name.clone().filter(|n| !n.is_empty())),
+        None => CutAt::Text,
+    }
+}
+
 // Free functions for parallel tool execution
 // ---------------------------------------------------------------------------
 
@@ -305,7 +320,12 @@ impl AgentEngine {
             first_action: first_action.filter(|_| !steered && !cut),
             tool_calls: Vec::new(),
             steered,
-            cut,
+            // An action the reply had begun is a call; otherwise words.
+            cut: cut.then_some(if thinking_ended {
+                CutAt::ToolCall(None)
+            } else {
+                CutAt::Text
+            }),
         })
     }
 
@@ -425,6 +445,9 @@ impl AgentEngine {
         // the UI thinking indicator after content tokens have been streamed).
         self.stream(ThinkingEvent::ContentDone);
 
+        // What a cut reply was writing: the call it had begun, else words.
+        let cut_at = cut.then(|| cut_at_of(&tc_names, &tc_args));
+
         // Build ParsedToolCall objects from accumulated deltas.
         // Skip phantom entries (empty name + empty args) caused by Responses API
         // output_index gaps (text blocks occupy indices before function calls).
@@ -483,7 +506,7 @@ impl AgentEngine {
             first_action: None,
             tool_calls,
             steered,
-            cut,
+            cut: cut_at,
         })
     }
 
@@ -943,6 +966,7 @@ mod fallback_window_tests {
             supports_tools: Some(true),
             auth_mode: None,
             reasoning_effort: None,
+            max_output_tokens: None,
             provided_by: None,
             is_builtin: false,
         }

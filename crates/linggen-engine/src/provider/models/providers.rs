@@ -9,6 +9,7 @@ use crate::message::ChatMessage;
 use crate::provider::anthropic::AnthropicClient;
 use crate::provider::ollama::OllamaClient;
 use crate::provider::openai::OpenAiClient;
+use crate::provider::output_limit::{tokens_to_send, FALLBACK_OUTPUT_TOKENS};
 use crate::provider::proxy_provider::ProxyModelClient;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -24,6 +25,9 @@ pub struct TurnOptions<'a> {
     pub keep_alive: Option<String>,
     pub effort: Option<&'a str>,
     pub app: Option<&'a str>,
+    /// The output limit this request carries, for a backend that sets one
+    /// (`Provider::max_output_tokens`).
+    pub max_output: Option<u32>,
 }
 
 #[async_trait]
@@ -52,6 +56,18 @@ pub(crate) trait Provider: Send + Sync {
     ) -> Result<Option<usize>>;
 
     async fn has_vision(&self, cfg: &ModelConfig, cache: &OnceCell<bool>) -> Result<bool>;
+
+    /// The output limit a request to this model carries, for a backend that
+    /// sets one itself; `cache` is the instance's memo of what the backend
+    /// says the model can write. `None`: the backend picks its own.
+    async fn max_output_tokens(
+        &self,
+        _cfg: &ModelConfig,
+        _cache: &OnceCell<Option<u32>>,
+        _with_tools: bool,
+    ) -> Option<u32> {
+        None
+    }
 
     /// The local Ollama client behind this model, if that is what it is.
     fn as_ollama(&self) -> Option<&OllamaClient> {
@@ -245,9 +261,10 @@ impl Provider for AnthropicClient {
         &self,
         cfg: &ModelConfig,
         messages: &[ChatMessage],
-        _opts: TurnOptions<'_>,
+        opts: TurnOptions<'_>,
     ) -> Result<ChunkStream> {
-        let stream = self.chat_text_stream(&cfg.model, messages).await?;
+        let max_tokens = opts.max_output.unwrap_or(FALLBACK_OUTPUT_TOKENS);
+        let stream = self.chat_text_stream(&cfg.model, messages, max_tokens).await?;
         Ok(Box::pin(stream))
     }
 
@@ -256,10 +273,29 @@ impl Provider for AnthropicClient {
         cfg: &ModelConfig,
         messages: &[ChatMessage],
         tools: Vec<serde_json::Value>,
-        _opts: TurnOptions<'_>,
+        opts: TurnOptions<'_>,
     ) -> Result<ChunkStream> {
-        let stream = self.chat_tool_stream(&cfg.model, messages, tools).await?;
+        let max_tokens = opts.max_output.unwrap_or(FALLBACK_OUTPUT_TOKENS);
+        let stream = self.chat_tool_stream(&cfg.model, messages, tools, max_tokens).await?;
         Ok(Box::pin(stream))
+    }
+
+    /// The model's own cap, learned once from the Models API (an answer
+    /// that does not come is asked for again next time), then the number
+    /// to send for it (`provider::output_limit`).
+    async fn max_output_tokens(
+        &self,
+        cfg: &ModelConfig,
+        cache: &OnceCell<Option<u32>>,
+        with_tools: bool,
+    ) -> Option<u32> {
+        let cap = cache
+            .get_or_try_init(|| self.output_cap(&cfg.model))
+            .await
+            .ok()
+            .copied()
+            .flatten();
+        Some(tokens_to_send(cfg.max_output_tokens, cap, with_tools))
     }
 
     /// Anthropic doesn't expose per-model context window over the API; use

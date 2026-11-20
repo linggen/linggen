@@ -302,7 +302,7 @@ mod tests {
             first_action: None,
             tool_calls: Vec::new(),
             steered: false,
-            cut: false,
+            cut: None,
         }
     }
 

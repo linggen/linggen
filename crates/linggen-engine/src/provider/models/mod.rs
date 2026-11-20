@@ -69,6 +69,8 @@ struct ModelInstance {
     client: Arc<dyn Provider>,
     semaphore: Arc<Semaphore>,
     context_window: OnceCell<Option<usize>>,
+    /// What the backend's Models API says the model can write in one reply.
+    output_cap: OnceCell<Option<u32>>,
     has_vision: OnceCell<bool>,
 }
 
@@ -195,6 +197,7 @@ impl ModelManager {
                     client,
                     semaphore,
                     context_window: OnceCell::new(),
+                    output_cap: OnceCell::new(),
                     has_vision: OnceCell::new(),
                 },
             );
@@ -240,6 +243,10 @@ impl ModelManager {
 
         // Note: permit is held for the duration of the stream
         let _permit = instance.semaphore.clone().acquire_owned().await?;
+        let max_output = instance
+            .client
+            .max_output_tokens(&instance.config, &instance.output_cap, false)
+            .await;
 
         let stream = instance
             .client
@@ -250,6 +257,7 @@ impl ModelManager {
                     keep_alive,
                     effort: effort_override,
                     app,
+                    max_output,
                 },
             )
             .await?;
@@ -274,6 +282,10 @@ impl ModelManager {
         Self::check_provider_auth(&instance.config)?;
 
         let _permit = instance.semaphore.clone().acquire_owned().await?;
+        let max_output = instance
+            .client
+            .max_output_tokens(&instance.config, &instance.output_cap, true)
+            .await;
 
         let stream = instance
             .client
@@ -285,6 +297,7 @@ impl ModelManager {
                     keep_alive: instance.config.keep_alive.clone(),
                     effort: effort_override,
                     app,
+                    max_output,
                 },
             )
             .await?;
@@ -345,6 +358,7 @@ impl ModelManager {
                 keep_alive: None,
                 auth_mode: None,
                 reasoning_effort: None,
+                max_output_tokens: None,
                 provided_by: owner_name.clone(),
                 is_builtin: false,
             };
@@ -356,6 +370,7 @@ impl ModelManager {
                     client: Arc::new(proxy_client.clone()),
                     semaphore: Arc::new(Semaphore::new(1)),
                     context_window: OnceCell::new(),
+                    output_cap: OnceCell::new(),
                     has_vision: OnceCell::new(),
                 },
             );
@@ -588,6 +603,7 @@ mod tests {
             supports_tools: Some(true),
             auth_mode: None,
             reasoning_effort: None,
+            max_output_tokens: None,
             provided_by: None,
             is_builtin: false,
         }

@@ -60,12 +60,51 @@ async fn a_cut_tool_call_is_not_run_and_the_model_is_told() {
     );
     let last = sent.last().unwrap();
     assert_eq!(last["role"], "user");
+    let told = last["content"].as_str().unwrap();
+    assert!(told.contains("output limit"), "the model is told its output was cut: {last}");
+    assert!(told.contains("call to Write"), "and which call was cut: {last}");
+    assert!(told.contains("nothing ran"), "and that nothing ran: {last}");
+    assert!(told.contains("make a smaller call"), "and to make a smaller one: {last}");
     assert!(
-        last["content"].as_str().unwrap().contains("output limit"),
-        "the model is told its output was cut: {last}"
+        !told.to_lowercase().contains("continue from"),
+        "a cut call cannot be gone on from: {last}"
     );
     assert!(!root.path().join("cut.txt").exists(), "nothing was written");
     assert_eq!(engine.last_assistant_text.as_deref(), Some("Written in two parts."));
+}
+
+/// The first reply is words, cut mid-sentence; the next answers.
+async fn text_cut_then_done(State(fake): State<Fake>, Json(body): Json<serde_json::Value>) -> String {
+    let first = {
+        let mut requests = fake.requests.lock().unwrap();
+        requests.push(body);
+        requests.len() == 1
+    };
+    if !first {
+        return sse(&[
+            serde_json::json!({"choices":[{"index":0,"delta":{"content":"The rest."}}]}),
+            serde_json::json!({"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}),
+        ]);
+    }
+    sse(&[
+        serde_json::json!({"choices":[{"index":0,"delta":{"content":"The long answer begins and"}}]}),
+        serde_json::json!({"choices":[{"index":0,"delta":{},"finish_reason":"length"}]}),
+    ])
+}
+
+/// Words cut off can be gone on from: the model is told to continue.
+#[tokio::test]
+async fn cut_words_are_told_to_go_on() {
+    let fake = Fake::default();
+    let (mut engine, _root) = engine_on(fake.clone(), post(text_cut_then_done)).await;
+
+    run(&mut engine).await.unwrap();
+
+    let requests = fake.requests.lock().unwrap().clone();
+    let sent = requests[1]["messages"].as_array().unwrap();
+    let told = sent.last().unwrap()["content"].as_str().unwrap();
+    assert!(told.contains("Continue from where it stopped"), "{told}");
+    assert!(!told.contains("smaller call"), "{told}");
 }
 
 /// Every reply is cut at the output limit.
@@ -90,6 +129,7 @@ async fn three_cut_replies_in_a_row_end_the_turn_as_a_failure() {
     assert_eq!(fake.requests.lock().unwrap().len(), 3, "the turn stopped after three cut replies");
     let err = ended.expect_err("a turn cut every time is a failure");
     assert!(format!("{err:#}").contains("output limit keeps cutting"), "{err:#}");
+    assert!(format!("{err:#}").contains("in the middle of text"), "{err:#}");
     assert_eq!(
         crate::provider::error::kind_of(&err),
         crate::provider::error::ProviderErrorKind::OutputCut,
@@ -100,6 +140,30 @@ async fn three_cut_replies_in_a_row_end_the_turn_as_a_failure() {
         crate::provider::error::ProviderErrorKind::OutputCut,
         "and stays that kind as text"
     );
+}
+
+/// Every reply is a tool call cut mid-arguments.
+async fn always_cut_call(State(fake): State<Fake>, Json(body): Json<serde_json::Value>) -> String {
+    fake.requests.lock().unwrap().push(body);
+    sse(&[
+        serde_json::json!({"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"Write","arguments":"{\"file_path\":\"big.txt\",\"content\":\"a very long"}}]}}]}),
+        serde_json::json!({"choices":[{"index":0,"delta":{},"finish_reason":"length"}]}),
+    ])
+}
+
+/// The three cuts that end a turn name what was cut: here, a call to Write.
+#[tokio::test]
+async fn three_cut_calls_end_the_turn_naming_the_call() {
+    let fake = Fake::default();
+    let (mut engine, root) = engine_on(fake.clone(), post(always_cut_call)).await;
+
+    let err = run(&mut engine).await.expect_err("a call cut every time is a failure");
+
+    assert_eq!(fake.requests.lock().unwrap().len(), 3);
+    let words = format!("{err:#}");
+    assert!(words.contains("output limit keeps cutting"), "{words}");
+    assert!(words.contains("in the middle of a call to Write"), "{words}");
+    assert!(!root.path().join("big.txt").exists(), "nothing was written");
 }
 
 /// The engine's turn, which must end within 20 s.
@@ -140,6 +204,7 @@ async fn engine_on(
         supports_tools: Some(true),
         auth_mode: None,
         reasoning_effort: None,
+        max_output_tokens: None,
         provided_by: None,
         is_builtin: false,
     };

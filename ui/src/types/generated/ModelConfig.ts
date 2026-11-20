@@ -30,6 +30,13 @@ auth_mode: string | null,
  */
 reasoning_effort: string | null, 
 /**
+ * The output limit (`max_tokens`) to send an Anthropic model, whatever
+ * the Models API says it can do. Clamped to the model's cap when that
+ * is known. Unset: the engine sends a working limit that fits the model
+ * (`provider/output_limit.rs`). Other providers ignore it.
+ */
+max_output_tokens?: number | null, 
+/**
  * Display name of the proxy room owner providing this model.
  * Only set for proxy models (provider = "proxy").
  */
