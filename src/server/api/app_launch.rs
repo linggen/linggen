@@ -4,7 +4,7 @@
 //! the phone, an errand that needs its page in front).
 //!
 //! What a surface does with it is the surface's own (`ui` eventHandlers): the
-//! desktop launcher opens the app's tab and brings its window up. Nothing here
+//! desktop app's window opens the app's tab and comes up. Nothing here
 //! opens a browser — a launch nobody hears is just unheard, and the caller
 //! learns whether its page came up from the page itself.
 

@@ -8,7 +8,7 @@ import { uiLocale } from './memoryFormat.mts';
 import { MemoryCalendarGrid } from './MemoryCalendarGrid';
 import { MemoryDayDetail } from './MemoryDayDetail';
 
-export const MemoryDays: React.FC = () => {
+export const MemoryDays: React.FC<{ canOpenRun: boolean }> = ({ canOpenRun }) => {
   const [data, setData] = useState<Days | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [notice, setNotice] = useState('');
@@ -50,7 +50,7 @@ export const MemoryDays: React.FC = () => {
         </>}
         <button className={primaryBtn} disabled={busy} onClick={() => start()}>Dream now</button>
       </div>
-      {notice && <div role="status" className="flex items-center gap-2 text-xs text-slate-500"><span>{notice}</span>{run && <OpenRun sessionId={run} />}</div>}
+      {notice && <div role="status" className="flex items-center gap-2 text-xs text-slate-500"><span>{notice}</span>{canOpenRun && run && <OpenRun sessionId={run} />}</div>}
       {error != null && <div role="alert" className="text-xs text-red-600 dark:text-red-400">{describeError(error, 'read memory')}{!(error instanceof MemoryError && error.forbidden) && <button className={ghostBtn} onClick={load}>Try again</button>}</div>}
       {!data && !error && <p className="text-xs text-slate-500">Loading…</p>}
       {data && <p className="text-xs text-slate-500">{`${waiting} days wait for a dream.`}</p>}

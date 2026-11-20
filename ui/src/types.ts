@@ -356,6 +356,8 @@ export interface SkillToolDef {
 export interface SkillAppConfig {
   launcher: 'web' | 'bash' | 'url';
   entry: string;
+  /** A relative path to this web app's settings page. */
+  settings?: string;
   /** The launcher's name for the app; absent → the skill's name. */
   title?: string;
   /** `false` keeps an installed-but-unfinished app out of the tab bar. */
@@ -413,9 +415,6 @@ export interface BuiltInSkillInfo {
   description: string;
   installed: boolean;
 }
-
-/** A Settings tab. `mcp` is kept for old links and opens Tools, where MCP now lives. */
-export type ManagementTab = 'models' | 'agents' | 'skills' | 'tools' | 'mcp' | 'general' | 'session' | 'phone' | 'mission' | 'memory' | 'storage' | 'room';
 
 // --- Mission types (cron-based) ---
 

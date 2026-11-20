@@ -1,11 +1,10 @@
 /**
  * Account avatar — the billing identity (`/api/account`, i.e. account.toml),
  * the account every app's LLM spend is metered against. Shown top-right in
- * both the dev console (HeaderBar) and the app launcher so it's always
- * visible which account the daemon is signed into.
+ * the header (HeaderBar), in the browser and the desktop app alike, so it's
+ * always visible which account the daemon is signed into.
  *
- * Signed in: avatar + dropdown (name, Dashboard, optional Account settings,
- * Sign out). Signed out: a Sign in button running the /api/account/login
+ * Signed in: avatar + dropdown (name, Dashboard, Sign out). Signed out: a Sign in button running the /api/account/login
  * flow (daemon opens the browser; we poll /api/account until it flips).
  */
 import React, { useState, useEffect, useRef, useCallback } from 'react';
@@ -24,10 +23,7 @@ const toAccountInfo = (a: Account): AccountInfo => ({
   avatar_url: a.avatar_url,
 });
 
-export const AccountAvatar: React.FC<{
-  /** Extra dropdown row (e.g. the launcher opens its Settings overlay). */
-  onManage?: () => void;
-}> = ({ onManage }) => {
+export const AccountAvatar: React.FC = () => {
   const [account, setAccount] = useState<AccountInfo | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [signingIn, setSigningIn] = useState(false);
@@ -106,14 +102,6 @@ export const AccountAvatar: React.FC<{
             className="block px-3 py-1.5 text-xs text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-white/5">
             Dashboard
           </a>
-          {onManage && (
-            <button
-              onClick={() => { setMenuOpen(false); onManage(); }}
-              className="w-full text-left px-3 py-1.5 text-xs text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-white/5"
-            >
-              Account settings
-            </button>
-          )}
           <button
             onClick={async () => {
               await accountApi.logout().catch(() => {});

@@ -6,6 +6,7 @@
 // frames and the pages it opens included.
 import type { Frame, Page } from '@playwright/test';
 import { test, expect, watchAsked, asked } from '../support/world';
+import { standInForShell } from '../support/shell';
 
 const DICE = '/apps/dice/index.html';
 
@@ -78,14 +79,16 @@ test('a dial that never comes up is abandoned and redialled — the call still l
   expect(channelFrames(page)).toHaveLength(1); // the same frame redialled
 });
 
-test('a skill page framed by the launcher rides its channel — no peer of its own', async ({ page, world }) => {
+test("a skill page framed by the desktop app's tab rides its channel — no peer of its own", async ({ page, world }) => {
+  await standInForShell(page);
   await page.addInitScript(watchAsked);
-  await page.goto(`${world.url}/?launcher=1`);
+  await page.goto(`${world.url}/`);
+  await page.getByRole('navigation', { name: 'Tabs' }).getByRole('button', { name: 'dice', exact: true }).click();
   const dice = page.frameLocator('iframe[title="dice"]');
   await expect(dice.getByText(/^Models: \d+$/)).toBeVisible();
   await expect(dice.getByText(/^Chats: \d+$/)).toBeVisible();
 
   expect(channelFrames(page)).toEqual([]);
-  // The launcher asked for it, over its own channel.
+  // The app's window asked for it, over its own channel.
   await expect.poll(() => asked(page)).toContain('GET /api/skill-sessions');
 });

@@ -1,7 +1,7 @@
 /**
  * The UI's data channel, offered to the skill pages it frames.
  *
- * A skill page has no channel of its own when the UI frames it (the launcher's
+ * A skill page has no channel of its own when the UI frames it (the desktop app's
  * app tabs, a settings page): its /shared/channel.js finds this host on the
  * frame above and asks it, so the page's `/api/*` calls ride this page's peer
  * — no second peer, never plain HTTP. A page standing alone opens the UI's

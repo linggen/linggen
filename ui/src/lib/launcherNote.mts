@@ -1,5 +1,5 @@
 /**
- * The line the launcher shows where its apps go: while the list loads, when
+ * The line the desktop app's tab bar shows for its apps: while the list loads, when
  * it failed (with a retry beside it), or when it came back empty — never
  * "Loading" for a list that is not coming. Pure, so node tests can hold it.
  */

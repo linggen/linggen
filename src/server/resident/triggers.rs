@@ -476,7 +476,7 @@ pub(crate) fn user_sees(state: &ServerState, sight: Sight<'_>) -> bool {
 /// take. Her bubble and its offer buttons are drawn only by the surface that
 /// holds her — the main page's dock (`MainApp.tsx`, `useYinyuePresenter`)
 /// and the pet window (`PetApp.tsx`); an app's page draws none of a home
-/// line (`LauncherApp.tsx` holds her there as a bodyless stage), and a
+/// line (the desktop app's window holds her there as a bodyless stage, `ui/src/apps/AppTabs.tsx`), and a
 /// private app's page never carries one. Audio alone never counts.
 fn line_is_drawn(state: &ServerState, app: Option<&str>) -> bool {
     state.manager.presence_at_page(app)

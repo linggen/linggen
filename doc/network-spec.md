@@ -137,7 +137,7 @@ cannot point it elsewhere.
 | Claude Code / Codex plugin | HTTP MCP, JSON-RPC | `/mcp` — the one door: memory (5), agents (4), browser (3); the view depends on the caller (`mcp-spec.md` § Views) |
 | Linggen.app shell | HTTP | `/api/health`, every 60s while a window is open |
 | Shell, Web UI, phone on LAN | WebRTC | `/api/rtc/token` → `/api/rtc/whip`; then every `/api/*` call as `http_request` on the channel — the web UI has no HTTP data path (webrtc-spec.md) |
-| Skill pages (`/apps/<skill>/…`) | WebRTC | the same, through `/shared/channel.js`: the launcher's channel when it frames them, else a hidden `/?channel=1` frame's own peer; only their files are HTTP (webrtc-spec.md § Skill pages) |
+| Skill pages (`/apps/<skill>/…`) | WebRTC | the same, through `/shared/channel.js`: the desktop app's window's channel when its tabs frame them, else a hidden `/?channel=1` frame's own peer; only their files are HTTP (webrtc-spec.md § Skill pages) |
 | Phone off LAN | WebRTC over relay | `linggen.dev` signalling → `/api/signaling/<nonce>/answer` |
 | linggen-browser extension | WebSocket, extension dials in | `/api/bridge/socket` |
 | Skill scripts reaching the browser | HTTP | `POST /api/bridge/call` (a skill page's own call rides its channel) |

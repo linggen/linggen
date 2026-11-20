@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { ArrowLeft, Target, Plus, Trash2, Check, X, Pause, Play } from 'lucide-react';
 import { cn } from '../lib/cn';
-import type { AgentInfo, CronMission } from '../types';
+import type { CronMission } from '../types';
 import { useSessionStore } from '../stores/sessionStore';
 import { describeCron, folderLabel, lastRunTrouble } from '../lib/mission-utils';
 import { fetchMissions, updateMission, deleteMission } from '../lib/missions-api';
@@ -216,18 +216,7 @@ const RightPanel: React.FC<{
 
 // ---- Main Page --------------------------------------------------------------
 
-export const MissionPage: React.FC<{
-  onBack: () => void;
-  projectRoot: string;
-  agents: AgentInfo[];
-  embedded?: boolean;
-  onOpenSession?: (sessionId: string) => void;
-}> = ({ onBack: rawOnBack, projectRoot, agents: _agents, embedded, onOpenSession: _onOpenSession }) => {
-  // Reset mission session state when navigating away
-  const onBack = useCallback(() => {
-    useSessionStore.setState({ isMissionSession: false, activeMissionId: null });
-    rawOnBack();
-  }, [rawOnBack]);
+export const MissionPage: React.FC<{ projectRoot: string }> = ({ projectRoot }) => {
   const [missions, setMissions] = useState<CronMission[]>([]);
   const [loading, setLoading] = useState(true);
   const [selection, setSelection] = useState<SidebarSelection>(null);
@@ -296,10 +285,8 @@ export const MissionPage: React.FC<{
     setRightView('agent-viewer');
   };
 
-  const enabledCount = missions.filter(m => m.enabled).length;
-
-  const mainContent = (
-    <div className="flex-1 flex overflow-hidden">
+  return (
+    <div className="flex h-full overflow-hidden">
       {/* Left sidebar — mission nav */}
       <div className="w-72 border-r border-slate-200 dark:border-white/5 flex flex-col bg-white dark:bg-[#0f0f0f] h-full">
         <MissionNav
@@ -339,27 +326,4 @@ export const MissionPage: React.FC<{
     </div>
   );
 
-  if (embedded) {
-    return <div className="flex flex-col h-full">{mainContent}</div>;
-  }
-
-  return (
-    <div className="flex flex-col h-screen bg-slate-100/70 dark:bg-[#0a0a0a] text-slate-900 dark:text-slate-200">
-      <header className="flex items-center gap-4 px-6 py-3 border-b border-slate-200 dark:border-white/5 bg-white/90 dark:bg-[#0f0f0f]/90 backdrop-blur-md shrink-0">
-        <button onClick={onBack} className="p-1.5 rounded-md hover:bg-slate-100 dark:hover:bg-white/5 text-slate-500 transition-colors">
-          <ArrowLeft size={16} />
-        </button>
-        <div className="flex items-center gap-2">
-          <Target size={18} className={enabledCount > 0 ? 'text-green-500' : 'text-slate-400'} />
-          <h1 className="text-lg font-bold tracking-tight">Missions</h1>
-        </div>
-        {enabledCount > 0 && (
-          <span className="text-[11px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full bg-green-500/15 text-green-600 dark:text-green-400">
-            {enabledCount} active
-          </span>
-        )}
-      </header>
-      {mainContent}
-    </div>
-  );
 };

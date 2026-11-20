@@ -89,7 +89,7 @@ see "Adaptive presentation".
 ## Adaptive presentation (app vs web)
 
 One character, one renderer, one event spine, presented by whichever host runs. The
-page detects its host — the `?app_mode=1` flag the shell injects (or
+page detects its host — `inShell()` (`ui/src/lib/appHost.ts`, the one reader of
 `__TAURI_INTERNALS__`) — and routes:
 
 - **Desktop app** → suppress the in-page overlay; the shell opens a transparent,
@@ -164,10 +164,11 @@ in `src/server/state.rs`; UI: `useYinyuePresenter(enabled, stage)`.
 
 An app page can also say "no body here right now" — the app-mode message
 `{type: 'linggen:companion', companion: 'hidden'}` (skill-spec § App-mode).
-While that page is the launcher's active tab the launcher itself holds her as a
-bodyless stage, so the corner draws nothing; `shown`, a tab change or the page
-going away hands her back. Her voice, if she speaks meanwhile, plays from the
-launcher with no body — the same as a `body=0` stage.
+While that page is the desktop app's tab in front (not covered by settings) the
+app's window itself holds her as a bodyless stage, so the corner draws nothing;
+`shown`, a tab change, settings over it or the page going away hands her back.
+Her voice, if she speaks meanwhile, plays from that window with no body — the
+same as a `body=0` stage. (`ui/src/apps/AppTabs.tsx`.)
 
 ### Mute (built 2026-09-16)
 
@@ -500,8 +501,8 @@ user's region and time without asking.
 - Shipped: adaptive presentation (renderer unify) — one `PetStage` in core, shown as
   the in-page `YinyueAvatar` overlay in the browser and as a transparent native window
   in the desktop app that loads the **same** page (`?pet=1`) over HTTP (`shell/src/pet.rs`
-  → `WebviewUrl::External`); `?app_mode=1` suppresses the in-page dock so the two never
-  double up. Retired the old bundled `shell/pet-ui` fork (and its `build.sh` staging).
+  → `WebviewUrl::External`); inside the shell (`inShell()`) the in-page dock never
+  presents, so the two never double up. Retired the old bundled `shell/pet-ui` fork (and its `build.sh` staging).
 - Designed (not built): the locomotion/roaming half of adaptive presentation —
   one state machine fed host-bounded walkable surfaces (see "Two environments").
 - Shipped (engine): voice — `TtsProvider` trait + Kokoro (any-tts/candle, Metal),

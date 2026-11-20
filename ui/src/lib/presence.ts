@@ -25,6 +25,16 @@ const SURFACE = `ui-${Math.random().toString(36).slice(2, 10)}${Date.now().toStr
 // The skill this surface shows, when it is an app's chat (the embed under an
 // app page); none on the main page.
 let app: string | null = null;
+let covered = false;
+let reportedFocus = false;
+
+/** The shell's app tab covers this surface. Withdraw the last focused
+ * reading now; while covered, only a pending withdrawal may beat. */
+export function setPresenceCovered(next: boolean): void {
+  if (covered === next) return;
+  covered = next;
+  beat();
+}
 
 function snapshot(): { surface: string; focused: boolean; typing: boolean; idle_ms: number; app?: string } {
   const now = Date.now();
@@ -32,7 +42,7 @@ function snapshot(): { surface: string; focused: boolean; typing: boolean; idle_
   // another app never reach this page, and a blurred/hidden tab reads as away.
   // Gate `typing` on focus so the raw field can't claim activity while the user
   // is off in another window.
-  const focused = document.hasFocus() && document.visibilityState === 'visible';
+  const focused = !covered && document.hasFocus() && document.visibilityState === 'visible';
   return {
     surface: SURFACE,
     focused,
@@ -43,11 +53,13 @@ function snapshot(): { surface: string; focused: boolean; typing: boolean; idle_
 }
 
 function beat(): void {
-  if (!connection.isOpen()) return;
+  if (!connection.isOpen() || (covered && !reportedFocus)) return;
+  const reading = snapshot();
+  reportedFocus = reading.focused;
   fetch('/api/presence', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(snapshot()),
+    body: JSON.stringify(reading),
   }).catch(() => {
     /* no surface connected / offline — nothing to do */
   });

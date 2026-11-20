@@ -14,11 +14,11 @@ function uiBuild() {
   execFileSync('npm', ['run', 'build'], { cwd: path.join(REPO, 'ui'), stdio: 'inherit' });
 }
 
-/** `cargo test --test world --no-run` → the built world binary's path. */
+/** Build the world in the same scratch environment as the Rust tests. */
 function worldBuild(): string {
   const out = execFileSync(
-    'cargo',
-    ['test', '--test', 'world', '--no-run', '--message-format=json'],
+    path.join(REPO, 'scripts/scratch-test.sh'),
+    ['--test', 'world', '--no-run', '--message-format=json'],
     { cwd: REPO, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'], maxBuffer: 256 << 20 },
   );
   for (const line of out.split('\n')) {

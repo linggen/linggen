@@ -920,7 +920,35 @@ fn attach_skill_dir(skill: &mut Skill, dir: PathBuf) {
     for tool_def in &mut skill.tool_defs {
         tool_def.skill_dir = Some(dir.clone());
     }
+    validate_app_settings(skill, &dir);
     skill.skill_dir = Some(dir);
+}
+
+fn validate_app_settings(skill: &mut Skill, dir: &Path) {
+    let Some(app) = &mut skill.app else { return };
+    let Some(path) = app.settings.as_deref() else {
+        return;
+    };
+    if app.launcher != "web" || !settings_file_in_skill(dir, path) {
+        tracing::warn!(skill = %skill.name, %path, "Ignoring invalid app settings page");
+        app.settings = None;
+    }
+}
+
+fn settings_file_in_skill(dir: &Path, path: &str) -> bool {
+    // Match the app file route's traversal check. Use slash-separated normal
+    // components so browser URL normalization cannot change the app prefix.
+    if path.contains("..")
+        || path.contains(['\\', ':'])
+        || path.chars().any(char::is_control)
+        || path.split('/').any(|part| part.is_empty() || part == ".")
+    {
+        return false;
+    }
+    let (Ok(root), Ok(file)) = (dir.canonicalize(), dir.join(path).canonicalize()) else {
+        return false;
+    };
+    file.starts_with(root) && file.is_file()
 }
 
 /// Honour every `renamed-from:` an installed skill declares, before any skill
@@ -1470,6 +1498,68 @@ Sing."#;
         assert!(app.allows("microphone"));
         assert!(!app.allows("camera"));
         assert_eq!(app.permissions_policy(), "camera=(), microphone=(self)");
+    }
+
+    #[test]
+    fn app_frontmatter_ignores_unknown_keys() {
+        let text = "---\nname: fixture\ndescription: App fixture\napp:\n  launcher: web\n  entry: index.html\n  settings: pages/options.html\n  future-field: { nested: true }\n---\nBody";
+        let skill = parse_skill_text(text, SkillSource::Global).unwrap();
+        let app = skill.app.unwrap();
+        assert_eq!(app.launcher, "web");
+        assert_eq!(app.entry, "index.html");
+        assert_eq!(app.settings.as_deref(), Some("pages/options.html"));
+        assert!(app.list);
+    }
+
+    #[test]
+    fn invalid_settings_paths_leave_the_skill_runnable_without_a_settings_page() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("fixture");
+        std::fs::create_dir_all(dir.join("pages")).unwrap();
+        std::fs::write(dir.join("pages/options.html"), "settings").unwrap();
+        std::fs::write(tmp.path().join("outside.html"), "outside").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(tmp.path().join("outside.html"), dir.join("link.html")).unwrap();
+
+        let load = |launcher: &str, settings: &str| {
+            let text = format!("---\nname: fixture\ndescription: App fixture\napp:\n  launcher: {launcher}\n  entry: index.html\n{settings}---\nBody");
+            std::fs::write(dir.join("SKILL.md"), text).unwrap();
+            let app = load_skill_from_path(&dir, SkillSource::Global)
+                .unwrap()
+                .unwrap()
+                .app
+                .unwrap();
+            assert_eq!(app.entry, "index.html");
+            app
+        };
+        let app = load("web", "  settings: pages/options.html\n");
+        assert_eq!(
+            serde_json::to_value(app).unwrap()["settings"],
+            "pages/options.html"
+        );
+        for path in [
+            "../outside.html",
+            "/outside.html",
+            "pages",
+            "missing.html",
+            "pages/./options.html",
+        ] {
+            assert!(
+                load("web", &format!("  settings: '{path}'\n"))
+                    .settings
+                    .is_none(),
+                "{path}"
+            );
+        }
+        #[cfg(unix)]
+        assert!(load("web", "  settings: link.html\n").settings.is_none());
+        assert!(load("bash", "  settings: pages/options.html\n")
+            .settings
+            .is_none());
+        assert!(serde_json::to_value(load("web", ""))
+            .unwrap()
+            .get("settings")
+            .is_none());
     }
 
     #[test]

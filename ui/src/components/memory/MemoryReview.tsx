@@ -6,7 +6,7 @@ import { describeError, memory, MemoryError, type MemoryRow, type ReviewIssue } 
 import { fmtTime } from './memoryFormat.mts';
 import { chipCls, dangerBtn, ghostBtn, primaryBtn, sectionCls } from './memoryStyle';
 
-export const MemoryReview: React.FC<{ onCount: (count: number) => void }> = ({ onCount }) => {
+export const MemoryReview: React.FC<{ onCount: (count: number) => void; canOpenRun: boolean }> = ({ onCount, canOpenRun }) => {
   const [items, setItems] = useState<ReviewIssue[] | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [opened, setOpened] = useState<Record<string, MemoryRow | null>>({});
@@ -51,7 +51,7 @@ export const MemoryReview: React.FC<{ onCount: (count: number) => void }> = ({ o
       {items === null && !error && <p className="text-xs text-slate-500">Loading…</p>}
       {items?.length === 0 && <p className="text-xs text-slate-500">Nothing waits for review.</p>}
       {items != null && items.length > 0 && <div className="space-y-1"><button className={primaryBtn} disabled={solving} onClick={solve}>Solve</button><p className="text-xs text-slate-500">Ling works through the queue and asks you only when it must.</p></div>}
-      {notice && <div role="status" className="flex items-center gap-2 text-xs text-slate-500"><span>{notice}</span>{run && <OpenRun sessionId={run} />}</div>}
+      {notice && <div role="status" className="flex items-center gap-2 text-xs text-slate-500"><span>{notice}</span>{canOpenRun && run && <OpenRun sessionId={run} />}</div>}
       {items?.map((item) => (
         <section key={item.id} className={`${sectionCls} space-y-2`}>
           <p data-no-i18n className="text-xs text-slate-800 dark:text-slate-200 whitespace-pre-wrap break-words">{item.note}</p>

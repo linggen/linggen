@@ -467,7 +467,9 @@ Three launcher types: `web` (static files in an embedded panel), `bash` (run a s
 
 `title` is the name the launcher shows (`title: CFO`, `title: Apple Shifu`); without it the launcher shows the skill's `name`. The engine keeps no table of app names.
 
-`list: false` keeps a `web` app out of the launcher's tab bar while leaving it installed and runnable — what a skill that isn't finished declares about itself. Defaults to true.
+`list: false` keeps a `web` app out of the desktop app's tab bar while leaving it installed and runnable — what a skill that isn't finished declares about itself. A launch (`RunApp`, `POST /api/apps/launch`) does not bring it up there; the person's own click on its skill card opens it in a tab. Defaults to true.
+
+`settings` names a `web` app's settings page inside the skill (`settings: scripts/settings.html`). It appears under Settings → Apps even with `list: false`. Without a valid file inside the skill, the app still runs but has no settings page.
 
 `allow` names the device features the app's page may ask for — `camera` and `microphone` (`allow: [camera]`, `allow: [microphone]`). The launcher frames a declaring app with `allow="camera"` (or `microphone`) and the engine serves its pages with `Permissions-Policy: camera=(self)`; a feature not declared gets `'none'` / `()`. In Linggen.app the shell grants a capture request only to the engine's own origin and only for a page under a declaring app; macOS asks the user once. A new feature name needs the Mac shell's usage text and entitlement first.
 
@@ -533,7 +535,7 @@ const saveUi = (patch) => { try { localStorage.setItem(UI_KEY, JSON.stringify({ 
 
 - Write on change, merge into state at boot, and **validate restored values against live data** (a saved playlist may be deleted; a saved month may fall outside the imported range) — fall back to defaults, never render a dangling selection.
 - UI prefs only — data lives in the skill's `data/` files. localStorage is per-browser and clearable; the page must render correctly from an empty blob.
-- The launcher shell keeps its own blob (`linggen:launcher`, currently `{ v, active }`) to reopen the last active app. References: `dj/scripts/dj.js`, `cfo/scripts/cfo.js`, `ui/src/apps/LauncherApp.tsx`.
+- The desktop app's tab bar keeps its own blob (`linggen:launcher`, currently `{ v, active }`; `active: null` is the chat home) to reopen the last tab used. References: `dj/scripts/dj.js`, `cfo/scripts/cfo.js`, `ui/src/apps/AppTabs.tsx`.
 
 ## Install
 

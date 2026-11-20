@@ -1,11 +1,18 @@
 /**
- * Main entry — owner's full UI: sidebar, chat, info panel, settings, missions.
+ * The one shell — owner's full UI: sidebar, chat, info panel, settings, missions.
+ * The desktop app's window shows this same shell; what differs there (the
+ * tabs, where an app opens, Yinyue in her own window) asks `inShell()`
+ * (lib/appHost.ts) and nothing else.
  * Uses responsive CSS for mobile (<768px) — no separate mobile entry.
  */
-import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useMemo, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { chatAgentOf, memberModel } from '../lib/sessionMembers.mts';
 import { X } from 'lucide-react';
 import type { SessionInfo, SkillInfo } from '../types';
+import { appPage, inShell, openApp } from '../lib/appHost';
+import { isSettingsTarget } from '../lib/settingsSections.mts';
+import { AppFrames, AppTabBar, useAppTabs } from './AppTabs';
+import { SkyOverlay } from '../components/SkyOverlay';
 import { SessionList } from '../components/SessionList';
 import { FilePreview } from '../components/FilePreview';
 import { ChatWidget } from '../components/chat';
@@ -15,13 +22,12 @@ import { ToastContainer } from '../components/ToastContainer';
 import { LingMemConnectModal } from '../components/LingMemConnectModal';
 import { YinyueBubble } from '../components/YinyueBubble';
 import { YinyueAvatar } from '../components/yinyue/YinyueAvatar';
-import { AppPanel } from '../components/AppPanel';
 import { InfoPanel } from '../components/InfoPanel';
 import { RoomChatPanel } from '../components/RoomChatPanel';
 import { roomsShown } from '../lib/roomsShown.mts';
 import { recordSkillUsage } from '../lib/skillUsage';
 import { buildAgentWorkInfo } from '../lib/messageUtils';
-import { startPresenceBeat } from '../lib/presence';
+import { setPresenceCovered, startPresenceBeat } from '../lib/presence';
 import { useSessionStore } from '../stores/sessionStore';
 import { useServerStore } from '../stores/serverStore';
 import { useChatStore } from '../stores/chatStore';
@@ -33,14 +39,10 @@ import { useChatActions } from '../hooks/useChatActions';
 import { sendViewContext, useYinyuePresenter } from '../hooks/useTransport';
 import { useOpenSettings } from '../hooks/useOpenSettings';
 import '../lib/ownModel';
-import { useLocation } from 'react-router-dom';
 import { useShallow } from 'zustand/react/shallow';
 
 const urlParams = new URLSearchParams(window.location.search);
 const isMobileParam = urlParams.get('mode') === 'mobile';
-// Inside a desktop app shell, Yinyue lives in a separate native pet window
-// (loaded from `?pet=1`), so suppress the in-page dock to avoid two of her.
-const isAppMode = urlParams.get('app_mode') === '1';
 
 /** Detect mobile viewport (< 768px) or explicit ?mode=mobile. */
 function useIsMobile(): boolean {
@@ -60,7 +62,7 @@ function useIsMobile(): boolean {
 /** Detect remote/tunnel mode (blob iframe with injected instance meta tag). */
 const isRemoteMode = typeof document !== 'undefined' && !!document.querySelector('meta[name="linggen-instance"]');
 
-export const MainApp: React.FC = () => {
+export const MainApp: React.FC<{ covered: boolean }> = ({ covered }) => {
   // --- Stores ---
   // Only the fields this shell renders from. A whole-store subscription made
   // every streamed token (chat store) and token-rate tick (server store)
@@ -87,9 +89,8 @@ export const MainApp: React.FC = () => {
     reloadingSkills: s.reloadingSkills,
     agentTreesByProject: s.agentTreesByProject,
   })));
-  const { showAgentSpecEditor, openApp, selectedFileContent, selectedFilePath } = useUiStore(useShallow((s) => ({
+  const { showAgentSpecEditor, selectedFileContent, selectedFilePath } = useUiStore(useShallow((s) => ({
     showAgentSpecEditor: s.showAgentSpecEditor,
-    openApp: s.openApp,
     selectedFileContent: s.selectedFileContent,
     selectedFilePath: s.selectedFilePath,
   })));
@@ -97,29 +98,37 @@ export const MainApp: React.FC = () => {
   const agentStore = useServerStore.getState();
   const uiStore = useUiStore.getState();
 
-  // Yinyue singleton: subscribe this surface (the in-page dock) to the server's
-  // FCFS presenter lock and render her only when this surface holds it. In an
-  // app shell the native pet window owns her, so the dock never presents.
-  const showYinyue = useYinyuePresenter(!isAppMode);
+  const shell = inShell();
+  const tabs = useAppTabs({ enabled: shell, covered });
+
+  // Yinyue singleton: subscribe this surface to the server's FCFS presenter
+  // lock and render her only when this surface holds it. In the desktop app
+  // her own window holds her; this window only lends a bodyless stage while
+  // the app page in front says it has no body for her.
+  const presenting = useYinyuePresenter(shell ? tabs.bodylessStage : true, shell);
+  const showYinyue = !shell && presenting;
 
   const openSettings = useOpenSettings();
-  // A chat framed under this page (an embed) opens Settings → Models here (lib/ownModel.ts).
+  // A chat framed under this page (an embed) opens Settings → Models here
+  // (lib/ownModel.ts); the desktop app's Settings… menu and tray post
+  // `linggen:show-settings` (optionally with a section) to this window.
   useEffect(() => {
     window.__linggenOpenSettings = (tab) => openSettings(tab);
-    return () => { delete window.__linggenOpenSettings; };
+    const onMsg = (e: MessageEvent) => {
+      if (e.data?.type === 'linggen:show-settings' && e.origin === window.location.origin) {
+        openSettings(isSettingsTarget(e.data.section) ? e.data.section : undefined);
+      }
+    };
+    window.addEventListener('message', onMsg);
+    return () => {
+      delete window.__linggenOpenSettings;
+      window.removeEventListener('message', onMsg);
+    };
   }, [openSettings]);
 
-  // Presence beat — tell the server whether the user is here (typing / reading /
-  // away) so Yinyue's `sense` can read the room. Owner UI only; mounts once.
+  // Only the app's own chat can report presence while its tab is in front.
+  useLayoutEffect(() => setPresenceCovered(tabs.appInFront), [tabs.appInFront]);
   useEffect(() => startPresenceBeat(), []);
-
-  // Hide the main shell when an overlay route (Settings, Mission editor) is
-  // active. We keep MainApp mounted so WebRTC stays alive — only the visual
-  // shell is hidden so the routed overlay component is the only thing on
-  // screen.
-  const location = useLocation();
-  const isOverlayRoute = location.pathname === '/settings'
-    || location.pathname === '/missions/edit';
 
   const isMobile = useIsMobile();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -258,22 +267,9 @@ export const MainApp: React.FC = () => {
   // --- Info panel props (shared between desktop sidebar and mobile drawer) ---
   const handleClickSkill = useCallback((skill: SkillInfo) => {
     recordSkillUsage(skill.name);
-    if (skill.app) {
-      if (skill.app.launcher === 'web') {
-        const appUrl = `/apps/${skill.name}/${skill.app.entry}`;
-        if (isRemoteMode) {
-          const instanceId = document.querySelector('meta[name="linggen-instance"]')?.getAttribute('content') || '';
-          const relayOrigin = document.querySelector('meta[name="linggen-relay-origin"]')?.getAttribute('content') || '';
-          window.open(`${relayOrigin}/app/connect/${instanceId}?app=${encodeURIComponent(appUrl)}`, '_blank');
-        } else {
-          window.open(appUrl, '_blank');
-        }
-      } else if (skill.app.launcher === 'url') {
-        window.open(skill.app.entry, '_blank');
-      } else {
-        sendChatMessage(`/${skill.name} --web`);
-      }
-    } else sendChatMessage(`/${skill.name}`);
+    const page = appPage(skill);
+    if (page) openApp({ skill: skill.name, url: page });
+    else sendChatMessage(skill.app ? `/${skill.name} --web` : `/${skill.name}`);
   }, [sendChatMessage]);
 
   const infoPanelProps = {
@@ -290,14 +286,19 @@ export const MainApp: React.FC = () => {
   // --- Remote mode: gate rendering until transport is connected ---
   const connectionStatus = useUserStore((s) => s.connectionStatus);
   const roomsOn = useUserStore((s) => s.roomsOn);
+  // The live sky shows over the chat home and settings, never over an app's page.
+  const sky = tabs.appInFront ? null : <SkyOverlay />;
   if (isRemoteMode && connectionStatus === 'disconnected') {
     return (
+      <>
+      {sky}
       <div className="h-screen flex items-center justify-center bg-white dark:bg-[#0b0e14]">
         <div className="text-center space-y-4">
           <div className="inline-block animate-spin rounded-full h-10 w-10 border-4 border-slate-200 dark:border-slate-700 border-t-emerald-500" />
           <p className="text-slate-500 dark:text-slate-400 text-sm">Connecting to linggen server…</p>
         </div>
       </div>
+      </>
     );
   }
 
@@ -324,20 +325,23 @@ export const MainApp: React.FC = () => {
   // --- Render ---
   return (
     <>
+      {sky}
       <ToastContainer />
       <LingMemConnectModal />
       {showYinyue && <YinyueBubble />}
-      <div className={`flex flex-col h-screen bg-(--surface-shell) text-slate-900 dark:text-slate-200 font-sans overflow-hidden${isOverlayRoute ? ' hidden' : ''}`}>
+      <div className={`flex flex-col h-screen bg-(--surface-shell) text-slate-900 dark:text-slate-200 font-sans overflow-hidden${covered ? ' hidden' : ''}`}>
         {/* Header */}
         <HeaderBar
+          covered={covered}
+          tabs={tabs.enabled ? <AppTabBar t={tabs} /> : undefined}
           onOpenSettings={() => openSettings('general')}
-          onToggleMobileMenu={() => setMobileMenuOpen(!mobileMenuOpen)}
-          onToggleInfoPanel={isMobile ? () => setMobileInfoOpen(!mobileInfoOpen) : toggleRight}
+          onToggleMobileMenu={tabs.active ? undefined : () => setMobileMenuOpen(!mobileMenuOpen)}
+          onToggleInfoPanel={tabs.active ? undefined : isMobile ? () => setMobileInfoOpen(!mobileInfoOpen) : toggleRight}
           infoPanelOpen={isMobile ? mobileInfoOpen : !rightHidden}
         />
 
-        {/* Main Layout */}
-        <div className="flex-1 flex overflow-hidden">
+        {/* Main Layout: the chat home (behind an app's tab in the desktop app) */}
+        <div className={`flex-1 flex overflow-hidden${tabs.active ? ' hidden' : ''}`}>
 
           {/* Mobile slide-over session list */}
           {mobileMenuOpen && (
@@ -419,12 +423,12 @@ export const MainApp: React.FC = () => {
           )}
         </div>
 
+        <AppFrames t={tabs} />
+
         <FilePreview selectedFilePath={selectedFilePath} selectedFileContent={selectedFileContent} onClose={() => uiStore.closeFilePreview()} />
         <AgentSpecEditorModal open={showAgentSpecEditor} projectRoot={selectedProjectRoot}
           onClose={() => uiStore.setShowAgentSpecEditor(false)}
           onChanged={() => { agentStore.fetchAgents(selectedProjectRoot); useChatStore.getState().fetchSessionState(); }} />
-
-        {openApp && <AppPanel app={openApp} onClose={() => uiStore.setOpenApp(null)} />}
 
         <style>{`
           .custom-scrollbar { scrollbar-gutter: stable; }

@@ -182,7 +182,7 @@ export const test = base.extend<Fixtures>({
       all.push(r);
     };
     // Every frame of the page (a skill page's own channel frame, an app tab
-    // in the launcher) and every page it opens (an app skill's page) is held
+    // in the desktop app's window) and every page it opens (an app skill's page) is held
     // to the same rule.
     page.on('request', record(page));
     page.context().on('page', (opened) => opened.on('request', record(opened)));
@@ -221,6 +221,7 @@ function describe(method: string, url: string, pageUrl: string): string {
  *  WebRTC signaling that brings the data channel up. */
 const HTTP_ALLOWED: RegExp[] = [
   /^GET \/$/, // the page (`/?session=…` too)
+  /^GET \/settings$/, // the full-window settings route on reload
   /^GET \/embed$/, // an app's chat, the page an app frames (`/embed?skill=…`)
   /^GET \/assets\//, // its scripts, styles, lazy chunks
   /^GET \/(yinyue\.vrm|logo\.svg|favicon\.ico)$/, // static files from ui/public

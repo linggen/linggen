@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { confirmKey } from '../lib/dialogKeys.mts';
+import { watchTopDialogEscape } from '../lib/dialogEscape.mts';
 
 // The in-page modals behind lib/confirmDialog.
 
@@ -18,18 +19,19 @@ const inputCls =
   'w-full mt-3 px-2.5 py-1.5 rounded-lg text-sm bg-slate-50 dark:bg-white/5 border border-slate-200 dark:border-white/10 outline-none focus:border-blue-500';
 
 export const ConfirmCard: React.FC<{ message: string; onDone: (ok: boolean) => void }> = ({ message, onDone }) => {
+  const dialog = useRef<HTMLDivElement>(null);
   useEffect(() => {
+    const stopEscape = watchTopDialogEscape(dialog.current!, () => onDone(false));
     const onKey = (e: KeyboardEvent) => {
       const onButton = e.target instanceof HTMLElement && e.target.tagName === 'BUTTON';
-      const act = confirmKey(e.key, e.isComposing || e.keyCode === 229, onButton);
-      if (act) onDone(act === 'confirm');
+      if (confirmKey(e.key, e.isComposing || e.keyCode === 229, onButton) === 'confirm') onDone(true);
     };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    return () => { stopEscape(); window.removeEventListener('keydown', onKey); };
   }, [onDone]);
   return (
     <div className={overlayCls} onClick={() => onDone(false)}>
-      <div className={cardCls} role="alertdialog" aria-modal="true" aria-label={message} onClick={(e) => e.stopPropagation()}>
+      <div ref={dialog} className={cardCls} role="alertdialog" aria-modal="true" aria-label={message} onClick={(e) => e.stopPropagation()}>
         <p className={msgCls}>{message}</p>
         <div className={rowCls}>
           <button className={cancelCls} onClick={() => onDone(false)}>Cancel</button>
@@ -47,17 +49,14 @@ export const PromptCard: React.FC<{
 }> = ({ message, initial, onDone }) => {
   const [value, setValue] = useState(initial);
   const inputRef = useRef<HTMLInputElement>(null);
+  const dialog = useRef<HTMLDivElement>(null);
   useEffect(() => {
     inputRef.current?.select();
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onDone(null);
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    return watchTopDialogEscape(dialog.current!, () => onDone(null));
   }, [onDone]);
   return (
     <div className={overlayCls} onClick={() => onDone(null)}>
-      <div className={cardCls} onClick={(e) => e.stopPropagation()}>
+      <div ref={dialog} className={cardCls} role="dialog" aria-modal="true" aria-label={message} onClick={(e) => e.stopPropagation()}>
         <p className={msgCls}>{message}</p>
         <input
           ref={inputRef}

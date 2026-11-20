@@ -1,210 +1,32 @@
-import React, { useEffect, useState } from 'react';
-import { ArrowLeft } from 'lucide-react';
-import { useNavigate, useLocation } from 'react-router-dom';
-import type { ManagementTab } from '../../types';
-import { ModelsTab } from '../../components/ModelsTab';
-import { AgentsPage } from '../../components/AgentsPage';
-import { SessionTab } from '../../components/SessionTab';
-import { SkillsTab } from '../../components/SkillsTab';
-import { ToolsTab } from '../../components/ToolsTab';
-import { GeneralTab } from '../../components/GeneralTab';
-import { PhoneTab } from '../../components/PhoneTab';
-import { MissionPage } from '../../components/MissionPage';
-import { MemoryTab } from '../../components/memory/MemoryTab';
-import { StoragePage } from '../../components/StoragePage';
-import { RoomTab } from '../../components/RoomTab';
-import { useSessionStore } from '../../stores/sessionStore';
-import { useServerStore } from '../../stores/serverStore';
+import { useCallback, useEffect, useRef } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import type { SettingsLocationState } from '../../hooks/useOpenSettings';
-import { useAutoSaveConfig } from './useAutoSaveConfig';
-import { SaveStatus } from './SaveStatus';
-import { language } from '../../lib/i18n';
-import { useUserStore } from '../../stores/userStore';
-import { sectionOpens, tabGroupsFor } from '../../lib/roomsShown.mts';
+import { watchPageEscape } from '../../lib/dialogEscape.mts';
+import { useServerStore } from '../../stores/serverStore';
+import { SettingsPanel } from './SettingsPanel';
 
-type TabKey = Exclude<ManagementTab, 'mcp'>;
-
-/** Grouped the way the person thinks about them: who the agents are and how
- *  a chat runs; what they can do; the devices around them; the data kept. */
-const groups: { label?: string; tabs: { key: TabKey; label: string }[] }[] = [
-  { tabs: [
-    { key: 'general', label: 'General' },
-    { key: 'agents', label: 'Agents' },
-    { key: 'models', label: 'Models' },
-    { key: 'session', label: 'Session' },
-  ] },
-  { label: 'Capabilities', tabs: [
-    { key: 'skills', label: 'Skills' },
-    { key: 'tools', label: 'Tools & MCP' },
-    { key: 'mission', label: 'Missions' },
-  ] },
-  { label: 'Devices', tabs: [
-    { key: 'phone', label: 'Phone' },
-    { key: 'room', label: 'Room' },
-  ] },
-  { label: 'Data', tabs: [
-    { key: 'memory', label: 'Memory' },
-    { key: 'storage', label: 'Storage' },
-  ] },
-];
-const tabs = groups.flatMap((g) => g.tabs);
-const sidebarZh: Record<string, string> = {
-  Capabilities: '能力', 'Tools & MCP': '工具与 MCP', Devices: '设备', Phone: '手机', Room: '房间', Data: '数据',
-};
-const sidebarLabel = (label: string) => language() === 'zh-Hans' ? sidebarZh[label] ?? label : label;
-
-/** An old tab key (`mcp`) opens where that content lives now. */
-const toTab = (key: string | null | undefined): TabKey | undefined =>
-  key === 'mcp' ? 'tools' : tabs.find((t) => t.key === key)?.key;
-
-export const SettingsHome: React.FC = () => {
+export function SettingsHome() {
   const navigate = useNavigate();
   const location = useLocation();
-  const projectRoot = useSessionStore((s) => s.selectedProjectRoot);
-  const missionAgents = useServerStore((s) => s.agents);
-
-  // Tab to pre-select. Comes from route state set by useOpenSettings(tab).
-  // Reads on every render so a navigate() to the same URL with a new tab
-  // still updates the active tab.
-  // `/settings?tab=models` works too — a link from outside the app (a quest's
-  // `open`) has no route state to carry.
-  const queryTab = new URLSearchParams(location.search).get('tab');
-  const requestedTab = toTab((location.state as SettingsLocationState | null)?.tab ?? queryTab);
-  const roomsOn = useUserStore((s) => s.roomsOn);
-  const shownGroups = tabGroupsFor(groups, roomsOn);
-  const [pickedTab, setActiveTab] = useState<TabKey>(requestedTab || 'general');
-  // The room tab opens only while rooms are on.
-  const activeTab: TabKey = sectionOpens(pickedTab, roomsOn) ? pickedTab : 'general';
-  const { config, setConfig, setCredsDirty, saveCredsRef, state: saveState, error } = useAutoSaveConfig();
-
-  useEffect(() => {
-    if (requestedTab) setActiveTab(requestedTab);
-  }, [requestedTab]);
-
-  const onBack = () => {
+  const state = location.state as SettingsLocationState | null;
+  // A host passes route state; links from outside can use ?tab= instead.
+  const initial = state?.tab ?? new URLSearchParams(location.search).get('tab');
+  const onBack = useCallback(() => {
     const server = useServerStore.getState();
     server.fetchModels();
     server.fetchDefaultModels();
     server.fetchOllamaStatus();
+    // The shell under this page stays mounted, so the desktop app's tab in front stays as it was.
     navigate('/');
-  };
+  }, [navigate]);
 
-
-  if (!config) {
-    return (
-      <div className="flex items-center justify-center h-screen bg-slate-100/70 dark:bg-[#0a0a0a] text-slate-500">
-        {error ? <p className="text-red-500">{error}</p> : <p>Loading config...</p>}
-      </div>
-    );
-  }
+  const page = useRef<HTMLDivElement>(null);
+  useEffect(() => { page.current?.focus({ preventScroll: true }); }, []);
+  useEffect(() => watchPageEscape(document, onBack), [onBack]);
 
   return (
-    <div className="flex flex-col h-screen bg-slate-100/70 dark:bg-[#0a0a0a] text-slate-900 dark:text-slate-200">
-      <header className="border-b border-slate-200 dark:border-white/5 bg-white/90 dark:bg-[#0f0f0f]/90 backdrop-blur-md z-50">
-        <div className="flex items-center justify-between px-3 md:px-6 py-2 md:py-3">
-          <button onClick={onBack} className="flex items-center gap-1.5 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:text-blue-600 transition-colors shrink-0">
-            <ArrowLeft size={16} /> Back
-          </button>
-          <div className="flex items-center gap-2 min-h-[30px]">
-            <SaveStatus state={saveState} error={error} />
-          </div>
-        </div>
-        {/* Phone width: one scrolling row. Wider screens use the sidebar. */}
-        <nav className="md:hidden flex items-center gap-1 px-3 pb-2 overflow-x-auto">
-          {shownGroups.flatMap((g) => g.tabs).map((tab) => (
-            <TabButton key={tab.key} label={tab.label} active={activeTab === tab.key} onClick={() => setActiveTab(tab.key)} />
-          ))}
-        </nav>
-      </header>
-
-      <div className="flex-1 flex min-h-0">
-        <aside className="hidden md:flex flex-col w-48 shrink-0 border-r border-slate-200 dark:border-white/5 bg-white/60 dark:bg-[#0f0f0f]/60 overflow-y-auto py-3 px-2">
-          {shownGroups.map((g, i) => (
-            <div key={g.label ?? i} className={i ? 'mt-4' : undefined}>
-              {g.label && <div className="px-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">{sidebarLabel(g.label)}</div>}
-              {g.tabs.map((tab) => (
-                <TabButton key={tab.key} label={tab.label} active={activeTab === tab.key} onClick={() => setActiveTab(tab.key)} block />
-              ))}
-            </div>
-          ))}
-        </aside>
-      <div className="flex-1 min-w-0 overflow-hidden">
-        {activeTab === 'models' && (
-          <div className="h-full overflow-y-auto p-3 md:p-6">
-            <div className="max-w-4xl mx-auto">
-              <ModelsTab config={config} onChange={setConfig} onCredsDirtyChange={setCredsDirty} saveCredsRef={saveCredsRef} />
-            </div>
-          </div>
-        )}
-
-        {activeTab === 'agents' && (
-          <div className="h-full overflow-y-auto p-3 md:p-6">
-            <div className="max-w-4xl mx-auto"><AgentsPage config={config} onChange={setConfig} projectRoot={projectRoot} /></div>
-          </div>
-        )}
-
-        {activeTab === 'session' && (
-          <div className="h-full overflow-y-auto p-3 md:p-6">
-            <div className="max-w-4xl mx-auto"><SessionTab config={config} onChange={setConfig} /></div>
-          </div>
-        )}
-
-        {activeTab === 'skills' && (
-          <div className="h-full overflow-y-auto px-3 md:px-6 py-4 md:py-5">
-            <div className="max-w-6xl mx-auto h-full">
-              <SkillsTab projectRoot={projectRoot} />
-            </div>
-          </div>
-        )}
-
-        {activeTab === 'tools' && (
-          <div className="h-full overflow-y-auto p-3 md:p-6">
-            <div className="max-w-4xl mx-auto"><ToolsTab /></div>
-          </div>
-        )}
-
-        {activeTab === 'general' && (
-          <div className="h-full overflow-y-auto p-3 md:p-6">
-            <div className="max-w-4xl mx-auto"><GeneralTab config={config} onChange={setConfig} /></div>
-          </div>
-        )}
-
-        {activeTab === 'phone' && (
-          <div className="h-full overflow-y-auto p-3 md:p-6">
-            <div className="max-w-4xl mx-auto"><PhoneTab config={config} onChange={setConfig} /></div>
-          </div>
-        )}
-
-        {activeTab === 'mission' && (
-          <MissionPage embedded onBack={onBack} projectRoot={projectRoot} agents={missionAgents ?? []} />
-        )}
-
-        {activeTab === 'memory' && (
-          <div className="h-full overflow-y-auto p-3 md:p-6">
-            <div className="max-w-6xl mx-auto"><MemoryTab /></div>
-          </div>
-        )}
-
-        {activeTab === 'storage' && <StoragePage embedded onBack={onBack} />}
-
-        {activeTab === 'room' && (
-          <div className="h-full overflow-y-auto p-3 md:p-5"><RoomTab /></div>
-        )}
-      </div>
-      </div>
+    <div ref={page} tabIndex={-1} className="h-screen outline-none">
+      <SettingsPanel initial={initial} requestKey={initial ?? ''} canOpenRun onBack={onBack} />
     </div>
   );
-};
-
-const TabButton: React.FC<{ label: string; active: boolean; onClick: () => void; block?: boolean }> = ({ label, active, onClick, block }) => (
-  <button
-    onClick={onClick}
-    className={`${block ? 'w-full text-left' : 'shrink-0'} px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap ${
-      active
-        ? 'bg-blue-600/10 text-blue-600 dark:text-blue-400'
-        : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/5'
-    }`}
-  >
-    {sidebarLabel(label)}
-  </button>
-);
+}
