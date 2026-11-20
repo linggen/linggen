@@ -36,9 +36,11 @@ pub(super) fn in_edit_folder(target: &Path, perms: &SessionPermissions) -> bool 
         return false;
     }
     let real = sensitive::resolved(target);
+    let home = dirs::home_dir().map(|home| sensitive::resolved(&home));
     perms.path_modes.iter().filter(|g| g.path != "*").any(|g| {
         let grant = sensitive::resolved(Path::new(&g.path));
-        g.mode >= PermissionMode::Edit && grant.is_dir()
+        g.mode >= PermissionMode::Edit && grant.is_dir() && grant.parent().is_some()
+            && home.as_ref().is_none_or(|home| !sensitive::within(home, &grant))
             && real.strip_prefix(&grant).ok().is_some_and(|rel| crate::util::inside(&grant, rel).is_some())
     })
 }
@@ -72,11 +74,9 @@ pub(super) fn decide(
     if let Some(Protected::Place(root)) = protection {
         let named = perms.path_modes.iter().filter(|g| g.path != "*").any(|g| {
             let grant = sensitive::resolved(Path::new(&g.path));
-            (g.mode >= PermissionMode::Read && sensitive::within(&grant, &root)
-                && sensitive::within(&real, &grant))
-                || (g.mode >= PermissionMode::Edit && grant.is_dir()
-                    && real.strip_prefix(&grant).ok().is_some_and(|rel| crate::util::inside(&grant, rel).is_some()))
-        });
+            g.mode >= PermissionMode::Read && sensitive::within(&grant, &root)
+                && sensitive::within(&real, &grant)
+        }) || in_edit_folder(&real, perms);
         return if named && mode >= Some(PermissionMode::Read) { ReadDecision::Allow } else { ReadDecision::Ask };
     }
     if mode >= Some(PermissionMode::Read) || is_under_temp(&real)

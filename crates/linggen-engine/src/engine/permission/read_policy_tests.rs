@@ -124,6 +124,23 @@ fn read_policy_protected_places_require_a_specific_grant() {
 }
 
 #[test]
+fn read_policy_edit_exception_requires_a_project_scope() {
+    let home = dirs::home_dir().unwrap();
+    let world = tempfile::tempdir_in(&home).unwrap();
+    let project = world.path();
+    let env = file(project, ".env");
+    let ssh = home.join(".ssh/config");
+    let read = |target: &Path, root: &Path| outcome(check_permission(
+        "Read", None, target.to_str(), project,
+        &grant(root.to_str().unwrap(), PermissionMode::Edit), None,
+    ));
+    assert_eq!(read(&env, project), Allow);
+    for broad in [&home as &Path, home.parent().unwrap(), Path::new("/")] {
+        assert_eq!(read(&ssh, broad), Ask, "{}", broad.display());
+    }
+}
+
+#[test]
 fn read_policy_account_file_requires_local_owner_or_refuses() {
     let root = crate::paths::linggen_home();
     let path = root.join("account.toml");
