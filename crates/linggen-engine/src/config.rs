@@ -440,30 +440,46 @@ pub struct LoggingConfig {
     pub retention_days: Option<u64>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+/// A key missing from the file takes its value from [`RoutingConfig::default`]
+/// (the container-level `serde(default)`), so each default is written once —
+/// no field here may carry its own `#[serde(default…)]`.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(default)]
 #[cfg_attr(any(test, feature = "test-support"), derive(ts_rs::TS), ts(export))]
 pub struct RoutingConfig {
     // Retired keys `default_policy` / `policies` (named routing policies that
     // never ran) are ignored on load — serde skips unknown keys.
     /// Ordered list of model IDs selected as defaults by the user.
     /// The first model in the list is the primary default; others are fallbacks.
-    #[serde(default)]
     pub default_models: Vec<String>,
     /// Model for new Claude sessions (Settings → Models, the moon). Must be an
     /// Anthropic API-key model; unset or unusable falls back to
     /// `default_models`, then to the first usable Claude model.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(any(test, feature = "test-support"), ts(optional = nullable))]
     pub claude_default_model: Option<String>,
     /// When true, automatically try the next model on transient errors
     /// (timeout, rate limit, 502/503, connection failures). Default: true.
-    #[serde(default = "default_true")]
     pub auto_fallback: bool,
     /// Seconds a model may say nothing at all — no response headers, no
     /// first stream event — before the call is abandoned and retried (then
     /// moved down the chain). Unset: 30. `0` turns the guard off. A backend
     /// on this machine (localhost, loopback) is exempt.
-    #[serde(default)]
     pub first_event_timeout_secs: Option<u64>,
+}
+
+/// The one place routing defaults are decided: a fresh config, a file
+/// without `[routing]`, a `[routing]` missing a key, and a new engine
+/// (`AgentEngine::new`) all read them here.
+impl Default for RoutingConfig {
+    fn default() -> Self {
+        Self {
+            default_models: Vec::new(),
+            claude_default_model: None,
+            auto_fallback: true,
+            first_event_timeout_secs: None,
+        }
+    }
 }
 
 impl Config {
@@ -1040,6 +1056,29 @@ mod tests {
         .unwrap();
         assert_eq!(routing.default_models, vec!["m1".to_string()]);
         assert!(routing.auto_fallback);
+    }
+
+    /// `auto_fallback` has one default, `RoutingConfig::default`: a config
+    /// made fresh (no file), a file without `[routing]`, and a `[routing]`
+    /// without the key all say true. The engine asks the same default (see
+    /// `engine::types` tests).
+    #[test]
+    fn auto_fallback_has_one_default() {
+        let fresh = Config::default().routing.auto_fallback;
+        let mut file = toml::Value::try_from(Config::default()).unwrap();
+        file.as_table_mut().unwrap().remove("routing");
+        let no_table: Config = toml::from_str(&toml::to_string(&file).unwrap()).unwrap();
+        let no_key: RoutingConfig = toml::from_str("default_models = [\"m1\"]\n").unwrap();
+        assert!(RoutingConfig::default().auto_fallback);
+        assert!(fresh, "a fresh config");
+        assert!(no_table.routing.auto_fallback, "a file without [routing]");
+        assert!(no_key.auto_fallback, "a [routing] without the key");
+        // Every routing key: missing from the file means the Rust default.
+        let empty: RoutingConfig = toml::from_str("").unwrap();
+        assert_eq!(
+            toml::to_string(&empty).unwrap(),
+            toml::to_string(&RoutingConfig::default()).unwrap()
+        );
     }
 
     // ---- Config::validate tests ----
