@@ -69,17 +69,37 @@ function promptOf(t: SessionSpend['tokens']): { sent: number; cached: number } {
   return { sent: t.input + t.cache_read + t.cache_write, cached: t.cache_read };
 }
 
-function breakdown(u: SessionSpend): string {
-  const { sent, cached } = promptOf(u.tokens);
-  return `${compactTokens(sent)} in, ${compactTokens(u.tokens.output)} out, ${compactTokens(cached)} cached`;
+function breakdown(t: SessionSpend['tokens']): string {
+  const { sent, cached } = promptOf(t);
+  return `${compactTokens(sent)} in, ${compactTokens(t.output)} out, ${compactTokens(cached)} cached`;
+}
+
+/** The tokens of the session's models that have a price (`priced`) or are named unpriced. */
+function tokensOfModels(u: SessionSpend, priced: boolean): SessionSpend['tokens'] {
+  const sum = { input: 0, output: 0, cache_read: 0, cache_write: 0 };
+  for (const m of u.models ?? []) {
+    const has = m.cost_usd !== undefined;
+    const named = (u.unpriced ?? []).includes(m.model);
+    if (priced ? !has : !named) continue;
+    sum.input += m.input; sum.output += m.output; sum.cache_read += m.cache_read; sum.cache_write += m.cache_write;
+  }
+  return sum;
 }
 
 function estimateOf(u: SessionSpend, cost: number): NonNullable<SpendView['estimate']> {
   const unpriced = u.unpriced ?? [];
-  const note = unpriced.length ? ` No price is known for ${unpriced.join(', ')}: those tokens are not in the amount.` : '';
+  if (!unpriced.length) {
+    return {
+      text: `≈ $${dollars(cost)}`,
+      title: `Estimate at list price from this session's tokens: ${breakdown(u.tokens)}. Your bill may differ.`,
+    };
+  }
+  // Some models have no known price: the amount carries a mark, and the
+  // hover tells their tokens from the priced ones.
   return {
-    text: `≈ $${dollars(cost)}`,
-    title: `Estimate at list price from this session's tokens: ${breakdown(u)}. Your bill may differ.${note}`,
+    text: `≈ $${dollars(cost)}+`,
+    title: `Estimate at list price for the priced models: ${breakdown(tokensOfModels(u, true))}. Your bill may differ. `
+      + `Not priced, so not in the amount: ${unpriced.join(', ')} (${breakdown(tokensOfModels(u, false))}).`,
   };
 }
 
@@ -87,7 +107,7 @@ function tokensOf(u: SessionSpend): NonNullable<SpendView['tokens']> {
   const { sent } = promptOf(u.tokens);
   return {
     text: `${compactTokens(sent)} in · ${compactTokens(u.tokens.output)} out`,
-    title: `Tokens used: ${breakdown(u)}. No price is known for this model, so no cost is shown.`,
+    title: `Tokens used: ${breakdown(u.tokens)}. No price is known for this model, so no cost is shown.`,
   };
 }
 

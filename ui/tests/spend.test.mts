@@ -3,6 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { translateFrom } from '../src/lib/i18nMatch.mts';
 import { compactTokens, dollars, spendView, type SessionSpend } from '../src/lib/spend.mts';
 import { loadOutcome } from '../src/lib/sessionLoad.mts';
 
@@ -28,9 +29,23 @@ test('an unpriced model shows tokens and no dollars', () => {
   assert.ok(!/\$/.test(view.tokens!.text + view.tokens!.title), 'no amount is invented');
 });
 
-test('a priced model beside an unpriced one says the amount leaves tokens out', () => {
-  const view = spendView({ claude: false, onChatGpt: false, usage: used({ cost_usd: 1, unpriced: ['gem'] }) });
-  assert.match(view.estimate!.title, /No price is known for gem: those tokens are not in the amount\./);
+test('a partly priced session marks its amount and says what is not in it', () => {
+  const model = (name: string, input: number, cost?: number) => ({
+    model: name, billing: 'metered' as const, calls: 1, unreported: 0, input, output: 10, cache_read: 0, cache_write: 0,
+    ...(cost === undefined ? {} : { cost_usd: cost }),
+  });
+  const view = spendView({
+    claude: false, onChatGpt: false,
+    usage: used({ cost_usd: 1, unpriced: ['gem'], models: [model('sonnet', 2000, 1), model('gem', 500)] }),
+  });
+  assert.equal(view.estimate?.text, '≈ $1.00+', 'the figure carries a visible mark');
+  const title = view.estimate!.title;
+  assert.match(title, /Not priced, so not in the amount: gem/);
+  // The breakdown tells the priced tokens from the unpriced ones.
+  assert.match(title, /priced models: 2\.0k in, 10 out, 0 cached/);
+  assert.match(title, /gem \(500 in, 10 out, 0 cached\)/);
+  // A fully priced session has no mark.
+  assert.equal(spendView({ claude: false, onChatGpt: false, usage: used({ cost_usd: 1, models: [model('sonnet', 2000, 1)] }) }).estimate?.text, '≈ $1.00');
 });
 
 test('the Claude SDK session keeps its own figure, whatever the engine ledger says', () => {
@@ -58,14 +73,28 @@ test('a load that changed only the spend is applied', () => {
   assert.equal(loadOutcome({ ...before, spend: 99 }, 's', before), 'apply');
 });
 
-test('every sentence the bar can say has its Chinese in the string table', () => {
-  const zh = readFileSync(new URL('../src/lib/strings-zh.ts', import.meta.url), 'utf8');
-  for (const key of [
-    "Estimate at list price from this session's tokens: {a} in, {b} out, {c} cached. Your bill may differ.",
-    "Estimate at list price from this session's tokens: {a} in, {b} out, {c} cached. Your bill may differ. No price is known for {names}: those tokens are not in the amount.",
-    'Tokens used: {a} in, {b} out, {c} cached. No price is known for this model, so no cost is shown.',
-    '{a} in · {b} out',
-  ]) assert.ok(zh.includes(`'${key}'`) || zh.includes(`"${key}"`), key);
-  // The longer sentence is tried first: the shorter one is its prefix.
-  assert.ok(zh.indexOf('No price is known for {names}') < zh.indexOf('differ.": '));
+// The string table is a .ts module Node does not load as one; its one table is read as data.
+const ZH: Record<string, string> = new Function(
+  readFileSync(new URL('../src/lib/strings-zh.ts', import.meta.url), 'utf8').replace(/^export const ZH[^=]*=/m, 'return '),
+)();
+
+test('every sentence the bar builds is put into Chinese by the page\'s own matcher, every slot filled', () => {
+  const model = (name: string, input: number, cost?: number) => ({
+    model: name, billing: 'metered' as const, calls: 1, unreported: 0, input, output: 10, cache_read: 3, cache_write: 0,
+    ...(cost === undefined ? {} : { cost_usd: cost }),
+  });
+  const said = [
+    spendView({ claude: false, onChatGpt: false, usage: used({ cost_usd: 4.4, models: [model('a', 1000, 4.4)] }) }).estimate!.title,
+    spendView({ claude: false, onChatGpt: false, usage: used({ cost_usd: 1, unpriced: ['gem', 'zed'], models: [model('a', 2000, 1), model('gem', 500), model('zed', 70)] }) }).estimate!.title,
+    spendView({ claude: false, onChatGpt: false, usage: used() }).tokens!.title,
+    spendView({ claude: false, onChatGpt: false, usage: used() }).tokens!.text,
+  ];
+  for (const en of said) {
+    const zh = translateFrom(ZH, en);
+    assert.ok(zh, `no Chinese for: ${en}`);
+    assert.ok(!/\{\w+\}/.test(zh!), `an unfilled slot in: ${zh}`);
+    assert.ok(/[一-鿿]/.test(zh!), zh);
+  }
+  // The names and numbers of the English carry over.
+  assert.match(translateFrom(ZH, said[1])!, /gem, zed（输入 576，输出 20，缓存命中 6）/);
 });

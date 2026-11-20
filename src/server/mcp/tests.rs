@@ -348,7 +348,7 @@ async fn the_published_surface_is_locked() {
         ("memory_delete", "bbc85f7c3b3268e1"),
         ("memory_upkeep", "641714d169511379"),
         ("agent_run", "b81061f2a6510c81"),
-        ("agent_status", "dc59c089aca58cff"),
+        ("agent_status", "1eea40f024c741ef"),
         ("agent_permit", "da375d9cdd613884"),
         ("agent_end", "289a89471b91f423"),
         ("browser_open", "97f5d840f195a315"),

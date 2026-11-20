@@ -476,7 +476,7 @@
     },
     {
       "name": "agent_status",
-      "description": "op=session: one session's running work, pending permission requests, status, error, the model that answered, reply, followup, denied actions, grants, usage and cannot_run (why it stopped: a usage limit carries resets_at). usage is what the session's model calls used per model (input, output, cache_read, cache_write tokens) with cost_usd, an estimate at list price, only for a model with a known price; a model without one has tokens and no dollars, an account or local model is not spend — once when a watch ends without finished; never poll. op=models: every model and whether it can be used now (ready, or why not and what to do); pick a ready one for agent_run's model.",
+      "description": "op=session: one session's running work, pending permission requests, status, error, the model that answered, reply, followup, denied actions, grants and cannot_run (why it stopped: a usage limit carries resets_at) — once when a watch ends without finished; never poll. It also carries usage, what the session's model calls used and cost: per-model tokens, cost_usd only for a model with a known price, the total, and unpriced (models whose tokens the total leaves out). op=models: every model and whether it can be used now (ready, or why not and what to do); pick a ready one for agent_run's model.",
       "inputSchema": {
         "type": "object",
         "properties": {

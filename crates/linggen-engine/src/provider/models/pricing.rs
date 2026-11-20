@@ -71,6 +71,9 @@ const fn price(input: f64, output: f64, cache_read: f64, cache_write: f64) -> Pr
 /// `cache_control: ephemeral`, which is 5 minutes (no 1-hour ttl is set
 /// anywhere). Checked against platform.claude.com/docs/en/about-claude/pricing
 /// (the rows' prices were true on 2026-11-03 and read again on 2026-11-19).
+/// Haiku 5.5's long-prompt input (0.50) and output (2.50) are on that page;
+/// its long-prompt cache rates (0.05 read, 0.625 write) are DERIVED from them
+/// by the same ratios as everywhere else (0.1x read, 1.25x write), not listed.
 const TABLE: &[Listed] = &[
     Listed {
         model: "claude-opus-5-5",
@@ -444,7 +447,12 @@ mod tests {
     fn a_model_with_a_configured_price_is_metered_whatever_its_host() {
         let mut gateway = model("openai", "http://192.168.1.20:8000/v1", "x");
         assert_eq!(billing_of(&gateway), Billing::Local);
-        gateway.price = Some(ModelPrice { input: 1.0, output: 2.0, cache_read: None, cache_write: None });
+        gateway.price = Some(ModelPrice {
+            input: 1.0,
+            output: 2.0,
+            cache_read: None,
+            cache_write: None,
+        });
         assert_eq!(billing_of(&gateway), Billing::Metered);
         let mut local = model("ollama", "http://127.0.0.1:11434", "x");
         local.price = gateway.price.clone();
@@ -470,10 +478,20 @@ mod tests {
         let with = |billing: Option<Billing>, t: ModelTally| ModelTally { billing, ..t };
         let mut ledger = SessionUsage::default();
         let metered = Some(Billing::Metered);
-        ledger.models.insert("sonnet".into(), with(metered, tally(&[call(1_000_000, 0, 0, 100_000)])));
-        ledger.models.insert("gem".into(), with(metered, tally(&[call(500, 0, 0, 20)])));
-        ledger.models.insert("gpt".into(), with(Some(Billing::Account), tally(&[call(9_000, 0, 0, 90)])));
-        ledger.models.insert("gone".into(), with(metered, tally(&[call(7, 0, 0, 1)])));
+        ledger.models.insert(
+            "sonnet".into(),
+            with(metered, tally(&[call(1_000_000, 0, 0, 100_000)])),
+        );
+        ledger
+            .models
+            .insert("gem".into(), with(metered, tally(&[call(500, 0, 0, 20)])));
+        ledger.models.insert(
+            "gpt".into(),
+            with(Some(Billing::Account), tally(&[call(9_000, 0, 0, 90)])),
+        );
+        ledger
+            .models
+            .insert("gone".into(), with(metered, tally(&[call(7, 0, 0, 1)])));
         let spend = models.spend_of(&ledger);
         // 1M in × 2 + 0.1M out × 10 = 3.00; the ChatGPT account has no price.
         assert!((spend.cost_usd.unwrap() - 3.0).abs() < 1e-9);
@@ -498,15 +516,30 @@ mod tests {
         let mut ledger = SessionUsage::default();
         ledger.models.insert(
             "old-chatgpt".into(),
-            ModelTally { billing: Some(Billing::Account), ..tally(&[call(9_000, 0, 0, 90)]) },
+            ModelTally {
+                billing: Some(Billing::Account),
+                ..tally(&[call(9_000, 0, 0, 90)])
+            },
         );
-        ledger.models.insert("legacy".into(), tally(&[call(70, 0, 0, 1)]));
+        ledger
+            .models
+            .insert("legacy".into(), tally(&[call(70, 0, 0, 1)]));
         let spend = models.spend_of(&ledger);
-        assert_eq!(spend.tokens.input, 70, "an allowance model's tokens are no spend, gone or not");
-        assert!(spend.unpriced.is_empty(), "no claim about a call of unknown class: {:?}", spend.unpriced);
+        assert_eq!(
+            spend.tokens.input, 70,
+            "an allowance model's tokens are no spend, gone or not"
+        );
+        assert!(
+            spend.unpriced.is_empty(),
+            "no claim about a call of unknown class: {:?}",
+            spend.unpriced
+        );
         assert_eq!(spend.cost_usd, None);
         let legacy = spend.models.iter().find(|m| m.model == "legacy").unwrap();
-        assert_eq!((legacy.billing, legacy.input, legacy.cost_usd), (Billing::Unknown, 70, None));
+        assert_eq!(
+            (legacy.billing, legacy.input, legacy.cost_usd),
+            (Billing::Unknown, 70, None)
+        );
     }
 
     /// A ledger written before classes were recorded still reads.

@@ -15,6 +15,7 @@
  */
 import { ZH } from './strings-zh';
 import { translatePlaceholder } from './placeholder.mts';
+import { translateFrom } from './i18nMatch.mts';
 
 export type Language = 'en' | 'zh-Hans';
 let lang: Language = 'en';
@@ -78,34 +79,10 @@ const SKIP =
   '[data-no-i18n], .markdown-body, .chat-message-content';
 const ATTRS = ['title', 'placeholder', 'aria-label'];
 
-let patterns: { re: RegExp; names: string[]; zh: string }[] | null = null;
-
-function index() {
-  patterns = [];
-  for (const [en, zh] of Object.entries(ZH)) {
-    const names = [...en.matchAll(/\{(\w+)\}/g)].map((m) => m[1]);
-    if (!names.length) continue;
-    const body = en
-      .split(/\{\w+\}/)
-      .map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-      .join('(.+?)');
-    patterns.push({ re: new RegExp(`^${body}$`), names, zh });
-  }
-}
-
 /** The person's words for one piece of the page's English, or null. */
 export function translate(text: string): string | null {
   if (lang === 'en') return null;
-  const s = text.trim();
-  if (!s) return null;
-  const hit = ZH[s];
-  if (hit !== undefined) return hit;
-  if (!patterns) index();
-  for (const p of patterns!) {
-    const m = p.re.exec(s);
-    if (m) return p.zh.replace(/\{(\w+)\}/g, (_, k: string) => m[p.names.indexOf(k) + 1] ?? `{${k}}`);
-  }
-  return null;
+  return translateFrom(ZH, text);
 }
 
 function swapText(node: Text) {
