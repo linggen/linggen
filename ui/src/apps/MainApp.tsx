@@ -5,7 +5,7 @@
  * (lib/appHost.ts) and nothing else.
  * Uses responsive CSS for mobile (<768px) — no separate mobile entry.
  */
-import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useMemo, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { chatAgentOf, memberModel } from '../lib/sessionMembers.mts';
 import { X } from 'lucide-react';
 import type { SessionInfo, SkillInfo } from '../types';
@@ -27,7 +27,7 @@ import { RoomChatPanel } from '../components/RoomChatPanel';
 import { roomsShown } from '../lib/roomsShown.mts';
 import { recordSkillUsage } from '../lib/skillUsage';
 import { buildAgentWorkInfo } from '../lib/messageUtils';
-import { startPresenceBeat } from '../lib/presence';
+import { setPresenceCovered, startPresenceBeat } from '../lib/presence';
 import { useSessionStore } from '../stores/sessionStore';
 import { useServerStore } from '../stores/serverStore';
 import { useChatStore } from '../stores/chatStore';
@@ -126,8 +126,8 @@ export const MainApp: React.FC<{ covered: boolean }> = ({ covered }) => {
     };
   }, [openSettings]);
 
-  // Presence beat — tell the server whether the user is here (typing / reading /
-  // away) so Yinyue's `sense` can read the room. Owner UI only; mounts once.
+  // Only the app's own chat can report presence while its tab is in front.
+  useLayoutEffect(() => setPresenceCovered(tabs.appInFront), [tabs.appInFront]);
   useEffect(() => startPresenceBeat(), []);
 
   const isMobile = useIsMobile();

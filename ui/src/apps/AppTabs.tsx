@@ -8,8 +8,9 @@
  * Also here, because only an app page in front of the person can ask it:
  * Yinyue's bodyless stage while that page says `linggen:companion: hidden`.
  */
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { skillsApi } from '../lib/endpoints';
+import { useServerStore } from '../stores/serverStore';
 import { appLabel } from './appLabel.mts';
 import type { SkillAppConfig, SkillInfoFull } from '../types';
 import { frameAllow } from '../lib/frameAllow.mts';
@@ -59,10 +60,15 @@ export type AppTabs = {
 };
 
 export function useAppTabs({ enabled, covered }: { enabled: boolean; covered: boolean }): AppTabs {
-  const [apps, setApps] = useState<AppSkill[]>([]);
+  const [initialSkills, setInitialSkills] = useState<SkillInfoFull[]>([]);
+  // Once page_state arrives, tabs and sidebar cards use the same registry snapshot.
+  const liveSkills = useServerStore((s) => enabled && s.skillsLoaded ? s.skills : undefined);
+  const apps = useMemo(() => (liveSkills ?? initialSkills).filter(isWebApp)
+    .sort((a, b) => orderIndex(a.name) - orderIndex(b.name) || appLabel(a).localeCompare(appLabel(b))), [liveSkills, initialSkills]);
   const [active, setActive] = useState<string | null>(() => (enabled ? savedTab() : null));
   const [opened, setOpened] = useState<string[]>(() => (active ? [active] : []));
-  const [listState, setListState] = useState<ListState>('loading');
+  const [initialListState, setInitialListState] = useState<ListState>('loading');
+  const listState = liveSkills ? 'ready' : initialListState;
   const [listTry, setListTry] = useState(0);
   // The view each app's frame was last asked to land on (a tapped offer's `open`).
   const [views, setViews] = useState<Record<string, string>>({});
@@ -83,20 +89,21 @@ export function useAppTabs({ enabled, covered }: { enabled: boolean; covered: bo
     return rest;
   }), []);
 
-  // The list over the UI's own calls, not page_state, so tabs do not wait on its timing.
+  // Bootstrap before the first push, retaining the load/error/retry status.
+  const hasLiveSkills = liveSkills !== undefined;
   useEffect(() => {
-    if (!enabled) return;
-    setListState('loading');
+    if (!enabled || hasLiveSkills) return;
+    let cancelled = false;
+    setInitialListState('loading');
     skillsApi.list()
       .then((data) => {
-        const list: SkillInfoFull[] = Array.isArray(data) ? data : [];
-        const web = list.filter(isWebApp);
-        web.sort((a, b) => orderIndex(a.name) - orderIndex(b.name) || appLabel(a).localeCompare(appLabel(b)));
-        setApps(web);
-        setListState('ready');
+        if (cancelled) return;
+        setInitialSkills(Array.isArray(data) ? data : []);
+        setInitialListState('ready');
       })
-      .catch(() => setListState('error'));
-  }, [enabled, listTry]);
+      .catch(() => { if (!cancelled) setInitialListState('error'); });
+    return () => { cancelled = true; };
+  }, [enabled, hasLiveSkills, listTry]);
 
   // A remembered app that is no longer installed gives way to the chat home.
   useEffect(() => {

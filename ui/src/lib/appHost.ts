@@ -98,7 +98,7 @@ export function openApp(launch: AppLaunch): boolean {
       return true;
     }
     if (event) return false;
-  } else if (event && launch.launchedBy !== useSessionStore.getState().activeSessionId) {
+  } else if (event && (!launch.launchedBy || launch.launchedBy === 'global' || launch.launchedBy !== useSessionStore.getState().activeSessionId)) {
     return false;
   }
   window.open(browserUrl(launch.url), '_blank');
