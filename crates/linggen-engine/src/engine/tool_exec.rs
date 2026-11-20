@@ -1942,6 +1942,30 @@ mod declined_gate_tests {
     }
 
     #[tokio::test]
+    async fn read_policy_search_prunes_protected_entries_under_a_broad_grant() {
+        let root = tempfile::tempdir_in(dirs::home_dir().unwrap()).unwrap();
+        std::fs::write(root.path().join("public.txt"), "fixture-needle").unwrap();
+        let hidden = root.path().join(".ssh");
+        std::fs::create_dir(&hidden).unwrap();
+        std::fs::write(hidden.join("private.txt"), "fixture-needle").unwrap();
+        let pending: Pending = Default::default();
+        let engine = engine(root.path(), &pending, false);
+        let exec = ReadyExec {
+            canonical_tool: "Glob".into(), sig: String::new(), original_args: JsonValue::Null,
+            approved_reads: Vec::new(), tool_done_status: String::new(), tool_failed_status: String::new(),
+            block_id: String::new(), tool_call_id: None,
+        };
+        let call = tools::ToolCall {
+            tool: "Glob".into(),
+            args: serde_json::json!({"globs": [format!("{}/**/*.txt", root.path().display())]}),
+            block_id: None,
+        };
+        let result = crate::engine::render::render_tool_result(&engine.tools_for_call(&exec).execute(call).await.unwrap());
+        assert!(result.contains("public.txt"), "{result}");
+        assert!(!result.contains("private.txt"), "{result}");
+    }
+
+    #[tokio::test]
     async fn read_policy_recursive_glob_requires_grant_for_its_root() {
         let home = dirs::home_dir().unwrap();
         let work = tempfile::tempdir_in(&home).unwrap();
