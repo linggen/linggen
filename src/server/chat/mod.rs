@@ -52,7 +52,7 @@ pub(crate) use handler::{
     run_session_turn,
     resend_chat, say_in_app, say_in_session, start_turn, TurnOrigin,
 };
-pub(crate) use light::{line_now, reply_in_session};
+pub(crate) use light::{reply_in_session, reply_now};
 pub(crate) use plan_flow::{approve_plan_handler, edit_plan_handler, reject_plan_handler};
 pub(crate) use runtime::close_turn;
 
@@ -80,9 +80,10 @@ pub(super) struct ChatRunCtx {
     pub(super) sender: Option<String>,
     /// Device this agent continues the user's task from (see `ChatRequest::via`).
     pub(super) via: Option<String>,
-    /// The kickoff offers silence: a reply that is exactly `SILENT` is
-    /// neither streamed, shown nor kept.
-    pub(super) silence_ok: bool,
+    /// Where the turn comes from. For a turn of hers the engine started it
+    /// decides whether her reply is held for the finalizer, and which speaking
+    /// contract the model reads; every other turn is a person's.
+    pub(crate) origin: crate::server::resident::Origin,
     /// The place this turn stands in: what it takes from an app
     /// (`turn_place`) is set from this when it starts and cleared when it
     /// ends.
@@ -101,11 +102,20 @@ impl ChatRunCtx {
     /// What the model reads for this turn: a relayed message carries its
     /// speaker inline, so the model knows who is asking.
     pub(super) fn labeled_msg(&self) -> String {
-        if let Some(device) = self.via.as_deref() {
-            return via_line(device, &self.clean_msg);
+        let told = self.told();
+        match (self.via.as_deref(), self.sender.as_deref()) {
+            (Some(device), _) => via_line(device, &told),
+            (None, Some(s)) => format!("[{}]: {told}", sender_label(s)),
+            (None, None) => told,
         }
-        match self.sender.as_deref() {
-            Some(s) => format!("[{}]: {}", sender_label(s), self.clean_msg),
+    }
+
+    /// The message as the model is told it: with the speaking contract its
+    /// origin names — the one place a turn of hers gets it, so a held turn
+    /// without it cannot exist. The row the thread keeps stays `clean_msg`.
+    pub(super) fn told(&self) -> String {
+        match self.origin.contract() {
+            Some(contract) => format!("{} {contract}", self.clean_msg),
             None => self.clean_msg.clone(),
         }
     }

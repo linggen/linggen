@@ -21,7 +21,7 @@ use home::Home;
 use memory::Memory;
 use model::{Agent, Extra, FakeModel, Reply};
 
-pub use model::{error, text, tool};
+pub use model::{error, say, text, tool};
 
 /// A test that cannot run on this machine (`why`) says so: on stderr, and by
 /// name in the file `LINGGEN_TEST_SKIPPED` names, which

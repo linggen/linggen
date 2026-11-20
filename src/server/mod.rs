@@ -10,6 +10,8 @@ pub(crate) mod claude;
 mod event_log;
 mod facts;
 mod loopback_guard;
+#[cfg(test)]
+mod lock_scan;
 mod mac_tools;
 mod mcp;
 mod mcp_agent;

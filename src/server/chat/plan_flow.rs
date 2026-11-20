@@ -459,7 +459,7 @@ async fn run_approved_plan_task(
         policy: crate::engine::session_policy::SessionPolicy::default(),
         sender: None,
         via: None,
-        silence_ok: false,
+        origin: crate::server::resident::Origin::Person,
         place,
         turn: Default::default(),
     };

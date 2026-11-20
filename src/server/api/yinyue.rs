@@ -14,6 +14,7 @@ use axum::response::IntoResponse;
 use axum::Json;
 use serde::Deserialize;
 
+use crate::server::resident::Line;
 use crate::server::{ServerEvent, ServerState};
 
 /// Where a line of hers is said: its session (`None`: her own thread) — with
@@ -28,15 +29,15 @@ pub struct SaidAt<'a> {
 
 /// Push a speak cue to the user's surfaces. The single producer — the
 /// event-reactive watch loop calls this when Yinyue reacts.
-pub fn emit_speak(state: &Arc<ServerState>, text: String, emotion: Option<String>, at: SaidAt<'_>) {
-    emit_speak_offering(state, text, emotion, at, None);
+pub(crate) fn emit_speak(state: &Arc<ServerState>, line: Line, emotion: Option<String>, at: SaidAt<'_>) {
+    emit_speak_offering(state, line, emotion, at, None);
 }
 
 /// A line that raised a problem, with its offers under her labels — the
 /// buttons the bubble shows (`problem`: its key, what answers are kept on).
 pub(crate) fn emit_speak_offering(
     state: &Arc<ServerState>,
-    text: String,
+    line: Line,
     emotion: Option<String>,
     at: SaidAt<'_>,
     problem: Option<(String, Vec<crate::perception::offer::Shown>)>,
@@ -59,7 +60,7 @@ pub(crate) fn emit_speak_offering(
         None => (None, Vec::new()),
     };
     let _ = state.events_tx.send(ServerEvent::PetSpeak {
-        text,
+        text: line.text().to_string(),
         emotion,
         voice,
         session_id: session.map(str::to_string),
@@ -330,9 +331,9 @@ pub(crate) async fn chat_handler(
     // user's reply and the open prompt land in the same turn (no cross-turn recall).
     let task = frame_with_pending_prompt(&state, &text).await;
     tokio::spawn(async move {
-        if let Some(reply) = crate::server::resident::run_yinyue_turn(&state, task, "user").await {
-            if !reply.eq_ignore_ascii_case("silent") {
-                emit_speak(&state, reply, None, SaidAt::default());
+        if let Some(reply) = crate::server::resident::run_yinyue_turn(&state, task, crate::server::resident::Origin::Person).await {
+            if let Some(answer) = reply.whole_answer() {
+                crate::server::resident::speak_reply(&state, answer, Default::default());
             }
         }
     });
@@ -482,27 +483,11 @@ pub(crate) async fn presence_handler(
 /// until it is looked at and listed.
 #[cfg(test)]
 mod one_voice_rule {
-    fn rust_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
-        for entry in std::fs::read_dir(dir).unwrap().flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                rust_files(&path, out);
-            } else if path.extension().is_some_and(|e| e == "rs") {
-                out.push(path);
-            }
-        }
-    }
-
-    /// Each file's count of `needle`, against the files it must be in.
+    /// Each file's count of `needle` in production code, against the files
+    /// it must be in.
     fn check(needle: &str, listed: &[(&str, usize)]) {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let mut files = Vec::new();
-        for dir in ["src", "crates/linggen-engine/src"] {
-            rust_files(&root.join(dir), &mut files);
-        }
-        for file in files {
-            let rel = file.strip_prefix(root).unwrap().to_string_lossy().to_string();
-            let found = std::fs::read_to_string(&file).unwrap().matches(needle).count();
+        for (rel, code) in crate::server::lock_scan::production_code(&["src", "crates/linggen-engine/src"]) {
+            let found = code.matches(needle).count();
             let want = listed.iter().find(|(f, _)| *f == rel).map_or(0, |e| e.1);
             assert_eq!(found, want, "{rel}: `{needle}` — her voice has one rule; look at it, then list it");
         }
@@ -517,6 +502,20 @@ mod one_voice_rule {
         check(&voice, &[("src/server/api/yinyue.rs", 2)]);
         let seen = format!("{}{}", "Sight::", "Line");
         check(&seen, &[("src/server/api/yinyue.rs", 1), ("src/server/resident/triggers.rs", 1)]);
+        // The helper that answers "is a page in front" decides when a condition
+        // is published; its callers are part of the rule.
+        let front = format!("{}{}", "a_page_is_in_", "front(");
+        check(
+            &front,
+            &[("src/server/resident/triggers.rs", 2), ("src/server/resident/ambient.rs", 3)],
+        );
+        // …and it answers through the one predicate the voice rule uses.
+        // Presence is asked of the board in one place, and that place is the
+        // one predicate: a new helper asking it directly fails here.
+        let ask = format!("{}{}", "presence_at_", "page(");
+        check(&ask, &[("src/server/resident/triggers.rs", 1), ("crates/linggen-engine/src/engine/agent/mod.rs", 1)]);
+        let drawn = format!("{}{}", "line_is_", "drawn(");
+        check(&drawn, &[("src/server/resident/triggers.rs", 3)]);
     }
 }
 

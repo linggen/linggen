@@ -70,9 +70,9 @@ pub(super) async fn run_structured_loop(ctx: &ChatRunCtx, engine: &mut crate::en
     let (thinking_tx, thinking_rx) = tokio::sync::mpsc::unbounded_channel();
     // A kickoff that offers silence streams nothing: the reply is shown
     // whole, or — when it is SILENT — not at all.
-    let mut run = crate::engine::turn_place::RunSetup::task(ctx.clean_msg.trim())
-        .silence_ok(ctx.silence_ok)
-        .thinking((!ctx.silence_ok).then_some(thinking_tx));
+    let mut run = crate::engine::turn_place::RunSetup::task(ctx.told().trim())
+        .reply_held(ctx.origin.held())
+        .thinking((!ctx.origin.held()).then_some(thinking_tx));
     if !ctx.images.is_empty() {
         run = run.images(ctx.images.clone());
     }

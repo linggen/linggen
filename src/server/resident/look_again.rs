@@ -1,7 +1,7 @@
 //! Look again — when a note's look-again time comes, she gets a turn of her
 //! own with that note as the reason: a quiet turn like a glance
 //! ([`Reach::SpeakOnly`]), so she may speak, ask, keep her notes, or end
-//! SILENT, and never act.
+//! say nothing, and never act.
 //!
 //! Code only keeps the time. Whether the note is worth a sentence is hers.
 //!
@@ -114,16 +114,13 @@ async fn wake(state: &Arc<ServerState>, note: Note, at: u64, now: u64) -> Option
         state.clone(),
         (kickoff(&note, now), None),
         "neutral",
-        LOOK_AGAIN_SOURCE,
+        Origin::Note,
         Reach::SpeakOnly,
         None,
     )
     .await;
     Some(now)
 }
-
-/// The trigger source of a woken note's turn.
-pub(super) const LOOK_AGAIN_SOURCE: &str = "note";
 
 fn withheld(note: &Note, at: u64) -> Withheld<'static> {
     Withheld {
@@ -159,7 +156,7 @@ pub(super) fn kickoff(note: &Note, now: u64) -> String {
     format!(
         "You set a time to look again at your note {} (written {age}): \"{}\". That time has \
          come; it is why you are here. Your notes, Right now and the World are in front of you. \
-         You may say one short line in your own voice, spoken aloud, plain prose, or ask \
+         You may say one short line in your own voice, or ask \
          something; you may write, rewrite or finish notes; or say nothing. The note stays open \
          until you finish it. You cannot act this turn; if something needs doing, say so in your \
          line and ask.",

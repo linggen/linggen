@@ -181,7 +181,7 @@ pub async fn run(
             session.into(),
             agent_id,
             prompt.into(),
-            "claude-code".into(),
+            ("claude-code".into(), crate::server::resident::Origin::Person),
         );
         let sid = session.to_string();
         let manager = state.manager.clone();

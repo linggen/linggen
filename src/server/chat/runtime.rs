@@ -111,6 +111,11 @@ pub(super) async fn run_loop_with_tracking(
 /// Give the engine this turn's inbox: each step takes in what the person
 /// sent meanwhile (`fold.rs`).
 pub(super) fn wire_inbox(ctx: &ChatRunCtx, engine: &mut crate::engine::AgentEngine) {
+    // A held turn (one the engine started) takes in nothing: a person's
+    // message waits and runs as its own turn, answered and shown as ever.
+    if ctx.origin.held() {
+        return;
+    }
     let key = crate::server::chat::helpers::fold_key(ctx.session_id.as_deref(), &ctx.agent_id);
     let fold = ctx.state.fold.clone();
     engine.tools.builtins.set_steer(Some(fold.open_turn(&key)));

@@ -3,6 +3,7 @@
 //! pane shows it and stops a task through it. In engine memory only: a task
 //! never outlives the engine that ran it.
 use crate::engine::events::{BackgroundTask, ServerEvent};
+use crate::server::resident::Origin;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
@@ -279,7 +280,8 @@ async fn settle(state: &std::sync::Arc<super::ServerState>, session: &str, task:
     };
     let (_, place) = super::chat::helpers::take_turn_place(state.manager.session_turn(session));
     let told = (session.to_string(), agent_id, notice, "system".to_string());
-    tokio::spawn(tell_in_place(state.clone(), told, (place, started_in), None));
+    let origin = crate::server::resident::Origin::TaskEnd;
+    tokio::spawn(tell_in_place(state.clone(), told, (place, started_in), (None, origin)));
 }
 
 /// Tell `agent` each of `notices` in a turn of its own, in order: their
@@ -304,7 +306,7 @@ pub(crate) fn tell(
     agent: String,
     notice: String,
 ) -> impl std::future::Future<Output = ()> + Send + 'static {
-    tell_from(state, session, agent, notice, "system".into())
+    tell_from(state, session, agent, notice, ("system".into(), Origin::TaskEnd))
 }
 
 pub(crate) fn tell_from(
@@ -312,10 +314,10 @@ pub(crate) fn tell_from(
     session: String,
     agent: String,
     notice: String,
-    sender: String,
+    (sender, origin): (String, Origin),
 ) -> impl std::future::Future<Output = ()> + Send + 'static {
     let (_, place) = super::chat::helpers::take_turn_place(state.manager.session_turn(&session));
-    tell_in_place(state, (session, agent, notice, sender), (place, None), None)
+    tell_in_place(state, (session, agent, notice, sender), (place, None), (None, origin))
 }
 
 /// [`tell`], its notice kept under `mark` (the row's `client_id`); `kept`
@@ -328,13 +330,14 @@ pub(crate) fn tell_marked(
     agent: String,
     notice: String,
     mark: (String, tokio::sync::oneshot::Sender<()>),
+    origin: Origin,
 ) -> impl std::future::Future<Output = ()> + Send + 'static {
     let (_, place) = super::chat::helpers::take_turn_place(state.manager.session_turn(&session));
     tell_in_place(
         state,
         (session, agent, notice, "system".into()),
         (place, stands_in),
-        Some(mark),
+        (Some(mark), origin),
     )
 }
 
@@ -344,7 +347,7 @@ async fn tell_in_place(
     state: std::sync::Arc<super::ServerState>,
     (session, agent, notice, sender): (String, String, String, String),
     (place, started_in): (super::chat::helpers::TurnSlot, Option<String>),
-    mark: Option<(String, tokio::sync::oneshot::Sender<()>)>,
+    (mark, told): (Option<(String, tokio::sync::oneshot::Sender<()>)>, Origin),
 ) {
     let Some(meta) = state
         .manager
@@ -375,11 +378,22 @@ async fn tell_in_place(
     // its plan instead.
     let (_turn, gate) = match &mark {
         Some(_) => (place.await, None),
-        None => match place_or_plan(&state, place, (&session, &agent, &notice, &sender)).await {
+        None => match place_or_plan(&state, place, (&session, &agent, &notice, &sender), told).await {
             Some((turn, gate)) => (turn, Some(gate)),
             None => return,
         },
     };
+    // Where this turn comes from is recorded the moment it holds the lock: a
+    // person's message that comes now ends it, and a restart's plan reads it.
+    let origin = Origin::for_agent(&agent, told);
+    let running = crate::server::resident::RunningOrigin::at_lock(&session, origin);
+    // A person's message was waiting for the session: this notice's turn does
+    // not run. (A restart's own continue turn, `mark`, keeps its retry
+    // contract and runs.)
+    let ended = running.as_ref().is_some_and(crate::server::resident::RunningOrigin::was_ended);
+    if ended && mark.is_none() {
+        return;
+    }
     // A plan proposed while this waited for its turn holds it too.
     let Some(notice) = state
         .manager
@@ -429,6 +443,10 @@ async fn tell_in_place(
         }
     }
     drop(gate);
+    // What kind of turn this is for the one it is told to: her turns have an
+    // origin, every other agent's is answered as ever.
+    // Her words are in the person's language, as for every turn of hers.
+    let language = crate::server::resident::language_of_turn(&state, &session, origin, None).await;
     let mut engine = engine.lock().await;
     engine.set_parent_agent(None);
     let ctx = super::chat::ChatRunCtx {
@@ -443,11 +461,19 @@ async fn tell_in_place(
         images: Vec::new(),
         policy: crate::engine::session_policy::SessionPolicy::owner(),
         sender: Some(sender),
-        silence_ok: false,
-        place: told_at,
-        turn: Default::default(),
+        // Told to her, the notice is an event: what she chooses to say is
+        // published by the finalizer, nothing of her reply is kept as prose.
+        origin,
+        place: told_at.clone(),
+        turn: crate::engine::turn_place::TurnSettings { language, ..Default::default() },
     };
     super::chat::run_session_turn(&ctx, &mut engine, &state.manager, None).await;
+    let ended = running.as_ref().is_some_and(crate::server::resident::RunningOrigin::was_ended);
+    if origin.held() && !ended {
+        let reply = engine.last_assistant_text.clone().map(|t| crate::server::resident::Turned::of(t, origin));
+        drop(engine);
+        crate::server::resident::say_event(&state, reply.as_ref(), (&session, &told_at)).await;
+    }
 }
 
 /// `place` in the session's turn line, with the admission gate to hold
@@ -457,6 +483,7 @@ async fn place_or_plan(
     state: &std::sync::Arc<super::ServerState>,
     place: super::chat::helpers::TurnSlot,
     (session, agent, notice, sender): (&str, &str, &str, &str),
+    origin: Origin,
 ) -> Option<(tokio::sync::OwnedMutexGuard<()>, super::admission::Gate)> {
     let incoming = super::admission::Incoming {
         session,
@@ -472,7 +499,7 @@ async fn place_or_plan(
             session.into(),
             agent.into(),
             notice.into(),
-            sender.into(),
+            (sender.into(), origin),
         )
     };
     match super::admission::admit_in_line(&state.admission, place, incoming, again).await {
@@ -491,11 +518,11 @@ fn resend_notice(
     session: String,
     agent: String,
     notice: String,
-    sender: String,
+    (sender, origin): (String, Origin),
 ) -> super::admission::Resend {
     Box::new(move || {
         Box::pin(async move {
-            tokio::spawn(tell_from(state, session, agent, notice, sender));
+            tokio::spawn(tell_from(state, session, agent, notice, (sender, origin)));
         })
     })
 }

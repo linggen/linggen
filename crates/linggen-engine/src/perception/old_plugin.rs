@@ -59,13 +59,13 @@ pub fn host_name(host: &str) -> &'static str {
 }
 
 /// What the person runs to update the plugin in `host`, then restarts it —
-/// said where they can act, since nothing on this Mac updates a host's
+/// said where they can act, since nothing updates a host's
 /// plugin by itself.
 pub fn update_commands(host: &str) -> &'static str {
     match host {
-        "claude-code" => "nothing on this Mac updates a host's plugin by itself; in a terminal: curl -fsSL https://linggen.dev/install-plugin.sh | bash, then restart Claude Code",
-        "codex" => "nothing on this Mac updates a host's plugin by itself; in a terminal: curl -fsSL https://linggen.dev/install-plugin.sh | bash, then restart Codex",
-        _ => "nothing on this Mac updates a host's plugin by itself; in a terminal: curl -fsSL https://linggen.dev/install-plugin.sh | bash, then restart Claude Code and Codex",
+        "claude-code" => "nothing updates a host's plugin by itself; in a terminal: curl -fsSL https://linggen.dev/install-plugin.sh | bash, then restart Claude Code",
+        "codex" => "nothing updates a host's plugin by itself; in a terminal: curl -fsSL https://linggen.dev/install-plugin.sh | bash, then restart Codex",
+        _ => "nothing updates a host's plugin by itself; in a terminal: curl -fsSL https://linggen.dev/install-plugin.sh | bash, then restart Claude Code and Codex",
     }
 }
 

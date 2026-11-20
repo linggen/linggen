@@ -17,9 +17,9 @@ use super::*;
 pub(crate) async fn run_yinyue_turn(
     state: &Arc<ServerState>,
     task: String,
-    trigger_source: &str,
-) -> Option<String> {
-    run_home(state, task, trigger_source, Reach::Open, None).await
+    origin: Origin,
+) -> Option<Turned> {
+    run_home(state, task, origin, Reach::Open, None).await
 }
 
 /// Her turn woken by an app moment: her line is all she gives — spoken — or
@@ -31,12 +31,12 @@ pub(crate) async fn run_yinyue_turn(
 pub(crate) async fn run_moment_turn(
     state: &Arc<ServerState>,
     (task, table): (String, Option<super::Table>),
-    trigger_source: &str,
+    origin: Origin,
     language: Option<String>,
-) -> Option<String> {
+) -> Option<Turned> {
     match table {
-        Some(table) => run_at_table(state, table, task, trigger_source, language).await,
-        None => run_home(state, task, trigger_source, Reach::Sealed, language).await,
+        Some(table) => run_at_table(state, table, task, origin, language).await,
+        None => run_home(state, task, origin, Reach::Sealed, language).await,
     }
 }
 
@@ -77,10 +77,10 @@ pub(super) fn withheld_for(reach: Reach) -> std::collections::HashSet<String> {
 pub(super) async fn run_home(
     state: &Arc<ServerState>,
     task: String,
-    trigger_source: &str,
+    origin: Origin,
     reach: Reach,
     language: Option<String>,
-) -> Option<String> {
+) -> Option<Turned> {
     let root = her_root();
 
     // Pet settings (Settings → General → Pet). Disabled → she doesn't run at all.
@@ -94,9 +94,7 @@ pub(super) async fn run_home(
     ensure_session_exists(state, &session_id, &root);
     crate::server::day_session::seat_her(&state.manager, &session_id).await;
 
-    // Engine-authored kickoffs (heralds, agent_chat, asked) carry the
-    // spoken-line contract; a person's own words are never appended to.
-    let task = with_contract(task, trigger_source);
+    let language = language_of_turn(state, &session_id, origin, language).await;
     // Her own thread holds no skill: home.
     let place = crate::server::chat::turn_place::of_session_id(&state.manager, &session_id);
     let turn = Turn {
@@ -107,7 +105,17 @@ pub(super) async fn run_home(
         language,
         place,
     };
-    run_at(state, &turn, &pet, task, trigger_source).await
+    run_at(state, &turn, &pet, task, origin).await
+}
+
+/// The place her turn at `table` stands in: in a day's session the app the
+/// moment came from, elsewhere the session's own.
+pub(super) fn table_place(state: &Arc<ServerState>, table: &super::Table) -> crate::engine::turn_place::TurnPlace {
+    let meta = state.manager.global_sessions.get_session_meta(&table.session).ok().flatten();
+    match crate::server::day_session::is_day(&table.session) {
+        true => crate::engine::turn_place::TurnPlace::of_request(table.app.as_deref(), meta.as_ref()),
+        false => crate::engine::turn_place::TurnPlace::of_session(meta.as_ref()),
+    }
 }
 
 /// Her moment turn at an app chat's table: seated there (for good, as an
@@ -120,9 +128,9 @@ async fn run_at_table(
     state: &Arc<ServerState>,
     table: super::Table,
     task: String,
-    trigger_source: &str,
+    origin: Origin,
     language: Option<String>,
-) -> Option<String> {
+) -> Option<Turned> {
     let session_id = table.session;
     let pet = state.manager.get_config_snapshot().await.pet;
     if !pet.enabled {
@@ -147,7 +155,7 @@ async fn run_at_table(
         true => her_root(),
         false => crate::util::resolve_path(std::path::Path::new(&meta.cwd)),
     };
-    let task = with_contract(task, trigger_source);
+    let language = language_of_turn(state, &session_id, origin, language).await;
     // No page sent it: she stands in the table's own app — in a day's
     // session, the app the moment came from.
     let place = match day {
@@ -162,7 +170,7 @@ async fn run_at_table(
         language,
         place,
     };
-    run_at(state, &turn, &pet, task, trigger_source).await
+    run_at(state, &turn, &pet, task, origin).await
 }
 
 /// Her own folder: where her turns run, and what her permissions cover.
@@ -193,11 +201,15 @@ async fn run_at(
     turn: &Turn,
     pet: &crate::config::PetConfig,
     task: String,
-    trigger_source: &str,
-) -> Option<String> {
+    origin: Origin,
+) -> Option<Turned> {
     let Turn {
         session_id, root, ..
     } = turn;
+    // An engine-authored kickoff is a hidden row (a person's words are left
+    // alone); the speaking contract is attached as the turn reads it
+    // (`ChatRunCtx::labeled_msg`).
+    let task = origin.kickoff(task);
     let agent = match state
         .manager
         .get_or_create_session_agent(session_id, root, YINYUE_AGENT)
@@ -216,7 +228,16 @@ async fn run_at(
     // which the engine never checks (seen 2026-09-24: yinyue01 + yinyue02).
     let spoken = {
         // Past a restart's snapshot her turn waits in its plan instead.
-        let (_held, gate) = her_place(state, turn, &task, trigger_source).await?;
+        let (_held, gate) = her_place(state, turn, &task, origin).await?;
+        // Recorded the moment the lock is ours: a person's message that comes
+        // now finds a held turn to end, and a restart's plan reads its origin.
+        let running = RunningOrigin::at_lock(session_id, origin);
+        // A person's message was waiting for the session: this turn does not
+        // run, and nothing of it is published (what it carried is kept as on
+        // any unpublished return).
+        if running.as_ref().is_some_and(RunningOrigin::was_ended) {
+            return None;
+        }
         let _mark = crate::server::chat::turn_place::mark_turn(&state.manager, session_id, &turn.place);
         // Persist the incoming message to the session store so it survives
         // reload and every member's thread holds it. (The turn core only
@@ -241,7 +262,7 @@ async fn run_at(
         // Mark/clear INSIDE the lock so the flag's lifetime matches exactly the
         // turn holding the engine — a concurrent same-session turn can't observe
         // or clear another turn's mark.
-        if trigger_source == "agent_chat" {
+        if origin == Origin::AgentChat {
             state.manager.mark_agent_chat_session(session_id);
         }
         let policy = ready_for_turn(&mut engine, turn, pet);
@@ -272,18 +293,23 @@ async fn run_at(
             images: Vec::new(),
             policy,
             sender: None,
-            // At a table, silence is an answer and leaves no row there.
-            silence_ok: !turn.home && trigger_source != "asked",
+            // A turn the engine started shows and keeps nothing itself: what
+            // she chose to say is published by the finalizer (`spoken`).
+            origin,
             place: turn.place.clone(),
-            turn: turn_settings(turn, trigger_source),
+            turn: turn_settings(turn, origin),
         };
         let cap = turn.home.then_some(YINYUE_MAX_LIVE_MSGS);
         crate::server::chat::run_session_turn(&ctx, &mut engine, &state.manager, cap).await;
 
-        if trigger_source == "agent_chat" {
+        if origin == Origin::AgentChat {
             state.manager.clear_agent_chat_session(session_id);
         }
-        engine.last_assistant_text.clone()
+        // A person's message ended this turn: nothing of it is said.
+        match running.as_ref().is_some_and(RunningOrigin::was_ended) {
+            true => None,
+            false => engine.last_assistant_text.clone(),
+        }
     };
 
     // The turn core handles + persists its own errors and its run; an empty
@@ -291,6 +317,7 @@ async fn run_at(
     spoken
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
+        .map(|text| Turned::of(text, origin))
 }
 
 /// Her place in the session's turn line, with the admission gate to hold
@@ -300,7 +327,7 @@ async fn her_place(
     state: &Arc<ServerState>,
     turn: &Turn,
     task: &str,
-    trigger_source: &str,
+    origin: Origin,
 ) -> Option<(
     tokio::sync::OwnedMutexGuard<()>,
     crate::server::admission::Gate,
@@ -311,7 +338,7 @@ async fn her_place(
         agent: YINYUE_AGENT,
         text: task,
         images: &[],
-        sender: (trigger_source != "user").then_some("system"),
+        sender: (origin != Origin::Person).then_some("system"),
         place: None,
     };
     let again = || {
@@ -319,7 +346,7 @@ async fn her_place(
             state.clone(),
             turn.clone(),
             task.to_string(),
-            trigger_source.to_string(),
+            origin,
         )
     };
     match crate::server::admission::admit_in_line(&state.admission, place, incoming, again).await {
@@ -331,28 +358,65 @@ async fn her_place(
     }
 }
 
-/// Her turn kept in a restart's plan, run again as it came — her line
-/// spoken — if this engine outlives the restart.
+/// Her turn kept in a restart's plan, run again as it came if this engine
+/// outlives the restart. A person's turn is answered as ever. An engine-started
+/// one reaches the finalizer's checks only where it started (the question still
+/// waiting, a page in front, the last word): replayed here those are out of
+/// reach, and a line published without them is a second, unchecked way out — so
+/// it is not run at all (a model turn only to drop its line), and the thing
+/// that woke it wakes again.
 fn resend_hers(
     state: Arc<ServerState>,
     turn: Turn,
     task: String,
-    trigger_source: String,
+    origin: Origin,
 ) -> crate::server::admission::Resend {
     Box::new(move || {
         Box::pin(async move {
+            if !replays(origin) {
+                tracing::info!("[yinyue] {}: a turn kept in a restart's plan is dropped, not run", origin.name());
+                return;
+            }
             tokio::spawn(async move {
                 let pet = state.manager.get_config_snapshot().await.pet;
-                if let Some(reply) = run_at(&state, &turn, &pet, task, &trigger_source).await {
-                    let at = crate::server::api::yinyue::SaidAt {
-                        session: Some(&turn.session_id),
-                        app: turn.place.skill.as_deref(),
-                    };
-                    super::speak_reply(&state, &reply, at);
-                }
+                let Some(reply) = run_at(&state, &turn, &pet, task, origin).await else {
+                    return;
+                };
+                let Some(answer) = reply.answer() else {
+                    return;
+                };
+                let at = crate::server::api::yinyue::SaidAt {
+                    session: Some(&turn.session_id),
+                    app: turn.place.skill.as_deref(),
+                };
+                super::speak_reply(&state, answer, at);
             });
         })
     })
+}
+
+/// Whether a turn of this origin, kept in a restart's plan, is run again:
+/// only a person's (or an answer they asked for) — the rest is dropped.
+fn replays(origin: Origin) -> bool {
+    !origin.held()
+}
+
+/// The language this turn's words are in: the one its caller names (an app
+/// moment's `lang`); else — for a turn the engine started — the language the
+/// person writes in, the latest line they typed here, whatever language the
+/// kickoff is in; with none to read, the UI language stands. Set for every
+/// turn of hers in this one place, the light path included.
+pub(crate) async fn language_of_turn(
+    state: &Arc<ServerState>,
+    session_id: &str,
+    origin: Origin,
+    named: Option<String>,
+) -> Option<String> {
+    if named.is_some() || !origin.held() {
+        return named;
+    }
+    let sample = super::triggers::last_user_line(state, session_id).await;
+    sample.as_deref().and_then(super::spoken::language_of_sample)
 }
 
 /// Whether her turn at this table stands in an app, or the table is a
@@ -416,13 +480,13 @@ fn her_choice(
 /// What her turn sets for itself, put back when it ends: what its reach
 /// withholds (a quiet turn only speaks), the moment's language, and whether
 /// its kickoff tells a fault — so the next one hears its doorbell whole.
-fn turn_settings(turn: &Turn, trigger_source: &str) -> crate::engine::turn_place::TurnSettings {
+fn turn_settings(turn: &Turn, origin: Origin) -> crate::engine::turn_place::TurnSettings {
     crate::engine::turn_place::TurnSettings {
         withheld: withheld_for(turn.reach),
         allowlist: (turn.reach == Reach::SpeakOnly)
             .then(|| QUIET_TOOLS.iter().map(|t| t.to_string()).collect()),
         language: turn.language.clone(),
-        fault: trigger_source == super::triggers::FAULT_SOURCE,
+        fault: origin == Origin::Fault,
         ..Default::default()
     }
 }
@@ -490,7 +554,20 @@ mod tests {
     /// turn sets for itself (`run_session_turn` begins it).
     fn ready(engine: &mut crate::engine::AgentEngine, turn: &Turn) {
         ready_for_turn(engine, turn, &Default::default());
-        engine.begin_turn(turn_settings(turn, "test"));
+        engine.begin_turn(turn_settings(turn, Origin::Person));
+    }
+
+    #[test]
+    fn only_a_persons_turn_is_run_again_from_a_restarts_plan() {
+        for origin in [Origin::Person, Origin::Asked] {
+            assert!(replays(origin), "{origin:?}");
+        }
+        for origin in [
+            Origin::Herald, Origin::AgentChat, Origin::Fault, Origin::Moment,
+            Origin::InUse, Origin::Glance, Origin::Note, Origin::TaskEnd,
+        ] {
+            assert!(!replays(origin), "{origin:?} would run a model turn only to drop its line");
+        }
     }
 
     /// A moment turn cannot reach another agent; her own turns can.
