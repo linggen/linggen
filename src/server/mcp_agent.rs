@@ -736,9 +736,18 @@ fn run_host(meta: &crate::state_fs::sessions::SessionMeta) -> String {
     meta.params
         .get(HOST_PARAM)
         .map(String::as_str)
-        .filter(|h| !h.is_empty())
+        .filter(|h| names_an_outside_caller(meta, h))
         .unwrap_or(DEFAULT_HOST)
         .to_string()
+}
+
+/// Whether `host` can stand as a follow-up's sender: an agent-kind name
+/// (not a person, the engine or one of its own rows) that is no member of
+/// the session — the caller names it, so it is checked.
+fn names_an_outside_caller(meta: &crate::state_fs::sessions::SessionMeta, host: &str) -> bool {
+    !host.is_empty()
+        && RowAuthor::of(host).agent().is_some()
+        && !meta.agents.iter().any(|member| member.id == host)
 }
 
 /// The session record of a new delegated run: titled from the prompt, made by
@@ -1562,6 +1571,17 @@ mod wait_ready_tests {
         code.push_str(rest);
         let name = concat!("\"claude", "-code\"");
         assert_eq!(code.matches(name).count(), 1, "ask run_host / DEFAULT_HOST");
+    }
+
+    /// A host name that is not an outside caller's — a person, the engine,
+    /// one of its own kinds of row, or an agent of the session — is never a
+    /// follow-up's sender: such a run reads as started by the default host.
+    #[test]
+    fn a_host_that_names_no_outside_caller_is_not_a_sender() {
+        for host in ["user", "system", "compaction", "world", "memory-recall", "ling"] {
+            let meta = delegate_meta("s", "t", "ling", None, host, false, None);
+            assert_eq!(run_host(&meta), DEFAULT_HOST, "{host}");
+        }
     }
 
     /// A Codex run's follow-up prompt opens the caller's turn: the reply is
