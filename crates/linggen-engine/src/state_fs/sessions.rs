@@ -19,6 +19,9 @@ pub struct SessionStore {
     sessions_dir: PathBuf,
     append_lock: Mutex<()>,
     meta_lock: Mutex<()>,
+    /// Held while a session's usage ledger is written and while the session
+    /// is removed (`session_usage.rs`).
+    pub(super) usage_lock: Mutex<()>,
     /// How many times each session's history was rewritten in place (a
     /// compaction, a clear) through this store. A member's cached thread
     /// from before a rewrite is stale (`chat::thread`).
@@ -451,6 +454,7 @@ impl SessionStore {
             sessions_dir,
             append_lock: Mutex::new(()),
             meta_lock: Mutex::new(()),
+            usage_lock: Mutex::new(()),
             rewrites: Mutex::new(std::collections::HashMap::new()),
             running_places: Default::default(),
         }
@@ -698,6 +702,7 @@ impl SessionStore {
     pub fn remove_session(&self, session_id: &str) -> Result<()> {
         Self::validate_id(session_id)?;
         let dir = self.session_dir(session_id);
+        let _held = self.usage_lock.lock().unwrap_or_else(|e| e.into_inner());
         if dir.exists() {
             fs::remove_dir_all(dir)?;
         }

@@ -5,17 +5,13 @@
 //! known. Written once per model call, from `AgentEngine::note_call` (and
 //! the next-prompt fork) only.
 
+use super::devices::write_atomic;
 use super::SessionStore;
 use crate::provider::models::{ModelTally, TokenUsage};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::sync::Mutex;
 
 const FILE: &str = "usage.json";
-
-/// Subagents and forks write one session's ledger at the same time: a
-/// read-modify-write is held under this lock.
-static WRITING: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct SessionUsage {
@@ -29,9 +25,14 @@ impl SessionUsage {
     }
 }
 
+fn valid(session_id: &str) -> bool {
+    !session_id.is_empty() && !session_id.contains(['/', '\\']) && !session_id.contains("..")
+}
+
 impl SessionStore {
     /// Add one model call to the session's ledger. A session with no folder
-    /// (a call made outside any session) records nothing.
+    /// (a call made outside any session, or one removed meanwhile) records
+    /// nothing.
     pub fn record_usage(&self, session_id: &str, model_id: &str, usage: Option<&TokenUsage>) {
         if let Err(e) = self.try_record_usage(session_id, model_id, usage) {
             tracing::warn!("usage of '{model_id}' not recorded for session {session_id}: {e:#}");
@@ -44,35 +45,64 @@ impl SessionStore {
         model_id: &str,
         usage: Option<&TokenUsage>,
     ) -> anyhow::Result<()> {
-        if session_id.is_empty() || session_id.contains(['/', '\\']) || session_id.contains("..") {
+        if !valid(session_id) {
             return Ok(());
         }
+        // The store's own lock, held also by `remove_session`: a read-modify-
+        // write is never half-way when the session goes.
+        let _held = self.usage_lock.lock().unwrap_or_else(|e| e.into_inner());
         let dir = self.session_dir(session_id);
         if !dir.is_dir() {
             return Ok(());
         }
-        let _held = WRITING.lock().unwrap_or_else(|e| e.into_inner());
-        let mut ledger = self.session_usage(session_id);
+        let path = dir.join(FILE);
+        let mut ledger = match read_ledger(&path) {
+            Ok(ledger) => ledger,
+            Err(why) => {
+                set_aside(&path, &why);
+                SessionUsage::default()
+            }
+        };
         ledger
             .models
             .entry(model_id.to_string())
             .or_default()
             .add(usage);
-        let mut temp = tempfile::NamedTempFile::new_in(&dir)?;
-        std::io::Write::write_all(&mut temp, &serde_json::to_vec(&ledger)?)?;
-        temp.persist(dir.join(FILE))?;
+        write_atomic(&path, &serde_json::to_vec(&ledger)?)?;
         Ok(())
     }
 
-    /// What the session's models used so far; empty when none ran.
+    /// What the session's models used so far; empty when none ran (or the
+    /// ledger cannot be read — the next write sets it aside).
     pub fn session_usage(&self, session_id: &str) -> SessionUsage {
-        if session_id.is_empty() || session_id.contains(['/', '\\']) || session_id.contains("..") {
+        if !valid(session_id) {
             return SessionUsage::default();
         }
-        std::fs::read(self.session_dir(session_id).join(FILE))
-            .ok()
-            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-            .unwrap_or_default()
+        read_ledger(&self.session_dir(session_id).join(FILE)).unwrap_or_default()
+    }
+}
+
+/// A missing file is an empty ledger; anything unreadable is an error.
+fn read_ledger(path: &std::path::Path) -> Result<SessionUsage, String> {
+    match std::fs::read(path) {
+        Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| e.to_string()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(SessionUsage::default()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// An unreadable ledger is kept under a new name and logged, never written
+/// over: what it held may be recovered by hand.
+fn set_aside(path: &std::path::Path, why: &str) {
+    let aside = path.with_extension(format!("json.corrupt-{}", chrono::Utc::now().timestamp()));
+    match std::fs::rename(path, &aside) {
+        Ok(()) => tracing::warn!(
+            "usage ledger unreadable ({why}); kept as {}",
+            aside.display()
+        ),
+        Err(e) => {
+            tracing::warn!("usage ledger unreadable ({why}) and not set aside ({e}); replaced")
+        }
     }
 }
 
@@ -123,6 +153,66 @@ mod tests {
         store.record_usage("../escape", "m", Some(&call(1, 0, 0, 1)));
         assert!(!dir.path().join("no-such").exists());
         assert!(!dir.path().parent().unwrap().join("escape").exists());
+    }
+
+    /// Finding 9: a ledger that cannot be read is set aside under a new name
+    /// and a fresh one started — never silently written over.
+    #[test]
+    fn an_unreadable_ledger_is_set_aside_not_written_over() {
+        let (dir, store) = store();
+        let path = dir.path().join("s1").join("usage.json");
+        std::fs::write(&path, "{ not json").unwrap();
+        // Reading it for the page says nothing, and touches nothing.
+        assert!(store.session_usage("s1").is_empty());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "{ not json");
+        store.record_usage("s1", "m", Some(&call(10, 0, 0, 1)));
+        assert_eq!(
+            store.session_usage("s1").models["m"].calls,
+            1,
+            "a fresh ledger started"
+        );
+        let aside: Vec<_> = std::fs::read_dir(dir.path().join("s1"))
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| n.starts_with("usage.json.corrupt-"))
+            .collect();
+        assert_eq!(aside.len(), 1, "the unreadable file is kept: {aside:?}");
+        let kept = std::fs::read_to_string(dir.path().join("s1").join(&aside[0])).unwrap();
+        assert_eq!(kept, "{ not json");
+    }
+
+    /// Finding 8: a session removed while calls are being written is not an
+    /// error, and its folder does not come back.
+    #[test]
+    fn a_session_removed_mid_write_stays_removed() {
+        let (dir, store) = store();
+        let store = std::sync::Arc::new(store);
+        let writers: Vec<_> = (0..4)
+            .map(|_| {
+                let store = store.clone();
+                std::thread::spawn(move || {
+                    for _ in 0..50 {
+                        store.record_usage("s1", "m", Some(&call(10, 0, 0, 1)));
+                    }
+                })
+            })
+            .collect();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        store.remove_session("s1").unwrap();
+        writers.into_iter().for_each(|t| t.join().unwrap());
+        assert!(
+            !dir.path().join("s1").exists(),
+            "the removed session came back"
+        );
+    }
+
+    /// Two stores on one folder (the engine and a test) never share a
+    /// process-wide lock: the lock is the store's own.
+    #[test]
+    fn the_lock_is_the_stores_own() {
+        let src = include_str!("session_usage.rs");
+        assert!(!src.contains(concat!("static ", "WRITING")));
     }
 
     #[test]
