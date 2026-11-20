@@ -5,7 +5,6 @@
 import React, { useState } from 'react';
 import { chatAgentOf, withMemberModel } from '../../lib/sessionMembers.mts';
 import { formatTokens as fmt } from '../../lib/paneItems.mts';
-import { useChatStore } from '../../stores/chatStore';
 import { useServerStore } from '../../stores/serverStore';
 import { useUiStore } from '../../stores/uiStore';
 import { useUserStore } from '../../stores/userStore';
