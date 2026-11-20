@@ -119,7 +119,11 @@ impl AgentEngine {
     /// written for that path's place join the session's prompt. A Write or
     /// Edit the model asked for before those rules reached it is refused
     /// once, so the change is made with them in view.
-    pub(super) fn meet_place_rules(&mut self, tool: &str, args: &serde_json::Value) -> PlaceMeeting {
+    pub(super) fn meet_place_rules(
+        &mut self,
+        tool: &str,
+        args: &serde_json::Value,
+    ) -> PlaceMeeting {
         if !matches!(tool, "Read" | "Write" | "Edit") {
             return PlaceMeeting::default();
         }
@@ -153,7 +157,10 @@ impl AgentEngine {
 
 fn relative_label(root: &Path, path: &Path) -> String {
     let root = root.canonicalize().unwrap_or_else(|_| root.to_owned());
-    path.strip_prefix(&root).unwrap_or(path).display().to_string()
+    path.strip_prefix(&root)
+        .unwrap_or(path)
+        .display()
+        .to_string()
 }
 
 /// Where a path rule applies, from its front matter.
@@ -165,7 +172,10 @@ enum RuleReach {
 /// Split a rule's YAML front matter from its body. No front matter, or no
 /// `paths:` in it, means the rule applies everywhere.
 fn split_front_matter(text: &str) -> Result<(RuleReach, &str), &'static str> {
-    let Some(rest) = text.strip_prefix("---\n").or_else(|| text.strip_prefix("---\r\n")) else {
+    let Some(rest) = text
+        .strip_prefix("---\n")
+        .or_else(|| text.strip_prefix("---\r\n"))
+    else {
         return Ok((RuleReach::Everywhere, text));
     };
     let mut offset = 0;
@@ -242,7 +252,9 @@ fn rule_files(dir: &Path) -> Vec<PathBuf> {
         };
         for entry in entries.flatten() {
             let path = entry.path();
-            let Ok(kind) = entry.file_type() else { continue };
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
             if kind.is_dir() && depth < MAX_DEPTH {
                 walk(&path, depth + 1, out);
             } else if !kind.is_dir() && path.extension().is_some_and(|ext| ext == "md") {
@@ -302,7 +314,11 @@ impl InstructionScope {
                     loader.render(entry);
                 }
             }
-            for path in self.place_rules.iter().filter(|path| path.starts_with(&root)) {
+            for path in self
+                .place_rules
+                .iter()
+                .filter(|path| path.starts_with(&root))
+            {
                 if let Some(entry) = loader.discover_place_rule(path.clone()) {
                     loader.render(entry);
                 }
@@ -369,7 +385,12 @@ impl InstructionScope {
         let mut found = Vec::new();
         let folders: Vec<&Path> = relative
             .parent()
-            .map(|folder| folder.ancestors().filter(|dir| !dir.as_os_str().is_empty()).collect())
+            .map(|folder| {
+                folder
+                    .ancestors()
+                    .filter(|dir| !dir.as_os_str().is_empty())
+                    .collect()
+            })
             .unwrap_or_default();
         for folder in folders.into_iter().rev() {
             for &name in NAMES {
@@ -434,7 +455,11 @@ impl Loader<'_> {
         let mut entry = self.discover_entry(String::new(), path, RuleSource::Project)?;
         if !relative.starts_with(rules_dir(Path::new(""))) {
             let folder = relative.parent().unwrap_or(Path::new(""));
-            entry.label = format!("{} (for files under {}/)", relative.display(), folder.display());
+            entry.label = format!(
+                "{} (for files under {}/)",
+                relative.display(),
+                folder.display()
+            );
             return Some(entry);
         }
         entry.label = relative.display().to_string();

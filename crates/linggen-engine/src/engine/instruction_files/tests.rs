@@ -420,10 +420,19 @@ fn a_sub_folder_rule_reaches_only_work_under_its_folder() {
     let (_dir, root) = place_fixture();
     let mut scope = scope(&root);
     let base = rendered(&scope.load_with_home(None));
-    assert!(base.contains("ROOT RULE") && !base.contains("UI RULE") && !base.contains("CRATE RULE"), "{base}");
+    assert!(
+        base.contains("ROOT RULE") && !base.contains("UI RULE") && !base.contains("CRATE RULE"),
+        "{base}"
+    );
 
-    assert_eq!(met(&scope, &root.join("ui/src/new-file.ts")), [root.join("ui").join(CLAUDE)]);
-    assert_eq!(met(&scope, &root.join("crates/x/src/lib.rs")), [root.join("crates/x").join(AGENTS)]);
+    assert_eq!(
+        met(&scope, &root.join("ui/src/new-file.ts")),
+        [root.join("ui").join(CLAUDE)]
+    );
+    assert_eq!(
+        met(&scope, &root.join("crates/x/src/lib.rs")),
+        [root.join("crates/x").join(AGENTS)]
+    );
     assert!(met(&scope, &root.join("README.md")).is_empty());
     assert!(met(&scope, &root.join("uix/a.ts")).is_empty());
 
@@ -432,7 +441,10 @@ fn a_sub_folder_rule_reaches_only_work_under_its_folder() {
     let text = rendered(&result);
     assert_eq!(text.matches("UI RULE").count(), 1, "{text}");
     assert!(!text.contains("CRATE RULE"));
-    assert!(result.sections.iter().any(|(label, _)| label == "ui/CLAUDE.md (for files under ui/)"));
+    assert!(result
+        .sections
+        .iter()
+        .any(|(label, _)| label == "ui/CLAUDE.md (for files under ui/)"));
 }
 
 #[test]
@@ -441,18 +453,31 @@ fn a_path_scoped_rule_reaches_only_files_its_globs_match() {
     let mut scope = scope(&root);
     let base = rendered(&scope.load_with_home(None));
     assert!(base.contains("STYLE EVERYWHERE"), "{base}");
-    assert!(!base.contains("API RULE") && !base.contains("DOCS RULE"), "{base}");
+    assert!(
+        !base.contains("API RULE") && !base.contains("DOCS RULE"),
+        "{base}"
+    );
 
     let api = rules_dir(&root).join("api.md");
-    assert_eq!(met(&scope, &root.join("src/api/v1/users.ts")), [api.clone()]);
+    assert_eq!(
+        met(&scope, &root.join("src/api/v1/users.ts")),
+        [api.clone()]
+    );
     assert!(met(&scope, &root.join("src/api/v1/users.js")).is_empty());
     assert!(met(&scope, &root.join("src/other/users.ts")).is_empty());
-    assert_eq!(met(&scope, &root.join("notes.txt")), [rules_dir(&root).join("lang/docs.md")]);
+    assert_eq!(
+        met(&scope, &root.join("notes.txt")),
+        [rules_dir(&root).join("lang/docs.md")]
+    );
     assert!(met(&scope, &root.join("docs/deep/a.md")).is_empty());
 
     scope.place_rules = vec![api];
     let result = scope.load_with_home(None);
-    let (label, text) = result.sections.iter().find(|(_, text)| text.contains("API RULE")).unwrap();
+    let (label, text) = result
+        .sections
+        .iter()
+        .find(|(_, text)| text.contains("API RULE"))
+        .unwrap();
     assert_eq!(label, ".claude/rules/api.md (for src/api/**/*.ts)");
     assert_eq!(text, "API RULE", "front matter is not rule text");
 }
@@ -465,7 +490,11 @@ fn place_rules_are_for_coding_sessions_only() {
     assert!(met(&scope, &root.join("ui/src/a.ts")).is_empty());
     scope.place_rules = vec![root.join("ui").join(CLAUDE)];
     let text = rendered(&scope.load_with_home(None));
-    assert!(text.contains("ROOT RULE") && !text.contains("UI RULE") && !text.contains("STYLE EVERYWHERE"));
+    assert!(
+        text.contains("ROOT RULE")
+            && !text.contains("UI RULE")
+            && !text.contains("STYLE EVERYWHERE")
+    );
 }
 
 #[test]
@@ -475,25 +504,52 @@ fn a_place_rule_imports_only_inside_the_project_and_never_a_protected_file() {
     write(dir.path().join("outside.md"), "OUTSIDE CONTENT").unwrap();
     write(root.join(".env"), "INVENTED SECRET").unwrap();
     write(root.join("ui/shared.md"), "SHARED UI").unwrap();
-    write(root.join("ui").join(CLAUDE), "UI RULE\n@shared.md\n@../../outside.md\n@../.env").unwrap();
-    write(rules_dir(&root).join("api.md"), "---\npaths: src/**\n---\nAPI RULE @../../../outside.md").unwrap();
+    write(
+        root.join("ui").join(CLAUDE),
+        "UI RULE\n@shared.md\n@../../outside.md\n@../.env",
+    )
+    .unwrap();
+    write(
+        rules_dir(&root).join("api.md"),
+        "---\npaths: src/**\n---\nAPI RULE @../../../outside.md",
+    )
+    .unwrap();
     let mut scope = scope(&root);
-    scope.place_rules = vec![root.join("ui").join(CLAUDE), rules_dir(&root).join("api.md")];
+    scope.place_rules = vec![
+        root.join("ui").join(CLAUDE),
+        rules_dir(&root).join("api.md"),
+    ];
     let text = rendered(&scope.load_with_home(None));
     assert!(text.contains("SHARED UI"), "{text}");
-    assert!(text.contains("[Import @../../outside.md not loaded: outside the project.]"), "{text}");
-    assert!(text.contains("[Import @../../../outside.md not loaded: outside the project.]"), "{text}");
-    assert!(text.contains("[Import @../.env not loaded: protected or requires approval.]"), "{text}");
+    assert!(
+        text.contains("[Import @../../outside.md not loaded: outside the project.]"),
+        "{text}"
+    );
+    assert!(
+        text.contains("[Import @../../../outside.md not loaded: outside the project.]"),
+        "{text}"
+    );
+    assert!(
+        text.contains("[Import @../.env not loaded: protected or requires approval.]"),
+        "{text}"
+    );
     assert!(!text.contains("OUTSIDE CONTENT") && !text.contains("INVENTED SECRET"));
 }
 
 #[test]
 fn a_path_rule_that_cannot_be_read_says_so_and_a_change_to_a_met_rule_is_picked_up() {
     let (_dir, root) = place_fixture();
-    write(rules_dir(&root).join("broken.md"), "---\npaths: [unclosed\n").unwrap();
+    write(
+        rules_dir(&root).join("broken.md"),
+        "---\npaths: [unclosed\n",
+    )
+    .unwrap();
     let mut scope = scope(&root);
     let base = rendered(&scope.load_with_home(None));
-    assert!(base.contains("[Rule not loaded: front matter not closed.]"), "{base}");
+    assert!(
+        base.contains("[Rule not loaded: front matter not closed.]"),
+        "{base}"
+    );
     scope.place_rules = vec![root.join("ui").join(CLAUDE)];
     let first = scope.load_with_home(None).fingerprint();
     write(root.join("ui").join(CLAUDE), "UI RULE two").unwrap();
@@ -515,7 +571,12 @@ fn native_instruction_filenames_live_in_one_place() {
                 let source = fs::read_to_string(&path).unwrap();
                 let personal = personal_rule_path(Path::new(""));
                 let rules = rules_dir(Path::new(""));
-                for name in NAMES.iter().copied().chain(personal.to_str()).chain(rules.to_str()) {
+                for name in NAMES
+                    .iter()
+                    .copied()
+                    .chain(personal.to_str())
+                    .chain(rules.to_str())
+                {
                     assert!(
                         !source.contains(&format!("\"{name}\"")),
                         "{} repeats the native instruction name {name}",
