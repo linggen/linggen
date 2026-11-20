@@ -1907,6 +1907,40 @@ mod declined_gate_tests {
         assert_eq!(asked.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 
+    #[test]
+    fn read_policy_origin_matrix() {
+        use crate::engine::permission::{PermissionCheckResult, ReadOrigin};
+        let world = tempfile::tempdir_in(dirs::home_dir().unwrap()).unwrap();
+        let target = world.path().join("notes.txt");
+        std::fs::write(&target, "fixture").unwrap();
+        let command = format!("cat {}", target.display());
+        let grants = SessionPermissions::default();
+        for (label, origin, coding, ceiling, allowed) in [
+            ("local coding chat", ReadOrigin::LocalOwner, true, None, true),
+            ("local coding delegate", ReadOrigin::LocalDelegate, true, None, true),
+            ("coding Task", ReadOrigin::LocalDelegate.task_child(), true, None, true),
+            ("ordinary chat", ReadOrigin::LocalOwner, false, None, false),
+            ("handoff", ReadOrigin::Other, true, None, false),
+            ("app", ReadOrigin::Other, false, None, false),
+            ("private place", ReadOrigin::Other, true, None, false),
+            ("daily", ReadOrigin::Other, false, None, false),
+            ("companion", ReadOrigin::Other, false, None, false),
+            ("mission", ReadOrigin::Other, false, None, false),
+            ("room guest", ReadOrigin::Other, false, None, false),
+            ("remote person", ReadOrigin::Other, true, None, false),
+            ("paired admin", ReadOrigin::Other, true, Some(PermissionMode::Admin), false),
+            ("remote Task", ReadOrigin::Other.task_child(), true, None, false),
+        ] {
+            for tool in ["Read", "Glob", "Grep", "Bash"] {
+                let result = permission::check_permission_with_read_approvals(
+                    tool, (tool == "Bash").then_some(command.as_str()), target.to_str(),
+                    world.path(), &grants, None, coding, ceiling, origin, None, &[],
+                );
+                assert_eq!(matches!(result, PermissionCheckResult::Allowed), allowed, "{label}: {tool}: {result:?}");
+            }
+        }
+    }
+
     #[tokio::test]
     async fn read_policy_recursive_glob_requires_grant_for_its_root() {
         let home = dirs::home_dir().unwrap();
