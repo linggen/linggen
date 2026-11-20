@@ -418,6 +418,11 @@ async fn a_restart_continues_her_turn(origin: Option<&str>, her_reply: crate::su
     crate::restart::leave_plan(&w, json!([entry]));
     let mark = w.mark();
     w.engine.restart(&w.home).await;
+    if origin == Some("herald") || origin == Some("glance") {
+        // An engine-started turn is not continued: there is no run to wait for.
+        tokio::time::sleep(Duration::from_secs(6)).await;
+        return w;
+    }
     w.wait_agent(Agent::Yinyue, mark).await;
     tokio::time::sleep(Duration::from_secs(3)).await;
     w
@@ -431,14 +436,16 @@ async fn a_persons_turn_continued_after_a_restart_is_still_answered_in_the_open(
     assert!(every_row(&w).contains("CONTINUED-ANSWER"), "a person's answer was dropped");
 }
 
-/// One an engine-started wake began: the continue turn speaks only in the
-/// envelope — and a bare reply says nothing.
+/// A turn an engine-started wake began, interrupted by a restart, is dropped:
+/// a herald is perishable, a condition is raised again by the glance loop. No
+/// turn of hers runs, so no event line has a way out of a restart.
 #[tokio::test]
-async fn an_event_turn_continued_after_a_restart_speaks_only_in_the_envelope() {
-    let w = a_restart_continues_her_turn(Some("herald"), text("BARE-PROSE continued thinking.")).await;
-    assert!(!every_row(&w).contains("BARE-PROSE"), "bare prose reached a thread");
-    let w = a_restart_continues_her_turn(Some("herald"), say("RESTART-LINE back on the new build.")).await;
-    assert_eq!(every_row(&w).matches("RESTART-LINE").count(), 1);
+async fn an_event_turn_interrupted_by_a_restart_is_dropped() {
+    for origin in ["herald", "glance"] {
+        let w = a_restart_continues_her_turn(Some(origin), say("RESTART-LINE back on the new build.")).await;
+        assert!(!every_row(&w).contains("RESTART-LINE"), "{origin}: a dropped turn spoke");
+        assert_eq!(w.model.calls_of(Agent::Yinyue).len(), 1, "{origin}: a turn of hers ran after the restart");
+    }
 }
 
 /// A notice told to her with no turn of hers behind it (a task's end, a

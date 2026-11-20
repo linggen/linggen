@@ -850,6 +850,10 @@ fn deliveries_for(
             tracing::info!("[restart] {sid}/{owner} was already told");
             continue;
         }
+        let Some(origin) = continued_origin(session, &owner, &agent) else {
+            tracing::info!("[restart] {sid}/{owner}: an engine-started turn was interrupted; dropped");
+            continue;
+        };
         tracing::info!("[restart] {sid}/{owner} continues");
         let message = continue_message(plan, &scoped, outcome);
         deliveries.push(Delivery {
@@ -858,26 +862,27 @@ fn deliveries_for(
             message,
             mark,
             place: place.clone(),
-            origin: continued_origin(session, &owner, &agent),
+            origin,
             scoped,
         });
     }
     deliveries
 }
 
-/// What the continue turn for `owner` is. The session's own agent continues
-/// the turn it was running, so it keeps that turn's origin — a person's turn
-/// stays on the answer path; one with no record was a person's. Any other
-/// owner is told its task ended.
-fn continued_origin(session: &Value, owner: &str, agent: &str) -> super::resident::Origin {
+/// What the continue turn for `owner` is, or `None` when there is none. The
+/// session's own agent continues the turn it was running only when a PERSON
+/// started it — it stays on the answer path; one with no record was a
+/// person's. A turn the engine started (a herald, a glance, a condition) is
+/// dropped: a herald is perishable, a condition was never told so the glance
+/// loop raises it again, and a fault it carried is held as on any
+/// unpublished return. Any other owner is told its task ended.
+fn continued_origin(session: &Value, owner: &str, agent: &str) -> Option<super::resident::Origin> {
     use super::resident::Origin;
-    if owner != agent {
-        return Origin::TaskEnd;
+    if owner != agent || session["turn_interrupted"] != true {
+        return Some(Origin::TaskEnd);
     }
-    match session["turn_interrupted"] == true {
-        true => serde_json::from_value(session["origin"].clone()).unwrap_or(Origin::Person),
-        false => Origin::TaskEnd,
-    }
+    let origin = serde_json::from_value(session["origin"].clone()).unwrap_or(Origin::Person);
+    (!origin.held()).then_some(origin)
 }
 
 /// A session's entry as `owner` is told it: its own tasks only, and — when
