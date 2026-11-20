@@ -1323,10 +1323,8 @@ fn copy_sources(tokens: &[Token]) -> Vec<usize> {
 /// `linggen/other`, never the session folder's parent. Only a plain `cd`
 /// to a directory that exists, with no variable, glob or subshell syntax
 /// anywhere in the command, is followed, and only across `&&`, `;` and a
-/// newline. After `|`, `||` or `&` the shell's own folder is not known to
-/// have moved (a pipeline stage is a subshell, `||` runs only when the cd
-/// failed, `&` backgrounds it), so the rest resolves from the session's
-/// folder as before.
+/// newline. Pipeline stages keep the enclosing directory and cannot change
+/// it. An ambiguous conditional or background chain is not followed.
 ///
 /// Text the command carries is not a target: a heredoc body, or the pattern
 /// of grep, sed, awk or jq (see `shell_text`).
@@ -1350,6 +1348,8 @@ fn command_target_levels(cmd: &str, session_cwd: &Path) -> Vec<(PathBuf, TargetK
     let sources = copy_sources(&tokens);
     let mut sed_files_from = None;
     let mut tail_input = None;
+    let mut in_pipeline = false;
+    let mut segment_end = 0;
     for (index, (token, text)) in tokens.iter().zip(text).enumerate() {
         let w = match token {
             Token::Op(joint) => {
@@ -1358,6 +1358,7 @@ fn command_target_levels(cmd: &str, session_cwd: &Path) -> Vec<(PathBuf, TargetK
                 let unknown = cd_pending
                     || joint == Joint::Break
                     || joint == Joint::Seq && moved_conditionally;
+                in_pipeline = joint == Joint::Pipe;
                 if unknown {
                     following = false;
                     cwd = session_cwd.to_path_buf();
@@ -1374,6 +1375,7 @@ fn command_target_levels(cmd: &str, session_cwd: &Path) -> Vec<(PathBuf, TargetK
         if at_command {
             sed_files_from = None;
             tail_input = None;
+            segment_end = index + tokens[index..].iter().position(|t| matches!(t, Token::Op(_))).unwrap_or(tokens.len() - index);
             if w == "tail" {
                 let end = tokens[index..]
                     .iter()
@@ -1405,7 +1407,7 @@ fn command_target_levels(cmd: &str, session_cwd: &Path) -> Vec<(PathBuf, TargetK
             if let Some(token) = path_token(w) {
                 out.push((resolve_bash_arg(&token, &cwd), TargetKind::Full));
             }
-            if following {
+            if following && !in_pipeline && !matches!(tokens.get(segment_end), Some(Token::Op(Joint::Pipe | Joint::Break))) {
                 match cd_destination(w, &cwd) {
                     Some(dir) => {
                         cwd = dir;
@@ -1521,7 +1523,9 @@ pub(super) enum Joint {
     Seq,
     /// `&&`: the next command runs only when this one succeeded.
     And,
-    /// `|`, `|&`, `||` or `&`: a cd before it does not move the shell.
+    /// `|` or `|&`: each stage has its own working directory.
+    Pipe,
+    /// `||` or `&`: the next segment does not inherit a change here.
     Break,
 }
 
@@ -1575,9 +1579,10 @@ pub(super) fn command_tokens(cmd: &str) -> Vec<Token> {
                 cur.push(c);
                 continue;
             }
+            '|' if chars.next_if_eq(&'|').is_some() => Joint::Break,
             '|' => {
-                chars.next_if(|&n| n == '|' || n == '&');
-                Joint::Break
+                chars.next_if_eq(&'&');
+                Joint::Pipe
             }
             '&' if cur.ends_with(['>', '<']) || chars.peek() == Some(&'>') => {
                 cur.push(c);

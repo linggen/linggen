@@ -2005,6 +2005,25 @@ mod tests {
         }
     }
 
+    #[test]
+    fn folder_chain_keeps_the_callers_directory_across_a_pipeline() {
+        let (ws, sp) = granted_workspace("folder-chain");
+        let check = |cmd: &str| check_permission_for("Bash", Some(cmd), None, &ws, &sp, None, true, None);
+        for cmd in [
+            format!("cd {}/skills && node --test tests/*.test.mts 2>&1 | tail -10; cd .. && git status --short", ws.display()),
+            "(cd /tmp && ls); git status".into(),
+        ] {
+            assert!(matches!(check(&cmd), PermissionCheckResult::Allowed), "{cmd}: {:?}", check(&cmd));
+        }
+        let outside = "cd skills && cd ../.. && ls";
+        assert!(matches!(check(outside), PermissionCheckResult::NeedsPrompt(_)));
+        let unknown = r#"cd "$X" && rm a"#;
+        assert_eq!(classify_bash_command(unknown), BashClass::Admin);
+        let mut edit_only = sp.clone();
+        edit_only.path_modes[0].mode = PermissionMode::Edit;
+        assert!(matches!(check_permission_for("Bash", Some(unknown), None, &ws, &edit_only, None, true, None), PermissionCheckResult::NeedsPrompt(_)));
+    }
+
     fn shellexpand_home(p: &str) -> std::path::PathBuf {
         match p.strip_prefix("~/") {
             Some(rest) => dirs::home_dir().unwrap().join(rest),
