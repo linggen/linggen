@@ -21,7 +21,7 @@
 set -eu
 real_home="$HOME"
 here="$(cd "$(dirname "$0")/.." && pwd)"
-scratch="$real_home/.cache/linggen-test-home/$(basename "$here")"
+scratch="${LINGGEN_TEST_HOME:-$real_home/.cache/linggen-test-home/$(basename "$here")}"
 mkdir -p "$scratch/.linggen/skills" "$scratch/.cache"
 models="$scratch/.cache/huggingface"
 # Only the system tests see the link; unit tests load nothing through it.

@@ -31,6 +31,7 @@ pub fn hermetic_env(home: &Home) -> Vec<(String, String)> {
         ("TZ", "UTC".to_string()),
         ("SHELL", "/bin/sh".to_string()),
         ("LINGGEN_NO_TELEMETRY", "1".to_string()),
+        ("LINGGEN_NO_BONJOUR", "1".to_string()),
         ("LING_MEM_NO_TELEMETRY", "1".to_string()),
         ("LINGGEN_SITE_URL", DEAD_PROXY.to_string()),
         ("HF_HUB_OFFLINE", "1".to_string()),

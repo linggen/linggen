@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import type { SettingsLocationState } from '../../hooks/useOpenSettings';
 import { watchPageEscape } from '../../lib/dialogEscape.mts';
@@ -21,10 +21,12 @@ export function SettingsHome({ launcher }: { launcher: boolean }) {
     else navigate('/', { replace: launcher });
   }, [launcher, navigate, returnToLauncher]);
 
+  const page = useRef<HTMLDivElement>(null);
+  useEffect(() => { page.current?.focus({ preventScroll: true }); }, []);
   useEffect(() => watchPageEscape(document, onBack), [onBack]);
 
   return (
-    <div className="h-screen">
+    <div ref={page} tabIndex={-1} className="h-screen outline-none">
       <SettingsPanel initial={initial} requestKey={launcher ? location.key : initial ?? ''} canOpenRun={!launcher} onBack={onBack} />
     </div>
   );

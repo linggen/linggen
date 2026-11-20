@@ -26,7 +26,7 @@ import { useTransport, sendViewContext } from '../hooks/useTransport';
 import '../index.css';
 import { installFetchProxy } from '../lib/fetchProxy';
 import { installChannelHost, startChannelView } from '../lib/channelHost';
-import { isLauncherWindow } from '../lib/launcherFace.mts';
+import { isEmbedLocation, isLauncherWindow } from '../lib/launcherFace.mts';
 
 installFetchProxy();
 // The skill pages this page frames ride its data channel (channelHost.ts).
@@ -68,9 +68,7 @@ const path = window.location.pathname;
 const urlParams = new URLSearchParams(window.location.search);
 // Remotely the chat is booted by the relay's connect page, at
 // /app/connect/<id>; the skill page's chat bridge marks it `entry=embed`.
-const isEmbedPath = path === '/embed' || path.startsWith('/embed/')
-  || urlParams.get('mode') === 'compact'
-  || urlParams.get('entry') === 'embed';
+const isEmbedPath = isEmbedLocation(path, urlParams);
 // The desktop shell's transparent pet window loads `?pet=1` — render only the
 // avatar (PetApp), but still let Root mount the transport so her events flow.
 const isPetView = urlParams.get('pet') === '1';
@@ -92,10 +90,10 @@ const Root: React.FC = () => {
   // otherwise tear down the connection.
   useTransport({ sessionId });
 
-  const view: View = isPetView
-    ? 'pet'
-    : isLauncherView
-      ? 'launcher'
+  const view: View = isLauncherView
+    ? 'launcher'
+    : isPetView
+      ? 'pet'
       : isEmbedPath
         ? 'embed'
         : currentPage === 'consumer'
@@ -144,7 +142,7 @@ const BARE_PATHS: ReadonlySet<string> = new Set(['/chat', '/sessions', '/info-pa
 
 // A standalone skill page's hidden channel frame (`?channel=1`): one peer
 // for its calls, nothing rendered.
-if (urlParams.get('channel') === '1') {
+if (!isLauncherView && urlParams.get('channel') === '1') {
   startChannelView();
 } else {
   // The language first, so the page's English is put into it as it renders.

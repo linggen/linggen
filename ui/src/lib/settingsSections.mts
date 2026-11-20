@@ -32,6 +32,12 @@ export type SettingsSectionId = SettingsSection['id'];
 
 const ALIASES = { mcp: 'tools' } as const satisfies Record<string, SettingsSectionId>;
 export type SettingsTab = SettingsSectionId | keyof typeof ALIASES;
+export type SettingsTarget = SettingsTab | `app-${string}`;
+
+export function isSettingsTarget(tab: unknown): tab is SettingsTarget {
+  return typeof tab === 'string' && (Object.hasOwn(ALIASES, tab)
+    || SETTINGS_SECTIONS.some((section) => section.id === tab) || /^app-.+/.test(tab));
+}
 
 export function resolveSettingsTab(tab: string | null | undefined) {
   return tab && Object.hasOwn(ALIASES, tab) ? ALIASES[tab as keyof typeof ALIASES] : tab;

@@ -21,6 +21,7 @@ import type { SkillAppConfig, SkillInfoFull } from '../types';
 import { frameAllow } from '../lib/frameAllow.mts';
 import { launcherNote, type ListState } from '../lib/launcherNote.mts';
 import { setAppHost } from '../lib/appHost';
+import { isSettingsTarget } from '../lib/settingsSections.mts';
 
 /** A skill that is an app. */
 type AppSkill = SkillInfoFull & { app: SkillAppConfig };
@@ -65,7 +66,7 @@ export const LauncherApp: React.FC<{ covered: boolean }> = ({ covered }) => {
     const { [name]: _gone, ...rest } = prev;
     return rest;
   });
-  useYinyuePresenter(!!activeName && companion[activeName] === 'hidden', true);
+  useYinyuePresenter(!covered && !!activeName && companion[activeName] === 'hidden', true);
 
   // Self-fetch the app list over HTTP so the launcher doesn't depend on the
   // WebRTC page_state timing (the dev console's source).
@@ -106,7 +107,7 @@ export const LauncherApp: React.FC<{ covered: boolean }> = ({ covered }) => {
   // {type:'linggen:show-settings'} to the main window — open the merged settings.
   useEffect(() => {
     const onMsg = (e: MessageEvent) => {
-      if (e.data?.type === 'linggen:show-settings') openSettings(typeof e.data.section === 'string' ? e.data.section : undefined);
+      if (e.data?.type === 'linggen:show-settings') openSettings(isSettingsTarget(e.data.section) ? e.data.section : undefined);
       if (e.data?.type === 'linggen:companion' && e.origin === window.location.origin) {
         const name = [...frames.current].find(([, f]) => f.contentWindow === e.source)?.[0];
         const want = e.data.companion === 'hidden' ? 'hidden' : 'shown';

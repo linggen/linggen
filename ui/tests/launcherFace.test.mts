@@ -24,6 +24,15 @@ test('frames, pet, and channel do not take or change the launcher face', () => {
   assert.equal(isLauncherWindow(frame as unknown as Window), false);
 });
 
+test('a named face beats the remembered launcher but not an explicit launcher entry', () => {
+  for (const [path, search] of [['/embed', ''], ['/embed/session', ''], ['/', '?mode=compact'], ['/', '?entry=embed'], ['/', '?pet=1'], ['/', '?channel=1']]) {
+    assert.deepEqual(resolveLauncherFace(search, true, true, path), { launcher: false, remember: true });
+    const explicit = new URLSearchParams(search);
+    explicit.set('launcher', '1');
+    assert.deepEqual(resolveLauncherFace(explicit.toString(), true, false, path), { launcher: true, remember: true });
+  }
+});
+
 test('storage failure still honors an explicit launcher entry', () => {
   const win = { top: {}, location: { search: '?launcher=1' }, get sessionStorage() { throw new Error('blocked'); } };
   win.top = win;
