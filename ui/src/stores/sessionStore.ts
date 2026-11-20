@@ -59,7 +59,9 @@ interface SessionState {
   fetchSessions: () => Promise<void>;
   fetchAllSessions: () => Promise<void>;
 
-  createSession: (runtime?: 'claude_agent_sdk') => Promise<void>;
+  createSession: () => Promise<void>;
+  /** Go on from an old Claude session in a new Linggen session, and open it (lib/oldClaude.mts). */
+  continueOldClaude: (id: string) => Promise<void>;
   /** A New chat being made: a message sent meanwhile waits for it — it
    *  belongs to the new chat, not the one on screen before the click. */
   newChat: Promise<string | null> | null;
@@ -106,11 +108,18 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   newChat: null,
 
-  createSession: async (runtime) => {
-    const making = makeSession(set, runtime);
+  createSession: async () => {
+    const making = makeSession(set);
     set({ newChat: making });
     await making;
     if (get().newChat === making) set({ newChat: null });
+  },
+
+  continueOldClaude: async (id) => {
+    const old = get().allSessions.find((s) => s.id === id);
+    const data = await sessionsApi.continueOld(id);
+    set((s) => afterNewChat(s.allSessions, { id: data.id, title: `${old?.title ?? 'Claude session'} (continued)`, cwd: data.cwd }, Math.floor(Date.now() / 1000)));
+    window.localStorage.setItem(ACTIVE_SESSION_STORAGE_KEY, data.id);
   },
 
   removeSession: async (id) => {
@@ -208,15 +217,15 @@ export function effectiveProjectRoot(override?: string | null): string {
 }
 
 /** Makes a new chat session and opens it; its id, or null when it failed. */
-async function makeSession(set: (fn: (s: SessionState) => Partial<SessionState>) => void, runtime?: 'claude_agent_sdk'): Promise<string | null> {
+async function makeSession(set: (fn: (s: SessionState) => Partial<SessionState>) => void): Promise<string | null> {
   const now = new Date();
   const title = `Chat ${now.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}, ${now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
   try {
     // Never a folder: the engine starts a New chat in the default workspace.
-    const data = await sessionsApi.create({ ...newChatRequest(runtime ? `Claude ${title.slice(5)}` : title), ...(runtime ? { runtime } : {}) });
+    const data = await sessionsApi.create(newChatRequest(title));
     set((s) => {
-      const made = afterNewChat(s.allSessions, { id: data.id, title: runtime ? `Claude ${title.slice(5)}` : title, cwd: data.cwd }, Math.floor(Date.now() / 1000));
-      return { ...made, allSessions: made.allSessions.map((entry) => entry.id === data.id ? { ...entry, runtime: data.runtime, agents: data.agents } : entry) };
+      const made = afterNewChat(s.allSessions, { id: data.id, title, cwd: data.cwd }, Math.floor(Date.now() / 1000));
+      return { ...made, allSessions: made.allSessions.map((entry) => entry.id === data.id ? { ...entry, agents: data.agents } : entry) };
     });
     window.localStorage.setItem(ACTIVE_SESSION_STORAGE_KEY, data.id);
     return data.id;

@@ -94,8 +94,6 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
     [agentTree, mainAgentIds],
   );
 
-  const claudeSession = useSessionStore((s) => s.allSessions.find((session) => session.id === effectiveSessionId)?.runtime === 'claude_agent_sdk');
-
   // --- Model switcher ---
   const switchModel = useCallback(async (modelId: string) => {
     try {
@@ -119,9 +117,9 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
       selectedAgent={selectedAgent}
       memberIds={memberIds}
       setSelectedAgent={useServerStore.getState().setSelectedAgent}
-      skills={claudeSession ? [] : skills}
-      agents={claudeSession ? [] : agents}
-      mainAgents={claudeSession ? [] : agents}
+      skills={skills}
+      agents={agents}
+      mainAgents={agents}
       subagents={subagents}
       runningMainRunIds={runningMainRunIds}
       runningRunIdBySession={runningRunIdBySession}

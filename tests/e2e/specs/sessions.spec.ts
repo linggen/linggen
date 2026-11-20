@@ -7,6 +7,7 @@ import { test, expect, expectWebRtc, expectScriptedCalls, expectTurnOver, chat, 
 const SHARED = 'sess-1790000001-5a1ed001';
 const FERRY = 'sess-1790000002-c0ac7ed2';
 const INTERRUPTED = 'sess-1790000003-1e7e5ed3';
+const OLD_CLAUDE = 'sess-1790000004-c1a0de04';
 
 const row = (page: Page, id: string) => page.locator(`[data-testid="session-row"][data-session-id="${id}"]`);
 
@@ -79,6 +80,23 @@ test('a session deleted from the list is gone, after a reload too', async ({ pag
   await expectWebRtc(page, httpRequests);
   await expect(row(page, INTERRUPTED)).toHaveCount(1);
   await expect(row(page, FERRY)).toHaveCount(0);
+});
+
+// An old Claude session (2.5.1, the SDK's) opens read-only: its history,
+// one line why in place of the composer, and Continue in Linggen opening a
+// new session with the conversation carried.
+test('an old Claude session is read-only and continues in Linggen', async ({ page, world, httpRequests }) => {
+  await page.goto(`${world.url}/?session=${OLD_CLAUDE}`);
+  await expectWebRtc(page, httpRequests);
+  await expect(shown(page, 'Move the tram 28 timetable into tram28.md.')).toHaveCount(1);
+  const bar = page.getByTestId('old-claude-bar');
+  await expect(bar).toContainText('read-only');
+  await expect(composer(page)).toHaveCount(0);
+
+  await bar.getByRole('button', { name: 'Continue in Linggen' }).click();
+  await expect(page.getByTestId('session-list').getByText('Tram timetable (continued)')).toHaveCount(1);
+  await expect(composer(page)).toHaveCount(1);
+  await expect(page.getByTestId('old-claude-bar')).toHaveCount(0);
 });
 
 // Found by the whole-code review (2026-11-19): the chat box kept what was

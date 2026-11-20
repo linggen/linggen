@@ -4,6 +4,7 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { useOpenSettings } from '../../hooks/useOpenSettings';
 import { postToParent, fromParent } from '../../lib/parentFrame';
 import { sessions } from '../../lib/api';
+import { isOldClaude } from '../../lib/oldClaude.mts';
 
 /** Bare /sessions route — for skill apps to iframe the session list alone.
  *
@@ -32,7 +33,7 @@ export const BareSessions: React.FC = () => {
   // When mounted inside a skill app iframe, filter to that skill only.
   const filtered = useMemo(() => {
     if (!skillParam) return undefined;
-    return allSessions.filter(s => s.runtime !== 'claude_agent_sdk' && s.creator === 'skill' && (s.skill || '') === skillParam);
+    return allSessions.filter(s => !isOldClaude(s) && s.creator === 'skill' && (s.skill || '') === skillParam);
   }, [allSessions, skillParam]);
 
   // Skill-bound active highlight overrides the store's activeSessionId so
@@ -97,7 +98,6 @@ export const BareSessions: React.FC = () => {
         activeSessionId={effectiveActive}
         onSelectSession={handleSelect}
         onCreateSession={handleCreate}
-        onCreateClaudeSession={skillParam ? undefined : () => sessionStore.createSession('claude_agent_sdk')}
         onDeleteSession={(id) => sessionStore.removeSession(id)}
         onOpenSettings={skillParam ? undefined : openSettings}
         filterSessions={filtered}

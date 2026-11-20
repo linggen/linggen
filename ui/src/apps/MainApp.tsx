@@ -352,7 +352,6 @@ export const MainApp: React.FC<{ covered: boolean }> = ({ covered }) => {
                   activeSessionId={activeSessionId}
                   onSelectSession={(session) => selectSession(session, () => setMobileMenuOpen(false))}
                   onCreateSession={() => { projectStore.createSession(); setMobileMenuOpen(false); }}
-                  onCreateClaudeSession={() => { projectStore.createSession('claude_agent_sdk'); setMobileMenuOpen(false); }}
                   onDeleteSession={(id) => projectStore.removeSession(id)}
                   onOpenSettings={(tab) => { openSettings(tab); setMobileMenuOpen(false); }}
                 />
@@ -366,7 +365,6 @@ export const MainApp: React.FC<{ covered: boolean }> = ({ covered }) => {
               activeSessionId={activeSessionId}
               onSelectSession={(session) => selectSession(session)}
               onCreateSession={() => projectStore.createSession()}
-              onCreateClaudeSession={() => projectStore.createSession('claude_agent_sdk')}
               onDeleteSession={(id) => projectStore.removeSession(id)}
               onOpenSettings={openSettings}
             />

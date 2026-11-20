@@ -83,7 +83,6 @@ export interface PageState {
   all_sessions?: SessionInfo[];
   models?: ModelInfo[];
   default_models?: string[];
-  claude_default_model?: string;
   skills?: SkillInfo[];
   missions?: unknown[];
   pending_ask_user?: Array<{ question_id: string; agent_id?: string; questions?: AskUserQuestion[]; session_id?: string | null; place?: string | null }>;
@@ -97,7 +96,7 @@ export interface PageState {
   /** The session the scoped fields below are for. */
   session_id?: string;
   /** That session's runtime; absent while the session is not known. */
-  session_runtime?: 'linggen' | 'claude_agent_sdk';
+  session_runtime?: string;
   agents?: AgentInfo[];
   agent_runs?: AgentRunInfo[];
   queued?: Array<{ agent_id?: string; items?: QueuedChatItem[] }>;

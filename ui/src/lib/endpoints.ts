@@ -128,7 +128,7 @@ export const sessionApi = {
     apiPost<{ message?: string; images?: string[] }>('/api/queue/remove', { session_id: sessionId, agent_id: agentId, id }),
   /** Stop one background task of the session; never the turn or the others. */
   stopTask: (sessionId: string, id: string) => apiPost<void>('/api/tasks/stop', { session_id: sessionId, id }),
-  /** Claude sessions: send one queued message into the running turn now. */
+  /** Send one queued message into the running turn now. */
   steerQueued: (id: string) => apiPost<void>('/api/queue/steer', { id }),
   /** `skillName`: the app whose page asks — the export shows that app's place. */
   systemPrompt: (projectRoot: string, agentId: string, sessionId?: string | null, skillName?: string) =>

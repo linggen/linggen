@@ -34,6 +34,7 @@ import { pageAgent, setPageAgent } from '../lib/pageAgent';
 import { boundTo, parseBinding } from '../lib/sessionBinding.mts';
 import { startNewChat } from '../lib/newChat';
 import { startPresenceBeat } from '../lib/presence';
+import { isOldClaude } from '../lib/oldClaude.mts';
 
 const params = new URLSearchParams(window.location.search);
 const pinnedSession = params.get('session') || '';
@@ -92,7 +93,7 @@ export const EmbedApp: React.FC = () => {
   const boundParams = useSessionStore((s) => s.boundParams);
   const [skillSessions, setSkillSessions] = React.useState<SessionInfo[]>([]);
   const listed = useMemo(
-    () => (pinnedSkill ? boundTo(skillSessions, boundParams) : sessions).filter((session) => session.runtime !== 'claude_agent_sdk'),
+    () => (pinnedSkill ? boundTo(skillSessions, boundParams) : sessions).filter((session) => !isOldClaude(session)),
     [skillSessions, boundParams, sessions],
   );
   const loadSkillSessions = useCallback(async (): Promise<SessionInfo[]> => {
