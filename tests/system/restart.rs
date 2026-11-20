@@ -336,3 +336,32 @@ async fn a_plan_that_cannot_be_fully_delivered_retires_and_keeps_the_rest() {
     let status = w.api.post_status("/api/engine/restart", json!({"binary": bogus, "wait_secs": 0})).await;
     assert_eq!(status, 400, "a later restart is not refused for the old plan");
 }
+
+/// The upgrade from 2.5.1 itself: a plan the old engine left naming a Claude
+/// session (agent `claude`) is not continued — the session is a read-only
+/// record now — and the plan still retires, the native session in it told.
+#[tokio::test]
+async fn a_plan_naming_an_old_claude_session_skips_it_and_retires() {
+    let mut w = World::start(Setup::default().script(Agent::Ling, vec![text("Back on the new build.")])).await;
+    let sid = w.api.create_session(json!({"title": "Chat"})).await;
+    let old = "sess-1790000004-c1a0de04";
+    let before = crate::support::rows::read_raw(&w.home.linggen_home(), old).len();
+    leave_plan(&w, json!([
+        {"session_id": old, "agent_id": "claude", "caller": false, "tasks": [],
+         "queued": [{"text": "keep going", "images": [], "agent_id": "claude"}]},
+        {"session_id": sid, "agent_id": "ling", "caller": true, "tasks": []},
+    ]));
+    let mark = w.mark();
+    w.engine.restart(&w.home).await;
+    assert!(matches!(w.wait_run(&sid, Agent::Ling, mark).await, RunEnd::Finished));
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while w.home.linggen_home().join("restart/resume.json").exists() {
+        assert!(Instant::now() < deadline, "a plan naming an old Claude session never retired");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(
+        crate::support::rows::read_raw(&w.home.linggen_home(), old).len(),
+        before,
+        "the old Claude session was written to"
+    );
+}

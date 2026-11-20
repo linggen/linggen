@@ -167,8 +167,8 @@ pub async fn run(
     let mode = permission_mapping(permission_mode, write_dir.is_some())?;
     if let Some(session) = session {
         let meta = session_meta(state, session)?;
-        if !meta.runtime.is_linggen() {
-            return Err("session is not a Linggen session".into());
+        if crate::server::old_claude::is_read_only(&meta) {
+            return Err(crate::server::old_claude::READ_ONLY.into());
         }
         let agent_id = agent
             .map(str::to_string)
@@ -725,7 +725,6 @@ fn delegate_meta(
     let mut meta = crate::state_fs::sessions::SessionMeta {
         work: None,
         runtime: Default::default(),
-        claude_permission_mode: Default::default(),
         parent_session_id: None,
         id: id.to_string(),
         title: title.to_string(),

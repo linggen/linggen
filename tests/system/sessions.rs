@@ -182,151 +182,77 @@ const SHARED: &str = "sess-1790000001-5a1ed001";
 const COMPACTED: &str = "sess-1790000002-c0ac7ed2";
 const INTERRUPTED: &str = "sess-1790000003-1e7e5ed3";
 
-/// Claude sessions have one execution owner and persist SDK settings without
-/// creating a native permission file or invoking the native model.
+/// A Claude session from 2.5.1 (the fixture, written as the SDK host wrote
+/// it): its history opens, tool rows as tools, not bubbles.
+const OLD_CLAUDE: &str = "sess-1790000004-c1a0de04";
+
+/// Rule: an old Claude session is never lost and never a dead end. It opens
+/// read-only — no turn, no model change — renames as before, and continues
+/// in a new Linggen session in its folder whose first model call carries
+/// its conversation. Clearing and deleting it work as before.
 #[tokio::test]
-async fn claude_session_creation_and_permissions_are_independent() {
-    let w = World::start(Setup::default()).await;
-    let native = w.api.create_session(json!({"title":"Native"})).await;
-    let sid = w
-        .api
-        .create_session(
-            json!({"title":"Claude", "runtime":"claude_agent_sdk", "project_root":w.work()}),
-        )
-        .await;
-    w.api
-        .patch(
-            "/api/sessions",
-            json!({"session_id":sid, "claude_permission_mode":"acceptEdits"}),
-        )
-        .await;
-    let dir = w.home.linggen_home().join("sessions").join(&sid);
-    let meta: serde_json::Value =
-        serde_norway::from_str(&std::fs::read_to_string(dir.join("session.yaml")).unwrap())
-            .unwrap();
-    assert_eq!(meta["runtime"], "claude_agent_sdk");
-    assert_eq!(meta["agents"], json!([{"id":"claude"}]));
-    assert_eq!(meta["claude_permission_mode"], "acceptEdits");
-    assert!(!dir.join("permission.json").exists());
-    let native_meta = std::fs::read_to_string(
-        w.home
-            .linggen_home()
-            .join("sessions")
-            .join(&native)
-            .join("session.yaml"),
-    )
-    .unwrap();
-    assert!(!native_meta.contains("claude"));
+async fn an_old_claude_session_opens_read_only_and_continues_in_linggen() {
+    let w = World::start(Setup::default().script(Agent::Ling, vec![text("First car at 06:15, as before.")])).await;
+    let history = w.api.history(OLD_CLAUDE, &w.work()).await;
+    let shown = history["messages"].as_array().cloned().unwrap_or_default();
+    assert_eq!(shown.len(), 2, "tool observations became bubbles: {history}");
+    assert!(shown[1].to_string().contains("first car at 06:15"), "{history}");
+
     let client = reqwest::Client::new();
-    for (path, payload) in [
-        (
-            "/api/sessions/permission",
-            json!({"session_id":sid, "path":w.work(), "mode":"admin"}),
-        ),
-        (
-            "/api/sessions",
-            json!({"session_id":sid, "agent_id":"ling", "model_id":"test"}),
-        ),
-        (
-            "/api/sessions",
-            json!({"session_id":sid, "claude_permission_mode":"admin"}),
-        ),
-    ] {
-        let response = client
-            .patch(format!("{}{path}", w.engine.base_url()))
-            .json(&payload)
-            .send()
-            .await
-            .unwrap();
-        assert!(
-            response.status().is_client_error(),
-            "{path} accepted native policy"
-        );
-    }
-    // Selecting a native member cannot turn a Claude session into a native run.
-    let response = client
-        .post(format!("{}/api/chat", w.engine.base_url()))
-        .json(&json!({
-            "session_id":sid, "project_root":w.work(), "agent_id":"ling", "message":"Hello"
-        }))
+    let base = w.engine.base_url();
+    let said = client
+        .post(format!("{base}/api/chat"))
+        .json(&json!({"session_id": OLD_CLAUDE, "project_root": w.work(), "message": "Hello"}))
         .send()
         .await
         .unwrap();
-    assert_eq!(response.status(), 400);
-    // Apps may only create, bind and run native Linggen sessions.
-    for (path, payload) in [
-        (
-            "/api/sessions",
-            json!({"title":"App", "runtime":"claude_agent_sdk", "skill":"dice"}),
-        ),
-        (
-            "/api/chat",
-            json!({"session_id":sid, "project_root":w.work(), "agent_id":"claude", "skill_name":"dice", "message":"Hello"}),
-        ),
-    ] {
-        let response = client
-            .post(format!("{}{path}", w.engine.base_url()))
-            .json(&payload)
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(
-            response.status(),
-            400,
-            "{path} accepted a Claude app session"
-        );
-    }
-    let response = client
-        .get(format!("{}/api/skill-sessions/state", w.engine.base_url()))
-        .query(&[("skill", "dice"), ("session_id", sid.as_str())])
+    assert_eq!(said.status(), 410, "an old Claude session took a turn");
+    assert!(said.text().await.unwrap().contains("read-only"));
+    let model = client
+        .patch(format!("{base}/api/sessions"))
+        .json(&json!({"session_id": OLD_CLAUDE, "agent_id": "ling", "model_id": "test"}))
         .send()
         .await
         .unwrap();
-    assert_eq!(response.status(), 400);
+    assert_eq!(model.status(), 410, "an old Claude session changed its model");
+    w.api.patch("/api/sessions", json!({"session_id": OLD_CLAUDE, "title": "Tram 28"})).await;
+    let dir = w.home.linggen_home().join("sessions").join(OLD_CLAUDE);
+    let meta = std::fs::read_to_string(dir.join("session.yaml")).unwrap();
+    assert!(meta.contains("title: Tram 28"), "{meta}");
+    assert!(meta.contains("runtime: claude_agent_sdk"), "a rename made it a Linggen session: {meta}");
+
+    let made = w.api.post("/api/sessions/continue", json!({"session_id": OLD_CLAUDE})).await;
+    let sid = made["id"].as_str().unwrap_or_else(|| panic!("no new session: {made}")).to_string();
+    assert_ne!(sid, OLD_CLAUDE);
+    assert_eq!(made["cwd"], w.work(), "the new session left the old one's folder");
+    w.turn(&sid, &w.work(), "When is the first car?", Agent::Ling).await;
+    let call = w.model.calls_of(Agent::Ling).pop().expect("the new session's call");
+    let opening = call.thread().first().cloned().unwrap_or_default();
+    assert_eq!(opening.0, "system", "the carried conversation is not a system note");
+    assert!(opening.1.contains("Move the tram 28 timetable into tram28.md."), "{opening:?}");
+    assert!(opening.1.contains("first car at 06:15"), "{opening:?}");
+    assert!(!opening.1.contains("Tool Write"), "tool rows were carried: {opening:?}");
+
+    w.api.post("/api/chat/clear", json!({"session_id": OLD_CLAUDE})).await;
+    let cleared = w.api.history(OLD_CLAUDE, &w.work()).await;
+    assert_eq!(cleared["messages"].as_array().map_or(0, Vec::len), 0, "{cleared}");
+    w.api.delete("/api/sessions/all", json!({"session_id": OLD_CLAUDE})).await;
+    assert!(!dir.exists(), "the old session was not deleted");
     w.assert_all_scripted();
 }
 
+/// Rule: a request that still names the Claude Agent SDK runtime (a 2.5.1
+/// page or script) gets a Linggen session, and it runs natively.
 #[tokio::test]
-async fn claude_history_keeps_the_answer_and_restores_tools_without_observation_bubbles() {
-    let w = World::start(Setup::default()).await;
+async fn a_request_for_a_claude_sdk_session_gets_a_linggen_session() {
+    let w = World::start(Setup::default().script(Agent::Ling, vec![text("Here, natively.")])).await;
     let sid = w
         .api
-        .create_session(json!({"title":"Claude", "runtime":"claude_agent_sdk"}))
+        .create_session(json!({"title": "Claude", "runtime": "claude_agent_sdk", "project_root": w.work()}))
         .await;
-    let rows = [
-        json!({"from_id":"user", "to_id":"claude", "content":"Show the image", "is_observation":false}),
-        json!({"from_id":"claude", "to_id":"user", "content":json!({"type":"tool", "tool":"mcp__linggen-display__DisplayImage", "args":{"source":"image.png"}}).to_string(), "is_observation":true}),
-        json!({"from_id":"system", "to_id":"claude", "content":"Tool mcp__linggen-display__DisplayImage: image kept", "is_observation":true}),
-        json!({"from_id":"claude", "to_id":"user", "content":"[turn1image1]", "is_observation":false}),
-    ];
-    let text = rows
-        .into_iter()
-        .enumerate()
-        .map(|(i, mut row)| {
-            row["agent_id"] = json!("claude");
-            row["timestamp"] = json!(1790000000 + i);
-            row["run_id"] = json!("sdk-image");
-            format!("{row}\n")
-        })
-        .collect::<String>();
-    std::fs::write(
-        w.home
-            .linggen_home()
-            .join("sessions")
-            .join(&sid)
-            .join("messages.jsonl"),
-        text,
-    )
-    .unwrap();
-    let state = w.api.history(&sid, &w.work()).await;
-    let messages = state["messages"].as_array().unwrap();
-    assert_eq!(
-        messages.len(),
-        2,
-        "tool observations became chat bubbles: {state}"
-    );
-    assert_eq!(messages[1][1], "[turn1image1]");
-    assert_eq!(messages[1][0]["tools"][0]["status"], "done");
+    let meta = std::fs::read_to_string(w.home.linggen_home().join("sessions").join(&sid).join("session.yaml")).unwrap();
+    assert!(!meta.contains("claude"), "{meta}");
+    w.turn(&sid, &w.work(), "Hello", Agent::Ling).await;
     w.assert_all_scripted();
 }
 

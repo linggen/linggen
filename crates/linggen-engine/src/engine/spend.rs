@@ -11,8 +11,7 @@ use crate::provider::models::{spend_of, CallRecord, ModelManager, SessionSpend, 
 impl AgentManager {
     /// What the session's model calls used and, for the models with a price,
     /// cost — the one answer the chat's top bar and `agent_status` both
-    /// give. `None` when no call has been noted (a Claude SDK session never
-    /// is: its cost figure is the host's own).
+    /// give. `None` when no call has been noted.
     pub fn session_spend(&self, session_id: &str) -> Option<SessionSpend> {
         let ledger = self.global_sessions.session_usage(session_id);
         if ledger.is_empty() {

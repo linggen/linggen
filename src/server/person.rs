@@ -595,8 +595,7 @@ mod tests {
     /// put in its body.
     const BY_ANOTHER_ID: &[(&str, &str)] = &[
         ("src/server/chat/admin.rs", "a question's id: may_answer"),
-        ("src/server/api/agents.rs", "a run's id: cancel_agent_run"),
-        ("src/server/claude/mod.rs", "a queued message's id: steer_queued"),
+        ("src/server/api/agents.rs", "a run's id: cancel_agent_run; a queued message's id: steer_queued"),
     ];
 
     /// A session id from off this machine reaches a route only where the

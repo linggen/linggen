@@ -74,7 +74,7 @@ pub(crate) async fn update_session_permission(
         .get_session_meta(&req.session_id)
         .ok()
         .flatten()
-        .is_some_and(|m| !m.runtime.is_linggen())
+        .is_some_and(|m| crate::server::old_claude::is_read_only(&m))
     {
         return StatusCode::BAD_REQUEST;
     }

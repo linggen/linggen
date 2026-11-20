@@ -65,6 +65,7 @@ impl Tasks {
     }
 
     /// Change one task in place. False when it is not listed.
+    #[cfg(test)]
     pub fn update(&self, session: &str, id: &str, f: impl FnOnce(&mut BackgroundTask)) -> bool {
         self.with(|all| {
             let Some(tasks) = all.get_mut(session) else {
@@ -79,6 +80,7 @@ impl Tasks {
         })
     }
 
+    #[cfg(test)]
     pub fn finish(&self, session: &str, id: &str, status: &str, summary: Option<String>) -> bool {
         self.update(session, id, |task| {
             task.end(status);
@@ -90,6 +92,7 @@ impl Tasks {
 
     /// What ran them is gone (a runner ended, the engine stopped them):
     /// whatever still runs is interrupted. False when nothing ran.
+    #[cfg(test)]
     pub fn interrupt_running(&self, session: &str) -> bool {
         self.with(|all| {
             let Some(tasks) = all.get_mut(session) else {
@@ -191,20 +194,7 @@ pub(crate) async fn stop(
     if !task.is_running() {
         return axum::Json(serde_json::json!({"status": "ok"})).into_response();
     }
-    let runtime = state
-        .manager
-        .global_sessions
-        .get_session_meta(&req.session_id)
-        .ok()
-        .flatten()
-        .map(|meta| meta.runtime);
-    let stopped = match runtime {
-        Some(runtime) if !runtime.is_linggen() => {
-            super::claude::stop_task(&state, &req.session_id, &req.id).await
-        }
-        _ => state.manager.background.stop(&req.session_id, &req.id),
-    };
-    match stopped {
+    match state.manager.background.stop(&req.session_id, &req.id) {
         Ok(()) => axum::Json(serde_json::json!({"status": "ok"})).into_response(),
         Err(error) => (StatusCode::CONFLICT, error.to_string()).into_response(),
     }
@@ -358,7 +348,7 @@ async fn tell_in_place(
     else {
         return; // the session was deleted meanwhile
     };
-    if !meta.runtime.is_linggen() {
+    if crate::server::old_claude::is_read_only(&meta) {
         return;
     }
     let root = std::path::PathBuf::from(meta.project.clone().unwrap_or_else(|| meta.cwd.clone()));

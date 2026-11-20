@@ -440,7 +440,6 @@ mod tests {
         let mut meta = SessionMeta {
             work: None,
             runtime: Default::default(),
-            claude_permission_mode: Default::default(),
             parent_session_id: None,
             id: id.into(),
             title: id.into(),

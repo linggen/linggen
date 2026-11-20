@@ -1,0 +1,10 @@
+id: sess-1790000004-c1a0de04
+runtime: claude_agent_sdk
+claude_permission_mode: acceptEdits
+title: Tram timetable
+created_at: 1790000000
+creator: user
+agents:
+- id: claude
+cwd: {{WORK}}
+title_locked: false

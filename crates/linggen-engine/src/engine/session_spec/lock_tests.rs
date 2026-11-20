@@ -51,11 +51,6 @@ const LISTED: &[(&str, usize, &str)] = &[
     ("crates/linggen-engine/src/engine/mod.rs", 2, "tests"),
     ("crates/linggen-engine/src/engine/types.rs", 1, "a test"),
     (
-        "crates/linggen-engine/src/engine/tools/builtin/claude_session.rs",
-        1,
-        "a test",
-    ),
-    (
         "crates/linggen-engine/src/engine/prompt/notes.rs",
         4,
         "tests",
@@ -248,8 +243,8 @@ const WORK_WRITES: &[&str] = &["ask_work(", ".work = ", "work: Some(", "Work::Co
 const WORK_WRITERS: &[(&str, usize, &str)] = &[
     (
         "src/server/api/sessions.rs",
-        3,
-        "a new session (a Claude one refuses the tag), the Coding switch",
+        2,
+        "a new session, the Coding switch",
     ),
     (
         "src/server/mcp_agent.rs",

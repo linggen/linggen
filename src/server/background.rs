@@ -231,16 +231,6 @@ fn connect_mcp_servers(state: &Arc<ServerState>) {
 async fn bridge_agent_events(state: Arc<ServerState>, mut rx: AgentEvents) {
     while let Some((event, session_id)) = rx.recv().await {
         match event {
-            AgentEvent::StartSession {
-                session_id,
-                message,
-                from,
-            } => {
-                let state = state.clone();
-                tokio::spawn(async move {
-                    super::claude::start_task(state, session_id, message, from).await;
-                });
-            }
             // Special cases that need extra logic beyond a 1:1 mapping.
             AgentEvent::AgentStatus {
                 agent_id,
@@ -415,14 +405,7 @@ fn sweep_stale_runs(state: &Arc<ServerState>) {
             let changed = sweep_state
                 .tasks
                 .interrupt_stale_subagents(|session, task| {
-                    let native = sweep_state
-                        .manager
-                        .global_sessions
-                        .get_session_meta(session)
-                        .ok()
-                        .flatten()
-                        .is_some_and(|meta| meta.runtime.is_linggen());
-                    !native || subagent_task_alive(&sweep_state.manager, session, task)
+                    subagent_task_alive(&sweep_state.manager, session, task)
                 });
             for session in changed {
                 crate::server::tasks::emit(&sweep_state, &session);

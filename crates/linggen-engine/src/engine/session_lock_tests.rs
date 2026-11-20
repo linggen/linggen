@@ -64,7 +64,7 @@ const LISTED: &[(&str, usize, &str)] = &[
     // Not the engine's: another struct's field of the same name.
     (
         "crates/linggen-engine/src/config.rs",
-        13,
+        15,
         "RoutingConfig::default_models",
     ),
     (
@@ -82,9 +82,7 @@ const LISTED: &[(&str, usize, &str)] = &[
         2,
         "RoutingConfig::default_models (tests)",
     ),
-    ("src/server/api/sessions.rs", 1, "SessionMeta::withheld_tools"),
     ("src/server/day_session.rs", 1, "SessionMeta::withheld_tools"),
-    ("src/server/claude/protocol.rs", 2, "a Claude turn's run"),
     ("src/server/rtc/page_state.rs", 3, "the page state's fields"),
     ("src/server/rtc/peer/control.rs", 1, "a view's session"),
 ];

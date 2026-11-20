@@ -313,7 +313,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = crate::state_fs::SessionStore::with_sessions_dir(dir.path().into());
         let made_for = |id: &str, user: Option<&str>| {
-            let mut meta = crate::server::claude::new_meta("t".into(), "/p".into(), None);
+            let mut meta = crate::state_fs::sessions::SessionMeta::default();
             meta.id = id.into();
             meta.user_id = user.map(str::to_string);
             store.add_session(&meta).unwrap();

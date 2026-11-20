@@ -276,8 +276,6 @@ pub(crate) async fn read_file_api(
 
 #[derive(Serialize)]
 struct WorkspaceStateResponse {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    claude_usage: Option<crate::server::claude::usage::Usage>,
     /// What the session's model calls used and cost (`AgentManager::session_spend`).
     #[serde(skip_serializing_if = "Option::is_none")]
     usage: Option<crate::provider::models::SessionSpend>,
@@ -334,7 +332,7 @@ pub(crate) async fn get_workspace_state(
     let running = !sid.is_empty() && run_calls::session_running(&state.manager, sid).await;
 
     let spoken = crate::engine::answer_refs::view::spoken_texts(&messages);
-    let mut mapped_messages = run_calls::with_run_calls(
+    let mapped_messages = run_calls::with_run_calls(
         messages,
         running,
         |mut m, calls| {
@@ -380,28 +378,16 @@ pub(crate) async fn get_workspace_state(
         |run| (run.meta(), String::new()),
     );
 
-    crate::server::claude::subagents::attach(
-        &state.manager.global_sessions,
-        sid,
-        &state.claude.running_children(sid),
-        &mut mapped_messages,
-    );
     let refs = crate::engine::answer_refs::view::refs_for(
         &state.manager.global_sessions,
         sid,
         spoken.iter().map(String::as_str),
     );
-    let claude_usage = if !sid.is_empty() && !sid.contains('/') && !sid.contains("..") {
-        crate::server::claude::usage::read(&state.manager.global_sessions.session_dir(sid))
-    } else {
-        None
-    };
     let usage = match sid.is_empty() || sid.contains('/') || sid.contains("..") {
         true => None,
         false => state.manager.session_spend(sid),
     };
     Json(WorkspaceStateResponse {
-        claude_usage,
         usage,
         active_task,
         user_stories,

@@ -1141,7 +1141,7 @@ mod herald_gate_tests {
         config.agent.daily_session = Some(true);
         let manager = crate::engine::agent::AgentManager::new(config, None, empty(), empty(), empty(), crate::engine::InterfaceMode::Web).0;
         let made_for = |id: &str, user: Option<&str>| {
-            let mut meta = crate::server::claude::new_meta("t".into(), "/p".into(), None);
+            let mut meta = crate::state_fs::sessions::SessionMeta::default();
             meta.id = id.into();
             meta.user_id = user.map(str::to_string);
             manager.global_sessions.add_session(&meta).unwrap();

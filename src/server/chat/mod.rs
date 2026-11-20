@@ -35,7 +35,7 @@ pub(crate) mod presence;
 mod restored_tools;
 pub(crate) mod run_calls;
 mod runtime;
-pub(crate) use runtime::{owner_turn_memory, recall_into_thread};
+pub(crate) use runtime::recall_into_thread;
 mod skill_dispatch;
 pub(crate) use skill_dispatch::slash_command;
 mod structured;
@@ -48,9 +48,8 @@ pub(crate) use admin::{
     get_system_prompt_api, pending_ask_user_handler,
 };
 pub(crate) use handler::{
-    chat_handler, dequeue_and_emit, enqueue_if_busy, mark_steered, question_open_for_queued, queued_session,
-    run_session_turn,
-    resend_chat, say_in_app, say_in_session, start_turn, TurnOrigin, Typed,
+    chat_handler, mark_steered, question_open_for_queued, queued_session, run_session_turn,
+    say_in_app, say_in_session, Typed,
 };
 pub(crate) use light::{reply_in_session, reply_now};
 pub(crate) use plan_flow::{approve_plan_handler, edit_plan_handler, reject_plan_handler};

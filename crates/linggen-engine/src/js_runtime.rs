@@ -1,6 +1,6 @@
 //! Managed JS runtime — a pinned bun at `~/.linggen/bin/bun`, the runtime
-//! skill actions run on (`<skill>/scripts/run-js.sh` looks there first) and
-//! the Claude Agent SDK runner needs. The engine owns it: a Mac that got
+//! skill actions and web apps run on (`<skill>/scripts/run-js.sh` looks there
+//! first). The engine owns it: a Mac that got
 //! Linggen from the DMG, with no install script and no node, still gets one.
 //!
 //! [`ensure_in_background`] is spawned on engine start, so startup never

@@ -544,9 +544,9 @@ impl AgentManager {
             .get_session_meta(session_id)
             .ok()
             .flatten();
-        // The lowest point every native turn passes: a session hosted by
-        // another runtime (Claude Agent SDK) never gets a native engine, so
-        // no path can run a Linggen loop inside its transcript.
+        // The lowest point every native turn passes: an old Claude session
+        // (2.5.1, hosted by the retired Claude Agent SDK) is a read-only
+        // record and never gets an engine, whichever door a turn came by.
         refuse_foreign_runtime(meta.as_ref())?;
         let pinned_root = meta
             .as_ref()
@@ -1052,12 +1052,13 @@ impl AgentManager {
     }
 }
 
-/// A session hosted by another runtime (the Claude Agent SDK) has no
-/// native engine: this is the one check every native turn passes.
+/// An old Claude session (`SessionRuntime::ClaudeAgentSdk`) has no engine:
+/// this is the one check every turn passes. The doors before it refuse
+/// early with `server::old_claude::READ_ONLY`.
 fn refuse_foreign_runtime(meta: Option<&crate::state_fs::sessions::SessionMeta>) -> Result<()> {
     if let Some(meta) = meta.filter(|m| !m.runtime.is_linggen()) {
         anyhow::bail!(
-            "Session {} runs on another runtime; it has no native agents.",
+            "Session {} is an old Claude session: read-only.",
             meta.id
         );
     }

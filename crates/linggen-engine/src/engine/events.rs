@@ -69,7 +69,7 @@ pub struct QueuedChatItem {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[cfg_attr(any(test, feature = "test-support"), derive(ts_rs::TS), ts(export))]
 pub struct BackgroundTask {
-    /// The runtime's own id for the task (the SDK's task_id, a native id).
+    /// The task's own id.
     pub id: String,
     /// Session agent that started the task, if known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -793,8 +793,7 @@ impl ServerEvent {
             }),
             // AgentStatus and TaskUpdate need special handling — return None.
             AgentEvent::AgentStatus { .. }
-            | AgentEvent::TaskUpdate { .. }
-            | AgentEvent::StartSession { .. } => None,
+            | AgentEvent::TaskUpdate { .. } => None,
         }
     }
 }

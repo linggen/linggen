@@ -5,7 +5,7 @@
  */
 export type BackgroundTask = { 
 /**
- * The runtime's own id for the task (the SDK's task_id, a native id).
+ * The task's own id.
  */
 id: string, 
 /**
