@@ -63,13 +63,7 @@ impl CallSpend {
 /// aliased, does not compile.
 pub struct Seal(());
 
-#[cfg(test)]
-impl Seal {
-    /// The ledger's own unit tests write to it directly.
-    pub(crate) fn for_tests() -> Seal {
-        Seal(())
-    }
-}
+impl crate::state_fs::session_usage::LedgerKey for Seal {}
 
 /// Put what a call used into the session's ledger. A call that never opened
 /// (refused, unreachable) cost nothing and is not a call.

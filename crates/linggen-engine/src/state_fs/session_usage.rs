@@ -7,12 +7,19 @@
 
 use super::devices::write_atomic;
 use super::SessionStore;
-use crate::engine::spend::Seal;
 use crate::provider::models::{Billing, ModelTally, TokenUsage};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 const FILE: &str = "usage.json";
+
+/// What `record_usage` demands to be called with: a key. Its one implementor
+/// is `engine::spend::Seal`, whose field is private to that module — so the
+/// ledger is written from there only, and a second writer does not compile
+/// unless it makes a key of its own, which `engine::spend`'s tripwire test
+/// counts. (A trait, not the type itself: the store does not name the
+/// engine above it.)
+pub trait LedgerKey {}
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct SessionUsage {
@@ -34,9 +41,9 @@ impl SessionStore {
     /// Add one model call to the session's ledger. A session with no folder
     /// (a call made outside any session, or one removed meanwhile) records
     /// nothing.
-    pub fn record_usage(
+    pub fn record_usage<K: LedgerKey>(
         &self,
-        _key: &Seal,
+        _key: &K,
         session_id: &str,
         model_id: &str,
         billing: Option<Billing>,
@@ -117,6 +124,9 @@ fn set_aside(path: &std::path::Path, why: &str) {
 mod tests {
     use super::*;
 
+    struct TestKey;
+    impl LedgerKey for TestKey {}
+
     fn store() -> (tempfile::TempDir, SessionStore) {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir(dir.path().join("s1")).unwrap();
@@ -138,27 +148,15 @@ mod tests {
     fn calls_add_up_per_session_and_model() {
         let (_dir, store) = store();
         store.record_usage(
-            &Seal::for_tests(),
+            &TestKey,
             "s1",
             "sonnet",
             None,
             Some(&call(1_000, 600, 100, 50)),
         );
-        store.record_usage(
-            &Seal::for_tests(),
-            "s1",
-            "sonnet",
-            None,
-            Some(&call(2_000, 0, 0, 70)),
-        );
-        store.record_usage(
-            &Seal::for_tests(),
-            "s1",
-            "gemini",
-            None,
-            Some(&call(10, 0, 0, 5)),
-        );
-        store.record_usage(&Seal::for_tests(), "s1", "gemini", None, None);
+        store.record_usage(&TestKey, "s1", "sonnet", None, Some(&call(2_000, 0, 0, 70)));
+        store.record_usage(&TestKey, "s1", "gemini", None, Some(&call(10, 0, 0, 5)));
+        store.record_usage(&TestKey, "s1", "gemini", None, None);
         let ledger = store.session_usage("s1");
         let sonnet = &ledger.models["sonnet"];
         assert_eq!(sonnet.calls, 2);
@@ -174,20 +172,8 @@ mod tests {
     #[test]
     fn a_call_outside_any_session_folder_records_nothing() {
         let (dir, store) = store();
-        store.record_usage(
-            &Seal::for_tests(),
-            "no-such",
-            "m",
-            None,
-            Some(&call(1, 0, 0, 1)),
-        );
-        store.record_usage(
-            &Seal::for_tests(),
-            "../escape",
-            "m",
-            None,
-            Some(&call(1, 0, 0, 1)),
-        );
+        store.record_usage(&TestKey, "no-such", "m", None, Some(&call(1, 0, 0, 1)));
+        store.record_usage(&TestKey, "../escape", "m", None, Some(&call(1, 0, 0, 1)));
         assert!(!dir.path().join("no-such").exists());
         assert!(!dir.path().parent().unwrap().join("escape").exists());
     }
@@ -202,13 +188,7 @@ mod tests {
         // Reading it for the page says nothing, and touches nothing.
         assert!(store.session_usage("s1").is_empty());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "{ not json");
-        store.record_usage(
-            &Seal::for_tests(),
-            "s1",
-            "m",
-            None,
-            Some(&call(10, 0, 0, 1)),
-        );
+        store.record_usage(&TestKey, "s1", "m", None, Some(&call(10, 0, 0, 1)));
         assert_eq!(
             store.session_usage("s1").models["m"].calls,
             1,
@@ -236,13 +216,7 @@ mod tests {
                 let store = store.clone();
                 std::thread::spawn(move || {
                     for _ in 0..50 {
-                        store.record_usage(
-                            &Seal::for_tests(),
-                            "s1",
-                            "m",
-                            None,
-                            Some(&call(10, 0, 0, 1)),
-                        );
+                        store.record_usage(&TestKey, "s1", "m", None, Some(&call(10, 0, 0, 1)));
                     }
                 })
             })
@@ -273,13 +247,7 @@ mod tests {
                 let store = store.clone();
                 std::thread::spawn(move || {
                     for _ in 0..10 {
-                        store.record_usage(
-                            &Seal::for_tests(),
-                            "s1",
-                            "m",
-                            None,
-                            Some(&call(10, 0, 0, 1)),
-                        );
+                        store.record_usage(&TestKey, "s1", "m", None, Some(&call(10, 0, 0, 1)));
                     }
                 })
             })
