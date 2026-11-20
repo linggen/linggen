@@ -191,9 +191,6 @@ fn expand(word: &str, cwd: &Path) -> Option<Vec<PathBuf>> {
     if sensitive::protected(&prefix).is_some() || !prefix.canonicalize().ok()?.is_dir() {
         return None;
     }
-    if !tree_is_unprotected(&prefix) {
-        return None;
-    }
     let mut matches = vec![prefix];
     for component in pattern {
         if !component.contains(['*', '?', '[', ']']) {

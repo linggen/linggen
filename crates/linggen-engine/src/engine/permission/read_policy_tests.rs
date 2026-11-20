@@ -195,6 +195,27 @@ fn read_policy_skill_keeps_its_named_grant() {
 }
 
 #[test]
+fn read_policy_shell_globs_check_matches_in_a_large_prefix() {
+    let world = tempfile::tempdir_in(dirs::home_dir().unwrap()).unwrap();
+    let cwd = world.path();
+    let prefix = cwd.join("registry");
+    fill_large_tree(&prefix);
+    file(&prefix, "index/crate/file.rs");
+    let grants = SessionPermissions::default();
+    for cmd in ["sed -n '1,2p' registry/*/crate/file.rs", "grep -n foo registry/*/crate/file.rs"] {
+        assert_eq!(bash(cmd, cwd, &grants), Allow, "{cmd}");
+    }
+    #[cfg(unix)]
+    {
+        file(cwd, ".ssh/crate/file.rs");
+        std::os::unix::fs::symlink(cwd.join(".ssh"), prefix.join("linked")).unwrap();
+        for cmd in ["sed -n '1,2p' registry/*/crate/file.rs", "grep -n foo registry/*/crate/file.rs"] {
+            assert_eq!(bash(cmd, cwd, &grants), Ask, "{cmd}");
+        }
+    }
+}
+
+#[test]
 fn read_policy_shell_globs_need_a_safe_fixed_prefix() {
     let world = tempfile::tempdir_in(dirs::home_dir().unwrap()).unwrap();
     let cwd = world.path();
@@ -207,7 +228,7 @@ fn read_policy_shell_globs_need_a_safe_fixed_prefix() {
         ("safe/*/file.rs", Allow),
         ("safe/inde?/file.rs", Allow),
         ("safe/inde[xy]/file.rs", Allow),
-        ("mixed/*/file.rs", Ask),
+        ("mixed/*/file.rs", Allow),
         ("private/.ssh/*/file.rs", Ask),
         ("safe/*/../index/file.rs", Ask),
         ("missing/*/file.rs", Ask),
