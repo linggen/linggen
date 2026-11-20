@@ -155,7 +155,7 @@ Launches an app-enabled skill. The skill must have an `app` section in its front
 
 **From a skill script**: `POST /api/apps/launch {skill}` sends the same event (no session) for a script with no model turn to call `RunApp` from — e.g. DJ's play asked from the phone. The page itself is how the caller learns it came up.
 
-**Implementation**: `engine/tools/delegation.rs` (`run_app()`), `server/chat_api.rs` (direct dispatch), `server/mod.rs` (static serving at `/apps/`), `ui/src/components/AppPanel.tsx` (UI).
+**Implementation**: `engine/tools/delegation.rs` (`run_app()`), `server/chat_api.rs` (direct dispatch), `server/mod.rs` (static serving at `/apps/`), `ui/src/lib/appHost.ts` `openApp` (UI: where it opens), `ui/src/apps/AppTabs.tsx` (the desktop app's tabs).
 
 ## Tool dispatch
 

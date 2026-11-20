@@ -26,9 +26,10 @@ const shellIpc = () => (window as { __TAURI_INTERNALS__?: TauriIpc }).__TAURI_IN
 export const inShell = () => !!shellIpc();
 
 /** What the tab bar can do: bring an app's tab forward (at one of its own
- *  views), or the chat home. Only apps/AppTabs.tsx registers one. */
+ *  views; an app kept out of the bar only when `unlisted` allows it), or the
+ *  chat home. Only apps/AppTabs.tsx registers one. */
 export type AppTabHost = {
-  open: (skill: string, view?: string) => boolean;
+  open: (skill: string, view: string | undefined, unlisted: boolean) => boolean;
   home: () => void;
 };
 
@@ -87,12 +88,17 @@ export function openApp(launch: AppLaunch): boolean {
   const where = surface();
   if (where !== 'main' && !(where === 'consumer' && launch.launchedBy === undefined)) return false;
   const own = launch.url.startsWith('/');
-  if (inShell() && own) {
-    if (!host || !host.open(launch.skill, viewOf(launch.url))) return false;
-    void raiseWindow();
-    return true;
-  }
-  if (!inShell() && launch.launchedBy !== undefined && launch.launchedBy !== useSessionStore.getState().activeSessionId) {
+  const event = launch.launchedBy !== undefined;
+  if (inShell()) {
+    // An app's own page is a tab. A launch event opens only an app the bar
+    // lists and never a browser; the person's own click may open the rest.
+    if (own) {
+      if (!host || !host.open(launch.skill, viewOf(launch.url), !event)) return false;
+      void raiseWindow();
+      return true;
+    }
+    if (event) return false;
+  } else if (event && launch.launchedBy !== useSessionStore.getState().activeSessionId) {
     return false;
   }
   window.open(browserUrl(launch.url), '_blank');

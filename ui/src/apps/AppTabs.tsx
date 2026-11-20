@@ -111,8 +111,9 @@ export function useAppTabs({ enabled, covered }: { enabled: boolean; covered: bo
   useEffect(() => {
     if (!enabled) return;
     setAppHost({
-      open: (name, view) => {
-        if (!appsRef.current.some((a) => a.name === name)) return false;
+      open: (name, view, unlisted) => {
+        const app = appsRef.current.find((a) => a.name === name);
+        if (!app || (app.app.list === false && !unlisted)) return false;
         // A launch that names a view reloads that app's frame there: the page
         // reads `?view=` as it loads, and what a view means is its own.
         if (view) setViews((prev) => ({ ...prev, [name]: view }));
