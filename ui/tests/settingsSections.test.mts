@@ -71,56 +71,110 @@ test('mcp aliases Tools; the legacy model id and retired app entries are absent'
   for (const name of ['mac-shifu', 'sys-doctor', 'health']) assert.equal(appHasSettings(name), false);
 });
 
-function literal(node: ts.Node | undefined): string | undefined {
-  if (!node) return undefined;
-  if (ts.isStringLiteralLike(node)) return node.text;
-  if (ts.isLiteralTypeNode(node)) return literal(node.literal);
-  if (ts.isPropertyAssignment(node)) return literal(node.initializer);
-  return undefined;
+const panel = 'pages/Settings/SettingsPanel.tsx';
+const frames = new Set(['pages/Settings/SettingsHome.tsx', 'pages/Settings/BareSection.tsx', 'apps/LauncherSettings.tsx']);
+const launcher = 'apps/LauncherApp.tsx';
+const moduleOptions = { moduleResolution: ts.ModuleResolutionKind.Bundler, allowJs: true };
+const moduleCache = ts.createModuleResolutionCache(root, (file) => file);
+
+function resolveModule(specifier: string, file: string) {
+  const resolved = ts.resolveModuleName(specifier, join(root, file), moduleOptions, ts.sys, moduleCache).resolvedModule;
+  return resolved && relative(root, resolved.resolvedFileName);
 }
 
-function containsId(node: ts.Node): boolean {
-  return ids.has(literal(node) ?? '') || ts.forEachChild(node, (child) => containsId(child) || undefined) === true;
+function importBindings(clause: ts.ImportClause | undefined) {
+  const names = new Map<string, string>();
+  if (clause?.name) names.set(clause.name.text, 'default');
+  const bindings = clause?.namedBindings;
+  if (bindings && ts.isNamedImports(bindings)) {
+    for (const entry of bindings.elements) names.set(entry.name.text, (entry.propertyName ?? entry.name).text);
+  }
+  return names;
 }
 
-function isId(node: ts.Node | undefined): boolean {
-  return ids.has(literal(node) ?? '');
+function mappedComponents() {
+  const imports = new Map<string, { file: string; name: string }>();
+  for (const node of source(mapping).statements) {
+    if (!ts.isImportDeclaration(node) || !ts.isStringLiteralLike(node.moduleSpecifier)) continue;
+    const file = resolveModule(node.moduleSpecifier.text, mapping);
+    if (!file) continue;
+    for (const [local, name] of importBindings(node.importClause)) imports.set(local, { file, name });
+  }
+  const components = new Map<string, Set<string>>();
+  for (const [id, render] of objectEntries(mapping, 'sections')) {
+    let found = false;
+    walk(render, (node) => {
+      if (!(ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) || !ts.isIdentifier(node.tagName)) return;
+      const imported = imports.get(node.tagName.text);
+      if (!imported) return;
+      found = true;
+      const names = components.get(imported.file) ?? new Set<string>();
+      names.add(imported.name);
+      components.set(imported.file, names);
+    });
+    assert.ok(found, `${id}: expected an imported section body in the renderer`);
+  }
+  return components;
 }
 
-function isSectionList(node: ts.ArrayLiteralExpression, file: string) {
-  // Short lists of common words need settings context. Registry-shaped entries
-  // (an id field), or a longer run of ids, need no naming convention.
-  const settingsContext = /settings|section/i.test(file) || /settings|section|tab/i.test(node.parent.getText().split(/[=\x5b(]/u, 1)[0]);
-  const structured = node.elements.filter((entry) => ts.isObjectLiteralExpression(entry) && entry.properties.some((prop) =>
-    ts.isPropertyAssignment(prop) && (literal(prop.name) ?? prop.name.getText()) === 'id' && isId(prop.initializer)));
-  return structured.length >= 2 || node.elements.filter(containsId).length >= (settingsContext ? 2 : 3);
+const components = mappedComponents();
+
+function moduleUse(node: ts.Node) {
+  if (ts.isImportDeclaration(node) && ts.isStringLiteralLike(node.moduleSpecifier)) {
+    const clause = node.importClause;
+    const bindings = clause?.namedBindings;
+    const names = !clause || (bindings && ts.isNamespaceImport(bindings)) ? null : [...importBindings(clause).values()];
+    return { specifier: node.moduleSpecifier.text, names };
+  }
+  if (ts.isExportDeclaration(node) && node.moduleSpecifier && ts.isStringLiteralLike(node.moduleSpecifier)) {
+    const clause = node.exportClause;
+    const names = clause && ts.isNamedExports(clause) ? clause.elements.map((entry) => (entry.propertyName ?? entry.name).text) : null;
+    return { specifier: node.moduleSpecifier.text, names };
+  }
+  if (ts.isCallExpression(node) && (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+    (ts.isIdentifier(node.expression) && node.expression.text === 'require'))) {
+    const [argument] = node.arguments;
+    if (argument && ts.isStringLiteralLike(argument)) return { specifier: argument.text, names: null };
+  }
 }
 
-function duplicate(node: ts.Node, file: string): boolean {
-  if (ts.isArrayLiteralExpression(node)) return isSectionList(node, file);
-  if (ts.isUnionTypeNode(node)) return node.types.filter(isId).length >= 2;
+function importViolation(node: ts.Node, file: string) {
+  const use = moduleUse(node);
+  if (!use) return;
+  const target = resolveModule(use.specifier, file);
+  if (!target) return;
+  const bodies = components.get(target);
+  if (bodies && file !== mapping) {
+    const used = use.names === null ? [...bodies] : use.names.filter((name) => bodies.has(name));
+    if (used.length) return `${used.join(', ')} may only be imported by ${mapping}`;
+  }
+  // Named exception: SettingsPanel renders the mapping on behalf of both faces.
+  if (file === panel && target === mapping) return;
+  if ((target === mapping || target === panel) && !frames.has(file)) {
+    return `${target} may only be imported by settings frames`;
+  }
+}
+
+function drawsSettings(file: string) {
+  return file.startsWith('pages/Settings/') || file.startsWith('components/settings/') || frames.has(file) || file === launcher;
+}
+
+function isId(node: ts.Node): boolean {
+  return ts.isStringLiteralLike(node) && ids.has(node.text);
+}
+
+function duplicateDispatch(node: ts.Node, file: string): boolean {
   if (ts.isObjectLiteralExpression(node)) {
-    return node.properties.filter((prop) => ts.isPropertyAssignment(prop) && ids.has(literal(prop.name) ?? prop.name.getText()) && (
-      !ts.isArrayLiteralExpression(prop.initializer) &&
-      !(ts.isPropertyAccessExpression(prop.initializer) && prop.initializer.name.text === prop.name.getText())
+    const owner = ts.isSatisfiesExpression(node.parent) ? node.parent.parent : node.parent;
+    if (file === mapping && ts.isVariableDeclaration(owner) && owner.name.getText() === 'sections') return false;
+    return node.properties.filter(({ name }) => name && (
+      ts.isComputedPropertyName(name) ? isId(name.expression) :
+        (ts.isIdentifier(name) || ts.isStringLiteralLike(name)) && ids.has(name.text)
     )).length >= 2;
   }
-  if (ts.isTypeReferenceNode(node) && /^(Record|Set|ReadonlySet)$/.test(node.typeName.getText())) {
-    return /\b(SettingsSectionId|SettingsTab)\b/.test(node.typeArguments?.[0]?.getText() ?? '') || isId(node.typeArguments?.[0]);
-  }
-  if (ts.isCaseClause(node)) return sectionComparison(node.parent.parent.expression, node.expression);
-  return ts.isBinaryExpression(node) && /^[!=]==?$/.test(node.operatorToken.getText()) && (
-    sectionComparison(node.left, node.right) || sectionComparison(node.right, node.left)
-  );
-}
-
-function sectionComparison(key: ts.Expression, value: ts.Expression) {
-  if (!isId(value)) return false;
-  // These are established wire values, not settings dispatch.
-  const field = ts.isPropertyAccessExpression(key) ? key.name.text : key.getText();
-  return !((field === 'creator' && literal(value) === 'mission') ||
-    (field === 'type' && literal(value) === 'tools') ||
-    (field === 'from' && literal(value) === 'memory'));
+  if (ts.isCaseClause(node)) return isId(node.expression);
+  return ts.isBinaryExpression(node) && /^[!=]==?$/.test(node.operatorToken.getText()) &&
+    (isId(node.left) || isId(node.right));
 }
 
 const desktop = 'components/settings/DesktopSection.tsx';
@@ -129,19 +183,22 @@ const flagFile = /\b(?:start-at-login|pet-disabled|pet-always-on)\b/;
 function inspect(tree: ts.SourceFile, file: string) {
   const violations: string[] = [];
   if (file !== declaration && /\b(?:HAS_SETTINGS|KNOWN_SECTIONS|sidebarZh|ManagementTab)\b/.test(tree.getFullText())) violations.push(`${file}: legacy section list`);
+  const scoped = drawsSettings(file);
   walk(tree, (node) => {
-    const line = tree.getLineAndCharacterOfPosition(node.getStart()).line + 1;
+    const line = () => tree.getLineAndCharacterOfPosition(node.getStart()).line + 1;
+    const access = importViolation(node, file);
+    if (access) violations.push(`${file}:${line()}: ${access}`);
     if (file !== desktop && (ts.isStringLiteralLike(node) || ts.isTemplateLiteralToken(node)) && flagFile.test(node.text)) {
-      violations.push(`${file}:${line}: flag file belongs in DesktopSection`);
+      violations.push(`${file}:${line()}: flag file belongs in DesktopSection`);
     }
-    if (file !== declaration && file !== mapping && duplicate(node, file)) {
-      violations.push(`${file}:${line}: second settings list or dispatch`);
+    if (scoped && duplicateDispatch(node, file)) {
+      violations.push(`${file}:${line()}: second settings dispatch`);
     }
   });
   return violations;
 }
 
-test('no second section list or flag writer anywhere in UI source', () => {
+test('settings source respects section import, dispatch, and flag ownership', () => {
   const violations: string[] = [];
   for (const entry of readdirSync(root, { recursive: true, withFileTypes: true })) {
     if (!entry.isFile() || !/\.[cm]?[jt]sx?$/.test(entry.name)) continue;
@@ -153,16 +210,50 @@ test('no second section list or flag writer anywhere in UI source', () => {
 
 const fixture = (code: string, file = 'lib/example.ts') => inspect(ts.createSourceFile(file, code, ts.ScriptTarget.Latest, true), file);
 
-for (const [name, code] of [
-  ['switch', "switch (key) { case 'memory': render(); }"],
-  ['section comparison', "section === 'memory' ? Memory : Storage"],
-  ['property comparison', "active.id === 'memory' ? Memory : Storage"],
-  ['key comparison', "key === 'memory' ? Memory : key === 'storage' ? Storage : null"],
-  ['identifier keys', 'const render = { memory: Memory, storage: Storage };'],
-  ['settings list', "const sections = ['session', 'general'];"],
+const otherApp = 'apps/OtherSettings.tsx';
+
+test('a new app cannot assemble its own settings from section bodies', () => {
+  const code = `import { MemoryTab } from '../components/memory/MemoryTab';
+import { ModelsTab as Models } from '../components/ModelsTab.js';
+export const OtherSettings = ({ showMemory }) => showMemory ? <MemoryTab /> : <Models />;`;
+  assert.deepEqual(fixture(code, otherApp), [
+    `${otherApp}:1: MemoryTab may only be imported by ${mapping}`,
+    `${otherApp}:2: ModelsTab may only be imported by ${mapping}`,
+  ]);
+});
+
+test('barrels, namespace imports, and literal dynamic imports cannot expose section bodies', () => {
+  for (const code of [
+    "export * from '../components/memory/MemoryTab';",
+    "import * as memory from '../components/memory/MemoryTab';",
+    "const memory = import('../components/memory/MemoryTab');",
+  ]) {
+    assert.deepEqual(fixture(code, otherApp), [`${otherApp}:1: MemoryTab may only be imported by ${mapping}`]);
+  }
+});
+
+test('other exports of a section module are not section bodies', () => {
+  assert.deepEqual(fixture("import { MissionEditor } from '../components/MissionPage';", otherApp), []);
+});
+
+test('the mapping and panel stay behind the settings frames', () => {
+  const code = `import { SettingsSectionBody } from '../components/settings/sections';
+import { SettingsPanel } from '../pages/Settings/SettingsPanel';`;
+  assert.deepEqual(fixture(code, otherApp), [
+    `${otherApp}:1: ${mapping} may only be imported by settings frames`,
+    `${otherApp}:2: ${panel} may only be imported by settings frames`,
+  ]);
+  assert.deepEqual(fixture(code, 'apps/LauncherSettings.tsx'), []);
+});
+
+for (const [name, file, code] of [
+  ['switch', launcher, "switch (key) { case 'memory': render(); }"],
+  ['comparison chain', panel, "tab === 'memory' ? Memory : tab === 'models' ? Models : null"],
+  ['property comparison', 'apps/LauncherSettings.tsx', "active.id === 'memory' ? Memory : Storage"],
+  ['id-keyed map', 'components/settings/ExtraPanel.tsx', "const render = { ['memory']: Memory, storage: Storage };"],
 ]) {
-  test(`the lock rejects a duplicate ${name}`, () => {
-    assert.throws(() => assert.deepEqual(fixture(code), []), /second settings list or dispatch/);
+  test(`the lock rejects a duplicate ${name} in settings`, () => {
+    assert.match(fixture(code, file).join('\n'), /second settings dispatch/);
   });
 }
 
@@ -174,6 +265,16 @@ test('the lock rejects all three flag paths outside DesktopSection', () => {
   }
 });
 
-test('the lock allows a short unrelated array even if its words are section ids', () => {
-  assert.deepEqual(fixture("const eventScopes = ['session', 'general'];"), []);
-});
+for (const [name, code] of [
+  ['scope', "scope === 'session'"],
+  ['kind', "r.kind === 'memory'"],
+  ['source', "a.source === 'account'"],
+  ['role', "m.role === 'tools'"],
+  ['union type', "type Tier = 'session' | 'memory' | 'core'"],
+  ['object keys', 'const counts = { session: 1, memory: 2 }'],
+  ['array', "['agents', 'skills', 'tools']"],
+]) {
+  test(`the lock allows unrelated ${name} using section words`, () => {
+    assert.deepEqual(fixture(code, 'lib/unrelatedSettingsMetrics.ts'), []);
+  });
+}
