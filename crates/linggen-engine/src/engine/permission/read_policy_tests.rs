@@ -124,6 +124,27 @@ fn read_policy_protected_places_require_a_specific_grant() {
 }
 
 #[test]
+fn read_policy_home_stores_and_histories_are_protected() {
+    let home = dirs::home_dir().unwrap();
+    let broad = grant("*", PermissionMode::Read);
+    let read = |name: &str| outcome(check_permission(
+        "Read", None, home.join(name).to_str(), &home, &broad, None,
+    ));
+    for name in [
+        "Library/Cookies", "Library/Group Containers",
+        "Library/Application Support/1Password", "Library/Application Support/Arc",
+        "Library/Application Support/com.apple.TCC", ".config/op",
+        ".cargo/credentials.toml", ".cargo/credentials", ".pypirc", ".gem/credentials",
+        ".terraform.d", ".zsh_history", ".bash_history", ".zsh_sessions",
+    ] {
+        assert_eq!(read(name), Ask, "{name}");
+    }
+    for name in [".cargo/registry", ".cargo/git"] {
+        assert_eq!(read(name), Allow, "{name}");
+    }
+}
+
+#[test]
 fn read_policy_edit_exception_requires_a_project_scope() {
     let home = dirs::home_dir().unwrap();
     let world = tempfile::tempdir_in(&home).unwrap();

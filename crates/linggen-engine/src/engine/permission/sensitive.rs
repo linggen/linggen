@@ -21,6 +21,11 @@ const HOME_ROOTS: &[&str] = &[
     ".config/gcloud", ".config/gh", ".config/1Password", ".local/share/keyrings",
     ".kube", ".docker/config.json", ".git-credentials", ".netrc", ".npmrc",
     ".claude/projects", ".codex/sessions",
+    "Library/Cookies", "Library/Group Containers",
+    "Library/Application Support/1Password", "Library/Application Support/Arc",
+    "Library/Application Support/com.apple.TCC", ".config/op",
+    ".cargo/credentials.toml", ".cargo/credentials", ".pypirc", ".gem/credentials",
+    ".terraform.d", ".zsh_history", ".bash_history", ".zsh_sessions",
 ];
 
 #[derive(Debug, PartialEq, Eq)]
