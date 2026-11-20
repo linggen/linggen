@@ -535,7 +535,7 @@ const saveUi = (patch) => { try { localStorage.setItem(UI_KEY, JSON.stringify({ 
 
 - Write on change, merge into state at boot, and **validate restored values against live data** (a saved playlist may be deleted; a saved month may fall outside the imported range) — fall back to defaults, never render a dangling selection.
 - UI prefs only — data lives in the skill's `data/` files. localStorage is per-browser and clearable; the page must render correctly from an empty blob.
-- The launcher shell keeps its own blob (`linggen:launcher`, currently `{ v, active }`) to reopen the last active app. References: `dj/scripts/dj.js`, `cfo/scripts/cfo.js`, `ui/src/apps/LauncherApp.tsx`.
+- The desktop app's tab bar keeps its own blob (`linggen:launcher`, currently `{ v, active }`; `active: null` is the chat home) to reopen the last tab used. References: `dj/scripts/dj.js`, `cfo/scripts/cfo.js`, `ui/src/apps/AppTabs.tsx`.
 
 ## Install
 
