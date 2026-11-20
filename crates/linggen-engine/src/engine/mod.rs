@@ -72,7 +72,7 @@ pub use context::summarize_text;
 // Internal imports used by run_agent_loop
 use closing_ask::ClosingAsk;
 use streaming::{can_parallel_tool, has_write_path_conflicts};
-use types::{KickoffTurn, LoopControl, LoopState, ParsedToolCall, ToolUse};
+use types::{CutAt, KickoffTurn, LoopControl, LoopState, ParsedToolCall, ToolUse};
 
 use crate::message::ChatMessage;
 use anyhow::Result;
@@ -80,11 +80,23 @@ use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use tracing::{debug, info, warn};
 
-/// What the model is told after the provider cut its reply at the output
-/// limit.
-const CUT_REPLY_NOTE: &str = "[Your last reply was cut off at the model's output limit, so no tool \
-call in it was run. Continue from where it stopped; write a long file in smaller parts — Write \
-the first part, then add the rest with Edit.]";
+/// What the model is told after the provider cut its words at the output
+/// limit: it can go on from where they stopped.
+const CUT_TEXT_NOTE: &str = "[Your last reply was cut off at the model's output limit. Continue \
+from where it stopped.]";
+
+/// What the model is told after the provider cut a tool call it was writing
+/// at the output limit. "Go on" cannot continue a call: its arguments are
+/// incomplete and the call never ran, so the model makes a smaller one.
+fn cut_call_note(call: Option<&str>) -> String {
+    let call = call.map_or("a tool call".to_string(), |name| format!("a call to {name}"));
+    format!(
+        "[Your last reply was cut off at the model's output limit while you were writing {call}. \
+That call was incomplete, so nothing ran. Do not write it again as it was: make a smaller call — \
+split the work into several calls (for a long file, Write the first part, then add the rest with \
+Edit).]"
+    )
+}
 
 /// After this many cut replies in a row the turn ends as a failure
 /// (`ProviderErrorKind::OutputCut`) instead of asking again until the step
@@ -572,13 +584,14 @@ impl AgentEngine {
                     .await;
                 continue;
             }
-            if stream_result.cut {
+            if stream_result.cut.is_some() {
                 cut_streak += 1;
                 let native = native_tools.is_some();
-                self.keep_cut_reply(stream_result.full_text, native, &mut state.messages, session_id)
+                let cut_at = stream_result.cut.unwrap_or(CutAt::Text);
+                self.keep_cut_reply(stream_result.full_text, native, &cut_at, &mut state.messages, session_id)
                     .await;
                 if cut_streak >= MAX_CUT_REPLIES {
-                    return Err(self.cut_too_often());
+                    return Err(self.cut_too_often(&cut_at));
                 }
                 continue;
             }
@@ -1015,33 +1028,40 @@ impl AgentEngine {
 
     /// A reply the provider cut at its output limit: what it said stays, as
     /// a steered reply's does; no tool call it was writing runs (its
-    /// arguments are incomplete); and the model is told, so it goes on.
+    /// arguments are incomplete); and the model is told what was cut —
+    /// words it goes on from, a call it makes smaller.
     /// With native tools the whole text is words; only a JSON-action reply
     /// (`native` false) is cut before its first action.
     async fn keep_cut_reply(
         &mut self,
         raw: String,
         native: bool,
+        cut_at: &CutAt,
         messages: &mut Vec<ChatMessage>,
         session_id: Option<&str>,
     ) {
-        warn!("model '{}' reply was cut at its output limit; asking it to go on", self.model_id);
+        warn!("model '{}' reply was cut at its output limit ({})", self.model_id, cut_at.words());
         let text = if native { raw.trim().to_string() } else { text_before_first_json(&raw) };
         if !text.trim().is_empty() {
             self.emit_text_segment(text.clone(), session_id).await;
             self.push_tracked_message(messages, ChatMessage::new("assistant", text));
         }
-        self.push_tracked_message(messages, ChatMessage::new("user", CUT_REPLY_NOTE.to_string()));
+        let note = match cut_at {
+            CutAt::Text => CUT_TEXT_NOTE.to_string(),
+            CutAt::ToolCall(name) => cut_call_note(name.as_deref()),
+        };
+        self.push_tracked_message(messages, ChatMessage::new("user", note));
     }
 
     /// The turn's end after [`MAX_CUT_REPLIES`] cut replies in a row: a
     /// failure of its kind (`OutputCut`), noted on the run as why it could
-    /// not go on.
-    fn cut_too_often(&self) -> anyhow::Error {
+    /// not go on; it says what the last cut reply was writing.
+    fn cut_too_often(&self, cut_at: &CutAt) -> anyhow::Error {
         use crate::provider::error::{ProviderError, ProviderErrorKind, OUTPUT_CUT_WORDS};
         let words = format!(
-            "model '{}': its {OUTPUT_CUT_WORDS} its answer ({MAX_CUT_REPLIES} replies in a row were cut)",
-            self.model_id
+            "model '{}': its {OUTPUT_CUT_WORDS} its answer ({MAX_CUT_REPLIES} replies in a row were cut, the last {})",
+            self.model_id,
+            cut_at.words()
         );
         let err = ProviderError::new(ProviderErrorKind::OutputCut, words).into();
         self.note_cannot_run(&err);

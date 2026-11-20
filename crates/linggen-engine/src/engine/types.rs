@@ -576,8 +576,29 @@ pub(crate) struct StreamResult {
     /// tool call it began is kept.
     pub steered: bool,
     /// The provider cut the reply at its output limit: `full_text` is what
-    /// came, and no tool call it began is kept.
-    pub cut: bool,
+    /// came, and no tool call it began is kept. Says what was being written.
+    pub cut: Option<CutAt>,
+}
+
+/// What a reply cut at the model's output limit was still writing. A cut
+/// text can go on; a cut tool call cannot (its arguments are incomplete and
+/// it never ran), so the model must make a smaller one instead.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CutAt {
+    Text,
+    /// A tool call, by name when the stream had named it.
+    ToolCall(Option<String>),
+}
+
+impl CutAt {
+    /// What was cut, for the words of a turn that ends on it.
+    pub(crate) fn words(&self) -> String {
+        match self {
+            Self::Text => "in the middle of text".to_string(),
+            Self::ToolCall(Some(name)) => format!("in the middle of a call to {name}"),
+            Self::ToolCall(None) => "in the middle of a tool call".to_string(),
+        }
+    }
 }
 
 /// Cached system prompt with hash for quick staleness checks.
