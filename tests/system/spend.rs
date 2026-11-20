@@ -233,3 +233,27 @@ async fn a_manual_compaction_is_a_call_in_the_ledger() {
     assert_eq!(resp["compacted"], true, "{resp}");
     assert_eq!(calls(), 3, "the summary is a call of the summarizing model");
 }
+
+/// A model on this machine's network is listed in the ledger but is no
+/// spend: no tokens in the total, no dollars, nothing to name as unpriced.
+/// (The fixture's fake models are `openai` on loopback.)
+#[tokio::test]
+async fn a_local_models_calls_are_listed_but_are_no_spend() {
+    use crate::support::model::{text, Agent};
+    let w = World::start(Setup::default().script(Agent::Ling, vec![text("Done.")])).await;
+    let call = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "agent_run",
+        "arguments": {"prompt": "Say done.", "write_dir": w.work(), "work": "none"}}});
+    w.api.post("/mcp", call).await;
+    let dir = w.home.linggen_home().join("sessions");
+    let sid = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name().to_string_lossy().to_string())
+        .find(|id| std::fs::read_to_string(dir.join(id).join("session.yaml")).unwrap_or_default().contains("creator: external"))
+        .expect("the delegated session");
+    let usage = status(&w, &sid).await["usage"].clone();
+    let m = &usage["models"][0];
+    assert_eq!(m["model"], "fake-ling", "{usage}");
+    assert_eq!(m["billing"], "local", "{usage}");
+    assert!(m["calls"].as_u64().unwrap() >= 1);
+    assert!(m.get("cost_usd").is_none() && usage.get("cost_usd").is_none(), "{usage}");
+    assert_eq!(usage["tokens"], json!({"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}), "{usage}");
+    assert!(usage.get("unpriced").is_none(), "{usage}");
+}

@@ -324,6 +324,9 @@ pub(super) struct OaiUsage {
     pub(super) completion_tokens: Option<u64>,
     #[serde(default)]
     pub(super) total_tokens: Option<u64>,
+    /// DeepSeek's own count of the prompt it served from cache.
+    #[serde(default)]
+    pub(super) prompt_cache_hit_tokens: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]

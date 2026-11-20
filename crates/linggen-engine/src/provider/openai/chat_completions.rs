@@ -80,10 +80,13 @@ fn usage_chunk(usage: OaiUsage) -> StreamChunk {
         prompt_tokens: usage.prompt_tokens.map(|v| v as usize),
         completion_tokens: usage.completion_tokens.map(|v| v as usize),
         total_tokens: usage.total_tokens.map(|v| v as usize),
+        // OpenAI and Gemini's compatible endpoint say it in the prompt
+        // details; DeepSeek counts hits at the top of `usage`.
         cached_tokens: usage
             .prompt_tokens_details
             .as_ref()
             .and_then(|d| d.cached_tokens)
+            .or(usage.prompt_cache_hit_tokens)
             .map(|v| v as usize),
     })
 }
@@ -270,5 +273,35 @@ mod cut_tests {
         assert!(chunks.iter().any(|c| matches!(c, Ok(StreamChunk::Token(t)) if t == "and then")));
         let stop = r#"{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}"#;
         assert!(!is_cut(&parse_tool_chunk(stop)));
+    }
+}
+
+#[cfg(test)]
+mod cache_tests {
+    use super::*;
+
+    fn usage_of(data: &str) -> TokenUsage {
+        parse_text_chunk(data)
+            .into_iter()
+            .find_map(|c| match c.expect("parses") {
+                StreamChunk::Usage(u) => Some(u),
+                _ => None,
+            })
+            .expect("a usage chunk")
+    }
+
+    /// OpenAI's shape — and Gemini's compatible endpoint's, which reports
+    /// the same field.
+    #[test]
+    fn the_cached_part_is_read_from_the_prompt_details() {
+        let u = usage_of(r#"{"choices":[],"usage":{"prompt_tokens":1000,"completion_tokens":50,"total_tokens":1050,"prompt_tokens_details":{"cached_tokens":800}}}"#);
+        assert_eq!((u.prompt_tokens, u.cached_tokens), (Some(1000), Some(800)));
+    }
+
+    /// DeepSeek counts its cache at the top of `usage`, as hit and miss.
+    #[test]
+    fn deepseeks_cache_hit_tokens_are_the_cached_part() {
+        let u = usage_of(r#"{"choices":[],"usage":{"prompt_tokens":1000,"completion_tokens":50,"total_tokens":1050,"prompt_cache_hit_tokens":900,"prompt_cache_miss_tokens":100}}"#);
+        assert_eq!((u.prompt_tokens, u.cached_tokens), (Some(1000), Some(900)));
     }
 }

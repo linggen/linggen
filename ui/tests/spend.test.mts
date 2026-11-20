@@ -53,7 +53,7 @@ test('the Claude SDK session keeps its own figure, whatever the engine ledger sa
   assert.deepEqual(spendView({ claude: true, onChatGpt: false }), { claude: { cost: null } });
 });
 
-test('a ChatGPT-account chat shows its allowance; account models add no spend', () => {
+test('a ChatGPT-account chat shows its allowance; a session with no spend tokens shows no spend', () => {
   assert.deepEqual(spendView({ claude: false, onChatGpt: true, usage: null }), { allowance: true });
   const none = { input: 0, output: 0, cache_read: 0, cache_write: 0 };
   assert.deepEqual(spendView({ claude: false, onChatGpt: false, usage: used({ tokens: none }) }), {});
