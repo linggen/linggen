@@ -161,8 +161,8 @@ const GRANT_WRITERS: &[(&str, usize, &str)] = &[
     ),
     (
         "crates/linggen-engine/src/engine/mod.rs",
-        4,
-        "a new person's session starts at the configured level; tests",
+        5,
+        "a new person's session starts at the configured level; tests (one a coding turn that may edit)",
     ),
     ("src/server/mcp_agent.rs", 1, "a test"),
     ("crates/linggen-engine/src/engine/permission/read_policy_tests.rs", 1, "a test"),

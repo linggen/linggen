@@ -1645,7 +1645,7 @@ mod member_tests {
     /// A coding session at `root` that may edit it, its first turn opened.
     fn coding_turn(root: &std::path::Path) -> (AgentEngine, super::LoopState) {
         let mut engine = engine_at(root);
-        engine.session_spec.work = Some(crate::state_fs::sessions::Work::Code);
+        crate::engine::session_spec::coding_caller_fixture().apply(&mut engine);
         let mut perms = SessionPermissions::default();
         perms.set_path_mode(&root.to_string_lossy(), PermissionMode::Edit);
         engine.session_permissions = perms;
