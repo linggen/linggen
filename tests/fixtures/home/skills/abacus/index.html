@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Abacus</title>
+</head>
+<body>
+  <!-- A second app page for the desktop app's tabs (tests/e2e). Its count
+       lives only in the page, so a reload would show 0 again. -->
+  <h1>Abacus</h1>
+  <p id="count">Count: 0</p>
+  <button id="add">Add one</button>
+  <script>
+    let n = 0;
+    document.getElementById('add').addEventListener('click', () => {
+      n += 1;
+      document.getElementById('count').textContent = `Count: ${n}`;
+    });
+  </script>
+</body>
+</html>

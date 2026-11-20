@@ -182,7 +182,7 @@ export const test = base.extend<Fixtures>({
       all.push(r);
     };
     // Every frame of the page (a skill page's own channel frame, an app tab
-    // in the launcher) and every page it opens (an app skill's page) is held
+    // in the desktop app's window) and every page it opens (an app skill's page) is held
     // to the same rule.
     page.on('request', record(page));
     page.context().on('page', (opened) => opened.on('request', record(opened)));
