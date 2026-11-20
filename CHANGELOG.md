@@ -35,7 +35,8 @@
 - **An import is a read nobody was asked about**, so it brings in only what the
   session may read without asking, and never a protected place. A project's
   rule file imports only from inside the project; a rule file that is a link
-  follows the same rule.
+  follows the same rule — so a project's `CLAUDE.md` that links to a file
+  outside the project is no longer read, and says so in its place.
 - **A rule that is not loaded says so** in its place — refused, too large
   (256 KiB a file, 512 KiB in all), not text.
 - **A change to a parent folder's rules or to an imported file** is picked up
