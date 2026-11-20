@@ -14,6 +14,8 @@
 #   only — 87 s instead of 170 s (measured 2026-11-15). The folder is this worktree's own from then on: no
 #   shared lock, no shared binary.
 set -euo pipefail
+# Any build subprocess added here must stay out of user telemetry.
+export LINGGEN_NO_TELEMETRY=1 LING_MEM_NO_TELEMETRY=1
 
 HERE="$(git rev-parse --show-toplevel)"
 MAIN="$(cd "$(git rev-parse --git-common-dir)/.." && pwd)"

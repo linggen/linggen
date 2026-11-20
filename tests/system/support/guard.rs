@@ -58,8 +58,17 @@ pub fn path_in_root(path: &Path, root: &Path, what: &str) {
     }
 }
 
-/// The env a child process gets: every path-valued variable inside the root.
+/// The env a child process gets: telemetry off and every path inside the root.
 pub fn env(vars: &[(String, String)], root: &Path) {
+    if vars
+        .iter()
+        .rev()
+        .find(|(key, _)| key == "LINGGEN_NO_TELEMETRY")
+        .map(|(_, value)| value.as_str())
+        != Some("1")
+    {
+        refuse("the child must have LINGGEN_NO_TELEMETRY=1");
+    }
     for (key, value) in vars {
         let is_path = matches!(
             key.as_str(),

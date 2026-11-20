@@ -30,6 +30,7 @@ pub fn hermetic_env(home: &Home) -> Vec<(String, String)> {
         ("LANG", "en_US.UTF-8".to_string()),
         ("TZ", "UTC".to_string()),
         ("SHELL", "/bin/sh".to_string()),
+        // The watchdog starts with a cleared env, even under scratch-test.sh.
         ("LINGGEN_NO_TELEMETRY", "1".to_string()),
         ("LINGGEN_NO_BONJOUR", "1".to_string()),
         ("LING_MEM_NO_TELEMETRY", "1".to_string()),
@@ -312,6 +313,26 @@ pub fn strip_ansi(text: &str) -> String {
         }
     }
     out
+}
+
+/// Read the running engine's environment, not cargo's or the watchdog's.
+#[tokio::test]
+async fn the_test_engine_has_telemetry_disabled() {
+    let home = Home::new();
+    let engine = super::engine::Engine::start(&home, free_port(), false, &[], None, None).await;
+    let pids = listeners(engine.port);
+    assert_eq!(pids.len(), 1, "expected one engine listener");
+    let out = Command::new("ps")
+        .args(["eww", "-p", &pids[0].to_string()])
+        .output()
+        .expect("read the running engine's environment");
+    assert!(out.status.success(), "ps could not read the engine process");
+    assert!(
+        String::from_utf8_lossy(&out.stdout)
+            .split_whitespace()
+            .any(|word| word == "LINGGEN_NO_TELEMETRY=1"),
+        "the running test engine lacks LINGGEN_NO_TELEMETRY=1"
+    );
 }
 
 /// A mark taken before a child is started again on the same log still

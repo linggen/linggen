@@ -13,6 +13,9 @@ Goal: every release ships only after one automated run says it works — the
 code is right, a new user's first install starts and runs, and an existing
 user upgrades cleanly.
 
+Test harnesses and release-gate runs opt out of telemetry and are never counted as users.
+Gate VMs keep the opt-out file so engines launched by the app are covered too.
+
 ## Layers
 
 | When | What | Where | Data |
