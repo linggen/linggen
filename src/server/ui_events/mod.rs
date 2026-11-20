@@ -67,7 +67,16 @@ impl Ui {
 }
 
 pub(crate) fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Option<UiEvent> {
-    map_event(event, seq, crate::server::rooms_switch::on())
+    let ui = map_event(event, seq, crate::server::rooms_switch::on())?;
+    // A turn the engine started for her shows nothing on a page: decided
+    // in one place (`resident::shows_on_page`).
+    let shown = crate::server::resident::shows_on_page(
+        &ui.kind,
+        ui.agent_id.as_deref(),
+        ui.session_id.as_deref(),
+        ui.run_id.as_deref(),
+    );
+    shown.then_some(ui)
 }
 
 /// [`map_server_event_to_ui_message`], with the rooms switch given: room chat
