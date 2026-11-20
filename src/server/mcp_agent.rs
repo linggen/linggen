@@ -144,6 +144,7 @@ pub async fn run(
     model_fallback: Option<bool>,
     work: Option<&str>,
     grants: Option<&serde_json::Value>,
+    read_origin: crate::engine::permission::ReadOrigin,
 ) -> Result<String, String> {
     let prompt = prompt.trim();
     if prompt.is_empty() {
@@ -180,7 +181,7 @@ pub async fn run(
             session.into(),
             agent_id,
             prompt.into(),
-            "claude-code".into(),
+            ("claude-code".into(), crate::server::resident::Origin::Person),
         );
         let sid = session.to_string();
         let manager = state.manager.clone();
@@ -377,6 +378,7 @@ pub async fn run(
             prompt.to_string(),
             mode.is_some(),
             model,
+            read_origin,
         )
         .await
     });
@@ -532,6 +534,7 @@ async fn drive(
     prompt: String,
     write: bool,
     model: Option<String>,
+    read_origin: crate::engine::permission::ReadOrigin,
 ) -> Result<String, String> {
     let agent = match state
         .manager
@@ -552,6 +555,7 @@ async fn drive(
     // A run is a turn of its own: it starts with nothing an earlier turn
     // in the session set, and puts back what it set when it ends.
     engine.begin_turn(Default::default());
+    engine.respec(|spec| spec.read_origin = read_origin);
     if let Some(model) = model {
         // Checked (or chosen by the agent's chain) already; a delegated run
         // never switches models.

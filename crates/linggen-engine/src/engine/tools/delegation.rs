@@ -153,7 +153,7 @@ impl Tools {
             self.parent_allowed_tools.clone(),
             self.parent_path_modes.clone(),
             self.parent_interactive,
-            (self.parent_work, self.parent_ceiling),
+            (self.parent_work, self.parent_ceiling, self.parent_read_origin),
             false,
             None,
         ))
@@ -378,9 +378,10 @@ pub(crate) async fn run_delegation(
     parent_allowed_tools: Option<std::collections::HashSet<String>>,
     parent_path_modes: Vec<crate::engine::permission::PathMode>,
     parent_interactive: bool,
-    (parent_work, parent_ceiling): (
+    (parent_work, parent_ceiling, read_origin): (
         Option<crate::engine::session_spec::Work>,
         Option<crate::engine::permission::PermissionMode>,
+        crate::engine::permission::ReadOrigin,
     ),
     background: bool,
     started: Option<tokio::sync::oneshot::Sender<String>>,
@@ -469,13 +470,14 @@ pub(crate) async fn run_delegation(
     // Inherit consumer restrictions from parent — subagents can only tighten,
     // never widen. A delegated run is a task whatever the parent's session
     // was: the bootstrap message is the subagent's only delivery of its task.
-    crate::engine::session_spec::SessionSpec::delegated_child(
+    let mut spec = crate::engine::session_spec::SessionSpec::delegated_child(
         parent_policy,
         parent_interactive,
         parent_work,
         parent_ceiling,
-    )
-    .apply(&mut engine);
+    );
+    spec.read_origin = read_origin;
+    spec.apply(&mut engine);
     // Under a guest's policy the child, like its parent, runs only a model
     // the room shares.
     engine

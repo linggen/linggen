@@ -801,7 +801,7 @@ async fn herald_while_away(app: &str, private: bool, question: &str) -> String {
         // A reply for each call she may get: the greeting, the question's
         // notice, and the "reply ready" one when the first reply finishes
         // while the person is already away (before or after the question's).
-        .script(Agent::Yinyue, vec![text("I'm here."), text("They need you back."), text("Your reply is ready.")]);
+        .script(Agent::Yinyue, vec![text("I'm here."), crate::support::say("They need you back."), crate::support::say("Your reply is ready.")]);
     let (w, _) = day_world_at(12, setup).await;
     install_app(&w, app, "Bash, AskUser", private).await;
     let mark = w.mark();

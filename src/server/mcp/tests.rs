@@ -14,6 +14,7 @@ fn deps(hub: &BridgeHub) -> McpDeps<'_> {
     McpDeps {
         bridge: hub,
         state: None,
+        read_origin: Default::default(),
     }
 }
 

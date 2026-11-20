@@ -139,7 +139,7 @@ fn only_data_readers(line: &str) -> bool {
     let mut at_command = true;
     for token in command_tokens(line) {
         match token {
-            Token::Op(Joint::Break) => return false,
+            Token::Op(Joint::Break | Joint::Pipe) => return false,
             Token::Op(_) => at_command = true,
             Token::Word(w) if at_command => {
                 if !DATA_READERS.contains(&dequote(&w).as_str()) {

@@ -62,6 +62,8 @@ pub struct SessionSpec {
     /// and this machine's. Set only where a turn is typed ([`SessionSpec::typed`])
     /// and carried to its `Task` children.
     pub ceiling: Option<PermissionMode>,
+    /// Trusted admission of this turn, never loaded from session metadata.
+    pub read_origin: super::permission::ReadOrigin,
     /// What it may do without asking, set by whoever makes it; empty from
     /// its meta. An `agent_run` delegate's are seeded before its run
     /// ([`SessionSpec::seed`]); a skill's and a mission's are stamped as
@@ -308,6 +310,7 @@ impl SessionSpec {
             creator: Some(meta.creator.clone()),
             policy,
             ceiling: None,
+            read_origin: Default::default(),
             grants: PresetGrants::default(),
         }
     }
@@ -330,6 +333,7 @@ impl SessionSpec {
             creator,
             policy: None,
             ceiling: None,
+            read_origin: Default::default(),
             grants: PresetGrants::default(),
         }
     }
@@ -408,5 +412,6 @@ mod tests;
 pub(crate) fn coding_caller_fixture() -> SessionSpec {
     let mut spec = SessionSpec::delegated_child(None, false, Some(Work::Code), None);
     spec.permission = Permission::AskCaller;
+    spec.read_origin = super::permission::ReadOrigin::LocalDelegate;
     spec
 }

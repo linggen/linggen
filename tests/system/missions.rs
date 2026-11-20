@@ -4,7 +4,7 @@
 
 use crate::notes::{held, wait_for};
 use crate::support::model::Agent;
-use crate::support::{text, tool, Setup, World};
+use crate::support::{say, text, tool, Setup, World};
 use crate::unprompted::{quiet_around_now, set_pet};
 use serde_json::{json, Value};
 use std::{fs, path::Path};
@@ -85,7 +85,7 @@ const HER_LINE: &str = "The beacon check stumbled again tonight.";
 /// whatever `data/exit` holds, and a mission of its own that uses it. Written
 /// into the world's home after start: the engine reads skills and their
 /// missions from disk on every trigger, once the skills are reloaded.
-fn install_beacon(skills: &Path) {
+pub(crate) fn install_beacon(skills: &Path) {
     let dir = skills.join("beacon");
     for sub in ["scripts", "data", "missions/nightly"] {
         std::fs::create_dir_all(dir.join(sub)).expect("beacon dirs");
@@ -125,14 +125,14 @@ fn install_beacon(skills: &Path) {
     .expect("mission.md");
 }
 
-fn set_exit(w: &World, code: i32) {
+pub(crate) fn set_exit(w: &World, code: i32) {
     let path = w.home.linggen_home().join("skills/beacon/data/exit");
     std::fs::write(path, code.to_string()).expect("exit file");
 }
 
 /// Trigger the mission unattended and wait until its run is on record as
 /// finished; returns that record.
-async fn run_once(w: &World) -> Value {
+pub(crate) async fn run_once(w: &World) -> Value {
     let mark = w.mark();
     let path = format!("/api/missions/{}/trigger", urlencoding::encode(MISSION));
     let resp = w.api.post(&path, json!({})).await;
@@ -154,7 +154,7 @@ async fn run_once(w: &World) -> Value {
     panic!("the run in {sid} was never finalized");
 }
 
-fn pet_lines(w: &World) -> Vec<String> {
+pub(crate) fn pet_lines(w: &World) -> Vec<String> {
     w.events()
         .into_iter()
         .filter(|e| e["kind"] == "pet_speak")
@@ -162,14 +162,14 @@ fn pet_lines(w: &World) -> Vec<String> {
         .collect()
 }
 
-async fn beat_present(w: &World) {
+pub(crate) async fn beat_present(w: &World) {
     let body = json!({"surface": "main-ui", "focused": true, "typing": false, "idle_ms": 1000});
     w.api.post("/api/presence", body).await;
 }
 
 /// Her kickoffs so far, oldest first: each call's last user row (the world
 /// block follows it).
-fn her_facts(w: &World) -> Vec<String> {
+pub(crate) fn her_facts(w: &World) -> Vec<String> {
     w.model
         .calls_of(Agent::Yinyue)
         .iter()
@@ -202,7 +202,7 @@ async fn a_failed_tool_in_an_unattended_run_reaches_her_as_one_fact() {
     ];
     let w = World::start(Setup::default().script(Agent::Ling, ling).script(
         Agent::Yinyue,
-        vec![text(HER_LINE), text(HER_LINE), text("Hello.")],
+        vec![say(HER_LINE), say(HER_LINE), text("Hello.")],
     ))
     .await;
     install_beacon(&w.home.linggen_home().join("skills"));
@@ -309,7 +309,7 @@ async fn a_failed_tool_in_an_unattended_run_reaches_her_as_one_fact() {
 }
 
 /// Two failing-then-closing runs' worth of script: Ling pings and closes.
-fn failing_run_script() -> Setup {
+pub(crate) fn failing_run_script() -> Setup {
     Setup::default()
         .script(
             Agent::Ling,
@@ -318,7 +318,7 @@ fn failing_run_script() -> Setup {
                 text("The lamp check did not complete. DONE"),
             ],
         )
-        .script(Agent::Yinyue, vec![text(HER_LINE)])
+        .script(Agent::Yinyue, vec![say(HER_LINE)])
 }
 
 async fn beacon_world() -> World {
@@ -441,7 +441,7 @@ async fn a_failed_kickoff_run_is_continued_with_each_row_once_in_order() {
                 text("Back to the trays."),
             ],
         )
-        .script(Agent::Yinyue, vec![text(HER_LINE)]);
+        .script(Agent::Yinyue, vec![say(HER_LINE)]);
     let w = World::start(setup).await;
     install_tally(&w.home.linggen_home().join("skills"));
     w.api.post("/api/skills/reload", json!({})).await;

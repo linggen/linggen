@@ -357,6 +357,46 @@ async fn route_target(
     )
 }
 
+/// Whether the turn running in `session` holds its reply for the finalizer.
+fn held_turn_running(session: &str) -> bool {
+    crate::server::resident::running_origin(session).is_some_and(|o| o.held())
+}
+
+/// A person outranks anything the engine started: their message ends a held
+/// turn running in `session` — what it says is dropped, and it is cancelled,
+/// again and again until it has unwound (its run record may not exist yet).
+/// What the turn carried is kept as on any unpublished return: a condition
+/// stays untold, a rode fault is held, a routine herald is dropped. The
+/// message waits only for that unwinding, then runs as its own person turn.
+fn end_held_turn(state: &Arc<ServerState>, session: &str) {
+    if !crate::server::resident::end_held_turns(session) {
+        return;
+    }
+    let (state, session) = (state.clone(), session.to_string());
+    tokio::spawn(async move {
+        for _ in 0..100 {
+            let runs = state
+                .manager
+                .list_agent_runs(&std::path::PathBuf::new(), Some(&session))
+                .await
+                .unwrap_or_default();
+            // The held turn's record is dropped before the turn lock is, and
+            // the next turn begins only under the lock: a held turn still
+            // recorded after the listing means every run listed is its own.
+            if !held_turn_running(&session) {
+                return;
+            }
+            for run in runs.iter().filter(|r| r.parent_run_id.is_none() && r.status == crate::engine::agent::AgentRunStatus::Running) {
+                let _ = state.manager.cancel_run_tree(&run.run_id).await;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        tracing::warn!(
+            "[yinyue] session {session}: the held turn did not unwind after 100 cancels; the person's message will run when it ends"
+        );
+    });
+}
+
 /// How a message sent while the agent is busy meets the running turn.
 #[derive(Debug, PartialEq, Eq)]
 enum BusyMessage {
@@ -825,6 +865,12 @@ pub(crate) async fn run_session_turn(
         Some(sid) => super::turn_place::mark_turn(manager, sid, &ctx.place),
         None => None,
     };
+    // A person's turn is recorded here, for a restart's plan; one the engine
+    // started was recorded when it took the turn lock.
+    let _origin = ctx
+        .session_id
+        .as_deref()
+        .and_then(|sid| crate::server::resident::RunningOrigin::in_turn(sid, ctx.origin));
     // The turn's own settings; what closes it names this turn's run, never
     // the last one's.
     engine.begin_turn(ctx.turn.clone());
@@ -856,12 +902,16 @@ fn hear_her_at_table(
     session_id: &str,
 ) {
     if super::members::is_companion(&ctx.agent_id) && !crate::server::resident::is_own_session(session_id) {
-        if let Some(reply) = engine.last_assistant_text.clone() {
+        let reply = engine
+            .last_assistant_text
+            .clone()
+            .map(|t| crate::server::resident::Turned::of(t, ctx.origin));
+        if let Some(answer) = reply.and_then(|r| r.answer()) {
             let at = crate::server::api::yinyue::SaidAt {
                 session: Some(session_id),
                 app: ctx.place.skill.as_deref(),
             };
-            crate::server::resident::speak_reply(state, &reply, at);
+            crate::server::resident::speak_reply(state, answer, at);
         }
     }
 }
@@ -919,15 +969,25 @@ pub(crate) enum TurnOrigin {
     /// outlived the restart (`admission::thaw`). It stamps no presence and
     /// waits behind the turn running, never interrupting it.
     Resumed,
+    /// An interactive request admitted at this machine.
+    LocalPerson,
 }
 
 pub(crate) async fn chat_handler(
     State(state): State<Arc<ServerState>>,
+    axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<std::net::SocketAddr>,
     headers: axum::http::HeaderMap,
     Json(mut req): Json<ChatRequest>,
 ) -> axum::response::Response {
     req.level = Some(crate::server::api::pair::caller_level(&headers));
-    start_turn(state, req, TurnOrigin::Person).await
+    let origin = if crate::server::api::ling_mem_connect::is_at_this_mac(peer, &headers)
+        && crate::memory_host::caller::token_from_headers(&headers).is_none()
+    {
+        TurnOrigin::LocalPerson
+    } else {
+        TurnOrigin::Person
+    };
+    start_turn(state, req, origin).await
 }
 
 /// The person's words to `agent_id` in an existing session, said somewhere
@@ -1126,7 +1186,7 @@ pub(crate) async fn start_turn(
     req: ChatRequest,
     origin: TurnOrigin,
 ) -> axum::response::Response {
-    if origin == TurnOrigin::Person {
+    if origin != TurnOrigin::Resumed {
         // Any user chat turn stamps the quiet clock — background mission work
         // (catch-up, deferrable cron fires) waits for a quiet window instead of
         // competing with the user for the model. See quiet_for_background.
@@ -1281,6 +1341,22 @@ pub(crate) async fn start_turn(
         .then(|| running_places.of(&effective_session_id))
         .flatten();
     let queue = crate::engine::turn_place::running::meets_running(running.as_ref(), &turn_place, rule);
+    // A turn of hers the engine started holds its reply for the finalizer: a
+    // person's message never joins it (it would be answered on the event path
+    // and the answer dropped). The person outranks it: it is ended, and the
+    // message runs as its own turn, answered and shown as any person's, as
+    // soon as it has unwound.
+    // While it waits for the session, any held turn that takes the lock ahead
+    // of it is ended on arrival (`RunningOrigin::at_lock`).
+    let mut waiting = None;
+    let queue = match was_busy && held_turn_running(&effective_session_id) {
+        true => {
+            waiting = Some(crate::server::resident::PersonWaiting::new(&effective_session_id));
+            end_held_turn(&state, &effective_session_id);
+            Meets::AfterRun
+        }
+        false => queue,
+    };
     // Not queued: this turn holds the lock now, and its place is kept
     // before its message is.
     let mark = match was_busy {
@@ -1394,6 +1470,8 @@ pub(crate) async fn start_turn(
                 },
             },
         };
+        // It has the session: no held turn is ahead of it any more.
+        drop(waiting);
         if let Some(queued_id) = queued_item_id.as_deref() {
             state_clone.fold.forget(queued_id);
         }
@@ -1471,12 +1549,18 @@ pub(crate) async fn start_turn(
         // A person's turn: the session's spec typed by this policy — the
         // lead's tools, verbatim, its memory the turn's (an app's or a
         // mission's keeps less of the biography).
-        typed_spec(&state_clone, &session_id_for_queue, &engine, &policy, (session_creator, req_level))
-            .apply(&mut engine);
+        let mut spec = typed_spec(&state_clone, &session_id_for_queue, &engine, &policy, (session_creator, req_level));
+        if origin == TurnOrigin::LocalPerson && !is_consumer && sender.is_none()
+            && session_creator == "user" && turn_place.skill.is_none()
+            && spec.preset == crate::engine::session_spec::Preset::Chat
+        {
+            spec.read_origin = crate::engine::permission::ReadOrigin::LocalOwner;
+        }
+        spec.apply(&mut engine);
         // A chat turn withholds nothing and names no language of its own
         // (its message may: `(lang en)`); its surface may show the hint.
         let turn = crate::engine::turn_place::TurnSettings {
-            person_spoke: origin == TurnOrigin::Person && sender.is_none(),
+            person_spoke: origin != TurnOrigin::Resumed && sender.is_none(),
             followups: req_followups
                 && !is_consumer
                 && state.manager.get_config_snapshot().await.agent.suggest_followups,
@@ -1505,7 +1589,7 @@ pub(crate) async fn start_turn(
             policy,
             sender,
             via: via.clone(),
-            silence_ok: false,
+            origin: crate::server::resident::Origin::Person,
             place: turn_place,
             turn,
         };

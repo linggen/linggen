@@ -35,6 +35,23 @@ fn abs_glob_base_dir(pattern: &str) -> String {
     joined
 }
 
+pub(crate) fn glob_roots(args: &serde_json::Value, cwd: &Path) -> Vec<std::path::PathBuf> {
+    let args = super::normalize_tool_args("Glob", args.clone());
+    let patterns = args.get("globs").and_then(|value| value.as_array());
+    let mut roots = Vec::new();
+    for pattern in patterns.into_iter().flatten().filter_map(|value| value.as_str()) {
+        let expanded = expand_file_tool_path(pattern, dirs::home_dir().as_deref());
+        let root = if Path::new(&expanded).is_absolute() {
+            abs_glob_base_dir(&expanded).into()
+        } else {
+            cwd.to_path_buf()
+        };
+        if !roots.contains(&root) { roots.push(root); }
+    }
+    if roots.is_empty() { roots.push(cwd.to_path_buf()); }
+    roots
+}
+
 #[derive(Debug, Deserialize)]
 pub(super) struct ListFilesArgs {
     pub(super) globs: Option<Vec<String>>,
@@ -99,12 +116,10 @@ impl Tools {
                 Some(&rel_globs)
             })?;
             let cwd = self.cwd();
-            let walker = WalkBuilder::new(&cwd)
-                .standard_filters(true)
-                .hidden(true)
-                .build();
-
-            for entry in walker {
+            let mut walker = WalkBuilder::new(&cwd);
+            walker.standard_filters(true).hidden(true);
+            self.filter_read_walk(&mut walker);
+            for entry in walker.build() {
                 let entry = match entry {
                     Ok(v) => v,
                     Err(_) => continue,
@@ -133,11 +148,10 @@ impl Tools {
             }
             let gs = build_globset(Some(std::slice::from_ref(abs_glob)))?;
             let Some(gs) = gs else { continue };
-            let walker = WalkBuilder::new(walk_root)
-                .standard_filters(false)
-                .hidden(false)
-                .build();
-            for entry in walker {
+            let mut walker = WalkBuilder::new(walk_root);
+            walker.standard_filters(false).hidden(false);
+            self.filter_read_walk(&mut walker);
+            for entry in walker.build() {
                 let entry = match entry {
                     Ok(v) => v,
                     Err(_) => continue,
@@ -164,7 +178,7 @@ impl Tools {
 
         // Absolute paths are read directly (no workspace sandboxing).
         if abs_path.is_absolute() {
-            if abs_path.exists() && abs_path.is_file() {
+            if self.permits_read(abs_path) && abs_path.is_file() {
                 return self.do_read_file(&args.path, abs_path, args.max_bytes, args.line_range);
             }
             return Ok(ToolResult::Success(self.prompt(
@@ -181,6 +195,9 @@ impl Tools {
             .unwrap_or(&rel);
         let path = cwd.join(&rel);
 
+        if !self.permits_read(&path) && path.exists() {
+            anyhow::bail!("This file was not approved for reading.");
+        }
         if path.exists() && path.is_dir() {
             anyhow::bail!(
                 "{}",
@@ -265,12 +282,11 @@ impl Tools {
         let query_lower = query.to_lowercase();
         let filename_lower = filename.to_lowercase();
         let cwd2 = self.cwd();
-        let walker = WalkBuilder::new(&cwd2)
-            .standard_filters(true)
-            .hidden(true)
-            .build();
+        let mut walker = WalkBuilder::new(&cwd2);
+        walker.standard_filters(true).hidden(true);
+        self.filter_read_walk(&mut walker);
 
-        for entry in walker {
+        for entry in walker.build() {
             let entry = match entry {
                 Ok(v) => v,
                 Err(_) => continue,

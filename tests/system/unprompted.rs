@@ -8,7 +8,7 @@
 
 use crate::notes::{held, wait_for};
 use crate::support::model::Agent;
-use crate::support::{text, Setup, World};
+use crate::support::{say, Setup, World};
 use serde_json::{json, Value};
 use std::time::Duration;
 
@@ -58,7 +58,7 @@ fn spoken(w: &World) -> Vec<String> {
 }
 
 async fn night_world() -> World {
-    let w = World::start(Setup::default().script(Agent::Yinyue, vec![text(LINE)])).await;
+    let w = World::start(Setup::default().script(Agent::Yinyue, vec![say(LINE)])).await;
     set_pet(&w, json!({ "quiet_hours": quiet_around_now() })).await;
     w
 }

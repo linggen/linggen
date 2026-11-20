@@ -79,11 +79,11 @@ pub(super) fn bind(offers: &[Offer], labels: &[(usize, String)]) -> Vec<Shown> {
 /// What a reply shows for a problem's offers, and whether the line is
 /// unlabelled — offers to show and none named. Such a line is said without
 /// buttons (`triggers::wake_and_offer`): never silent comes first.
-pub(super) fn shown(offers: Option<&[Offer]>, reply: Option<&str>) -> (Vec<Shown>, bool) {
-    let (Some(offers), Some(reply)) = (offers, reply) else {
+pub(super) fn shown(offers: Option<&[Offer]>, labels: Option<&[(usize, String)]>) -> (Vec<Shown>, bool) {
+    let (Some(offers), Some(labels)) = (offers, labels) else {
         return (Vec::new(), false);
     };
-    let shown = bind(offers, &take(reply).1);
+    let shown = bind(offers, labels);
     let unlabelled = !offers.is_empty() && shown.is_empty();
     (shown, unlabelled)
 }
@@ -115,7 +115,7 @@ mod tests {
         assert_eq!(shown[0].label, "Look what's big");
         assert!(matches!(shown[0].offer, Offer::Tool { .. }));
         // What reaches her voice carries no marker.
-        let spoken = super::super::spoken::spoken_line(reply).unwrap();
+        let spoken = super::super::spoken::spoken_line(&format!("<say>{reply}</say>")).unwrap();
         assert_eq!(spoken, "Your Mac is nearly full.");
     }
 
@@ -129,10 +129,11 @@ mod tests {
     #[test]
     fn a_line_that_labels_no_offer_is_known_as_unlabelled() {
         let o = offers();
-        assert!(shown(Some(&o), Some("Your Mac is nearly full.")).1);
-        assert!(!shown(Some(&o), Some("Full. [offer 1: Open Files]")).1);
-        assert!(!shown(Some(&[]), Some("Nothing can be done here.")).1, "a none-remedy line is said bare");
-        assert!(!shown(None, Some("A quiet remark.")).1);
+        let labels = |reply: &str| take(reply).1;
+        assert!(shown(Some(&o), Some(&labels("Your Mac is nearly full."))).1);
+        assert!(!shown(Some(&o), Some(&labels("Full. [offer 1: Open Files]"))).1);
+        assert!(!shown(Some(&[]), Some(&labels("Nothing can be done here."))).1, "a none-remedy line is said bare");
+        assert!(!shown(None, Some(&labels("A quiet remark."))).1);
     }
 
     #[test]

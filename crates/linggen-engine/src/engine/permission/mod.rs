@@ -31,8 +31,15 @@ mod pattern_text;
 mod prompt;
 #[cfg(test)]
 mod readable_shapes_tests;
+#[cfg(test)]
+mod read_policy_tests;
+#[cfg(test)]
+mod read_lock_tests;
 mod scripts;
+mod sensitive;
 mod shell_text;
+mod read_scope;
+mod read_shell;
 mod store;
 #[cfg(test)]
 mod gate_copy_tests;
@@ -40,6 +47,10 @@ mod gate_copy_tests;
 mod outward_tests;
 
 pub use declined::DeclinedScopes;
+pub use read_scope::ReadOrigin;
+#[cfg(test)]
+use model::check_permission_at_turn;
+pub(crate) use model::check_permission_with_read_approvals;
 pub use manifest::{apply_grants, Grants, PathGrant};
 pub use model::{
     check_permission, check_permission_for, display_path, effective_mode_for_path, parse_skill_tier, PathMode,
@@ -1994,6 +2005,25 @@ mod tests {
             let r = bash(cmd, &ws, &sp);
             assert!(matches!(r, PermissionCheckResult::Allowed), "{cmd}: {r:?}");
         }
+    }
+
+    #[test]
+    fn folder_chain_keeps_the_callers_directory_across_a_pipeline() {
+        let (ws, sp) = granted_workspace("folder-chain");
+        let check = |cmd: &str| check_permission_for("Bash", Some(cmd), None, &ws, &sp, None, true, None);
+        for cmd in [
+            format!("cd {}/skills && node --test tests/*.test.mts 2>&1 | tail -10; cd .. && git status --short", ws.display()),
+            "(cd /tmp && ls); git status".into(),
+        ] {
+            assert!(matches!(check(&cmd), PermissionCheckResult::Allowed), "{cmd}: {:?}", check(&cmd));
+        }
+        let outside = "cd skills && cd ../.. && ls";
+        assert!(matches!(check(outside), PermissionCheckResult::NeedsPrompt(_)));
+        let unknown = r#"cd "$X" && rm a"#;
+        assert_eq!(classify_bash_command(unknown), BashClass::Admin);
+        let mut edit_only = sp.clone();
+        edit_only.path_modes[0].mode = PermissionMode::Edit;
+        assert!(matches!(check_permission_for("Bash", Some(unknown), None, &ws, &edit_only, None, true, None), PermissionCheckResult::NeedsPrompt(_)));
     }
 
     fn shellexpand_home(p: &str) -> std::path::PathBuf {

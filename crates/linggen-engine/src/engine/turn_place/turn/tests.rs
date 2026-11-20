@@ -98,11 +98,11 @@ fn the_sessions_withheld_tools_outlive_a_turn() {
 async fn a_run_that_fails_puts_back_its_wiring() {
     let mut engine = engine();
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-    engine.begin_run(RunSetup::task("x").silence_ok(true).thinking(Some(tx)));
-    assert!(engine.silence_ok && engine.thinking_tx.is_some());
+    engine.begin_run(RunSetup::task("x").reply_held(true).thinking(Some(tx)));
+    assert!(engine.reply_held && engine.thinking_tx.is_some());
     engine.task = None;
     assert!(engine.run_agent_loop(None).await.is_err());
-    assert!(!engine.silence_ok);
+    assert!(!engine.reply_held);
     assert!(engine.thinking_tx.is_none());
 }
 

@@ -46,6 +46,8 @@ const LISTED: &[(&str, usize, &str)] = &[
         3,
         "tests",
     ),
+    ("crates/linggen-engine/src/engine/tool_exec.rs", 1, "a test"),
+    ("crates/linggen-engine/src/engine/permission/ceiling_tests.rs", 1, "a test"),
     ("crates/linggen-engine/src/engine/mod.rs", 2, "tests"),
     ("crates/linggen-engine/src/engine/types.rs", 1, "a test"),
     (
@@ -144,7 +146,7 @@ const GRANT_WRITERS: &[(&str, usize, &str)] = &[
     ),
     (
         "crates/linggen-engine/src/engine/tool_exec.rs",
-        4,
+        6,
         "a person's answer to a prompt; tests",
     ),
     (
@@ -163,6 +165,8 @@ const GRANT_WRITERS: &[(&str, usize, &str)] = &[
         "a new person's session starts at the configured level; tests",
     ),
     ("src/server/mcp_agent.rs", 1, "a test"),
+    ("crates/linggen-engine/src/engine/permission/read_policy_tests.rs", 1, "a test"),
+    ("crates/linggen-engine/src/engine/permission/ceiling_tests.rs", 1, "a test"),
     (
         "crates/linggen-engine/src/extensions/missions/mod.rs",
         1,

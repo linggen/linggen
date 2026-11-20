@@ -41,6 +41,8 @@ pub mod steer;
 mod steer_loop_tests;
 #[cfg(test)]
 mod cut_loop_tests;
+#[cfg(test)]
+mod held_loop_tests;
 mod streaming;
 pub mod suggestion;
 #[cfg(any(test, feature = "test-support"))]
@@ -681,7 +683,9 @@ impl AgentEngine {
                         self.model_id, state.empty_response_streak
                     );
                     let _ = self.persist_assistant_message(&msg, session_id).await;
-                    if self.tools.get_manager().is_some() {
+                    // An engine-written text is no more shown live in a held
+                    // turn than any other (`reply_held`).
+                    if self.tools.get_manager().is_some() && !self.reply_held {
                         let agent_id = self
                             .agent_id
                             .clone()
@@ -796,8 +800,9 @@ impl AgentEngine {
                     // Only ExitPlanMode submits a plan; a text reply is an answer.
                     self.leave_plan_mode_for_answer();
 
-                    // Pure conversational text — emit as a complete block.
-                    if self.tools.get_manager().is_some() {
+                    // Pure conversational text — emit as a complete block (a
+                    // held reply is the caller's to show).
+                    if self.tools.get_manager().is_some() && !self.reply_held {
                         let agent_id = self
                             .agent_id
                             .clone()
@@ -889,10 +894,16 @@ impl AgentEngine {
             let actions = match actions {
                 Ok(v) if !v.is_empty() => v,
                 Ok(_) | Err(_) => {
-                    if !raw.contains('{') && looks_like_final_answer(&raw) {
+                    // A held turn's plain-text reply is its answer however short:
+                    // the envelope (`<say>…</say>`) is a line, not a long text.
+                    if !raw.contains('{') && (self.reply_held || looks_like_final_answer(&raw)) {
                         // Plain text that looks like a substantive answer (long enough,
                         // not "thinking out loud") — treat as an implicit done.
                         let _ = self.persist_assistant_message(&raw, session_id).await;
+                        // The caller of a held turn reads the reply from here.
+                        if self.reply_held {
+                            self.last_assistant_text = Some(raw.clone());
+                        }
                         match self
                             .try_closing_ask(
                                 state,

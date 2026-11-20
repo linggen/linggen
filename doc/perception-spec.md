@@ -188,6 +188,23 @@ next start closes the saved stretch where it was last saved, losing at most
 those 30 seconds. A record names the app, never what was on it. Time in the
 terminal, the CLI or any other program sends no beat and is not counted.
 
+What presence cannot tell apart today: the person **away from the Mac** and
+the person **working in another app** both send no beat, so they read the same
+(no Linggen page in front). A condition — a notice with something to do —
+therefore waits for a page where her line is drawn — Linggen's main page, in
+front (`a_page_is_in_front`, which is the voice rule's "seen" judgement too),
+with the presence beat's own freshness — and is told only when its line is
+published there. Her bubble and its offer buttons are drawn only by the surface
+that holds her: the main page's dock and the desktop pet window
+(`useYinyuePresenter`); an app's page draws none (an app that hides her body
+holds her as a bodyless stage), and a private app's page never counts. So a
+condition is not published, and not told, while only an app's page is in
+front; a routine herald does not wait, and is written and spoken under the
+voice rule. Still not told apart: the phone alone, and long quiet reading
+(over two minutes without input) — a condition waits through both. Telling
+them apart
+needs a Mac-local awake and recent-input signal, which does not exist yet.
+
 The doorbell shows changes, not durations: a record that carries
 `detail.seconds` is written to disk and read through `recent_activity`, but
 never counted in "since you last looked" nor shown as the latest thing.
@@ -389,8 +406,9 @@ Three rules, each earned:
    after the problem has been absent for a day of readings.
 2. **Never dropped.** A problem that exists and has not been said is due at
    every moment the resident's gates allow, until it is said. The record starts
-   when the resident **speaks**, never when it is asked: a SILENT reply or a
-   failed run defers, it does not dismiss. The judge chooses when and in what
+   when a line about it is **published** with a Linggen page in front, never
+   when the resident is asked: no envelope, a failed run, or no page in front
+   defers, it does not dismiss. The judge chooses when and in what
    words, never whether: on the phone a `stay_quiet` or an unreachable model
    puts a problem off (asked again after a while, or when the app comes back)
    and only news may be judged out. A run of hers that failed is a fact held

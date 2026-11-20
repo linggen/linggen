@@ -9,7 +9,7 @@ use crate::engine::tools::{self, ToolCall};
 use crate::message::ChatMessage;
 use serde_json::Value as JsonValue;
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tracing::{info, warn};
 
@@ -271,7 +271,8 @@ impl AgentEngine {
         if let Some(stop) = self.gate_restrictions(&t, messages).await {
             return stop;
         }
-        if let Some(stop) = self.gate_permission(&t, messages).await {
+        let mut approved_reads = Vec::new();
+        if let Some(stop) = self.gate_permission(&t, messages, &mut approved_reads).await {
             return stop;
         }
 
@@ -317,6 +318,7 @@ impl AgentEngine {
                 canonical_tool,
                 sig,
                 original_args: args,
+                approved_reads,
                 tool_done_status,
                 tool_failed_status,
                 block_id,
@@ -591,12 +593,23 @@ impl AgentEngine {
             .then(|| format!("Skill '{}' is not available to consumers.", skill_name))
     }
 
+    pub(crate) fn read_origin(&self) -> permission::ReadOrigin {
+        if self.active_mission.is_some() || self.tools.builtins.private_app.is_some()
+            || self.tools.builtins.turn_place.as_ref().is_some_and(|place| place.skill.is_some())
+        {
+            permission::ReadOrigin::Other
+        } else {
+            self.session_spec.read_origin
+        }
+    }
+
     /// The path/tier permission gate (permission-spec.md), asking the user
     /// when the call exceeds the session's grant.
     async fn gate_permission(
         &mut self,
         t: &ToolTurn<'_>,
         messages: &mut Vec<ChatMessage>,
+        approved_reads: &mut Vec<PathBuf>,
     ) -> Option<PreExecOutcome> {
         // Skill data tools (empty cmd, e.g. PageUpdate) pass their args
         // straight through as a content block — they don't read files, run
@@ -615,7 +628,10 @@ impl AgentEngine {
         } else {
             None
         };
-        let file_path_arg = if matches!(t.canonical, "Write" | "Edit" | "Read") {
+        let file_path_arg = if t.canonical == "Read" {
+            t.args.get("path").or_else(|| t.args.get("file")).or_else(|| t.args.get("filepath"))
+                .and_then(JsonValue::as_str).map(str::to_owned)
+        } else if matches!(t.canonical, "Write" | "Edit") {
             normalize_tool_path_arg(&self.tools.builtins.cwd(), t.args)
         } else {
             // For tools without an explicit file path (Glob, Grep, Task, etc.),
@@ -642,16 +658,33 @@ impl AgentEngine {
             // the main chat's, the badge) holds here too.
             self.sync_session_grants();
             let coding = self.is_coding_session();
-            let check_result = permission::check_permission_for(
-                t.canonical,
-                bash_command.as_deref(),
-                file_path_arg.as_deref(),
-                &self.tools.builtins.cwd(),
-                &self.session_permissions,
-                skill_tier_override,
-                coding,
-                self.session_spec.ceiling,
-            );
+            let origin = self.read_origin();
+            let cwd = self.tools.builtins.cwd();
+            let check = |path: Option<&str>| {
+                permission::check_permission_with_read_approvals(
+                    t.canonical, bash_command.as_deref(), path, &cwd,
+                    &self.session_permissions, skill_tier_override, coding,
+                    self.session_spec.ceiling, origin, Some(&self.declined_scopes), approved_reads,
+                )
+            };
+            let check_result = if t.canonical == "Glob" {
+                let mut ask = None;
+                for root in tools::glob_roots(t.args, &cwd) {
+                    match check(root.to_str()) {
+                        permission::PermissionCheckResult::Allowed => {},
+                        blocked @ permission::PermissionCheckResult::Blocked(_) => {
+                            ask = Some(blocked);
+                            break;
+                        }
+                        request @ permission::PermissionCheckResult::NeedsPrompt(_) => {
+                            ask.get_or_insert(request);
+                        }
+                    }
+                }
+                ask.unwrap_or(permission::PermissionCheckResult::Allowed)
+            } else {
+                check(file_path_arg.as_deref())
+            };
 
             let prompt_kind = match check_result {
                 permission::PermissionCheckResult::Allowed => return None,
@@ -688,6 +721,7 @@ impl AgentEngine {
                 tool_summary,
                 outward,
                 reason,
+                scoped_read,
             } = prompt_kind;
             let reason = reason.as_deref();
             let tool_summary = with_gate_reason(tool_summary, reason);
@@ -715,6 +749,9 @@ impl AgentEngine {
                 });
                 let wait = if asks_caller { CALLER_ASK_WAIT } else { PERSON_ASK_WAIT };
                 (question, request, wait)
+            } else if scoped_read && !asks_caller {
+                let question = permission::build_caller_question(&tool_summary, &target_mode, &path, &directories);
+                (question, None, PERSON_ASK_WAIT)
             } else if asks_caller {
                 let request = self.caller_request(t, target_mode, &path, &directories, reason);
                 let question = permission::build_caller_question(
@@ -737,6 +774,10 @@ impl AgentEngine {
                 .ask_permission_raw(t.canonical, question, caller_request, wait)
                 .await;
             match answer {
+                Some(permission::PermissionAction::AllowOnce) if scoped_read => {
+                    approved_reads.push(PathBuf::from(&path));
+                    continue;
+                }
                 Some(permission::PermissionAction::AllowOnce) => return None,
                 Some(permission::PermissionAction::AllowDirectory { all, mode, path: chosen }) => {
                     // Do not use a session grant when persisting it failed.
@@ -1063,6 +1104,7 @@ impl AgentEngine {
             canonical_tool,
             sig,
             original_args,
+            approved_reads: _,
             tool_done_status,
             tool_failed_status,
             block_id,
@@ -1425,6 +1467,26 @@ impl AgentEngine {
         }
     }
 
+    /// Carry the gate's read decision into the executor for each path it visits.
+    pub(crate) fn tools_for_call(&self, exec: &ReadyExec) -> crate::engine::tool_registry::ToolRegistry {
+        let mut tools = self.tools.clone();
+        if matches!(exec.canonical_tool.as_str(), "Read" | "Glob" | "Grep") {
+            let perms = self.session_permissions.clone();
+            let ceiling = self.session_spec.ceiling;
+            let origin = self.read_origin();
+            let coding = self.is_coding_session();
+            let declined = self.declined_scopes.clone();
+            let cwd = self.tools.builtins.cwd();
+            let approved = exec.approved_reads.clone();
+            tools.builtins.read_filter = Some(Arc::new(move |path| {
+                path.to_str().is_some_and(|path| matches!(permission::check_permission_with_read_approvals(
+                    "Read", None, Some(path), &cwd, &perms, None, coding, ceiling, origin, Some(&declined), &approved,
+                ), permission::PermissionCheckResult::Allowed))
+            }));
+        }
+        tools
+    }
+
     /// Validate, dispatch, and record a single tool call from the model.
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn handle_tool_action(
@@ -1466,7 +1528,8 @@ impl AgentEngine {
                 self.tools.builtins.parent_allowed_tools = allowed_tools.clone();
                 self.tools.builtins.parent_path_modes = self.session_permissions.path_modes.clone();
                 self.tools.builtins.parent_interactive = self.session_permissions.interactive;
-                let tools_clone = self.tools.clone();
+                self.tools.builtins.parent_read_origin = self.read_origin().task_child();
+                let tools_clone = self.tools_for_call(&exec);
                 // Each tool declares its own ceiling (`Tool::max_duration`);
                 // `None` means open-ended by nature — AskUser waits on a
                 // person, Task on a subagent. The progress tick below is
@@ -1728,7 +1791,7 @@ mod declined_gate_tests {
         let id = Some("c1".to_string());
         let t = ToolTurn { tool, canonical: tool, args: &args, session_id: None, tool_call_id: &id };
         let mut messages = Vec::new();
-        assert!(engine.gate_permission(&t, &mut messages).await.is_some(), "{tool} was let through");
+        assert!(engine.gate_permission(&t, &mut messages, &mut Vec::new()).await.is_some(), "{tool} was let through");
         messages.last().map(|m| m.content.clone()).unwrap_or_default()
     }
 
@@ -1827,6 +1890,144 @@ mod declined_gate_tests {
     }
 
     #[tokio::test]
+    async fn read_policy_local_coding_caller_reads_without_a_grant() {
+        let home = dirs::home_dir().unwrap();
+        let work = tempfile::tempdir_in(&home).unwrap();
+        let source = tempfile::tempdir_in(&home).unwrap();
+        let path = source.path().join("notes.txt");
+        std::fs::write(&path, "fixture").unwrap();
+        let pending: Pending = Default::default();
+        let asked = deny_all(&pending);
+        let mut engine = engine(work.path(), &pending, true);
+        crate::engine::session_spec::coding_caller_fixture().apply(&mut engine);
+        let args = serde_json::json!({"path": path});
+        let id = Some("c1".to_string());
+        let t = ToolTurn { tool: "Read", canonical: "Read", args: &args, session_id: None, tool_call_id: &id };
+        assert!(engine.gate_permission(&t, &mut Vec::new(), &mut Vec::new()).await.is_none());
+        assert_eq!(asked.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn read_policy_origin_matrix() {
+        use crate::engine::permission::{PermissionCheckResult, ReadOrigin};
+        let world = tempfile::tempdir_in(dirs::home_dir().unwrap()).unwrap();
+        let target = world.path().join("notes.txt");
+        std::fs::write(&target, "fixture").unwrap();
+        let command = format!("cat {}", target.display());
+        let grants = SessionPermissions::default();
+        for (label, origin, coding, ceiling, allowed) in [
+            ("local coding chat", ReadOrigin::LocalOwner, true, None, true),
+            ("local coding delegate", ReadOrigin::LocalDelegate, true, None, true),
+            ("coding Task", ReadOrigin::LocalDelegate.task_child(), true, None, true),
+            ("ordinary chat", ReadOrigin::LocalOwner, false, None, false),
+            ("handoff", ReadOrigin::Other, true, None, false),
+            ("app", ReadOrigin::Other, false, None, false),
+            ("private place", ReadOrigin::Other, true, None, false),
+            ("daily", ReadOrigin::Other, false, None, false),
+            ("companion", ReadOrigin::Other, false, None, false),
+            ("mission", ReadOrigin::Other, false, None, false),
+            ("room guest", ReadOrigin::Other, false, None, false),
+            ("remote person", ReadOrigin::Other, true, None, false),
+            ("paired admin", ReadOrigin::Other, true, Some(PermissionMode::Admin), false),
+            ("remote Task", ReadOrigin::Other.task_child(), true, None, false),
+        ] {
+            for tool in ["Read", "Glob", "Grep", "Bash"] {
+                let result = permission::check_permission_with_read_approvals(
+                    tool, (tool == "Bash").then_some(command.as_str()), target.to_str(),
+                    world.path(), &grants, None, coding, ceiling, origin, None, &[],
+                );
+                assert_eq!(matches!(result, PermissionCheckResult::Allowed), allowed, "{label}: {tool}: {result:?}");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn read_policy_search_prunes_protected_entries_under_a_broad_grant() {
+        let root = tempfile::tempdir_in(dirs::home_dir().unwrap()).unwrap();
+        std::fs::write(root.path().join("public.txt"), "fixture-needle").unwrap();
+        let hidden = root.path().join(".ssh");
+        std::fs::create_dir(&hidden).unwrap();
+        std::fs::write(hidden.join("private.txt"), "fixture-needle").unwrap();
+        let pending: Pending = Default::default();
+        let engine = engine(root.path(), &pending, false);
+        let exec = ReadyExec {
+            canonical_tool: "Glob".into(), sig: String::new(), original_args: JsonValue::Null,
+            approved_reads: Vec::new(), tool_done_status: String::new(), tool_failed_status: String::new(),
+            block_id: String::new(), tool_call_id: None,
+        };
+        let call = tools::ToolCall {
+            tool: "Glob".into(),
+            args: serde_json::json!({"globs": [format!("{}/**/*.txt", root.path().display())]}),
+            block_id: None,
+        };
+        let result = crate::engine::render::render_tool_result(&engine.tools_for_call(&exec).execute(call).await.unwrap());
+        assert!(result.contains("public.txt"), "{result}");
+        assert!(!result.contains("private.txt"), "{result}");
+    }
+
+    #[tokio::test]
+    async fn read_policy_recursive_glob_requires_grant_for_its_root() {
+        let home = dirs::home_dir().unwrap();
+        let work = tempfile::tempdir_in(&home).unwrap();
+        let private = tempfile::tempdir_in(crate::paths::linggen_home()).unwrap();
+        let pending: Pending = Default::default();
+        let mut engine = admin_engine(work.path(), &pending, false, false);
+        let args = serde_json::json!({"globs": [format!("{}/**/*", private.path().display())]});
+        gate(&mut engine, "Glob", args).await;
+    }
+
+    #[tokio::test]
+    async fn read_policy_protected_search_root_is_refused_unattended() {
+        let private = tempfile::tempdir_in(crate::paths::linggen_home()).unwrap();
+        let pending: Pending = Default::default();
+        let mut engine = engine(private.path(), &pending, false);
+        engine.session_permissions.interactive = false;
+        engine.session_permissions.set_path_mode("*", PermissionMode::Read);
+        gate(&mut engine, "Grep", serde_json::json!({"query": "fixture"})).await;
+    }
+
+    #[tokio::test]
+    async fn read_policy_secrets_never_reach_the_approval_path() {
+        use std::sync::atomic::Ordering::SeqCst;
+        let home = crate::paths::linggen_home();
+        let work = tempfile::tempdir_in(dirs::home_dir().unwrap()).unwrap();
+        let pending: Pending = Default::default();
+        let asked = deny_all(&pending);
+        let mut engine = admin_engine(work.path(), &pending, true, false);
+        for name in ["account.toml", "credentials.json", "codex_auth.json", "paired-devices.json", "push/state.json"] {
+            let file = home.join(name);
+            engine.session_permissions.set_path_mode(file.to_str().unwrap(), PermissionMode::Admin);
+            gate(&mut engine, "Read", serde_json::json!({"path": file})).await;
+        }
+        assert_eq!(asked.load(SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn read_policy_local_owner_can_approve_one_secret_read() {
+        let work = tempfile::tempdir_in(dirs::home_dir().unwrap()).unwrap();
+        let pending: Pending = Default::default();
+        let seen = answer_first(&pending, crate::engine::permission::ALLOW_ONCE);
+        let mut engine = admin_engine(work.path(), &pending, true, false);
+        engine.respec(|spec| spec.read_origin = permission::ReadOrigin::LocalOwner);
+        let path = crate::paths::linggen_home().join("account.toml");
+        let args = serde_json::json!({"path": path});
+        let id = None;
+        let t = ToolTurn { tool: "Read", canonical: "Read", args: &args, session_id: None, tool_call_id: &id };
+        let mut approved = Vec::new();
+        assert!(engine.gate_permission(&t, &mut Vec::new(), &mut approved).await.is_none());
+        let (labels, request) = seen.await.unwrap();
+        assert!(labels.iter().any(|label| label == permission::ALLOW_ONCE));
+        assert!(request.is_none());
+        assert_eq!(approved.len(), 1);
+        let allowed = |approved: &[PathBuf]| permission::check_permission_with_read_approvals(
+            "Read", None, path.to_str(), work.path(), &engine.session_permissions,
+            None, false, None, permission::ReadOrigin::LocalOwner, None, approved,
+        );
+        assert!(matches!(allowed(&approved), permission::PermissionCheckResult::Allowed));
+        assert!(matches!(allowed(&[]), permission::PermissionCheckResult::NeedsPrompt(_)));
+    }
+
+    #[tokio::test]
     async fn an_outward_command_is_refused_unattended_without_asking() {
         let work = tempfile::tempdir_in(dirs::home_dir().unwrap()).unwrap();
         let pending: Pending = Default::default();
@@ -1838,7 +2039,7 @@ mod declined_gate_tests {
         let args = serde_json::json!({"command": "cargo build"});
         let id = Some("c2".to_string());
         let t = ToolTurn { tool: "Bash", canonical: "Bash", args: &args, session_id: None, tool_call_id: &id };
-        assert!(engine.gate_permission(&t, &mut Vec::new()).await.is_none());
+        assert!(engine.gate_permission(&t, &mut Vec::new(), &mut Vec::new()).await.is_none());
     }
 
     #[tokio::test]
@@ -1850,7 +2051,7 @@ mod declined_gate_tests {
         let args = serde_json::json!({"command": "git push --force origin feature"});
         let id = Some("c1".to_string());
         let t = ToolTurn { tool: "Bash", canonical: "Bash", args: &args, session_id: None, tool_call_id: &id };
-        assert!(engine.gate_permission(&t, &mut Vec::new()).await.is_none(), "allowed once");
+        assert!(engine.gate_permission(&t, &mut Vec::new(), &mut Vec::new()).await.is_none(), "allowed once");
         let wait = std::time::Duration::from_secs(5);
         let (labels, request) = tokio::time::timeout(wait, seen).await.expect("asked").unwrap();
         assert_eq!(labels, [crate::engine::permission::ALLOW_ONCE, "Deny"]);
@@ -2015,6 +2216,7 @@ mod run_fault_tests {
             canonical_tool: "fetch".into(),
             sig: "fetch{}".into(),
             original_args: serde_json::json!({}),
+            approved_reads: Vec::new(),
             tool_done_status: "Fetched".into(),
             tool_failed_status: "Fetch failed".into(),
             block_id: "b1".into(),

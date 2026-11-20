@@ -8,14 +8,14 @@
 //! forty minutes passing would leave it.
 
 use crate::support::model::{Agent, Call};
-use crate::support::{text, tool, Setup, World};
+use crate::support::{say, text, tool, Setup, World};
 use serde_json::{json, Value};
 use std::time::{Duration, Instant};
 
 /// What the engine's own side of the woken turn may use.
 const QUIET: [&str; 4] = ["note_done", "note_write", "recent_activity", "sense"];
 
-fn script(woken: &str) -> Setup {
+pub(crate) fn script(woken: crate::support::model::Reply) -> Setup {
     Setup::default().script(
         Agent::Yinyue,
         vec![
@@ -24,7 +24,7 @@ fn script(woken: &str) -> Setup {
                 json!({"text": "the parcel arrives tomorrow", "look_again": "+40m"}),
             ),
             text("Noted."),
-            text(woken),
+            woken,
         ],
     )
 }
@@ -47,7 +47,7 @@ fn her_notes(w: &World) -> Vec<Value> {
 }
 
 /// She is asked to remember; her note is kept with its time, forty minutes on.
-async fn she_writes_the_note(w: &World) {
+pub(crate) async fn she_writes_the_note(w: &World) {
     let mark = w.mark();
     w.api
         .post(
@@ -68,7 +68,7 @@ async fn she_writes_the_note(w: &World) {
 }
 
 /// Forty minutes pass: the look-again time is now a minute behind.
-fn the_clock_moves(w: &World) {
+pub(crate) fn the_clock_moves(w: &World) {
     let path = notes_file(w);
     let mut book: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
     book["notes"][0]["look_again_at"] = json!(now() - 60);
@@ -101,7 +101,7 @@ fn assert_woken_with_the_note(call: &Call) {
     assert_eq!(offered, QUIET, "a woken note may speak and ask, never act");
 }
 
-fn spoken(w: &World) -> Vec<String> {
+pub(crate) fn spoken(w: &World) -> Vec<String> {
     w.events()
         .into_iter()
         .filter(|e| e["kind"] == "pet_speak")
@@ -118,7 +118,7 @@ fn assert_open_without_a_time(w: &World) {
 
 #[tokio::test]
 async fn a_woken_note_is_in_front_of_her_and_she_may_stay_silent() {
-    let w = World::start(script("SILENT")).await;
+    let w = World::start(script(text("SILENT"))).await;
     she_writes_the_note(&w).await;
     let mark = w.mark();
     the_clock_moves(&w);
@@ -126,7 +126,7 @@ async fn a_woken_note_is_in_front_of_her_and_she_may_stay_silent() {
     let calls = w.model.calls_of(Agent::Yinyue);
     assert_woken_with_the_note(calls.last().unwrap());
     tokio::time::sleep(Duration::from_secs(1)).await;
-    assert_eq!(spoken(&w), ["Noted."], "SILENT says nothing");
+    assert_eq!(spoken(&w), ["Noted."], "no envelope says nothing");
     assert_open_without_a_time(&w);
     w.assert_all_scripted();
 }
@@ -134,7 +134,7 @@ async fn a_woken_note_is_in_front_of_her_and_she_may_stay_silent() {
 #[tokio::test]
 async fn a_woken_note_may_have_her_speak() {
     let line = "The parcel comes tomorrow. Don't miss it.";
-    let w = World::start(script(line)).await;
+    let w = World::start(script(say(line))).await;
     she_writes_the_note(&w).await;
     let mark = w.mark();
     the_clock_moves(&w);
@@ -187,7 +187,7 @@ pub(crate) async fn wait_for(what: &str, mut done: impl FnMut() -> bool) {
 
 #[tokio::test]
 async fn the_hourly_ceiling_holds_the_wake_once_and_lets_it_go_after() {
-    let w = World::start(script("SILENT")).await;
+    let w = World::start(script(text("SILENT"))).await;
     she_writes_the_note(&w).await;
     set_ceiling(&w, 0).await;
     the_clock_moves(&w);

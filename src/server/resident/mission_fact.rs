@@ -167,15 +167,14 @@ fn later_clean_run(runs: &[MissionRunEntry], run_id: &str) -> Option<u64> {
     (newest.run_id != run_id && !newest.faulted()).then_some(newest.triggered_at)
 }
 
-/// The kickoff: the facts, then the herald's usual choice — a word, or SILENT.
+/// The kickoff: the facts, then the herald's usual choice — a word, or nothing.
 fn kickoff(label: &str, entry: &MissionRunEntry, lines: &[String]) -> String {
     format!(
         "You've been woken by a background event on the user's machine. The background \
          job \"{label}\" ran on its own at {} (status: {}). What the engine recorded about \
-         the run:\n{}\n\nDecide whether it's worth telling the user. If so, reply with one or \
-         two brief sentences in your voice. Your reply will be SPOKEN ALOUD, so write plain \
-         prose, no markdown. If it's not worth interrupting them, reply with exactly the \
-         single word SILENT and nothing else. Never nag.",
+         the run:\n{}\n\nDecide whether it's worth telling the user. If so, say one or \
+         two brief sentences in your voice. If it's not worth interrupting them, say nothing. \
+         Never nag.",
         local_time(entry.triggered_at),
         entry.status,
         lines.join("\n"),
@@ -286,7 +285,7 @@ mod tests {
             text.contains("each of the last 5 runs, on 5 different day(s), since "),
             "{text}"
         );
-        assert!(text.contains("SILENT"), "{text}");
+        assert!(text.contains("say nothing"), "{text}");
         assert!(!text.to_lowercase().contains("important"), "{text}");
     }
 

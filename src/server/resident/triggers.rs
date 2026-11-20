@@ -104,8 +104,7 @@ fn herald_ask(
         let Some(reply) = herald_line(&state, kickoff).await else {
             return;
         };
-        let Some(line) = spoken_line(&reply) else {
-            tracing::info!("[yinyue-watch] Yinyue chose silence");
+        let Some(said) = reply.finalize() else {
             return;
         };
         if !ask_still_pending(&state, &question_id).await {
@@ -120,9 +119,10 @@ fn herald_ask(
         }
         tracing::info!(
             "[yinyue-watch] Yinyue heralds ({} chars, neutral)",
-            line.len()
+            said.line.text().len()
         );
-        crate::server::api::yinyue::emit_speak(&state, line, Some("neutral".to_string()), Default::default());
+        let stage = Stage::of(&state, None).await;
+        spoken::publish(&state, said, &stage, Some("neutral".to_string()), None).await;
     });
 }
 
@@ -147,13 +147,14 @@ fn herald_kept_ask(state: &Arc<ServerState>, app: String, question_id: String, s
         let Some(reply) = herald_line(&state, kept_ask_kickoff(&app)).await else {
             return;
         };
-        let Some(line) = spoken_line(&reply) else {
+        let Some(said) = reply.finalize() else {
             return;
         };
         if !ask_still_pending(&state, &question_id).await || user_sees(&state, Sight::Screen) {
             return;
         }
-        crate::server::api::yinyue::emit_speak(&state, line, Some("neutral".to_string()), Default::default());
+        let stage = Stage::of(&state, None).await;
+        spoken::publish(&state, said, &stage, Some("neutral".to_string()), None).await;
     });
 }
 
@@ -163,47 +164,29 @@ fn kept_ask_kickoff(app: &str) -> String {
     format!(
         "The app \"{app}\" is waiting for the user to answer a question there; what it \
          asks is kept to that app. The user has stepped away from the screen. Call them back \
-         to it in your voice — one brief line, spoken aloud, plain prose. If it truly \
-         doesn't warrant interrupting now, reply with exactly SILENT."
+         to it in your voice — one brief line."
     )
 }
 
-/// Her words for a herald. A question waits inside a turn that holds her
-/// session's turn lock when that session is the day's, so a full turn of
+/// Her reply to a herald's kickoff. A question waits inside a turn that holds
+/// her session's turn lock when that session is the day's, so a full turn of
 /// hers would wait for the very answer it is to call for: then she gives one
-/// line now, from home's view of the thread, and it is kept as her row once
-/// the session is free. Elsewhere her own turn runs, as before.
-async fn herald_line(state: &Arc<ServerState>, kickoff: String) -> Option<String> {
+/// reply now, from home's view of the thread. Elsewhere her own turn runs, as
+/// before. Either way it is only her reply: nothing is shown or kept until the
+/// caller has finalized it and checked the question is still waiting.
+async fn herald_line(state: &Arc<ServerState>, kickoff: String) -> Option<Turned> {
+    // The turn's own origin: every reading of its reply is by this value.
+    let origin = Origin::Herald;
     let sid = super::session_roll::resolve_current_session(state).await;
     let free = state.manager.session_turn(&sid).try_lock().is_ok();
     if free {
-        return run_yinyue_turn(state, kickoff, "event").await;
+        return run_yinyue_turn(state, kickoff, origin).await;
     }
-    let ask = super::spoken::with_contract(kickoff, "event");
-    let line = crate::server::chat::line_now(state.clone(), &sid, YINYUE_AGENT, &ask).await?;
-    keep_when_free(state.clone(), sid, line.clone());
-    Some(line)
-}
-
-/// Keep her herald line as her row in `sid` once its running turn is over.
-fn keep_when_free(state: Arc<ServerState>, sid: String, line: String) {
-    tokio::spawn(async move {
-        let _turn = state.manager.session_turn(&sid).lock_owned().await;
-        crate::server::chat::helpers::persist_and_emit_to_store(
-            &state.manager.global_sessions,
-            &state.events_tx,
-            YINYUE_AGENT,
-            YINYUE_AGENT,
-            "user",
-            &line,
-            Some(&sid),
-            false,
-            None,
-            None,
-            None,
-        )
-        .await;
-    });
+    let ask = super::spoken::with_contract(kickoff, origin);
+    // The person's language, set here as it is for every turn of hers.
+    let language = super::turn::language_of_turn(state, &sid, origin, None).await;
+    let text = crate::server::chat::reply_now(state.clone(), &sid, YINYUE_AGENT, (&ask, language)).await?;
+    Some(Turned::of(text, origin))
 }
 
 fn ask_kickoff(
@@ -220,10 +203,9 @@ fn ask_kickoff(
     format!(
         "The agent \"{agent_id}\" is blocked, waiting on the user to answer: \
          \"{summary}\".{opts} The user has stepped away from the screen. Call them \
-         back in your voice — one brief line, spoken aloud, plain prose. When they give you their answer, relay \
+         back in your voice — one brief line. When they give you their answer, relay \
          it with `answer_prompt` (question_id \"{question_id}\") — only their actual \
-         words, never your own decision. If it truly doesn't warrant interrupting now, \
-         reply with exactly SILENT."
+         words, never your own decision."
     )
 }
 
@@ -267,26 +249,20 @@ fn on_agent_chat(
                 "The agent \"{from}\" sent you a message, addressed to YOU: \"{message}\". \
                  Respond however fits — it's yours to act on:\n\
                  • a nudge to move (dance, wave, nod, a little cheer…) → do it with Express;\n\
-                 • news worth telling the user → say one brief line in your voice (spoken, \
-                 plain prose), reading the room from Right now;\n\
+                 • news worth telling the user → say one brief line in your voice, \
+                 reading the room from Right now;\n\
                  • you can do both — move and speak;\n\
-                 • if nothing fits, reply with exactly SILENT.\n\
+                 • if nothing fits, say nothing.\n\
                  You're reached via agent_chat, so you can't pass it to a third agent."
             );
-            if let Some(reply) = run_yinyue_turn(&state, kickoff, "agent_chat").await {
-                if let Some(line) = spoken_line(&reply) {
+            if let Some(reply) = run_yinyue_turn(&state, kickoff, Origin::AgentChat).await {
+                if let Some(said) = reply.finalize() {
                     tracing::info!(
                         "[yinyue-watch] relays agent_chat ({} chars)",
-                        line.len()
+                        said.line.text().len()
                     );
-                    crate::server::api::yinyue::emit_speak(
-                        &state,
-                        line,
-                        Some("neutral".to_string()),
-                        Default::default(),
-                    );
-                } else {
-                    tracing::info!("[yinyue-watch] chose silence (agent_chat)");
+                    let stage = Stage::of(&state, None).await;
+                    spoken::publish(&state, said, &stage, Some("neutral".to_string()), None).await;
                 }
             }
         });
@@ -402,8 +378,7 @@ pub(super) fn handle_notification(state: &Arc<ServerState>, payload: Notificatio
                      when they're back, say one brief line in your voice that their reply is ready \
                      — name the topic in a few words taken from what they asked; never say what \
                      the reply did, found, or changed, and never judge it. Right now says whether \
-                     they're back. If it's routine, reply with exactly SILENT. Spoken aloud: plain \
-                     prose, no markdown. Never nag."
+                     they're back. If it's routine, say nothing. Never nag."
                 );
                 wake_herald(state, kickoff, "happy").await;
             });
@@ -490,8 +465,29 @@ pub(crate) fn user_sees(state: &ServerState, sight: Sight<'_>) -> bool {
                 .state(crate::util::now_ts_secs())
                 != "away"
         }
-        Sight::Line(app) => state.manager.presence_at_page(app),
+        Sight::Line(app) => line_is_drawn(state, app),
     }
+}
+
+/// Whether the line `app`'s place says is DRAWN where the person is looking:
+/// the page of the place (`None`: Linggen's main page) is in front, read by
+/// the presence board's own freshness. The one judgement both the voice rule
+/// ("seen, so words only") and a condition ("publish, and mark it told")
+/// take. Her bubble and its offer buttons are drawn only by the surface that
+/// holds her — the main page's dock (`MainApp.tsx`, `useYinyuePresenter`)
+/// and the pet window (`PetApp.tsx`); an app's page draws none of a home
+/// line (`LauncherApp.tsx` holds her there as a bodyless stage), and a
+/// private app's page never carries one. Audio alone never counts.
+fn line_is_drawn(state: &ServerState, app: Option<&str>) -> bool {
+    state.manager.presence_at_page(app)
+}
+
+/// Whether a condition's line — said at home, on Linggen's main page — is
+/// drawn where the person is looking: the one evidence it is published on
+/// (`wake_and_offer`) and waits for (`ambient`). The phone and a long quiet
+/// read are not told apart (`doc/perception-spec.md`).
+pub(crate) fn a_page_is_in_front(state: &ServerState) -> bool {
+    line_is_drawn(state, None)
 }
 
 /// Whether an AskUser question (or permission prompt) is still awaiting the
@@ -513,23 +509,17 @@ pub(crate) async fn wake_herald(
     state: Arc<ServerState>,
     kickoff: String,
     emotion: &str,
-) -> Option<String> {
-    wake_and_speak(state, (kickoff, None), emotion, "event", Reach::Open, None).await
+) -> Option<Line> {
+    wake_and_speak(state, (kickoff, None), emotion, Origin::Herald, Reach::Open, None).await
 }
 
-/// What woke a fault's turn: a mission run that went wrong.
-pub(super) const FAULT_SOURCE: &str = "fault";
-
-/// What woke a moment's turn from the app the person is using.
-const IN_USE_SOURCE: &str = "event-in-use";
-
-/// The trigger source of an app moment's turn: asked for, from the app the
-/// person is using, or neither.
-pub(crate) fn moment_source(asked: bool, in_use: bool) -> &'static str {
+/// The origin of an app moment's turn: asked for, from the app the person is
+/// using, or neither.
+pub(crate) fn moment_origin(asked: bool, in_use: bool) -> Origin {
     match (asked, in_use) {
-        (true, _) => "asked",
-        (false, true) => IN_USE_SOURCE,
-        (false, false) => "event",
+        (true, _) => Origin::Asked,
+        (false, true) => Origin::InUse,
+        (false, false) => Origin::Moment,
     }
 }
 
@@ -544,7 +534,7 @@ pub(crate) struct Table {
 
 /// The page a line said at `table` shows on: in a day's session the app it
 /// stands in, elsewhere the session's own app (`None`: the main page).
-fn table_page(state: &ServerState, table: &Table) -> Option<String> {
+pub(super) fn table_page(state: &ServerState, table: &Table) -> Option<String> {
     table.app.clone().or_else(|| {
         crate::server::chat::turn_place::of_session_id(&state.manager, &table.session).skill
     })
@@ -552,19 +542,19 @@ fn table_page(state: &ServerState, table: &Table) -> Option<String> {
 
 /// Wake her to tell a mission run's fault. Unprompted: quiet hours make it
 /// wait, and the hourly ceiling neither counts nor holds it ([`Source::Fault`]).
-pub(super) async fn wake_fault(state: Arc<ServerState>, fact: String) -> Option<String> {
+pub(super) async fn wake_fault(state: Arc<ServerState>, fact: String) -> Option<Line> {
     wake_and_speak(
         state,
         (fact, None),
         "neutral",
-        FAULT_SOURCE,
+        Origin::Fault,
         Reach::Open,
         None,
     )
     .await
 }
 
-/// Wake her for an app moment; `source` is [`moment_source`]. `asked`: the
+/// Wake her for an app moment; `origin` is [`moment_origin`]. `Asked`: the
 /// user asked her for this — the same spoken final paragraph, under the
 /// contract that offers no SILENT. Sealed either way: her line is the whole
 /// of her answer (`Reach::Sealed`). `table`: the app chat the moment names —
@@ -573,10 +563,10 @@ pub(crate) async fn wake_for_moment(
     state: Arc<ServerState>,
     moment: (String, Option<Table>),
     emotion: &str,
-    source: &str,
+    origin: Origin,
     language: Option<String>,
-) -> Option<String> {
-    wake_and_speak(state, moment, emotion, source, Reach::Sealed, language).await
+) -> Option<Line> {
+    wake_and_speak(state, moment, emotion, origin, Reach::Sealed, language).await
 }
 
 /// Wake her, and speak her line. Returns the line she said aloud — `None`
@@ -585,17 +575,21 @@ pub(super) async fn wake_and_speak(
     state: Arc<ServerState>,
     moment: (String, Option<Table>),
     emotion: &str,
-    trigger_source: &str,
+    origin: Origin,
     reach: Reach,
     language: Option<String>,
-) -> Option<String> {
-    wake_and_offer(state, moment, (emotion, trigger_source), reach, language, None).await
+) -> Option<Line> {
+    wake_and_offer(state, moment, (emotion, origin), reach, language, None).await
 }
 
 /// A problem her line raises, with what can be offered for it.
 pub(super) struct Raised<'a> {
     pub problem: &'a str,
     pub offers: &'a [crate::perception::offer::Offer],
+    /// The condition behind the line. It is published only with a Linggen
+    /// page in front to show it, and marked told at that publication — here,
+    /// nowhere else: audio alone never spends a notice.
+    pub notice: &'a crate::perception::conditions::Notice,
 }
 
 /// [`wake_and_speak`] for a line that raises a problem: the kickoff asks her
@@ -605,88 +599,108 @@ pub(super) struct Raised<'a> {
 pub(super) async fn wake_and_offer(
     state: Arc<ServerState>,
     (kickoff, table): (String, Option<Table>),
-    (emotion, trigger_source): (&str, &str),
+    (emotion, origin): (&str, Origin),
     reach: Reach,
     language: Option<String>,
     raised: Option<Raised<'_>>,
-) -> Option<String> {
+) -> Option<Line> {
     let kickoff = match &raised {
         Some(r) if !r.offers.is_empty() => format!("{kickoff} {}", super::offer_labels::CONTRACT),
         _ => kickoff,
     };
-    // The app chat it is said at, and the place there whose page shows it.
+    // The app chat it is said at.
     let said_in = table.clone();
-    let shown_on = table.as_ref().and_then(|t| table_page(&state, t));
     // A failure of hers held for a turn that can carry it rides this one —
     // her own thread's unprompted turns only: never an app's table, an asked
     // reading or a tap's outcome, whose answer is about something else.
-    let carries = table.is_none() && trigger_source != "asked" && reach != Reach::Sealed;
+    let carries = table.is_none() && origin != Origin::Asked && reach != Reach::Sealed;
     let (kickoff, rode) = match carries {
         true => super::run_fault::ride(kickoff),
         false => (kickoff, None),
     };
     // `None`: the run failed or she produced nothing.
     let reply = match reach {
-        Reach::Open => run_yinyue_turn(&state, kickoff, trigger_source).await,
-        Reach::Sealed => run_moment_turn(&state, (kickoff, table), trigger_source, language).await,
+        Reach::Open => run_yinyue_turn(&state, kickoff, origin).await,
+        Reach::Sealed => run_moment_turn(&state, (kickoff, table), origin, language).await,
         Reach::SpeakOnly => {
-            super::turn::run_home(&state, kickoff, trigger_source, reach, language).await
+            super::turn::run_home(&state, kickoff, origin, reach, language).await
         }
     };
-    let (shown, unlabelled) =
-        super::offer_labels::shown(raised.as_ref().map(|r| r.offers), reply.as_deref());
-    if unlabelled {
-        tracing::warn!("[yinyue-watch] a problem's offers were left unlabelled — said without buttons");
-    }
-    let line = reply.as_deref().and_then(spoken_line);
-    let Some(line) = line else {
-        // Unsaid: the fact it carried waits for the next turn.
+    // Unsaid or unpublished for any reason — silence, a page that left, the
+    // quiet hours, a row not kept — the fact the turn carried is held for the
+    // next one: it is never lost.
+    let line = deliver(&state, reply.as_ref(), said_in.as_ref(), (emotion, origin, reach), raised).await;
+    if line.is_none() {
         if let Some(f) = rode {
             super::run_fault::hold(f);
         }
-        tracing::info!("[yinyue-watch] Yinyue chose silence");
-        return None;
-    };
-    if let Some(source) = unprompted_source(reach, trigger_source) {
-        if !passes_last_word(&state, source).await {
+    }
+    line
+}
+
+/// What a turn's reply comes to: finalized, checked, published. `None`: nothing
+/// was published.
+async fn deliver(
+    state: &Arc<ServerState>,
+    reply: Option<&Turned>,
+    said_in: Option<&Table>,
+    (emotion, origin, reach): (&str, Origin, Reach),
+    raised: Option<Raised<'_>>,
+) -> Option<Line> {
+    let said = reply.and_then(Turned::finalize);
+    let (shown, unlabelled) = super::offer_labels::shown(
+        raised.as_ref().map(|r| r.offers),
+        said.as_ref().map(|e| e.labels.as_slice()),
+    );
+    if unlabelled {
+        tracing::warn!("[yinyue-watch] a problem's offers were left unlabelled — said without buttons");
+    }
+    let said = said?;
+    let source = unprompted_source(reach, origin);
+    if let Some(source) = source {
+        if !passes_last_word(state, source).await {
             return None;
-        }
-        if source.counts() {
-            super::guard::spoke_unprompted();
         }
     }
     tracing::info!(
         "[yinyue-watch] Yinyue heralds ({} chars, {emotion})",
-        line.len()
+        said.line.text().len()
     );
-    crate::server::api::yinyue::emit_speak_offering(
-        &state,
-        line.clone(),
-        Some(emotion.to_string()),
-        crate::server::api::yinyue::SaidAt {
-            session: said_in.as_ref().map(|t| t.session.as_str()),
-            app: shown_on.as_deref(),
-        },
-        raised.map(|r| (r.problem.to_string(), shown)),
-    );
-    Some(line)
+    let stage = Stage::of(state, said_in).await;
+    // A condition is published only where a page will show it. The last thing
+    // before publication, for the person may have left meanwhile; what is left
+    // of the window (the row's own awaits) is accepted: the worst is a line a
+    // moment late.
+    if raised.is_some() && !a_page_is_in_front(state) {
+        tracing::info!("[yinyue-watch] a condition's line has no page to show on — held, not told");
+        return None;
+    }
+    let notice = raised.as_ref().map(|r| r.notice);
+    let problem = raised.as_ref().map(|r| (r.problem.to_string(), shown));
+    let line = spoken::publish(state, said, &stage, Some(emotion.to_string()), problem).await;
+    // Counted against the hour's ceiling only when a line went out.
+    if line.is_some() && source.is_some_and(|s| s.counts()) {
+        super::guard::spoke_unprompted();
+    }
+    // Told only when the line was published — its row kept.
+    if let (Some(notice), Some(_)) = (notice, &line) {
+        crate::perception::conditions::spoken(notice);
+    }
+    line
 }
 
 /// What woke an unprompted turn of hers — `None` for a reply: her ordinary
 /// turns (a person's words, a herald of a run they started) and anything
 /// asked. Only these are under the guardrails.
-pub(super) fn unprompted_source(reach: Reach, trigger_source: &str) -> Option<Source> {
-    if trigger_source == "asked" {
-        return None;
-    }
-    match reach {
-        Reach::Open => (trigger_source == FAULT_SOURCE).then_some(Source::Fault),
-        Reach::Sealed if trigger_source == IN_USE_SOURCE => Some(Source::InUse),
-        Reach::Sealed => Some(Source::Moment),
-        Reach::SpeakOnly if trigger_source == super::look_again::LOOK_AGAIN_SOURCE => {
-            Some(Source::Note)
-        }
-        Reach::SpeakOnly => Some(Source::Glance),
+pub(super) fn unprompted_source(reach: Reach, origin: Origin) -> Option<Source> {
+    match (reach, origin) {
+        (_, Origin::Person | Origin::Asked) => None,
+        (Reach::Open, Origin::Fault) => Some(Source::Fault),
+        (Reach::Open, _) => None,
+        (Reach::Sealed, Origin::InUse) => Some(Source::InUse),
+        (Reach::Sealed, _) => Some(Source::Moment),
+        (Reach::SpeakOnly, Origin::Note) => Some(Source::Note),
+        (Reach::SpeakOnly, _) => Some(Source::Glance),
     }
 }
 
@@ -866,7 +880,7 @@ pub(super) async fn deliver_to_chat_agent(
             images: Vec::new(),
             policy: crate::engine::session_policy::SessionPolicy::owner(),
             sender: Some(from.clone()),
-            silence_ok: false,
+            origin: Origin::Person,
             place: delivered_place(&state, &session_id, app.as_deref()),
             turn: Default::default(),
         };

@@ -208,7 +208,12 @@ game's loss, a hard win, a wound. **Nothing is said then.** The moments queue
   no quiet, no cooldown, and told silence is not an answer.
 
 Then she is woken once with everything queued (`wake_herald`), in her own
-voice, and may answer `SILENT`. Every kickoff the engine writes her — heralds,
+voice. A turn the engine started shows and keeps nothing of what she writes:
+she speaks only by one `<say>…</say>` that is the last thing in her reply
+(text before it is dropped; none, two, text after, an empty, broken or
+over-long one says nothing), and only `resident::spoken::finalize_event`
+turns that into a line the row, the live event and the voice accept.
+Every kickoff the engine writes her — heralds,
 ambient moments, a relayed `agent_chat`, an app moment — is a `[HIDDEN]` row
 (`resident::spoken::with_contract`): kept for her model, never shown as the
 user's words. Rows saved before 2026-10-14 carry no marker; the history views
@@ -227,7 +232,7 @@ wakes her **at that chat's table**, a member of it (`doc/shared-session-spec.md`
 her turn runs in that session on a `[HIDDEN]` kickoff only she reads, she
 reads its whole thread, and her line is a row there — `[Yinyue]` in the embed
 chat, and in Ling's thread on his next turn — without starting a Ling run.
-SILENT leaves nothing, and nothing runs in a chat whose skill keeps her away
+No envelope leaves nothing, and nothing runs in a chat whose skill keeps her away
 (`absent_until` is read again when the wake comes). Her place there is the
 skill's `place.yinyue` (else the member place), her tools what the skill names
 for her (`place.yinyue.tools`). A moment with no `session` runs on her own

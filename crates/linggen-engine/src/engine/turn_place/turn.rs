@@ -56,7 +56,7 @@ pub struct Kickoff {
 pub struct RunSetup {
     task: String,
     images: Option<Vec<String>>,
-    silence_ok: bool,
+    reply_held: bool,
     plan_mode: bool,
     thinking: Option<UnboundedSender<StreamedToken>>,
 }
@@ -76,9 +76,9 @@ impl RunSetup {
         self
     }
 
-    /// A reply that is exactly the silence marker is neither shown nor kept.
-    pub fn silence_ok(mut self, ok: bool) -> Self {
-        self.silence_ok = ok;
+    /// The reply is held: neither streamed, shown nor kept; the caller decides.
+    pub fn reply_held(mut self, ok: bool) -> Self {
+        self.reply_held = ok;
         self
     }
 
@@ -176,7 +176,7 @@ impl AgentEngine {
         if let Some(images) = run.images {
             self.pending_images = images;
         }
-        self.silence_ok = run.silence_ok;
+        self.reply_held = run.reply_held;
         self.plan_mode = run.plan_mode;
         self.thinking_tx = run.thinking;
     }
@@ -186,7 +186,7 @@ impl AgentEngine {
     /// next run is set up or the turn ends.
     pub(crate) fn end_run(&mut self) {
         self.thinking_tx = None;
-        self.silence_ok = false;
+        self.reply_held = false;
         self.inbox = None;
     }
 

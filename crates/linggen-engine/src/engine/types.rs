@@ -351,10 +351,11 @@ pub struct AgentEngine {
     /// so the server can route events without a shared mutable map.
     pub session_id: Option<String>,
     pub(crate) thinking_tx: Option<mpsc::UnboundedSender<StreamedToken>>,
-    /// This turn may answer with silence: a final reply that is exactly the
-    /// silence marker (`SILENT`) is neither shown nor kept. Set per turn by
-    /// whoever woke the agent with a kickoff that offers silence.
-    pub(crate) silence_ok: bool,
+    /// This turn's reply is held: the engine started the turn, so nothing the
+    /// agent writes is streamed, shown or kept as a row here — the caller
+    /// reads it (`last_assistant_text`) and publishes what the agent chose
+    /// to say. Set per run by whoever woke the agent.
+    pub(crate) reply_held: bool,
     /// Where a person's messages sent during this turn wait: each step takes
     /// them in, so they join the running turn instead of ending it.
     pub(crate) inbox: Option<Inbox>,
@@ -541,6 +542,7 @@ pub(crate) struct ReadyExec {
     pub canonical_tool: String,
     pub sig: String,
     pub original_args: JsonValue,
+    pub approved_reads: Vec<std::path::PathBuf>,
     pub tool_done_status: String,
     pub tool_failed_status: String,
     /// Unique ID for the content block (used by Web UI content-block events).
@@ -706,7 +708,7 @@ impl AgentEngine {
             last_run_id: None,
             session_id: None,
             thinking_tx: None,
-            silence_ok: false,
+            reply_held: false,
             inbox: None,
             plan_mode: false,
             plan: None,
