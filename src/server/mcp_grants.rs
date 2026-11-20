@@ -132,16 +132,11 @@ fn dedup(items: &[String]) -> Vec<&str> {
     seen
 }
 
-/// A folder a preset may name: `write_dir`'s rules (an existing absolute
-/// folder, never `/` or home), and never Linggen's own folder or one holding it.
+/// A folder a preset may name: exactly `write_dir`'s rules — the one place
+/// that decides them is `mcp_agent::write_root`.
 fn folder(dir: &str, own_home: &Path) -> Result<String, String> {
-    let path =
-        super::mcp_agent::write_root(dir).map_err(|e| e.replacen("write_dir", "a folder", 1))?;
-    let real = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
-    let (path_real, home_real) = (real(&path), real(own_home));
-    if path_real.starts_with(&home_real) || home_real.starts_with(&path_real) {
-        return Err("Linggen's own folder is never granted".into());
-    }
+    let path = super::mcp_agent::write_root(dir, own_home)
+        .map_err(|e| e.replacen("write_dir", "a folder", 1))?;
     Ok(path.to_string_lossy().to_string())
 }
 
