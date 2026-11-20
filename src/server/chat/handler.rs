@@ -391,6 +391,9 @@ fn end_held_turn(state: &Arc<ServerState>, session: &str) {
             }
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
+        tracing::warn!(
+            "[yinyue] session {session}: the held turn did not unwind after 100 cancels; the person's message will run when it ends"
+        );
     });
 }
 
