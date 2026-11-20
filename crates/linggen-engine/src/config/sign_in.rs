@@ -168,7 +168,8 @@ mod tests {
         }
         // Absent stays absent; null reads as absent.
         let cfg: ModelConfig =
-            toml::from_str("id = \"m\"\nprovider = \"openai\"\nurl = \"\"\nmodel = \"m\"\n").unwrap();
+            toml::from_str("id = \"m\"\nprovider = \"openai\"\nurl = \"\"\nmodel = \"m\"\n")
+                .unwrap();
         assert_eq!(cfg.auth_mode, None);
         assert_eq!(model("openai", None).auth_mode, None);
         let null: ModelConfig = serde_json::from_value(serde_json::json!({
@@ -180,14 +181,20 @@ mod tests {
 
     #[test]
     fn a_chatgpt_sign_in_is_the_mode_or_the_provider_but_never_linggen_cloud() {
-        assert_eq!(model("openai", Some("chatgpt_oauth")).sign_in(), SignIn::ChatGpt);
+        assert_eq!(
+            model("openai", Some("chatgpt_oauth")).sign_in(),
+            SignIn::ChatGpt
+        );
         assert_eq!(model("chatgpt", None).sign_in(), SignIn::ChatGpt);
         assert_eq!(model("chatgpt", Some("api_key")).sign_in(), SignIn::ChatGpt);
         assert_eq!(
             model("chatgpt", Some("linggen_account")).sign_in(),
             SignIn::LinggenAccount
         );
-        assert_eq!(model("anthropic", Some("claude_oauth")).sign_in(), SignIn::Claude);
+        assert_eq!(
+            model("anthropic", Some("claude_oauth")).sign_in(),
+            SignIn::Claude
+        );
         assert_eq!(model("anthropic", Some("api_key")).sign_in(), SignIn::Key);
         assert_eq!(model("openai", None).sign_in(), SignIn::Key);
         assert_eq!(model("openai", Some("someday")).sign_in(), SignIn::Unknown);
@@ -195,12 +202,21 @@ mod tests {
 
     #[test]
     fn provider_kind_names_the_few_providers_the_engine_treats_apart() {
-        assert_eq!(model("anthropic", None).provider_kind(), ProviderKind::Anthropic);
-        assert_eq!(model("chatgpt", None).provider_kind(), ProviderKind::ChatGpt);
+        assert_eq!(
+            model("anthropic", None).provider_kind(),
+            ProviderKind::Anthropic
+        );
+        assert_eq!(
+            model("chatgpt", None).provider_kind(),
+            ProviderKind::ChatGpt
+        );
         assert_eq!(model("ollama", None).provider_kind(), ProviderKind::Ollama);
         assert_eq!(model("proxy", None).provider_kind(), ProviderKind::Proxy);
         for other in ["openai", "deepseek", "gemini", "my-gateway"] {
-            assert_eq!(model(other, None).provider_kind(), ProviderKind::OpenAiCompatible);
+            assert_eq!(
+                model(other, None).provider_kind(),
+                ProviderKind::OpenAiCompatible
+            );
         }
     }
 

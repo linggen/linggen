@@ -4,8 +4,8 @@
 //! is in the session's ledger (`AgentManager::session_spend`). A test below
 //! fails when a second caller reads either of them.
 
-use crate::server::ServerState;
 use crate::provider::models::SessionSpend;
+use crate::server::ServerState;
 use crate::state_fs::sessions::SessionRuntime;
 use serde::Serialize;
 
