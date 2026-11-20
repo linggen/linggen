@@ -361,10 +361,12 @@ chat messages do not expand imports.
 Project imports stay inside the canonical workspace. Personal imports may
 leave it, but use the same unattended read gate: protected files never load.
 A refusal leaves a one-line note. Discovered rule symlinks use the same gate.
+A project rule linked outside the workspace is refused with a note, so a
+cloned project cannot pull a personal file into the prompt.
 A discovered rule that cannot be loaded leaves a one-line reason in its
-section. The loader accepts regular UTF-8 text up to 256 KiB per file and
-512 KiB total, with five import levels and up to 128 references to existing
-files per load. It never executes what it reads.
+section. The loader accepts regular UTF-8 text up to 256 KiB per file, with
+separate 512 KiB and 128 existing import reference allowances for personal
+and project rules, and up to five import levels. It never executes what it reads.
 
 Instructions are part of the stable prompt. Each full turn reloads them;
 the parallel-tool staleness check uses the same loader and includes parent

@@ -244,7 +244,7 @@ fn discovered_rules_load_ordinary_large_text_and_explain_each_rejection() {
     assert_eq!(section(AGENTS), ordinary);
     assert!(section(LOCAL).contains("file size limit"));
     assert!(section(CLAUDE).contains("not UTF-8 text"));
-    assert!(section(CURSOR).contains("hard-linked"));
+    assert_eq!(section(CURSOR), "hard-linked contents");
 
     write(root.join(AGENTS), vec![b'a'; 256 * 1024]).unwrap();
     write(root.join(LOCAL), vec![b'b'; 256 * 1024]).unwrap();
@@ -384,6 +384,116 @@ fn changes_to_personal_rules_and_their_imports_change_the_fingerprint() {
     let third = load();
     assert_ne!(second, third.fingerprint());
     assert!(rendered(&third).contains("updated style"));
+}
+
+#[test]
+#[cfg(unix)]
+fn review_discovered_hard_links_load_but_imported_hard_links_do_not() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    write(root.join(AGENTS), "shared rule").unwrap();
+    fs::hard_link(root.join(AGENTS), root.join(CLAUDE)).unwrap();
+    fs::hard_link(root.join(AGENTS), root.join("alias.md")).unwrap();
+    write(root.join(LOCAL), "@alias.md").unwrap();
+    std::os::unix::fs::symlink("alias.md", root.join(CURSOR)).unwrap();
+    let text = rendered(&scope(root).load_with_home(Some(root)));
+    assert_eq!(text.matches("shared rule").count(), 2, "{text}");
+    assert!(text.contains("[Import @alias.md not loaded: hard-linked file.]"), "{text}");
+    assert!(text.contains("[Rule not loaded: hard-linked file.]"), "{text}");
+}
+
+#[test]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn review_discovered_rules_load_through_search_only_directories() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let search = dir.path().join("search");
+    let root = search.join("work");
+    fs::create_dir_all(&root).unwrap();
+    write(root.join(AGENTS), "search-only rule\n@notes.md").unwrap();
+    write(root.join("notes.md"), "search-only import").unwrap();
+    fs::set_permissions(&search, fs::Permissions::from_mode(0o711)).unwrap();
+    let text = rendered(&scope(&root).load_with_home(Some(&root)));
+    fs::set_permissions(&search, fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(text.contains("search-only rule"), "{text}");
+    assert!(text.contains("search-only import"), "{text}");
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn review_case_insensitive_rule_name_is_not_a_symlink() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("work");
+    fs::create_dir(&root).unwrap();
+    write(dir.path().join(AGENTS.to_ascii_lowercase()), "case variant rule").unwrap();
+    if !dir.path().join(AGENTS).exists() {
+        return; // This volume is case-sensitive.
+    }
+    let text = rendered(&scope(&root).load_with_home(Some(dir.path())));
+    assert!(text.contains("case variant rule"), "{text}");
+}
+
+#[test]
+#[cfg(unix)]
+fn review_personal_rule_is_plain_under_a_symlinked_home() {
+    let (dir, root, personal) = personal_fixture();
+    let home = root.parent().unwrap();
+    let alias = dir.path().join("mounted-home");
+    std::os::unix::fs::symlink(home, &alias).unwrap();
+    write(&personal, "personal rule\n@~/style.md").unwrap();
+    write(home.join("style.md"), "personal import").unwrap();
+    let mut scope = scope(&root);
+    scope.ceiling = Some(PermissionMode::Chat);
+    let plain = rendered(&scope.load_with_home(Some(home)));
+    let linked = rendered(&scope.load_with_home(Some(&alias)));
+    assert!(plain.contains("personal rule"));
+    assert_eq!(linked, plain);
+    assert!(linked.contains("protected or requires approval"));
+    assert!(!linked.contains("personal import"));
+}
+
+#[test]
+fn review_rejected_text_does_not_spend_size_allowance() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    write(root.join(AGENTS), vec![0xff; MAX_FILE]).unwrap();
+    write(root.join(LOCAL), vec![0; MAX_FILE]).unwrap();
+    write(root.join(CLAUDE), "accepted rule").unwrap();
+    let text = rendered(&scope(root).load_with_home(Some(root)));
+    assert_eq!(text.matches("not UTF-8 text").count(), 2, "{text}");
+    assert!(text.contains("accepted rule"), "{text}");
+}
+
+#[test]
+#[cfg(unix)]
+fn review_personal_rules_do_not_spend_project_size_or_import_allowance() {
+    let (_dir, root, personal) = personal_fixture();
+    let home = root.parent().unwrap();
+    write(home.join("style.md"), "personal import").unwrap();
+    write(&personal, format!("{}{}", "@~/style.md ".repeat(MAX_IMPORTS), "p".repeat(MAX_FILE / 2))).unwrap();
+    write(root.join(AGENTS), vec![b'a'; MAX_FILE]).unwrap();
+    write(root.join(CLAUDE), format!("@project.md\n{}", "b".repeat(MAX_FILE - 64))).unwrap();
+    write(root.join("project.md"), "project import").unwrap();
+    let result = scope(&root).load_with_home(Some(home));
+    assert!(result.sections[0].1.contains("personal import"));
+    let text = rendered(&result);
+    assert!(!text.contains("total size limit"));
+    assert!(text.contains("project import"));
+}
+
+#[test]
+#[cfg(unix)]
+fn review_staleness_detects_a_replaced_inode_without_reloading_text() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let rule = root.join(AGENTS);
+    write(&rule, "same rule").unwrap();
+    let scope = scope(root);
+    let first = scope.load_with_home(Some(root));
+    let replacement = root.join("replacement");
+    write(&replacement, "same rule").unwrap();
+    fs::rename(replacement, rule).unwrap();
+    assert_ne!(first.fingerprint(), scope.load_with_home(Some(root)).fingerprint());
 }
 
 #[test]

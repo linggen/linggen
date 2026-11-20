@@ -100,8 +100,14 @@ impl InstructionScope {
         let personal = home.filter(|_| self.personal).and_then(|home| {
             let path = personal_rule_path(home);
             let label = format!("Personal instructions (from {})", path.display());
-            loader.discover_entry(label, path, RuleSource::Personal)
+            // Treat a mounted/aliased home like the project root. Links below
+            // that boundary still use the gate, as do all explicit imports.
+            let discovery_home = home.canonicalize().unwrap_or_else(|_| home.to_path_buf());
+            loader.discover_entry(label, personal_rule_path(&discovery_home), RuleSource::Personal)
         });
+        // Personal rules have their own allowance. Reserve both sets of
+        // discovered files before expanding either set of imports.
+        let personal_bytes_left = std::mem::replace(&mut loader.bytes_left, MAX_TOTAL);
         let dirs = super::tools::project_ancestors_within(&root, home);
         // Reserve discovered files in the legacy nearest-first order, then
         // render outermost first. An import cannot steal a discovered section.
@@ -119,7 +125,13 @@ impl InstructionScope {
                 }
             }
         }
-        for entry in personal.into_iter().chain(entries.into_iter().rev()) {
+        if let Some(entry) = personal {
+            let project_bytes_left = std::mem::replace(&mut loader.bytes_left, personal_bytes_left);
+            loader.render(entry);
+            loader.bytes_left = project_bytes_left;
+            loader.imports_left = MAX_IMPORTS;
+        }
+        for entry in entries.into_iter().rev() {
             loader.render(entry);
         }
         loader.result
@@ -185,7 +197,13 @@ impl Loader<'_> {
             Err(_) => return Err("unreadable"),
         };
         let canonical = path.canonicalize().map_err(|_| "unreadable")?;
-        let expected = if entry.is_symlink() || canonical != path {
+        // Discovery starts in canonical directories. Compare the parent,
+        // not the filename: case-insensitive lookup can change its spelling.
+        let parent_link = path.parent().is_some_and(|parent| {
+            parent.symlink_metadata().is_ok_and(|meta| meta.is_symlink())
+                || parent.canonicalize().ok().as_deref() != canonical.parent()
+        });
+        let expected = if entry.is_symlink() || parent_link {
             let metadata = canonical.metadata().map_err(|_| "unreadable")?;
             self.check_import_target(path, &canonical, source)?;
             Some(metadata)
@@ -200,8 +218,14 @@ impl Loader<'_> {
         } else {
             source
         };
-        self.read(&canonical, expected.as_ref())
-            .map(|text| Some((source, text)))
+        // For a plain discovery, open the name we checked, not a resolved
+        // replacement. The descriptor walk rejects links swapped in later.
+        let opened = if expected.is_some() { &canonical } else { path };
+        self.read(opened, expected.as_ref())
+            .map(|text| {
+                self.result.files.insert(canonical);
+                Some((source, text))
+            })
     }
 
     /// Opting into a file inside the workspace does not let its author
@@ -261,7 +285,7 @@ impl Loader<'_> {
         {
             use std::os::unix::fs::MetadataExt;
             // A hard link can hide a protected path's name from the gate.
-            if meta.nlink() != 1 {
+            if expected.is_some() && meta.nlink() != 1 {
                 return Err("hard-linked file");
             }
             if expected
@@ -276,7 +300,6 @@ impl Loader<'_> {
             .read_to_end(&mut bytes)
             .map_err(|_| "unreadable")?;
         self.check_size(bytes.len() as u64)?;
-        self.bytes_left -= bytes.len();
         let text = String::from_utf8(bytes).map_err(|_| "not UTF-8 text")?;
         if text
             .chars()
@@ -284,7 +307,7 @@ impl Loader<'_> {
         {
             return Err("not UTF-8 text");
         }
-        self.result.files.insert(path.to_path_buf());
+        self.bytes_left -= text.len();
         Ok(text)
     }
 
@@ -384,6 +407,7 @@ impl Loader<'_> {
             Ok(text) => text,
             Err(reason) => return note(reason),
         };
+        self.result.files.insert(canonical.to_path_buf());
         let text = self.expand(
             target,
             &text,
@@ -421,13 +445,20 @@ fn open_text(path: &Path, _import: bool) -> Option<File> {
     if components.next()? != Component::RootDir {
         return None;
     }
-    let flags = OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW | OFlags::NONBLOCK;
-    let mut fd = open("/", flags | OFlags::DIRECTORY, Mode::empty()).ok()?;
+    let flags = OFlags::CLOEXEC | OFlags::NOFOLLOW | OFlags::NONBLOCK;
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    let search = OFlags::PATH;
+    #[cfg(target_os = "macos")]
+    let search = OFlags::from_bits_retain(libc::O_SEARCH as _);
+    #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
+    let search = OFlags::RDONLY;
+    let directory = flags | OFlags::DIRECTORY | search;
+    let mut fd = open("/", directory, Mode::empty()).ok()?;
     while let Some(Component::Normal(name)) = components.next() {
         let flags = if components.peek().is_some() {
-            flags | OFlags::DIRECTORY
+            directory
         } else {
-            flags
+            flags | OFlags::RDONLY
         };
         fd = openat(&fd, name, flags, Mode::empty()).ok()?;
     }
