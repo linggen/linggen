@@ -20,8 +20,11 @@ export function setAppHost(open: OpenApp | null): void {
 
 type TauriIpc = { invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> };
 
+const shellIpc = () => (window as { __TAURI_INTERNALS__?: TauriIpc }).__TAURI_INTERNALS__;
+export const inShell = () => !!shellIpc();
+
 async function raiseWindow(): Promise<void> {
-  const ipc = (window as { __TAURI_INTERNALS__?: TauriIpc }).__TAURI_INTERNALS__;
+  const ipc = shellIpc();
   if (!ipc?.invoke) return;
   for (const cmd of ['show', 'unminimize', 'set_focus']) {
     await ipc.invoke(`plugin:window|${cmd}`, { label: 'main' }).catch(() => {});

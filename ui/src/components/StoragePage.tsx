@@ -103,7 +103,7 @@ const FileTreeNode: React.FC<{
 // ---------------------------------------------------------------------------
 
 export const StoragePage: React.FC<{
-  onBack: () => void;
+  onBack?: () => void;
   embedded?: boolean;
 }> = ({ onBack, embedded }) => {
   const [roots, setRoots] = useState<StorageRoot[]>([]);
@@ -315,9 +315,9 @@ export const StoragePage: React.FC<{
       {/* Header */}
       <header className="flex items-center justify-between px-4 py-2.5 border-b border-slate-200 dark:border-white/5 bg-white/90 dark:bg-[#0f0f0f]/90 backdrop-blur-md shrink-0">
         <div className="flex items-center gap-3">
-          <button onClick={onBack} className="p-1 hover:bg-slate-100 dark:hover:bg-white/5 rounded transition-colors text-slate-500">
+          {onBack && <button onClick={onBack} className="p-1 hover:bg-slate-100 dark:hover:bg-white/5 rounded transition-colors text-slate-500">
             <ArrowLeft size={16} />
-          </button>
+          </button>}
           <h1 className="text-sm font-bold tracking-tight">Storage</h1>
         </div>
         {fileActions}

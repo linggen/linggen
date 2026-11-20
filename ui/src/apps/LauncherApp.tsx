@@ -115,9 +115,8 @@ export const LauncherApp: React.FC = () => {
       }
     };
     window.addEventListener('message', onMsg);
-    // A chat framed anywhere under the launcher opens Settings → Models here
-    // (lib/ownModel.ts): its section id is `model`.
-    window.__linggenOpenSettings = (tab) => setSettingsOpen(tab === 'models' ? 'model' : tab);
+    // A chat framed under the launcher opens Settings → Models here.
+    window.__linggenOpenSettings = setSettingsOpen;
     return () => {
       window.removeEventListener('message', onMsg);
       delete window.__linggenOpenSettings;
@@ -187,7 +186,7 @@ export const LauncherApp: React.FC = () => {
               reflects immediately. */}
           <TermChip />
           <WeatherChip />
-          <AccountAvatar key={String(settingsOpen)} onManage={() => setSettingsOpen(true)} />
+          <AccountAvatar key={String(settingsOpen)} onManage={() => setSettingsOpen('account')} />
           <button
             onClick={() => setSettingsOpen(true)}
             title="Settings"

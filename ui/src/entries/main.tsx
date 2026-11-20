@@ -117,7 +117,7 @@ const Root: React.FC = () => {
   }, [view, sessionId]);
 
   if (view === 'pet') return <Suspense fallback={null}><PetApp /></Suspense>;
-  if (view === 'launcher') return <Suspense fallback={null}><LauncherApp /></Suspense>;
+  if (view === 'launcher') return <Suspense fallback={null}><SkyOverlay /><LauncherApp /></Suspense>;
   if (view === 'embed') return <EmbedApp />;
   if (view === 'consumer') return <ConsumerApp />;
 

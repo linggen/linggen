@@ -217,7 +217,7 @@ const RightPanel: React.FC<{
 // ---- Main Page --------------------------------------------------------------
 
 export const MissionPage: React.FC<{
-  onBack: () => void;
+  onBack?: () => void;
   projectRoot: string;
   agents: AgentInfo[];
   embedded?: boolean;
@@ -226,7 +226,7 @@ export const MissionPage: React.FC<{
   // Reset mission session state when navigating away
   const onBack = useCallback(() => {
     useSessionStore.setState({ isMissionSession: false, activeMissionId: null });
-    rawOnBack();
+    rawOnBack?.();
   }, [rawOnBack]);
   const [missions, setMissions] = useState<CronMission[]>([]);
   const [loading, setLoading] = useState(true);
@@ -346,9 +346,9 @@ export const MissionPage: React.FC<{
   return (
     <div className="flex flex-col h-screen bg-slate-100/70 dark:bg-[#0a0a0a] text-slate-900 dark:text-slate-200">
       <header className="flex items-center gap-4 px-6 py-3 border-b border-slate-200 dark:border-white/5 bg-white/90 dark:bg-[#0f0f0f]/90 backdrop-blur-md shrink-0">
-        <button onClick={onBack} className="p-1.5 rounded-md hover:bg-slate-100 dark:hover:bg-white/5 text-slate-500 transition-colors">
+        {rawOnBack && <button onClick={onBack} className="p-1.5 rounded-md hover:bg-slate-100 dark:hover:bg-white/5 text-slate-500 transition-colors">
           <ArrowLeft size={16} />
-        </button>
+        </button>}
         <div className="flex items-center gap-2">
           <Target size={18} className={enabledCount > 0 ? 'text-green-500' : 'text-slate-400'} />
           <h1 className="text-lg font-bold tracking-tight">Missions</h1>

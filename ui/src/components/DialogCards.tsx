@@ -28,7 +28,7 @@ export const ConfirmCard: React.FC<{ message: string; onDone: (ok: boolean) => v
     return () => window.removeEventListener('keydown', onKey);
   }, [onDone]);
   return (
-    <div className={overlayCls} onClick={() => onDone(false)}>
+    <div className={overlayCls} data-settings-dialog onClick={() => onDone(false)}>
       <div className={cardCls} role="alertdialog" aria-modal="true" aria-label={message} onClick={(e) => e.stopPropagation()}>
         <p className={msgCls}>{message}</p>
         <div className={rowCls}>
@@ -56,7 +56,7 @@ export const PromptCard: React.FC<{
     return () => window.removeEventListener('keydown', onKey);
   }, [onDone]);
   return (
-    <div className={overlayCls} onClick={() => onDone(null)}>
+    <div className={overlayCls} data-settings-dialog onClick={() => onDone(null)}>
       <div className={cardCls} onClick={(e) => e.stopPropagation()}>
         <p className={msgCls}>{message}</p>
         <input

@@ -414,8 +414,7 @@ export interface BuiltInSkillInfo {
   installed: boolean;
 }
 
-/** A Settings tab. `mcp` is kept for old links and opens Tools, where MCP now lives. */
-export type ManagementTab = 'models' | 'agents' | 'skills' | 'tools' | 'mcp' | 'general' | 'session' | 'phone' | 'mission' | 'memory' | 'storage' | 'room';
+export type { SettingsTab as ManagementTab } from './lib/settingsSections.mts';
 
 // --- Mission types (cron-based) ---
 

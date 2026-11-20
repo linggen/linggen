@@ -1,4 +1,5 @@
 import React, { useEffect } from 'react';
+import { createPortal } from 'react-dom';
 
 /** The frame the Memory dialogs share: a dimmed overlay and one card.
  *  Escape or a click outside closes it. */
@@ -8,8 +9,8 @@ export const ModalShell: React.FC<{ title: string; onClose: () => void; children
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
-  return (
-    <div className="fixed inset-0 z-[900] flex items-center justify-center bg-black/40 p-3" onClick={onClose}>
+  return createPortal(
+    <div data-settings-dialog className="fixed inset-0 z-[900] flex items-center justify-center bg-black/40 p-3" onClick={onClose}>
       <div
         role="dialog"
         aria-modal="true"
@@ -20,6 +21,7 @@ export const ModalShell: React.FC<{ title: string; onClose: () => void; children
         <h2 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">{title}</h2>
         {children}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 };

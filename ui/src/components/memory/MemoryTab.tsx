@@ -24,7 +24,7 @@ function emptyWhy(q: Query): string {
 
 /** Settings → Memory: the store's rows, browsed and edited through the
  *  engine's own door. */
-export const MemoryTab: React.FC = () => {
+export const MemoryTab: React.FC<{ canOpenRun: boolean }> = ({ canOpenRun }) => {
   const rows = useMemoryRows();
   const { query, change } = rows;
   const [reviewCount, setReviewCount] = useState(0);
@@ -101,8 +101,8 @@ export const MemoryTab: React.FC = () => {
         ))}
       </div>
       {/* SUBVIEW MOUNT */}
-      {subview === 'Days' && <MemoryDays />}
-      {subview === 'Review' && <MemoryReview onCount={setReviewCount} />}
+      {subview === 'Days' && <MemoryDays canOpenRun={canOpenRun} />}
+      {subview === 'Review' && <MemoryReview canOpenRun={canOpenRun} onCount={setReviewCount} />}
       {subview === 'Settings' && <MemorySettings />}
       {subview === 'Rows' && <div data-testid="memory-subview-rows" className="space-y-3">
         <MemoryToolbar
