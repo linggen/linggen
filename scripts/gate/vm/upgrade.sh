@@ -341,7 +341,7 @@ app_engine_upgrade_check() {
     pkill -f '/ling --web' 2>/dev/null; rm -rf /Applications/Linggen.app; mv "$new" /Applications/Linggen.app; return
   fi
   mv /Applications/Linggen.app /tmp/gate-old-app/Prev.app && mv "$new" /Applications/Linggen.app && rm -rf /tmp/gate-old-app/Prev.app
-  open /Applications/Linggen.app
+  open_app /Applications/Linggen.app
   wait_engine_version "$new_v" 300
   check "$name" $? "9527 still answers '$(engine_version)' 300 s after open (want $new_v, was $old_v)" "$old_v → $new_v after ${UPGRADED_AFTER:-?} s"
   pgrep -f '/Linggen.app/Contents/MacOS/linggen-shell' >/dev/null
@@ -358,7 +358,7 @@ if [ -n "$APP_VERSION" ]; then
   [ "$(app_version)" = "$APP_VERSION" ]; check "app: Linggen.app is the release" $? "got $(app_version)"
   launchctl setenv LINGGEN_RELEASE_BASE "$GOOD"
   t_open=$SECONDS
-  open /Applications/Linggen.app
+  open_app /Applications/Linggen.app
   engine_health 120; check "app: launches on the old home" $? "no 9527 health 120 s after open"
   for _ in $(seq 20); do [ "$(jq -r '.by // empty' "$LG/skills/lingjing/.installed" 2>/dev/null)" = app ] && break; sleep 3; done
   check_assets_heal "app (upgrade)" 600 upgrade "$t_open"

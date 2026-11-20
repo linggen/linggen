@@ -66,6 +66,8 @@ trap 'exit 130' INT TERM
 
 # ── Preflight ──────────────────────────────────────────────────────────────
 say "Preflight ($RUN)"
+[ "$(printenv LINGGEN_NO_TELEMETRY)" = 1 ] || die "host: telemetry disabled" "LINGGEN_NO_TELEMETRY=1 is not exported"
+record PASS "host: telemetry disabled" "LINGGEN_NO_TELEMETRY=1"
 for tool in tart jq curl python3 ssh scp; do
   command -v "$tool" >/dev/null || die "preflight: $tool" "not installed"
 done
