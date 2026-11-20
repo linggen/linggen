@@ -17,7 +17,7 @@ use tracing::warn;
 /// frontmatter write to it. `interactive` is metadata: false for mission and
 /// proxy-consumer sessions so the engine pauses or fails instead of trying
 /// to prompt.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionPermissions {
     #[serde(default)]
     pub path_modes: Vec<PathMode>,

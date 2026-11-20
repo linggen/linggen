@@ -7,7 +7,7 @@ use super::model::normalize_path;
 use std::path::{Path, PathBuf};
 
 /// The folders declined in the current run.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DeclinedScopes(Vec<(PathBuf, bool)>);
 
 impl DeclinedScopes {

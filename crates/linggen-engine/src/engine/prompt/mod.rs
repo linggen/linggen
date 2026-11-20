@@ -752,15 +752,15 @@ impl AgentEngine {
             .cached_system_prompt
             .as_ref()
             .is_some_and(|c| c.input_hash == hash);
-        let files_hash = instructions.fingerprint();
+        let instruction_watch = std::sync::Arc::new(instructions.watch);
         if !cache_hit {
             self.cached_system_prompt = Some(CachedSystemPrompt {
                 input_hash: hash,
-                files_hash,
+                instruction_watch,
                 content: stable_content,
             });
         } else if let Some(cache) = &mut self.cached_system_prompt {
-            cache.files_hash = files_hash;
+            cache.instruction_watch = instruction_watch;
         }
         let mut system = self.cached_system_prompt.as_ref().unwrap().content.clone();
 
