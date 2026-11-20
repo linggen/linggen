@@ -68,6 +68,10 @@ For background on why an AI app engine is needed, plus landscape and roadmap, se
 
 ---
 
+## Settings
+
+The browser and the Mac app open the same full-window settings page. In the Mac app, Back or Esc returns to the selected app without restarting it. Desktop controls appear only inside the native shell.
+
 ## Design Principles
 
 ### 1. Skills-first architecture
