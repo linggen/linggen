@@ -46,27 +46,52 @@ pub(crate) async fn list_skills(
     Json(skills).into_response()
 }
 
-/// Reload skills from disk and invalidate agent caches so they pick up changes.
+/// What changed in the skills on disk — the one difference between the
+/// paths that end in [`skills_changed`].
+pub(crate) enum SkillsChange<'a> {
+    /// Added, rewritten, moved or reloaded: their missions are read again.
+    OnDisk,
+    /// This skill was removed: what the user kept for its missions goes too.
+    Removed(&'a str),
+}
+
+/// The one follow-up after the skills on disk changed, whoever changed them:
+/// read them again, drop every cached engine that holds the old list (the
+/// project's agents and each session's live engines, rebuilt on their next
+/// turn), pick up the missions the skills ship, and tell the pages. Every
+/// path that changes skills ends here; the test
+/// `skills_are_reloaded_only_by_the_one_follow_up` fails on a second copy.
+pub(crate) async fn skills_changed(
+    state: &ServerState,
+    project_root: Option<&std::path::Path>,
+    change: SkillsChange<'_>,
+) -> anyhow::Result<()> {
+    let loaded = state.skills.load_all(project_root).await;
+    if let Err(err) = &loaded {
+        tracing::warn!("Failed to reload skills: {err}");
+    }
+    if let Some(root) = project_root {
+        let _ = state.manager.invalidate_agent_cache(&root.to_path_buf(), None).await;
+    }
+    state.manager.session_engines.lock().await.clear();
+    match change {
+        SkillsChange::OnDisk => state.missions.reload(),
+        SkillsChange::Removed(name) => state.missions.forget_skill(name),
+    }
+    let _ = state.events_tx.send(ServerEvent::StateUpdated);
+    loaded
+}
+
+/// Reload skills from disk (`skills_changed`).
 pub(crate) async fn reload_skills(
     State(state): State<Arc<ServerState>>,
     Json(body): Json<serde_json::Value>,
 ) -> impl IntoResponse {
     let project_root = body.get("project_root").and_then(|v| v.as_str());
     let root_path = project_root.map(std::path::Path::new);
-    if let Err(err) = state.skills.load_all(root_path).await {
-        tracing::warn!("Failed to reload skills: {err}");
+    if let Err(err) = skills_changed(&state, root_path, SkillsChange::OnDisk).await {
         return (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response();
     }
-    // Invalidate agent caches so engines pick up new skill metadata.
-    if let Some(root) = project_root {
-        let root_buf = std::path::PathBuf::from(root);
-        let _ = state.manager.invalidate_agent_cache(&root_buf, None).await;
-    }
-    // Clear per-session engines so they get recreated with new skills.
-    state.manager.session_engines.lock().await.clear();
-    // Skills ship missions — pick up added, changed, or removed ones.
-    state.missions.reload();
-    let _ = state.events_tx.send(ServerEvent::StateUpdated);
     axum::Json(serde_json::json!({ "ok": true })).into_response()
 }
 
@@ -235,10 +260,7 @@ pub(crate) async fn upsert_skill_file_api(
     if let Err(err) = std::fs::write(&full_path, &req.content) {
         return (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response();
     }
-    if let Err(err) = state.skills.load_all(Some(&root)).await {
-        tracing::warn!("Failed to reload skills after write: {}", err);
-    }
-    let _ = state.events_tx.send(ServerEvent::StateUpdated);
+    let _ = skills_changed(&state, Some(&root), SkillsChange::OnDisk).await;
     Json(serde_json::json!({ "path": rel })).into_response()
 }
 
@@ -258,9 +280,46 @@ pub(crate) async fn delete_skill_file_api(
     if let Err(err) = std::fs::remove_file(&full_path) {
         return (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response();
     }
-    if let Err(err) = state.skills.load_all(Some(&root)).await {
-        tracing::warn!("Failed to reload skills after delete: {}", err);
-    }
-    let _ = state.events_tx.send(ServerEvent::StateUpdated);
+    let _ = skills_changed(&state, Some(&root), SkillsChange::OnDisk).await;
     StatusCode::OK.into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    /// Every `.rs` file under `dir`, with its path.
+    fn sources(dir: &std::path::Path, out: &mut Vec<(String, String)>) {
+        for entry in std::fs::read_dir(dir).expect("src dir").flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                sources(&path, out);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                let text = std::fs::read_to_string(&path).expect("source");
+                out.push((path.display().to_string(), text));
+            }
+        }
+    }
+
+    /// The lock on `skills_changed`: outside it, the daemon's skills are read
+    /// only at boot (`main.rs`, before any session runs). A handler that
+    /// reloads them itself would leave live engines on the old list.
+    #[test]
+    fn skills_are_reloaded_only_by_the_one_follow_up() {
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut files = Vec::new();
+        sources(&src, &mut files);
+        let needle = [".load_all", "("].concat();
+        let mut sites = Vec::new();
+        for (path, text) in &files {
+            let n = text.matches(needle.as_str()).count();
+            if n > 0 {
+                sites.push((path.rsplit("/src/").next().unwrap_or(path).to_string(), n));
+            }
+        }
+        sites.sort();
+        assert_eq!(
+            sites,
+            [("main.rs".to_string(), 2), ("server/api/skills.rs".to_string(), 1)],
+            "reload skills through `skills_changed`"
+        );
+    }
 }

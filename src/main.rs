@@ -411,6 +411,8 @@ async fn main() -> Result<()> {
                 interface_mode,
             );
 
+            // Boot: the first read, before any session. Every later change
+            // of skills goes through `server::api::skills::skills_changed`.
             let _ = skills.load_all(Some(&ws_root)).await;
 
             // Auto-install built-in skills if none found
