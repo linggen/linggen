@@ -552,10 +552,11 @@ fn a_path_rule_that_cannot_be_read_says_so_and_a_change_to_a_met_rule_is_picked_
         "{base}"
     );
     scope.place_rules = vec![root.join("ui").join(CLAUDE)];
-    let first = scope.load_with_home(None).fingerprint();
+    let first = scope.load_with_home(None);
+    assert!(!first.watch.is_stale(&scope));
     write(root.join("ui").join(CLAUDE), "UI RULE two").unwrap();
+    assert!(first.watch.is_stale(&scope), "a met rule's file is watched");
     let second = scope.load_with_home(None);
-    assert_ne!(first, second.fingerprint());
     assert!(rendered(&second).contains("UI RULE two"));
 }
 
