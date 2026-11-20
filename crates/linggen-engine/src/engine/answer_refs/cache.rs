@@ -36,7 +36,7 @@ fn cap() -> u64 {
 /// picture's state changed.
 pub async fn show(store: &SessionStore, session_id: &str, answer: &str) -> bool {
     let ids = super::ids_in(answer);
-    if ids.is_empty() || session_id.contains('/') || session_id.contains("..") {
+    if ids.is_empty() || !crate::state_fs::sessions::safe_session_id(session_id) {
         return false;
     }
     let dir = store.session_dir(session_id);

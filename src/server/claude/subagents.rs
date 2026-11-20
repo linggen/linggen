@@ -335,7 +335,7 @@ pub(crate) fn attach(
     live: &HashSet<String>,
     messages: &mut [(Value, String)],
 ) {
-    if sid.is_empty() || sid.contains('/') || sid.contains("..") {
+    if !crate::state_fs::sessions::safe_session_id(sid) {
         return;
     }
     let all = read(&store.session_dir(sid).join(FILE));

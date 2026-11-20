@@ -112,7 +112,7 @@ impl SessionUsage {
 }
 
 fn valid(session_id: &str) -> bool {
-    !session_id.is_empty() && !session_id.contains(['/', '\\']) && !session_id.contains("..")
+    super::sessions::safe_session_id(session_id)
 }
 
 impl SessionStore {
@@ -236,6 +236,34 @@ mod tests {
 
     fn none() -> CallRecord {
         CallRecord::default()
+    }
+
+    /// The ledger is written and read only under a session id safe as a
+    /// folder name: a folder planted where an unsafe id leads is left alone.
+    #[test]
+    fn usage_is_kept_only_under_an_id_safe_as_a_folder_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SessionStore::with_sessions_dir(dir.path().join("a/sessions"));
+        std::fs::create_dir_all(store.session_dir("sess-1-a")).unwrap();
+        store.record_usage(&TestKey, "sess-1-a", "m", &none(), Some(&call(1, 0, 0, 1)));
+        let kept = store.session_dir("sess-1-a").join(FILE);
+        assert!(kept.is_file(), "the probe writes under a safe id");
+        let mut through = Vec::new();
+        for id in crate::state_fs::sessions::UNSAFE_SESSION_IDS {
+            let planted = store.session_dir(id);
+            std::fs::create_dir_all(&planted).unwrap();
+            let _ = std::fs::remove_file(planted.join(FILE));
+            store.record_usage(&TestKey, id, "m", &none(), Some(&call(1, 0, 0, 1)));
+            if planted.join(FILE).exists() {
+                through.push(format!("written: {id:?}"));
+            }
+            std::fs::copy(&kept, planted.join(FILE)).unwrap();
+            if !store.session_usage(id).is_empty() {
+                through.push(format!("read: {id:?}"));
+            }
+            let _ = std::fs::remove_file(planted.join(FILE));
+        }
+        assert!(through.is_empty(), "{through:?}");
     }
 
     /// The one entry of `model` in the session's ledger.

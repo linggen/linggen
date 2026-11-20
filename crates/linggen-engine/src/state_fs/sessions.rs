@@ -891,15 +891,36 @@ impl SessionStore {
     }
 
     fn validate_id(id: &str) -> Result<()> {
-        if id.is_empty() {
-            bail!("Session ID must not be empty");
-        }
-        if id.contains("..") || id.contains('/') || id.contains('\\') {
-            bail!("Session ID contains invalid characters: {}", id);
+        if !safe_session_id(id) {
+            bail!("Session ID is not safe as a folder name: {id:?}");
         }
         Ok(())
     }
 }
+
+/// The longest session id kept: a folder name's limit on the file systems
+/// the engine runs on (255 bytes); the id is the folder's whole name.
+const MAX_SESSION_ID_BYTES: usize = 255;
+
+/// Whether `id` is safe as a session's folder name under the sessions
+/// folder: not empty, not too long, not dot-leading (no `.`, `..` or hidden
+/// folder), and no `/`, `\`, `..` or NUL that could make it another path.
+/// The one rule — every place that turns a session id into a path asks this
+/// (a lock test below fails when a second copy of the check appears).
+pub fn safe_session_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= MAX_SESSION_ID_BYTES
+        && !id.starts_with('.')
+        && !id.contains(['/', '\\', '\0'])
+        && !id.contains("..")
+}
+
+/// Ids each site that turns a session id into a path must refuse; tests at
+/// each site plant a folder where the id would lead and check it is left
+/// alone.
+#[cfg(test)]
+pub(crate) const UNSAFE_SESSION_IDS: &[&str] =
+    &["", ".", "..", ".hidden", "a/b", "a\\b", "../x", "a..b"];
 
 #[cfg(test)]
 mod tests {
@@ -909,6 +930,77 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = SessionStore::with_sessions_dir(dir.path().join(".linggen/sessions"));
         (store, dir)
+    }
+
+    /// One rule says whether a session id is safe as a folder name: the
+    /// unsafe ids and an over-long one are refused, the ids the engine makes
+    /// pass.
+    #[test]
+    fn a_session_id_is_safe_as_a_folder_name_by_one_rule() {
+        for id in UNSAFE_SESSION_IDS {
+            assert!(!safe_session_id(id), "{id:?}");
+        }
+        assert!(!safe_session_id(&"x".repeat(MAX_SESSION_ID_BYTES + 1)));
+        assert!(!safe_session_id("a\0b"));
+        assert!(safe_session_id(&"x".repeat(MAX_SESSION_ID_BYTES)));
+        for id in [
+            "sess-1-a",
+            "sess-1763600000000-1a2b3c4d",
+            "sess-day-2026-11-16",
+            "sess-day-2026-11-16-p-752d667269656e64",
+            "sess-yinyue",
+            "concurrent",
+        ] {
+            assert!(safe_session_id(id), "{id}");
+        }
+    }
+
+    /// A session is kept only under an id safe as a folder name.
+    #[test]
+    fn a_session_is_kept_only_under_an_id_safe_as_a_folder_name() {
+        let (store, _dir) = temp_store();
+        let meta = |id: &str| SessionMeta { id: id.into(), cwd: "/tmp".into(), ..Default::default() };
+        let through: Vec<_> = UNSAFE_SESSION_IDS
+            .iter()
+            .filter(|id| store.add_session(&meta(id)).is_ok() || store.add_session_if_new(&meta(id)).is_ok())
+            .collect();
+        assert!(through.is_empty(), "kept under an unsafe id: {through:?}");
+    }
+
+    /// The check that a session id is safe as a folder name is written once,
+    /// in [`safe_session_id`]: a copy of it at a site (a session id tested
+    /// for `..`, `/` or `\\` by hand) fails here.
+    #[test]
+    fn a_session_id_is_checked_by_the_one_rule_only() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let copy = regex::Regex::new(
+            r#"\b(sid|session_id|session)\s*\.\s*contains\(\s*(\[\s*)?("\.\."|'/'|"/"|'\\\\')"#,
+        )
+        .unwrap();
+        let mut files = Vec::new();
+        for dir in ["src", "../../src"] {
+            let mut stack = vec![root.join(dir)];
+            while let Some(d) = stack.pop() {
+                for e in std::fs::read_dir(&d).unwrap().flatten() {
+                    let p = e.path();
+                    if p.is_dir() {
+                        stack.push(p);
+                    } else if p.extension().is_some_and(|x| x == "rs") {
+                        files.push(p);
+                    }
+                }
+            }
+        }
+        let mut found: Vec<String> = Vec::new();
+        for f in &files {
+            let text = std::fs::read_to_string(f).unwrap();
+            for (n, line) in text.lines().enumerate() {
+                if copy.is_match(line) {
+                    found.push(format!("{}:{}", f.display(), n + 1));
+                }
+            }
+        }
+        assert!(found.is_empty(), "ask state_fs::sessions::safe_session_id instead: {found:#?}");
     }
 
     #[test]

@@ -20,7 +20,7 @@ pub fn refs_for<'a>(
         ids.extend(super::ids_in(text));
     }
     let mut out = Map::new();
-    if ids.is_empty() || session_id.is_empty() || session_id.contains('/') || session_id.contains("..") {
+    if ids.is_empty() || !crate::state_fs::sessions::safe_session_id(session_id) {
         return out;
     }
     let refs = table::load(&store.session_dir(session_id));

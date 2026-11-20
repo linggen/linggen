@@ -89,9 +89,15 @@ fn final_reply(store: &crate::state_fs::SessionStore, session_id: &str) -> Optio
 }
 
 fn session_replies(store: &crate::state_fs::SessionStore, session_id: &str) -> TurnReplies {
+    let host = store
+        .get_session_meta(session_id)
+        .ok()
+        .flatten()
+        .map(|meta| run_host(&meta))
+        .unwrap_or_else(|| DEFAULT_HOST.into());
     store
         .get_chat_history(session_id)
-        .map(turn_replies)
+        .map(|msgs| turn_replies(msgs, &host))
         .unwrap_or_default()
 }
 
@@ -105,12 +111,13 @@ struct TurnReplies {
     followup: Option<String>,
 }
 
-/// A turn opens on a prompt (`user`, `claude-code`) or on the engine's own
+/// A turn opens on a prompt (`user`, or the run's `host` — see [`run_host`])
+/// or on the engine's own
 /// notice (`system`, not an observation). A restart's continue notice goes
 /// on with the turn it interrupted; one sent only for background work
 /// opens a notice turn of its own. Tool
 /// results are observations; recall and compaction rows are no reply.
-fn turn_replies(msgs: Vec<crate::state_fs::sessions::ChatMsg>) -> TurnReplies {
+fn turn_replies(msgs: Vec<crate::state_fs::sessions::ChatMsg>, host: &str) -> TurnReplies {
     let mut out = TurnReplies::default();
     let mut callers_turn = true;
     for m in msgs {
@@ -122,7 +129,13 @@ fn turn_replies(msgs: Vec<crate::state_fs::sessions::ChatMsg>) -> TurnReplies {
             .as_deref()
             .is_some_and(super::restart::continues_a_turn);
         match m.author() {
-            RowAuthor::Person | RowAuthor::Agent("claude-code") => {
+            RowAuthor::Person => {
+                out = TurnReplies::default();
+                callers_turn = true;
+            }
+            // A follow-up prompt, sent as the run's host; before the host was
+            // carried every follow-up was kept as Claude Code's.
+            RowAuthor::Agent(id) if id == host || id == DEFAULT_HOST => {
                 out = TurnReplies::default();
                 callers_turn = true;
             }
@@ -188,7 +201,7 @@ pub async fn run(
             session.into(),
             agent_id,
             prompt.into(),
-            ("claude-code".into(), crate::server::resident::Origin::Person),
+            (run_host(&meta), crate::server::resident::Origin::Person),
         );
         let sid = session.to_string();
         let manager = state.manager.clone();
@@ -292,7 +305,7 @@ pub async fn run(
         &title,
         &agent_id,
         model.clone(),
-        host.unwrap_or("claude-code"),
+        host.unwrap_or(DEFAULT_HOST),
         mode.is_some(),
         model_fallback,
     );
@@ -710,6 +723,33 @@ async fn drive(
     }
 }
 
+/// The session param that keeps the host that started a run.
+const HOST_PARAM: &str = "host";
+
+/// The host a run is recorded as started by when its caller names none.
+const DEFAULT_HOST: &str = "claude-code";
+
+/// The host that started a run (kept in its session as `host`), which its
+/// follow-up turns are sent as: [`DEFAULT_HOST`] for a run kept before the
+/// host was. Every reader of the run's host asks this.
+fn run_host(meta: &crate::state_fs::sessions::SessionMeta) -> String {
+    meta.params
+        .get(HOST_PARAM)
+        .map(String::as_str)
+        .filter(|h| names_an_outside_caller(meta, h))
+        .unwrap_or(DEFAULT_HOST)
+        .to_string()
+}
+
+/// Whether `host` can stand as a follow-up's sender: an agent-kind name
+/// (not a person, the engine or one of its own rows) that is no member of
+/// the session — the caller names it, so it is checked.
+fn names_an_outside_caller(meta: &crate::state_fs::sessions::SessionMeta, host: &str) -> bool {
+    !host.is_empty()
+        && RowAuthor::of(host).agent().is_some()
+        && !meta.agents.iter().any(|member| member.id == host)
+}
+
 /// The session record of a new delegated run: titled from the prompt, made by
 /// an `external` host, its model pinned, its toolset kept for follow-ups, and
 /// its model-fallback switch off unless the caller asked for it.
@@ -749,7 +789,7 @@ fn delegate_meta(
         model_fallback: Some(new_session_fallback(model_fallback)),
         params: Default::default(),
     };
-    meta.params.insert("host".into(), host.into());
+    meta.params.insert(HOST_PARAM.into(), host.into());
     // The delegate's toolset, so a continued session keeps it (see
     // `keep_delegate_tools`).
     meta.params.insert(
@@ -1487,6 +1527,80 @@ mod wait_ready_tests {
         }
     }
 
+    /// A follow-up turn is sent as the host that started the run, whoever
+    /// that was; a run kept before its host was named reads as Claude Code.
+    #[test]
+    fn a_follow_up_is_sent_as_the_host_that_started_the_run() {
+        let codex = delegate_meta("s", "t", "ling", None, "codex", false, None);
+        assert_eq!(run_host(&codex), "codex");
+        let mut old = delegate_meta("s", "t", "ling", None, "codex", false, None);
+        old.params.remove(HOST_PARAM);
+        assert_eq!(run_host(&old), "claude-code");
+    }
+
+    /// The default host is named once in this file's own code: a second
+    /// `"claude-code"` outside the tests (a follow-up sent under a fixed
+    /// name again) fails here.
+    #[test]
+    fn the_default_host_is_named_once() {
+        let text = include_str!("mcp_agent.rs");
+        let mut code = String::new();
+        let mut rest = text;
+        while let Some(at) = rest.find("#[cfg(test)]\nmod ") {
+            code.push_str(&rest[..at]);
+            let body = &rest[at..];
+            // Braces written as escapes, so this scan does not unbalance
+            // other scans of this file.
+            let (open_brace, close_brace) = ('\u{7b}', '\u{7d}');
+            let open = body.find(open_brace).unwrap();
+            let mut depth = 0;
+            let mut end = body.len();
+            for (i, c) in body[open..].char_indices() {
+                match c {
+                    c if c == open_brace => depth += 1,
+                    c if c == close_brace => depth -= 1,
+                    _ => {}
+                }
+                if depth == 0 {
+                    end = open + i + 1;
+                    break;
+                }
+            }
+            rest = &body[end..];
+        }
+        code.push_str(rest);
+        let name = concat!("\"claude", "-code\"");
+        assert_eq!(code.matches(name).count(), 1, "ask run_host / DEFAULT_HOST");
+    }
+
+    /// A host name that is not an outside caller's — a person, the engine,
+    /// one of its own kinds of row, or an agent of the session — is never a
+    /// follow-up's sender: such a run reads as started by the default host.
+    #[test]
+    fn a_host_that_names_no_outside_caller_is_not_a_sender() {
+        for host in ["user", "system", "compaction", "world", "memory-recall", "ling"] {
+            let meta = delegate_meta("s", "t", "ling", None, host, false, None);
+            assert_eq!(run_host(&meta), DEFAULT_HOST, "{host}");
+        }
+    }
+
+    /// A Codex run's follow-up prompt opens the caller's turn: the reply is
+    /// the agent's answer to it, not an earlier one.
+    #[test]
+    fn a_follow_up_from_the_runs_host_opens_its_turn() {
+        let replies = turn_replies(
+            vec![
+                row("user", "fix it", false),
+                row("ling", "Fixed.", false),
+                row("codex", "and the test", false),
+                row("ling", "Added.", false),
+            ],
+            "codex",
+        );
+        assert_eq!(replies.reply.as_deref(), Some("Added."));
+        assert_eq!(replies.followup, None);
+    }
+
     #[test]
     fn final_reply_skips_system_notice() {
         let messages = vec![
@@ -1494,19 +1608,22 @@ mod wait_ready_tests {
             row("system", "Background task sh-1 ended: failed", false),
         ];
         assert_eq!(
-            turn_replies(messages).reply.as_deref(),
+            turn_replies(messages, DEFAULT_HOST).reply.as_deref(),
             Some("agent answer")
         );
     }
 
     #[test]
     fn finished_frame_includes_reply_and_followup() {
-        let replies = turn_replies(vec![
-            row("user", "fix it", false),
-            row("ling", "Fixed.", false),
-            row("system", "Background task ended", false),
-            row("ling", "The watcher ended.", false),
-        ]);
+        let replies = turn_replies(
+            vec![
+                row("user", "fix it", false),
+                row("ling", "Fixed.", false),
+                row("system", "Background task ended", false),
+                row("ling", "The watcher ended.", false),
+            ],
+            DEFAULT_HOST,
+        );
         let frame = finished_frame(
             "s1",
             LastRun {
@@ -1538,7 +1655,7 @@ mod wait_ready_tests {
             row("ling", "", false),
         ];
         assert_eq!(
-            turn_replies(messages),
+            turn_replies(messages, DEFAULT_HOST),
             TurnReplies {
                 reply: Some("Fixed in abc123; tests pass.".into()),
                 followup: Some("The watcher ended.".into()),
@@ -1557,7 +1674,7 @@ mod wait_ready_tests {
             row("compaction", "Summary …", false),
         ];
         assert_eq!(
-            turn_replies(messages).reply.as_deref(),
+            turn_replies(messages, DEFAULT_HOST).reply.as_deref(),
             Some("Done after the restart.")
         );
         // A restart that cut no turn — only background work was running —
@@ -1571,7 +1688,7 @@ mod wait_ready_tests {
             row("ling", "The watcher was cut; restarting it.", false),
         ];
         assert_eq!(
-            turn_replies(messages),
+            turn_replies(messages, DEFAULT_HOST),
             TurnReplies {
                 reply: Some("Fixed.".into()),
                 followup: Some("The watcher was cut; restarting it.".into()),
@@ -1584,7 +1701,7 @@ mod wait_ready_tests {
             row("ling", "notice answer", false),
             row("claude-code", "next", false),
         ];
-        assert_eq!(turn_replies(messages), TurnReplies::default());
+        assert_eq!(turn_replies(messages, DEFAULT_HOST), TurnReplies::default());
     }
 }
 
