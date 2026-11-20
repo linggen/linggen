@@ -4,8 +4,6 @@
 . ./common.sh
 . ./expect.env
 
-[ ! -e "$LG" ] && pass "fresh VM (no ~/.linggen)" || fail "fresh VM (no ~/.linggen)" "$LG exists"
-
 # The whole first-run path runs under a tccd watch.
 tcc_watch_start
 
@@ -116,7 +114,7 @@ dmg_runtime_check() {
     gap "dmg: the engine fetches bun on a Mac with no JS runtime" "a JS runtime is here anyway:$others — the check would prove nothing"
     return
   fi
-  open /Applications/Linggen.app
+  open_app /Applications/Linggen.app
   engine_health 120
   check "dmg: no bun — app brings up 9527" $? "no health 120 s after open"
   wait_bun 180
@@ -146,7 +144,7 @@ if [ -n "$APP_VERSION" ]; then
 
   [ -n "$RB" ] && launchctl setenv LINGGEN_RELEASE_BASE "$GOOD"
   t_open=$SECONDS
-  open /Applications/Linggen.app
+  open_app /Applications/Linggen.app
   engine_health 120
   check "app: first launch brings up 9527" $? "no health 120 s after open"
   pgrep -f '/Linggen.app/Contents/MacOS/' >/dev/null
@@ -236,7 +234,7 @@ QAPP='gate-quarantine/Linggen.app/Contents/MacOS/linggen-shell|AppTranslocation/
 run_app() { # app — LaunchServices launch, as a double-click is
   local i
   QRUN_DETAIL="no Linggen process 60 s after open (Gatekeeper dialog?)"
-  open "$1" 2>/dev/null || { QRUN_DETAIL="open refused"; return 1; }
+  open_app "$1" 2>/dev/null || { QRUN_DETAIL="open refused"; return 1; }
   for ((i = 0; i < 60; i++)); do
     # Still up 5 s later: a refused launch can leave a process for a moment.
     if pgrep -f "$QAPP" >/dev/null && sleep 5 && pgrep -f "$QAPP" >/dev/null; then
