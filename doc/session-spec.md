@@ -351,7 +351,18 @@ up to the filesystem root. Git is not required. Owner chat, delegates,
 missions and skill sessions get this context; consumers do not. Claude SDK
 sessions keep their own loader. Native coding turns load the person's
 `~/.claude/CLAUDE.md` first, labelled with its path. Companion, app and
-consumer turns do not get it. Linggen does not load `.claude/rules/` here.
+consumer turns do not get it. Coding turns also load the project's
+`.claude/rules/**/*.md` that have no `paths:` front matter.
+
+Rules for part of a project reach a coding session when its work gets there:
+a rule file (same names) in a sub-folder applies to files under it, and a
+`.claude/rules/` file whose front matter lists `paths:` globs (relative to the
+workspace, `*` stays in one folder) applies to files they match. The first
+Read, Write or Edit of such a file adds the rule to the stable prompt for the
+rest of the session (`instruction_files::PlaceRules`), so a rebuild or a
+compaction keeps it. A Write or Edit asked for before its rule reached the
+model is refused once with a line saying so. Same gate, limits and refusal
+lines as every rule file. Shell commands do not trigger them.
 
 An `@path` in rule text, outside Markdown code, inlines the named file with
 its source. Relative paths start beside the importing file. If the exact
@@ -368,8 +379,7 @@ files per load. It never executes what it reads.
 
 Instructions are part of the stable prompt. Each full turn reloads them;
 the parallel-tool staleness check uses the same loader and includes parent
-and imported files. Subfolder rules below the workspace are not discovered
-from tool paths yet.
+and imported files, and the place rules met so far.
 
 ### Beside the turn
 

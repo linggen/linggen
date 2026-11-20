@@ -275,6 +275,9 @@ impl AgentEngine {
         if let Some(stop) = self.gate_permission(&t, messages, &mut approved_reads).await {
             return stop;
         }
+        if let Some(stop) = self.gate_place_rules(&t, allowed_tools, messages).await {
+            return stop;
+        }
 
         // Browser_* mutating actions are gated by the extension itself
         // (browser-control-spec.md): the Allow prompt renders in the browser
@@ -485,6 +488,24 @@ impl AgentEngine {
         let log_run = self.run_id.clone().unwrap_or_else(|| "root".to_string());
         info!("[{}] Tool: {} {}", log_run, t.canonical, safe_args);
         safe_args
+    }
+
+    /// Place-rules gate: a file tool's first call under a sub-folder's or a
+    /// path-scoped rule brings that rule into the system message, and a
+    /// change written before the rule reached the model waits one round
+    /// (`instruction_files::AgentEngine::meet_place_rules` decides).
+    async fn gate_place_rules(
+        &mut self,
+        t: &ToolTurn<'_>,
+        allowed_tools: &Option<HashSet<String>>,
+        messages: &mut Vec<ChatMessage>,
+    ) -> Option<PreExecOutcome> {
+        let meeting = self.meet_place_rules(t.canonical, t.args);
+        if meeting.added {
+            self.rebuild_system_message(messages, allowed_tools.as_ref());
+        }
+        let msg = meeting.wait?;
+        self.refuse_saved(t, messages, msg).await
     }
 
     /// Write-safety gate: Write/Edit on an existing file not Read first.
