@@ -395,6 +395,10 @@ pub struct AgentEngine {
     pub(crate) session_permissions: permission::SessionPermissions,
     /// Folders the person declined in this run (cleared at its start).
     pub(crate) declined_scopes: permission::DeclinedScopes,
+    /// The deny and ask rules of the person's Claude Code settings, read
+    /// at the start of each run (`permission::ClaudeRules`); honoured in a
+    /// coding session.
+    pub(crate) claude_rules: Arc<permission::ClaudeRules>,
     /// The session's lead member, when it isn't this engine's agent: then
     /// this agent is another member at the lead's table — the session's
     /// tools are the lead's, a bound skill's SKILL.md is the lead's place,
@@ -722,6 +726,7 @@ impl AgentEngine {
             open_calls: Default::default(),
             session_permissions: permission::SessionPermissions::default(),
             declined_scopes: permission::DeclinedScopes::default(),
+            claude_rules: Arc::default(),
             session_lead: None,
             session_tools: None,
             skill_bound: false,

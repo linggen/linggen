@@ -660,11 +660,13 @@ impl AgentEngine {
             let coding = self.is_coding_session();
             let origin = self.read_origin();
             let cwd = self.tools.builtins.cwd();
+            let url = t.args.get("url").and_then(JsonValue::as_str).filter(|_| t.canonical == "WebFetch");
             let check = |path: Option<&str>| {
-                permission::check_permission_with_read_approvals(
+                permission::check_permission_under_rules(
                     t.canonical, bash_command.as_deref(), path, &cwd,
                     &self.session_permissions, skill_tier_override, coding,
                     self.session_spec.ceiling, origin, Some(&self.declined_scopes), approved_reads,
+                    self.claude_rules.for_call(url),
                 )
             };
             let check_result = if t.canonical == "Glob" {
@@ -696,6 +698,9 @@ impl AgentEngine {
                     let msg = match self.session_spec.ceiling {
                         Some(_) => format!("Tool {}: {reason}", t.canonical),
                         None if t.canonical == "Bash" && coding => reason,
+                        // A deny rule of the person's Claude Code settings
+                        // names itself and its file, whatever the tool.
+                        None if permission::is_claude_refusal(&reason) => reason,
                         None => self.permission_denied_msg(t),
                     };
                     return self.refuse_saved(t, messages, msg).await;
@@ -722,6 +727,7 @@ impl AgentEngine {
                 outward,
                 reason,
                 scoped_read,
+                by_rule,
             } = prompt_kind;
             let reason = reason.as_deref();
             let tool_summary = with_gate_reason(tool_summary, reason);
@@ -738,10 +744,14 @@ impl AgentEngine {
                 self.record_denial(t, &target_mode.to_string(), "Declined earlier in this run");
                 return self.refuse_declined(t, messages, &scope, None, reason, true).await;
             }
-            let (question, caller_request, wait) = if outward {
-                // Its effect leaves the machine: this one command, once or not.
-                let question =
-                    permission::build_outward_question(&tool_summary, &target_mode, &path);
+            let (question, caller_request, wait) = if outward || by_rule {
+                // Its effect leaves the machine, or the person's Claude Code
+                // settings ask every time: this one action, once or not.
+                let question = if outward {
+                    permission::build_outward_question(&tool_summary, &target_mode, &path)
+                } else {
+                    permission::build_rule_question(&tool_summary, &target_mode, &path)
+                };
                 let request = asks_caller.then(|| {
                     let mut request = self.caller_request(t, target_mode, &path, &[], reason);
                     request.outward = true;
@@ -1478,9 +1488,11 @@ impl AgentEngine {
             let declined = self.declined_scopes.clone();
             let cwd = self.tools.builtins.cwd();
             let approved = exec.approved_reads.clone();
+            let claude = self.claude_rules.clone();
             tools.builtins.read_filter = Some(Arc::new(move |path| {
-                path.to_str().is_some_and(|path| matches!(permission::check_permission_with_read_approvals(
+                path.to_str().is_some_and(|path| matches!(permission::check_permission_under_rules(
                     "Read", None, Some(path), &cwd, &perms, None, coding, ceiling, origin, Some(&declined), &approved,
+                    claude.for_call(None),
                 ), permission::PermissionCheckResult::Allowed))
             }));
         }
@@ -2117,6 +2129,64 @@ mod declined_gate_tests {
     fn the_chat_line_follows_the_language() {
         assert_eq!(declined_notice("~/r", "zh-Hans"), "本轮已拒绝访问 ~/r");
         assert_eq!(declined_notice("~/r", "en"), "Access to ~/r declined for this turn");
+    }
+
+    /// A coding engine at admin everywhere whose project's Claude Code
+    /// settings hold `permissions`; the person (`interactive`) or the
+    /// caller answers.
+    fn claude_rules_engine(work: &std::path::Path, permissions: JsonValue, pending: &Pending, interactive: bool) -> AgentEngine {
+        let home = tempfile::tempdir_in(dirs::home_dir().unwrap()).unwrap();
+        std::fs::create_dir_all(work.join(".claude")).unwrap();
+        std::fs::write(work.join(".claude/settings.json"), serde_json::json!({"permissions": permissions}).to_string()).unwrap();
+        let mut engine = engine(work, pending, !interactive);
+        crate::engine::session_spec::coding_caller_fixture().apply(&mut engine);
+        engine.session_permissions = SessionPermissions { interactive, ask_caller: !interactive, ..Default::default() };
+        engine.session_permissions.set_path_mode("*", PermissionMode::Admin);
+        engine.claude_rules = Arc::new(permission::ClaudeRules::load(Some(home.path()), work));
+        engine
+    }
+
+    #[tokio::test]
+    async fn a_claude_deny_rule_refuses_a_read_and_says_which_file_refused_it() {
+        let work = tempfile::tempdir_in(dirs::home_dir().unwrap()).unwrap();
+        let pending: Pending = Default::default();
+        let asked = deny_all(&pending);
+        let mut engine = claude_rules_engine(work.path(), serde_json::json!({"deny": ["Read(./.env)"]}), &pending, true);
+        let refused = gate(&mut engine, "Read", serde_json::json!({"path": work.path().join(".env")})).await;
+        assert!(refused.contains("`Read(./.env)`") && refused.contains(".claude/settings.json"), "{refused}");
+        assert_eq!(asked.load(std::sync::atomic::Ordering::SeqCst), 0, "a deny rule is never asked");
+    }
+
+    #[tokio::test]
+    async fn a_claude_ask_rule_asks_the_person_once_with_no_grant_offered() {
+        let work = tempfile::tempdir_in(dirs::home_dir().unwrap()).unwrap();
+        let pending: Pending = Default::default();
+        let seen = answer_first(&pending, crate::engine::permission::ALLOW_ONCE);
+        let mut engine = claude_rules_engine(work.path(), serde_json::json!({"ask": ["Read(./notes/**)"]}), &pending, true);
+        let args = serde_json::json!({"path": work.path().join("notes/a.md")});
+        let id = Some("c1".to_string());
+        let t = ToolTurn { tool: "Read", canonical: "Read", args: &args, session_id: None, tool_call_id: &id };
+        let mut approved = Vec::new();
+        assert!(engine.gate_permission(&t, &mut Vec::new(), &mut approved).await.is_none(), "allowed once");
+        let (labels, request) = tokio::time::timeout(std::time::Duration::from_secs(5), seen).await.expect("asked").unwrap();
+        assert_eq!(labels, [crate::engine::permission::ALLOW_ONCE, "Deny"]);
+        assert!(request.is_none(), "the person, not a caller");
+        assert_eq!(approved.len(), 1, "the read itself is allowed once");
+    }
+
+    #[tokio::test]
+    async fn a_claude_ask_rule_asks_the_caller_for_this_one_action() {
+        let work = tempfile::tempdir_in(dirs::home_dir().unwrap()).unwrap();
+        let pending: Pending = Default::default();
+        let seen = answer_first(&pending, "Deny");
+        let mut engine = claude_rules_engine(work.path(), serde_json::json!({"ask": ["Bash(cargo build:*)"]}), &pending, false);
+        let refused = gate(&mut engine, "Bash", serde_json::json!({"command": "cargo build --release"})).await;
+        let (labels, request) = tokio::time::timeout(std::time::Duration::from_secs(5), seen).await.expect("asked").unwrap();
+        assert_eq!(labels, [crate::engine::permission::ALLOW_ONCE, "Deny"]);
+        let request = request.expect("the caller is asked");
+        assert!(request.outward && request.dir.is_none(), "only allow_once or deny answers it: {request:?}");
+        assert!(request.reason.as_deref().is_some_and(|r| r.contains("`Bash(cargo build:*)`")), "{request:?}");
+        assert!(refused.contains("`Bash(cargo build:*)`"), "{refused}");
     }
 }
 

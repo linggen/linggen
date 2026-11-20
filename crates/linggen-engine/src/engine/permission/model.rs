@@ -4,6 +4,7 @@
 //! All pure logic — no I/O, no UI prompts. The store layer lives in
 //! [`super::store`]; prompt construction in [`super::prompt`].
 
+use super::claude_rules::{ClaudeCall, ClaudeRules, Facts};
 use super::classify::{classify_bash, dequote, literal_shell_commands, reads_sed_lines};
 use super::pattern_text::text_words;
 use super::shell_text::strip_heredoc_bodies;
@@ -97,6 +98,10 @@ pub enum PromptKind {
         /// covers this one command — allow once or deny, no grant offered.
         outward: bool,
         scoped_read: bool,
+        /// A rule in the person's Claude Code settings asks before this
+        /// action (`claude_rules`): one answer covers this one action —
+        /// allow once or deny, no grant offered.
+        by_rule: bool,
     },
 }
 
@@ -166,10 +171,18 @@ pub fn is_hardcoded_deny(cmd: &str) -> bool {
     }
     // And each command as the shell splits them: by line and by `&` too,
     // with a quoted span kept whole.
-    let stripped = super::shell_text::strip_heredoc_bodies(trimmed);
-    command_segments(before_a_heredoc_body(&stripped))
+    commands_as_written(trimmed)
         .iter()
         .any(|words| words_are_hardcoded_deny(words))
+}
+
+/// The words of each command in `cmd` as the shell splits them — by
+/// operator, line and `&`, a quoted span kept whole, a heredoc's body left
+/// out — as the deny floor reads them (and Claude Code's Bash rules,
+/// `claude_rules`).
+pub(super) fn commands_as_written(cmd: &str) -> Vec<Vec<String>> {
+    let stripped = super::shell_text::strip_heredoc_bodies(cmd);
+    command_segments(before_a_heredoc_body(&stripped))
 }
 
 /// `cmd` up to the end of its first line that opens a heredoc: the lines
@@ -469,7 +482,7 @@ fn rm_target_is_root(arg: &str) -> bool {
 }
 
 /// Split a compound command into segments by `;`, `&&`, `||`, `|`.
-fn split_command_segments(cmd: &str) -> Vec<String> {
+pub(super) fn split_command_segments(cmd: &str) -> Vec<String> {
     let bytes = cmd.as_bytes();
     let len = bytes.len();
     let mut segments = Vec::new();
@@ -777,6 +790,22 @@ pub(crate) fn check_permission_with_read_approvals(
     coding: bool, ceiling: Option<PermissionMode>, origin: ReadOrigin,
     declined: Option<&super::DeclinedScopes>, approved: &[PathBuf],
 ) -> PermissionCheckResult {
+    check_permission_under_rules(tool, bash_command, file_path, session_cwd, session_perms,
+        action_tier_override, coding, ceiling, origin, declined, approved, ClaudeRules::none())
+}
+
+/// The one permission check, with the rules of the person's Claude Code
+/// settings (`claude_rules`) as one more source in a coding session: a
+/// call a `deny` rule matches is refused before anything else is judged,
+/// whatever the grants; one an `ask` rule matches is asked, once, even
+/// where the grants would let it through. Nothing they hold can allow.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn check_permission_under_rules(
+    tool: &str, bash_command: Option<&str>, file_path: Option<&str>, session_cwd: &Path,
+    session_perms: &SessionPermissions, action_tier_override: Option<PermissionMode>,
+    coding: bool, ceiling: Option<PermissionMode>, origin: ReadOrigin,
+    declined: Option<&super::DeclinedScopes>, approved: &[PathBuf], claude: ClaudeCall<'_>,
+) -> PermissionCheckResult {
     // `$HOME` and `$?` are read as the shell reads them, so a command naming
     // the home folder is judged by the path it reaches (`known_vars`).
     let read_as = bash_command
@@ -789,6 +818,10 @@ pub(crate) fn check_permission_with_read_approvals(
         .unwrap_or_default();
     if inner.iter().any(|text| is_hardcoded_deny(text)) {
         return PermissionCheckResult::Blocked(BashReason::Floor.sentence(PermissionMode::Admin, ""));
+    }
+    let facts = coding.then(|| call_facts(tool, bash_command, &inner, file_path, session_cwd));
+    if let Some(refusal) = facts.as_ref().and_then(|facts| claude.denies(facts)) {
+        return PermissionCheckResult::Blocked(refusal);
     }
     let result = check_grants(
         tool,
@@ -807,6 +840,20 @@ pub(crate) fn check_permission_with_read_approvals(
         Some(cmd) => ask_outward(result, cmd, session_cwd, coding),
         None => result,
     };
+    let asked = facts.as_ref().and_then(|facts| {
+        let approved_once = facts.path.as_ref().is_some_and(|target| {
+            let target = super::sensitive::resolved(target);
+            approved.iter().any(|once| target.starts_with(once))
+        });
+        claude.asks(facts).filter(|_| !approved_once).map(|why| (why, facts))
+    });
+    let result = match asked {
+        Some((why, facts)) => {
+            let tier = action_tier(tool, bash_command, action_tier_override, coding).0;
+            ask_by_rule(result, why, facts, tier, bash_command.or(file_path), session_cwd)
+        }
+        None => result,
+    };
     match (&result, ceiling) {
         (PermissionCheckResult::NeedsPrompt(PromptKind::ExceedsCeiling { target_mode, .. }), Some(c))
             if *target_mode > c =>
@@ -823,6 +870,128 @@ fn beyond_ceiling(needs: PermissionMode, ceiling: PermissionMode) -> PermissionC
     PermissionCheckResult::Blocked(format!(
         "Beyond this turn's level: the action needs {needs}, and the device that sent the turn stands at {ceiling}."
     ))
+}
+
+/// The level an action needs (1. of the check): a skill's declared tier,
+/// a Bash command's class, else the tool's own tier; with whether a coding
+/// session lowered the command, and why it asks.
+fn action_tier(
+    tool: &str,
+    bash_command: Option<&str>,
+    action_tier_override: Option<PermissionMode>,
+    coding: bool,
+) -> (PermissionMode, bool, Option<BashReason>) {
+    if let Some(override_tier) = action_tier_override {
+        return (override_tier, false, None);
+    }
+    if tool != "Bash" {
+        return (tool_action_tier(tool), false, None);
+    }
+    let Some(cmd) = bash_command else {
+        return (PermissionMode::Admin, false, None);
+    };
+    let (class, lowered, reason) = classify_bash(cmd, coding);
+    let tier = match class {
+        BashClass::Read => PermissionMode::Read,
+        BashClass::Write => PermissionMode::Edit,
+        BashClass::Admin => PermissionMode::Admin,
+    };
+    (tier, lowered, reason)
+}
+
+/// A tool's path as it names it: home-relative (never rebased onto the
+/// folder), absolute, or relative to the folder the session works in.
+fn resolve_against(path: &str, session_cwd: &Path) -> PathBuf {
+    if path == "~" || path.starts_with("~/") {
+        return expand_tilde(Path::new(path), dirs::home_dir().as_deref());
+    }
+    let p = Path::new(path);
+    if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        session_cwd.join(p)
+    }
+}
+
+/// What a Claude Code rule judges of a call (`claude_rules`): a file tool's
+/// path; a command's texts and every file it may name — the gate's path
+/// targets and each word after a program, resolved where it runs.
+fn call_facts<'a>(
+    tool: &'a str,
+    bash_command: Option<&str>,
+    inner: &[String],
+    file_path: Option<&str>,
+    session_cwd: &Path,
+) -> Facts<'a> {
+    let commands: Vec<String> = bash_command
+        .filter(|_| tool == "Bash")
+        .into_iter()
+        .map(str::to_string)
+        .chain(inner.iter().cloned())
+        .collect();
+    let mut bash_paths = Vec::new();
+    for cmd in &commands {
+        bash_paths.extend(command_target_levels(cmd, session_cwd).into_iter().map(|(path, _)| path));
+        for words in commands_as_written(cmd) {
+            let refs: Vec<&str> = words.iter().map(String::as_str).collect();
+            let run = command_run(&refs);
+            for word in run.iter().skip(1) {
+                let word = word.trim_start_matches(['<', '>', '&']);
+                if !word.is_empty() && !word.starts_with('-') {
+                    bash_paths.push(resolve_against(word, session_cwd));
+                }
+            }
+        }
+    }
+    let bash_writes = commands.iter().any(|cmd| classify_bash(cmd, true).0 != BashClass::Read);
+    Facts {
+        tool,
+        path: (tool != "Bash").then(|| file_path.map(|fp| resolve_against(fp, session_cwd))).flatten(),
+        commands,
+        bash_paths,
+        bash_writes,
+    }
+}
+
+/// An `ask` rule's call is asked whatever the check would do: what it
+/// would allow is asked at the action's level, and an ask it makes anyway
+/// becomes the same one-time ask. Either way no grant is offered — no
+/// grant can satisfy the rule — and a refusal stays one.
+fn ask_by_rule(
+    result: PermissionCheckResult,
+    why: String,
+    facts: &Facts<'_>,
+    tier: PermissionMode,
+    summary: Option<&str>,
+    session_cwd: &Path,
+) -> PermissionCheckResult {
+    let ask = match result {
+        PermissionCheckResult::Blocked(_) => return result,
+        PermissionCheckResult::Allowed => {
+            let target = facts.path.clone().unwrap_or_else(|| session_cwd.to_path_buf());
+            let summary = format!("{} {}", facts.tool, summary.unwrap_or(facts.tool));
+            match needs_prompt(&target, session_cwd, tier, summary, None) {
+                PermissionCheckResult::NeedsPrompt(kind) => kind,
+                other => return other,
+            }
+        }
+        PermissionCheckResult::NeedsPrompt(kind) => kind,
+    };
+    let PromptKind::ExceedsCeiling { target_mode, path, tool_summary, reason, outward, scoped_read, .. } = ask;
+    PermissionCheckResult::NeedsPrompt(PromptKind::ExceedsCeiling {
+        target_mode,
+        path,
+        directories: Vec::new(),
+        tool_summary,
+        reason: Some(match reason {
+            Some(need) => format!("{why} {need}"),
+            None => why,
+        }),
+        outward,
+        // A read allowed once is carried to the read itself (`approved`).
+        scoped_read: scoped_read || matches!(facts.tool, "Read" | "Glob" | "Grep"),
+        by_rule: true,
+    })
 }
 
 /// The check against the session's grants: the deny floor, then the
@@ -893,27 +1062,7 @@ fn check_grants(
     // 1. Classify action tier. Skill-declared override wins over the built-in table.
     // In a coding session what the tables would ask admin for is a write
     // (`lowered`).
-    let mut lowered = false;
-    let mut bash_reason = None;
-    let action_tier = if let Some(override_tier) = action_tier_override {
-        override_tier
-    } else if tool == "Bash" {
-        match bash_command {
-            Some(cmd) => {
-                let class = classify_bash(cmd, coding);
-                lowered = class.1;
-                bash_reason = class.2;
-                match class.0 {
-                    BashClass::Read => PermissionMode::Read,
-                    BashClass::Write => PermissionMode::Edit,
-                    BashClass::Admin => PermissionMode::Admin,
-                }
-            }
-            None => PermissionMode::Admin,
-        }
-    } else {
-        tool_action_tier(tool)
-    };
+    let (action_tier, lowered, bash_reason) = action_tier(tool, bash_command, action_tier_override, coding);
 
     // 1b. A turn under a ceiling: an action above it is refused, whatever
     // the grants say.
@@ -1048,19 +1197,7 @@ fn check_grants(
     // 3. Resolve target path for non-Bash tools (or Bash without path args).
     // Tools without an explicit file_path use cwd.
     let target_path = file_path
-        .map(|fp| {
-            if fp == "~" || fp.starts_with("~/") {
-                // An unresolved home-relative path is not rebased onto the session cwd.
-                expand_tilde(Path::new(fp), dirs::home_dir().as_deref())
-            } else {
-                let p = Path::new(fp);
-                if p.is_absolute() {
-                    p.to_path_buf()
-                } else {
-                    session_cwd.join(p)
-                }
-            }
-        })
+        .map(|fp| resolve_against(fp, session_cwd))
         .unwrap_or_else(|| session_cwd.to_path_buf());
 
     if let Some(c) = ceiling.filter(|_| owners_alone(session_perms, (action_tier, ceiling), &target_path)) {
@@ -1188,6 +1325,7 @@ fn needs_prompt(
         reason,
         outward: false,
         scoped_read: false,
+        by_rule: false,
     })
 }
 
@@ -1237,6 +1375,7 @@ fn ask_outward(
         reason,
         outward: true,
         scoped_read: false,
+        by_rule: false,
     })
 }
 

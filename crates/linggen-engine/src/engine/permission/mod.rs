@@ -18,6 +18,9 @@
 
 #[cfg(test)]
 mod ceiling_tests;
+mod claude_rules;
+#[cfg(test)]
+mod claude_rules_tests;
 mod classify;
 #[cfg(test)]
 mod coding_session_tests;
@@ -46,18 +49,22 @@ mod gate_copy_tests;
 #[cfg(test)]
 mod outward_tests;
 
+pub use claude_rules::{is_refusal as is_claude_refusal, ClaudeRules};
 pub use declined::DeclinedScopes;
 pub use read_scope::ReadOrigin;
 #[cfg(test)]
 use model::check_permission_at_turn;
-pub(crate) use model::{allows_instruction_import, check_permission_with_read_approvals};
+pub(crate) use model::{allows_instruction_import, check_permission_under_rules};
+#[cfg(test)]
+pub(crate) use model::check_permission_with_read_approvals;
 pub use manifest::{apply_grants, Grants, PathGrant};
 pub use model::{
     check_permission, check_permission_for, display_path, effective_mode_for_path, parse_skill_tier, PathMode,
     PermissionAction, PermissionCheckResult, PermissionMode, PromptKind,
 };
 pub use prompt::{
-    build_caller_question, build_exceeds_ceiling_question, build_outward_question, grant_at_label,
+    build_caller_question, build_exceeds_ceiling_question, build_outward_question, build_rule_question,
+    grant_at_label,
     parse_exceeds_ceiling_answer, permission_target_summary, ALLOW_ONCE,
 };
 pub use store::SessionPermissions;
