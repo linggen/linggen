@@ -291,6 +291,28 @@ impl AgentEngine {
         }
     }
 
+    /// Read the person's Claude Code rules for this run, from the folder it
+    /// starts in (permission-spec.md § Claude Code's rules). A coding run
+    /// that is not a subagent shows one line naming any rule it did not
+    /// understand.
+    pub(crate) async fn read_claude_rules(&mut self) {
+        let rules = permission::ClaudeRules::load(dirs::home_dir().as_deref(), &self.tools.builtins.cwd());
+        self.claude_rules = std::sync::Arc::new(rules);
+        let notice = self.claude_rules.notice();
+        let Some(line) = notice.filter(|_| self.tools.builtins.delegation_depth() == 0 && self.is_coding_session()) else {
+            return;
+        };
+        warn!("{line}");
+        self.emit(crate::engine::agent::AgentEvent::Message {
+            from: "system".to_string(),
+            to: "user".to_string(),
+            content: line,
+            run_id: None,
+            parent_id: None,
+        })
+        .await;
+    }
+
     /// One chat, one permission set: re-read the session's grant table, so
     /// a grant the person makes in any of the chat's runs — the main chat or
     /// a subagent at any depth — holds in all of them at once. `interactive`
@@ -341,6 +363,7 @@ impl AgentEngine {
                 self.load_session_permissions(sid);
             }
         }
+        self.read_claude_rules().await;
 
         if self.is_cancelled().await {
             anyhow::bail!("run cancelled");
