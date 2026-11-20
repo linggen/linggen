@@ -365,12 +365,13 @@ async fn an_external_runs_wait_is_never_told() {
     w.api.answer(&ask, "Deny").await;
 }
 
-// Two questions of one turn waiting at once — one telling, and the folded one
-// told when the first telling came to nothing — are held by the unit tests of
-// `src/server/resident/herald/waits.rs`
-// (`a_wait_is_one_turn_not_one_session`,
-// `a_folded_question_is_told_when_the_first_telling_came_to_nothing`): a
-// native turn asks one question at a time, so no system path makes two wait.
+// NOT COVERED HERE: two questions of one turn waiting at once (a subagent's
+// beside its parent's, or two subagents') — one telling, and the folded one
+// told when the first telling came to nothing. The two system tests of it
+// used a prop that is gone. The bookkeeping is held by the unit tests of
+// `src/server/resident/herald/waits.rs`; `herald::wait_key` (which run a
+// question belongs to) and the re-tell loop are run by no test until these
+// are rebuilt on Task children.
 
 /// The wait is answered while her line is being made: nothing of it is
 /// said, marked or written — then or later.
