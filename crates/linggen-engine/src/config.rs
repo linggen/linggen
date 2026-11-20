@@ -4,6 +4,9 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+mod sign_in;
+pub use sign_in::{AuthMode, ProviderKind, SignIn};
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[cfg_attr(any(test, feature = "test-support"), derive(ts_rs::TS), ts(export))]
 pub struct Config {
@@ -176,8 +179,10 @@ pub struct ModelConfig {
     pub supports_tools: Option<bool>,
     /// Authentication mode: "api_key" (default) or "chatgpt_oauth".
     /// When "chatgpt_oauth", uses ChatGPT subscription OAuth tokens instead of API key.
+    /// Read through [`ModelConfig::sign_in`] (`config/sign_in.rs`).
     #[serde(default)]
-    pub auth_mode: Option<String>,
+    #[cfg_attr(any(test, feature = "test-support"), ts(type = "string | null"))]
+    pub auth_mode: Option<AuthMode>,
     /// Reasoning effort level: "low", "medium", "high".
     /// Translates to provider-specific parameters:
     /// - OpenAI/o-series/GPT-5: `reasoning_effort`
@@ -595,7 +600,7 @@ impl Config {
             self.pet.model.clone(),
         );
         self.models.retain(|m| {
-            !(catalog.is_former(&m.id) && m.auth_mode.as_deref() == Some("chatgpt_oauth"))
+            !(catalog.is_former(&m.id) && m.auth_mode == Some(AuthMode::ChatgptOauth))
         });
 
         let surviving: std::collections::HashSet<String> =

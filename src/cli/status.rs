@@ -1,4 +1,4 @@
-use crate::config::Config;
+use crate::config::{Config, ProviderKind, SignIn};
 use crate::provider::{claude_auth, codex_auth};
 use anyhow::Result;
 use std::path::{Path, PathBuf};
@@ -340,11 +340,12 @@ async fn check_models(config: &Config) {
     for m in &config.models {
         let label = format!("Model [{}]", m.id);
         let base = m.url.trim_end_matches('/');
-        let auth = m.auth_mode.as_deref().unwrap_or("");
+        let sign_in = m.sign_in();
+        let kind = m.provider_kind();
 
         // OAuth-backed models have no key to send and nothing to ping
         // anonymously — the honest check is the sign-in state.
-        if auth == "chatgpt_oauth" || m.provider == "chatgpt" {
+        if sign_in == SignIn::ChatGpt {
             let tokens = codex_auth::CodexAuthTokens::load(&codex_auth::codex_auth_file());
             if tokens.is_valid() {
                 ok(
@@ -362,7 +363,7 @@ async fn check_models(config: &Config) {
             }
             continue;
         }
-        if m.provider == "anthropic" && auth == "claude_oauth" {
+        if kind == ProviderKind::Anthropic && sign_in == SignIn::Claude {
             match claude_auth::load() {
                 Ok(t) if t.can_do_inference() => {
                     ok(&label, &format!("{} via Claude OAuth (signed in)", m.model));
@@ -374,7 +375,7 @@ async fn check_models(config: &Config) {
             }
             continue;
         }
-        if auth == "linggen_account" {
+        if sign_in == SignIn::LinggenAccount {
             info(
                 &label,
                 &format!("{} via Linggen account (checked at run time)", m.model),
@@ -387,9 +388,9 @@ async fn check_models(config: &Config) {
         // anthropic speak their own wire; every other provider — openai,
         // deepseek, gemini, groq, … — is OpenAI-compatible, so `/models` is
         // the probe for all of them.
-        let mut req = match m.provider.as_str() {
-            "ollama" => client.get(format!("{base}/api/tags")),
-            "anthropic" => {
+        let mut req = match kind {
+            ProviderKind::Ollama => client.get(format!("{base}/api/tags")),
+            ProviderKind::Anthropic => {
                 let url = if base.ends_with("/v1") {
                     format!("{base}/models")
                 } else {
@@ -403,7 +404,7 @@ async fn check_models(config: &Config) {
             }
             _ => client.get(format!("{base}/models")),
         };
-        if m.provider != "anthropic" {
+        if kind != ProviderKind::Anthropic {
             if let Some(k) = &key {
                 req = req.header("Authorization", format!("Bearer {k}"));
             }

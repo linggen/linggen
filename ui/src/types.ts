@@ -234,6 +234,8 @@ export interface ModelInfo {
    *  Absent on older payloads — treat undefined as usable. */
   auth_ok?: boolean;
   supports_claude_sdk?: boolean;
+  /** The engine's answer (`ModelConfig::sign_in`): this model runs on the ChatGPT sign-in. */
+  signs_in_with_chatgpt?: boolean;
 }
 
 /** A row of GET /api/models: what page_state sends plus the fields only the

@@ -9,8 +9,8 @@
 //! runs on this machine has no per-token price: it is `Billing::Account` or
 //! `Billing::Local`, and a session's spend leaves it out.
 
-use super::{signs_in_with_chatgpt, ModelManager, TokenUsage, Tokens};
-use crate::config::{ModelConfig, ModelPrice};
+use super::{ModelManager, TokenUsage, Tokens};
+use crate::config::{ModelConfig, ModelPrice, ProviderKind, SignIn};
 use crate::state_fs::session_usage::SessionUsage;
 use serde::Serialize;
 
@@ -193,8 +193,8 @@ fn names(name: &str, model: &str) -> bool {
 /// Anthropic's own API, by key: the one place the built-in table is true.
 /// A gateway or a cloud reseller sets its own prices.
 fn on_anthropic_api(cfg: &ModelConfig) -> bool {
-    cfg.provider == "anthropic"
-        && cfg.auth_mode.as_deref() != Some("claude_oauth")
+    cfg.provider_kind() == ProviderKind::Anthropic
+        && cfg.sign_in() != SignIn::Claude
         && (cfg.url.trim().is_empty()
             || crate::provider::anthropic::takes_top_level_cache_control(&cfg.url))
 }
@@ -243,21 +243,22 @@ impl Billing {
 }
 
 pub fn billing_of(cfg: &ModelConfig) -> Billing {
-    let mode = cfg.auth_mode.as_deref();
-    let account = signs_in_with_chatgpt(cfg)
-        || matches!(mode, Some("linggen_account" | "claude_oauth"))
-        || cfg.provider == "proxy";
+    let kind = cfg.provider_kind();
+    let account = matches!(
+        cfg.sign_in(),
+        SignIn::ChatGpt | SignIn::LinggenAccount | SignIn::Claude
+    ) || kind == ProviderKind::Proxy;
     match () {
         _ if account => Billing::Account,
         // The person said what it costs: it is metered, whatever its host.
         _ if cfg.price.is_some() => Billing::Metered,
         // Anthropic's wire is a hosted service even behind a local gateway:
         // someone bills it, so its tokens stay spend.
-        _ if cfg.provider != "anthropic" && crate::provider::is_local_backend(&cfg.url) => {
+        _ if kind != ProviderKind::Anthropic && crate::provider::is_local_backend(&cfg.url) => {
             Billing::Local
         }
         // Ollama's hosted models are a plan, not a price per token.
-        _ if cfg.provider == "ollama" => Billing::Account,
+        _ if kind == ProviderKind::Ollama => Billing::Account,
         _ => Billing::Metered,
     }
 }

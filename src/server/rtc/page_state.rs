@@ -374,21 +374,7 @@ pub async fn build_page_state(
         ps.models = Some(
             models
                 .into_iter()
-                .map(|(m, auth_ok)| {
-                    // Only send metadata — strip sensitive fields (api_key, url).
-                    // auth_ok is a runtime reading (credentials present now) so the
-                    // pickers can mark a model that would only bail AUTH_REQUIRED.
-                    serde_json::json!({
-                        "id": m.id,
-                        "provider": m.provider,
-                        "model": m.model,
-                        "tags": m.tags,
-                        "supports_tools": m.supports_tools,
-                        "provided_by": m.provided_by,
-                        "auth_ok": auth_ok,
-                        "supports_claude_sdk": crate::server::claude::supports_model(&m),
-                    })
-                })
+                .map(|(m, auth_ok)| model_row(&m, auth_ok))
                 .collect(),
         );
 
@@ -572,11 +558,49 @@ pub async fn build_page_state(
     ps
 }
 
+/// A model as the pickers and the top bar see it. Only metadata — no
+/// api_key, no url. `auth_ok` is a runtime reading (credentials present now)
+/// so the pickers can mark a model that would only bail AUTH_REQUIRED; what
+/// the model signs in with is the engine's answer (`ModelConfig::sign_in`),
+/// told, not worked out again in the UI.
+fn model_row(m: &crate::config::ModelConfig, auth_ok: bool) -> serde_json::Value {
+    serde_json::json!({
+        "id": m.id,
+        "provider": m.provider,
+        "model": m.model,
+        "tags": m.tags,
+        "supports_tools": m.supports_tools,
+        "provided_by": m.provided_by,
+        "auth_ok": auth_ok,
+        "supports_claude_sdk": crate::server::claude::supports_model(m),
+        "signs_in_with_chatgpt": m.signs_in_with_chatgpt(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::engine::events::QueuedChatItem;
     use std::collections::HashMap;
+
+    /// The top bar's ChatGPT allowance follows the engine's sign-in answer:
+    /// a `chatgpt_oauth` model on another provider counts, a Linggen Cloud
+    /// one on the `chatgpt` provider does not.
+    #[test]
+    fn a_model_row_says_whether_it_signs_in_with_chatgpt() {
+        let row = |provider: &str, auth: Option<&str>| {
+            let mut m: crate::config::ModelConfig = serde_json::from_value(serde_json::json!({
+                "id": "m", "provider": provider, "url": "", "model": "m",
+            }))
+            .unwrap();
+            m.auth_mode = auth.map(Into::into);
+            model_row(&m, true)["signs_in_with_chatgpt"].clone()
+        };
+        assert_eq!(row("openai", Some("chatgpt_oauth")), true);
+        assert_eq!(row("chatgpt", None), true);
+        assert_eq!(row("chatgpt", Some("linggen_account")), false);
+        assert_eq!(row("openai", None), false);
+    }
 
     #[test]
     fn a_page_is_told_of_rooms_only_as_the_switch_allows() {

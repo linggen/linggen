@@ -92,10 +92,10 @@ pub(super) fn resolve_model_catalog(
                 return serde_json::json!({ "id": id, "kind": "cloud" });
             }
             match config.models.iter().find(|m| &m.id == id) {
-                Some(m) if m.provider == "ollama" => {
+                Some(m) if m.provider_kind() == crate::config::ProviderKind::Ollama => {
                     serde_json::json!({ "id": id, "kind": "local" })
                 }
-                Some(m) if m.auth_mode.as_deref() == Some("chatgpt_oauth") => {
+                Some(m) if m.signs_in_with_chatgpt() => {
                     serde_json::json!({ "id": id, "kind": "oauth", "model": m.model })
                 }
                 Some(m) => serde_json::json!({
@@ -342,7 +342,7 @@ mod tests {
     fn configured(id: &str, provider: &str, model: &str, auth_mode: Option<&str>) -> crate::config::ModelConfig {
         let toml = format!("id = \"{id}\"\nprovider = \"{provider}\"\nurl = \"https://example.test/v1\"\nmodel = \"{model}\"\n");
         let mut m: crate::config::ModelConfig = toml::from_str(&toml).unwrap();
-        m.auth_mode = auth_mode.map(str::to_string);
+        m.auth_mode = auth_mode.map(Into::into);
         m
     }
 
@@ -362,6 +362,17 @@ mod tests {
         assert_eq!(got[1]["kind"], "byok");
         assert_eq!(got[1]["model"], "claude-next");
         assert_eq!(got[2], serde_json::json!({"id": "gpt-6-luna", "kind": "oauth"}));
+    }
+
+    /// A `chatgpt` provider signs in with ChatGPT whatever its auth mode
+    /// says (`ModelConfig::sign_in`): the phone is told `oauth`, never a
+    /// key-based model with no key.
+    #[test]
+    fn a_chatgpt_provider_without_an_auth_mode_reaches_the_phone_as_oauth() {
+        let mut cfg = crate::config::Config::default();
+        cfg.models = vec![configured("plain-sol", "chatgpt", "gpt-9-sol", None)];
+        let got = resolve_model_catalog(&["plain-sol".to_string()], &cfg);
+        assert_eq!(got[0], serde_json::json!({"id": "plain-sol", "kind": "oauth", "model": "gpt-9-sol"}));
     }
 
     /// The phone takes the ChatGPT client version and what every older id

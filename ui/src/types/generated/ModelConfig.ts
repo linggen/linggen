@@ -20,6 +20,7 @@ supports_tools: boolean | null,
 /**
  * Authentication mode: "api_key" (default) or "chatgpt_oauth".
  * When "chatgpt_oauth", uses ChatGPT subscription OAuth tokens instead of API key.
+ * Read through [`ModelConfig::sign_in`] (`config/sign_in.rs`).
  */
 auth_mode: string | null, 
 /**

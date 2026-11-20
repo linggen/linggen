@@ -21,7 +21,7 @@ export const SessionSpend: React.FC<{ leading: boolean }> = ({ leading }) => {
   const chosen = useUiStore((s) => s.sessionModel);
   const fallback = useServerStore((s) => s.defaultModels[0]);
   const modelId = chosen || fallback;
-  const onChatGpt = useServerStore((s) => s.models.find((m) => m.id === modelId)?.provider === 'chatgpt');
+  const onChatGpt = useServerStore((s) => s.models.find((m) => m.id === modelId)?.signs_in_with_chatgpt === true);
 
   const view = spendView({
     claude,
