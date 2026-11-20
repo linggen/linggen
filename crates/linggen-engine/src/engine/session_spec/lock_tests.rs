@@ -252,6 +252,11 @@ const WORK_WRITERS: &[(&str, usize, &str)] = &[
         "an agent_run caller's new run",
     ),
     (
+        "src/server/old_claude.rs",
+        1,
+        "the person's Continue in Linggen on an old Claude session",
+    ),
+    (
         "crates/linggen-engine/src/engine/prompt/work.rs",
         1,
         "reads the tag (a match arm)",
