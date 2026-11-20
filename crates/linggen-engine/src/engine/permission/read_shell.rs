@@ -6,9 +6,44 @@ use super::model::{command_run, command_tokens, file_name, is_odd_space, resolve
 use super::sensitive;
 use std::path::{Path, PathBuf};
 
-pub(super) fn recursive_search(cmd: &str) -> bool {
-    let tokens = command_tokens(cmd);
-    tokens.split(|token| matches!(token, Token::Op(_))).any(|segment| {
+pub(super) fn segment_roots(segment: &[Token], cwd: &Path) -> Vec<PathBuf> {
+    if !is_recursive_segment(segment) {
+        return Vec::new();
+    }
+    let words: Vec<_> = segment.iter().filter_map(|token| match token {
+        Token::Word(word) => Some(word.as_str()),
+        Token::Op(_) => None,
+    }).collect();
+    let run = command_run(&words);
+    let program = file_name(run[0]);
+    let normalized: Vec<_> = run.iter().enumerate().map(|(i, word)| {
+        Token::Word(if i == 0 { program.clone() } else { (*word).into() })
+    }).collect();
+    let text = super::pattern_text::text_words(&normalized);
+    let mut roots = Vec::new();
+    let mut options = true;
+    for (&word, is_text) in run.iter().zip(text).skip(1) {
+        let plain = dequote(word);
+        if options && plain == "--" {
+            options = false;
+            continue;
+        }
+        if program == "find" && (plain.starts_with('-') || matches!(plain.as_str(), "(" | "!")) {
+            if matches!(plain.as_str(), "-H" | "-L" | "-P" | "-x") && roots.is_empty() {
+                continue;
+            }
+            break;
+        }
+        if is_text || (options && plain.starts_with('-')) || plain == "-" {
+            continue;
+        }
+        roots.push(resolve_bash_arg(&plain, cwd));
+    }
+    if roots.is_empty() { roots.push(cwd.to_path_buf()); }
+    roots
+}
+
+fn is_recursive_segment(segment: &[Token]) -> bool {
         let words: Vec<_> = segment.iter().filter_map(|token| match token {
             Token::Word(word) => Some(word.as_str()),
             Token::Op(_) => None,
@@ -24,7 +59,6 @@ pub(super) fn recursive_search(cmd: &str) -> bool {
             }),
             _ => false,
         }
-    })
 }
 
 pub(super) fn tree_is_unprotected(root: &Path) -> bool {
@@ -35,9 +69,10 @@ pub(super) fn tree_is_unprotected(root: &Path) -> bool {
         if budget == 0 || sensitive::protected(&path).is_some() {
             return false;
         }
-        let Ok(metadata) = path.symlink_metadata() else {
-            if path == root && !path.exists() { continue; }
-            return false;
+        let metadata = match path.symlink_metadata() {
+            Ok(metadata) => metadata,
+            Err(error) if path == root && error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(_) => return false,
         };
         // Traversal through a directory link is not part of this proof.
         if metadata.is_symlink() && path.is_dir() { return false; }

@@ -73,7 +73,7 @@ fn read_policy_command_fixtures() {
         ("kill -TERM 46284; sleep 12", Ask),
         ("tail -15 O/tasks/sh-9a0f4a5f.log; kill -TERM 46284", Ask),
         ("cat S/account.toml", Refuse),
-        ("grep -r token S", Refuse),
+        ("grep -r token S", Ask),
     ];
     let failures: Vec<_> = tests.into_iter().filter_map(|(cmd, want)| {
         let cmd = cmd.split(' ').map(|word| {
@@ -143,6 +143,33 @@ fn read_policy_account_file_requires_local_owner_or_refuses() {
         [read(&broad), read(&named), read(&parent), read(&delegate(broad)), read(&delegate(named))],
         [Ask, Allow, Allow, Refuse, Refuse]
     );
+}
+
+fn fill_large_tree(root: &Path) {
+    std::fs::create_dir_all(root).unwrap();
+    for n in 0..20_000 {
+        std::fs::write(root.join(format!("entry-{n:05}")), "x").unwrap();
+    }
+}
+
+#[test]
+fn read_policy_recursive_search_on_large_trees() {
+    let world = tempfile::tempdir_in(dirs::home_dir().unwrap()).unwrap();
+    let cwd = world.path().join("project");
+    let outside = world.path().join("outside");
+    fill_large_tree(&cwd);
+    fill_large_tree(&outside);
+    let grants = grant(cwd.to_str().unwrap(), PermissionMode::Edit);
+    for with_env in [false, true] {
+        if with_env { file(&cwd, ".env"); }
+        for cmd in ["rg foo", "grep -rn foo .", "find . -name x"] {
+            assert_eq!(bash(cmd, &cwd, &grants), Allow, "{cmd}, with .env: {with_env}");
+        }
+    }
+    assert_eq!(bash(&format!("grep -rn foo {}", outside.display()), &cwd, &grants), Ask);
+    let private = world.path().join("private");
+    file(&private, ".ssh/config");
+    assert_eq!(bash(&format!("grep -rn foo {}", private.display()), &cwd, &grants), Ask);
 }
 
 #[test]

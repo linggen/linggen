@@ -30,6 +30,19 @@ pub(super) enum ReadDecision {
     Refuse,
 }
 
+/// An explicitly granted directory in which the session can edit the target.
+pub(super) fn in_edit_folder(target: &Path, perms: &SessionPermissions) -> bool {
+    if effective_mode_for_path(&perms.path_modes, target) < Some(PermissionMode::Edit) {
+        return false;
+    }
+    let real = sensitive::resolved(target);
+    perms.path_modes.iter().filter(|g| g.path != "*").any(|g| {
+        let grant = sensitive::resolved(Path::new(&g.path));
+        g.mode >= PermissionMode::Edit && grant.is_dir()
+            && real.strip_prefix(&grant).ok().is_some_and(|rel| crate::util::inside(&grant, rel).is_some())
+    })
+}
+
 /// Whether this exact target can be read. A wildcard is never a named
 /// grant. The edit exception also requires an actual directory grant.
 pub(super) fn decide(

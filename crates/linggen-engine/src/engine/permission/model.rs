@@ -958,14 +958,31 @@ fn check_grants(
                     }
                 }
             }
-            let targets = command_target_levels(cmd, session_cwd);
-            if action_tier == PermissionMode::Read && super::read_shell::recursive_search(cmd)
-                && (targets.iter().filter(|(_, kind)| *kind != TargetKind::Program)
-                    .any(|(path, _)| !super::read_shell::tree_is_unprotected(path))
-                    || (targets.iter().all(|(_, kind)| *kind == TargetKind::Program)
-                        && !super::read_shell::tree_is_unprotected(session_cwd)))
-            {
-                return PermissionCheckResult::Blocked("Use a file search to read a protected directory.".into());
+            let mut recursive_roots = Vec::new();
+            let targets = command_targets_and_roots(cmd, session_cwd, &mut recursive_roots);
+            if action_tier == PermissionMode::Read {
+                let mut ask = None;
+                for root in recursive_roots {
+                    let root = root.as_path();
+                    if let Some(c) = ceiling.filter(|_| owners_alone(session_perms, (action_tier, ceiling), root)) {
+                        return beyond_ceiling(PermissionMode::Admin, c);
+                    }
+                    if !reads_own_dir(session_perms, action_tier, root)
+                        && !read_scope::in_edit_folder(root, session_perms)
+                        && !approved.contains(&super::sensitive::resolved(root))
+                        && !super::read_shell::tree_is_unprotected(root)
+                    {
+                        ask.get_or_insert_with(|| {
+                            let mut prompt = needs_prompt(root, session_cwd, action_tier, format!("Bash {cmd}"), None);
+                            if let PermissionCheckResult::NeedsPrompt(PromptKind::ExceedsCeiling { scoped_read, directories, .. }) = &mut prompt {
+                                *scoped_read = true;
+                                directories.clear();
+                            }
+                            prompt
+                        });
+                    }
+                }
+                if let Some(ask) = ask { return ask; }
             }
             if !targets.is_empty() {
                 let mut judged = false;
@@ -1332,6 +1349,10 @@ fn copy_sources(tokens: &[Token]) -> Vec<usize> {
 /// Text the command carries is not a target: a heredoc body, or the pattern
 /// of grep, sed, awk or jq (see `shell_text`).
 fn command_target_levels(cmd: &str, session_cwd: &Path) -> Vec<(PathBuf, TargetKind)> {
+    command_targets_and_roots(cmd, session_cwd, &mut Vec::new())
+}
+
+fn command_targets_and_roots(cmd: &str, session_cwd: &Path, recursive_roots: &mut Vec<PathBuf>) -> Vec<(PathBuf, TargetKind)> {
     let cmd = strip_heredoc_bodies(cmd);
     let cmd = cmd.as_str();
     let mut cwd = session_cwd.to_path_buf();
@@ -1379,6 +1400,7 @@ fn command_target_levels(cmd: &str, session_cwd: &Path) -> Vec<(PathBuf, TargetK
             sed_files_from = None;
             tail_input = None;
             segment_end = index + tokens[index..].iter().position(|t| matches!(t, Token::Op(_))).unwrap_or(tokens.len() - index);
+            recursive_roots.extend(super::read_shell::segment_roots(&tokens[index..segment_end], &cwd));
             if w == "tail" {
                 let end = tokens[index..]
                     .iter()
