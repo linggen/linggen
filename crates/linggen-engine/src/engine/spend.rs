@@ -56,6 +56,21 @@ impl CallSpend {
     }
 }
 
+/// The only key to the session ledger's writer (`SessionStore::record_usage`):
+/// its field is private to this module, so a call record can be written only
+/// from here — `record_call` below, which every model call (an engine's, a
+/// summary, the next-prompt fork) goes through. A second writer, however
+/// aliased, does not compile.
+pub struct Seal(());
+
+#[cfg(test)]
+impl Seal {
+    /// The ledger's own unit tests write to it directly.
+    pub(crate) fn for_tests() -> Seal {
+        Seal(())
+    }
+}
+
 /// Put what a call used into the session's ledger. A call that never opened
 /// (refused, unreachable) cost nothing and is not a call.
 pub(crate) fn record_call(
@@ -72,7 +87,7 @@ pub(crate) fn record_call(
     let billing = models.config_of(model_id).map(billing_of);
     manager
         .global_sessions
-        .record_usage(session_id, model_id, billing, spent.usage());
+        .record_usage(&Seal(()), session_id, model_id, billing, spent.usage());
 }
 
 /// A summary of the context (`/compact`, outside any engine) is a call too.
@@ -134,9 +149,12 @@ mod lock {
         }
     }
 
-    /// The ledger has one writer per kind of call: the engine's `note_call`
-    /// and the next-prompt fork. A third caller fails here until it is
-    /// looked at and listed — and the sum for a session stays one store.
+    /// A TRIPWIRE, not the lock: the lock is `Seal` — a call record only this
+    /// module can make, which `record_usage` demands, so a second writer does
+    /// not compile. This text scan catches what the types cannot say: a
+    /// second `record_call` site, a key made elsewhere, or the ledger's file
+    /// written by hand. It says nothing about one call counted twice — that
+    /// is what the engine tests (one call, one record) are for.
     #[test]
     fn the_session_ledger_has_listed_writers_only() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -164,6 +182,26 @@ mod lock {
             found,
             vec![spend],
             "a new writer of the session ledger: {found:?}"
+        );
+        // The key is made in one place, the ledger's file named in one.
+        let count = |needle: &str| -> Vec<String> {
+            files
+                .iter()
+                .filter(|f| !f.ends_with("state_fs/session_usage.rs"))
+                .filter(|f| std::fs::read_to_string(f).is_ok_and(|t| t.contains(needle)))
+                .map(|f| f.file_name().unwrap().to_string_lossy().to_string())
+                .collect()
+        };
+        let made = count(concat!("&Seal", "(())"));
+        assert_eq!(
+            made,
+            vec!["spend.rs".to_string()],
+            "a key to the ledger made elsewhere"
+        );
+        assert_eq!(
+            count(concat!("\"usage", ".json\"")),
+            Vec::<String>::new(),
+            "the ledger's file named outside session_usage.rs"
         );
     }
 }
