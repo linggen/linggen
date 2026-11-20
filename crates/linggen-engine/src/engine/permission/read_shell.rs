@@ -27,6 +27,32 @@ pub(super) fn recursive_search(cmd: &str) -> bool {
     })
 }
 
+pub(super) fn tree_is_unprotected(root: &Path) -> bool {
+    let mut pending = vec![root.to_path_buf()];
+    let mut budget = 16_384;
+    while let Some(path) = pending.pop() {
+        budget -= 1;
+        if budget == 0 || sensitive::protected(&path).is_some() {
+            return false;
+        }
+        let Ok(metadata) = path.symlink_metadata() else {
+            if path == root && !path.exists() { continue; }
+            return false;
+        };
+        // Traversal through a directory link is not part of this proof.
+        if metadata.is_symlink() && path.is_dir() { return false; }
+        if metadata.is_dir() {
+            let Ok(entries) = path.read_dir() else { return false; };
+            for entry in entries {
+                let Ok(entry) = entry else { return false; };
+                pending.push(entry.path());
+                if pending.len() >= budget { return false; }
+            }
+        }
+    }
+    true
+}
+
 pub(super) struct ReadTargets {
     pub paths: Vec<PathBuf>,
     pub has_pattern: bool,
@@ -130,13 +156,8 @@ fn expand(word: &str, cwd: &Path) -> Option<Vec<PathBuf>> {
     if sensitive::protected(&prefix).is_some() || !prefix.canonicalize().ok()?.is_dir() {
         return None;
     }
-    // Check the fixed directory's tree without following links. Every
-    // expanded link is resolved and checked separately as a read target.
-    let mut budget = 16_384;
-    for entry in ignore::WalkBuilder::new(&prefix).standard_filters(false).hidden(false).build() {
-        let entry = entry.ok()?;
-        budget -= 1;
-        if budget == 0 || sensitive::protected(entry.path()).is_some() { return None; }
+    if !tree_is_unprotected(&prefix) {
+        return None;
     }
     let mut matches = vec![prefix];
     for component in pattern {

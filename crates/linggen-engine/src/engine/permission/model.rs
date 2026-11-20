@@ -959,9 +959,12 @@ fn check_grants(
                 }
             }
             let targets = command_target_levels(cmd, session_cwd);
-            if action_tier == PermissionMode::Read && targets.iter().any(|(path, _)| {
-                super::sensitive::protected(path).is_some() && path.is_dir()
-            }) && super::read_shell::recursive_search(cmd) {
+            if action_tier == PermissionMode::Read && super::read_shell::recursive_search(cmd)
+                && (targets.iter().filter(|(_, kind)| *kind != TargetKind::Program)
+                    .any(|(path, _)| !super::read_shell::tree_is_unprotected(path))
+                    || (targets.iter().all(|(_, kind)| *kind == TargetKind::Program)
+                        && !super::read_shell::tree_is_unprotected(session_cwd)))
+            {
                 return PermissionCheckResult::Blocked("Use a file search to read a protected directory.".into());
             }
             if !targets.is_empty() {

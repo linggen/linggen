@@ -146,6 +146,18 @@ fn read_policy_account_file_requires_local_owner_or_refuses() {
 }
 
 #[test]
+fn read_policy_recursive_shell_search_requires_a_bounded_scope() {
+    let world = tempfile::tempdir_in(dirs::home_dir().unwrap()).unwrap();
+    let cwd = world.path();
+    file(cwd, "source/public.txt");
+    file(cwd, "source/.ssh/private.txt");
+    let grants = grant("*", PermissionMode::Admin);
+    for cmd in ["grep -rn needle source", "grep -r needle", "rg --hidden needle ."] {
+        assert_ne!(bash(cmd, cwd, &grants), Allow, "{cmd}");
+    }
+}
+
+#[test]
 fn read_policy_skill_keeps_its_named_grant() {
     let sandbox = tempfile::tempdir_in(crate::paths::linggen_home()).unwrap();
     let folder = sandbox.path().join("skill-data");
