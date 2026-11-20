@@ -50,7 +50,7 @@ pub use declined::DeclinedScopes;
 pub use read_scope::ReadOrigin;
 #[cfg(test)]
 use model::check_permission_at_turn;
-pub(crate) use model::check_permission_with_read_approvals;
+pub(crate) use model::{allows_instruction_import, check_permission_with_read_approvals};
 pub use manifest::{apply_grants, Grants, PathGrant};
 pub use model::{
     check_permission, check_permission_for, display_path, effective_mode_for_path, parse_skill_tier, PathMode,

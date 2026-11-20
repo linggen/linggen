@@ -37,7 +37,7 @@ pub fn project_ancestors(path: &Path) -> Vec<&Path> {
     project_ancestors_within(path, home.as_deref())
 }
 
-fn project_ancestors_within<'a>(path: &'a Path, home: Option<&Path>) -> Vec<&'a Path> {
+pub(crate) fn project_ancestors_within<'a>(path: &'a Path, home: Option<&Path>) -> Vec<&'a Path> {
     let all = path.ancestors();
     let Some(home) = home.and_then(|h| home_forms(h).into_iter().find(|f| path.starts_with(f)))
     else {

@@ -185,7 +185,7 @@ fn workspace_listing(ws_root: &std::path::Path) -> String {
         if name.starts_with('.')
             && !matches!(
                 name.as_str(),
-                ".claude" | ".linggen" | ".git" | ".github" | ".vscode" | ".cursorrules"
+                ".claude" | ".linggen" | ".git" | ".github" | ".vscode" | super::instruction_files::CURSOR
             )
         {
             continue;
@@ -609,7 +609,7 @@ impl AgentEngine {
 
     /// Build the stable portion of the system prompt (agent spec + project context + memory)
     /// and return (content, hash). This is the cacheable prefix.
-    pub(crate) fn build_stable_system_content(&self) -> (String, u64) {
+    fn build_stable_system_content(&self, instructions: &super::instruction_files::Instructions) -> (String, u64) {
         use crate::prompts::keys;
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
@@ -641,56 +641,19 @@ impl AgentEngine {
             stable.push_str(&self.unavailable_section());
         }
 
-        // --- Project context files (owner only) ---
-        if self.prompt_profile.include_project_context {
-            let context_filenames = ["AGENTS.md", "CLAUDE.md", ".cursorrules"];
-            let mut seen: std::collections::HashSet<std::path::PathBuf> =
-                std::collections::HashSet::new();
-            let mut sections: Vec<(String, String)> = Vec::new();
-
-            // From the workspace up, never above $HOME (Claude Code walks to
-            // `/`; a tree above the person's home is not theirs to read).
-            for current in crate::engine::tools::project_ancestors(&self.cfg.ws_root) {
-                for filename in &context_filenames {
-                    let filepath = current.join(filename);
-                    if let Ok(canonical) = filepath.canonicalize() {
-                        if seen.contains(&canonical) {
-                            continue;
-                        }
-                        if let Ok(content) = std::fs::read_to_string(&filepath) {
-                            let content = content.trim().to_string();
-                            if !content.is_empty() {
-                                let label = if current == self.cfg.ws_root.as_path() {
-                                    filename.to_string()
-                                } else {
-                                    format!("{} (from {})", filename, current.display())
-                                };
-                                sections.push((label, content));
-                                seen.insert(canonical);
-                            }
-                        }
-                    }
-                }
+        if !instructions.sections.is_empty() {
+            stable.push_str(&self.prompt_store.render_or_fallback(
+                keys::SYSTEM_PROJECT_INSTRUCTIONS_HEADER, &[],
+            ));
+            for (label, content) in &instructions.sections {
+                stable.push_str(&self.prompt_store.render_or_fallback(
+                    keys::SYSTEM_PROJECT_INSTRUCTIONS_ENTRY,
+                    &[("label", label.as_str()), ("content", content.as_str())],
+                ));
             }
-            sections.reverse();
-            if !sections.is_empty() {
-                stable.push_str(
-                    &self
-                        .prompt_store
-                        .render_or_fallback(keys::SYSTEM_PROJECT_INSTRUCTIONS_HEADER, &[]),
-                );
-                for (label, content) in &sections {
-                    stable.push_str(&self.prompt_store.render_or_fallback(
-                        keys::SYSTEM_PROJECT_INSTRUCTIONS_ENTRY,
-                        &[("label", label.as_str()), ("content", content.as_str())],
-                    ));
-                }
-                stable.push_str(
-                    &self
-                        .prompt_store
-                        .render_or_fallback(keys::SYSTEM_PROJECT_INSTRUCTIONS_FOOTER, &[]),
-                );
-            }
+            stable.push_str(&self.prompt_store.render_or_fallback(
+                keys::SYSTEM_PROJECT_INSTRUCTIONS_FOOTER, &[],
+            ));
         }
 
         // --- Core memory (owner only) ---
@@ -764,17 +727,22 @@ impl AgentEngine {
         allowed_tools: Option<&HashSet<String>>,
     ) -> String {
         // Build stable system content with caching.
-        let (stable_content, hash) = self.build_stable_system_content();
+        self.sync_session_grants();
+        let instructions = self.instruction_scope().load();
+        let (stable_content, hash) = self.build_stable_system_content(&instructions);
         let cache_hit = self
             .cached_system_prompt
             .as_ref()
             .is_some_and(|c| c.input_hash == hash);
+        let files_hash = instructions.fingerprint();
         if !cache_hit {
             self.cached_system_prompt = Some(CachedSystemPrompt {
                 input_hash: hash,
-                files_hash: crate::engine::streaming::context_files_hash(&self.cfg.ws_root),
-                content: stable_content.clone(),
+                files_hash,
+                content: stable_content,
             });
+        } else if let Some(cache) = &mut self.cached_system_prompt {
+            cache.files_hash = files_hash;
         }
         let mut system = self.cached_system_prompt.as_ref().unwrap().content.clone();
 

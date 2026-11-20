@@ -15,6 +15,7 @@ pub mod mission;
 pub mod model_choice;
 pub mod image_relevance;
 pub mod image_search;
+mod instruction_files;
 pub(crate) mod light_turn;
 pub mod picture_sheet;
 pub mod page_pictures;
@@ -1512,6 +1513,7 @@ mod tests {
 
 #[cfg(test)]
 mod member_tests {
+    use super::instruction_files::{AGENTS, CLAUDE};
     use super::permission::{PermissionMode, SessionPermissions};
     use super::{AgentEngine, AgentRole, EngineConfig, InterfaceMode};
 
@@ -1562,9 +1564,9 @@ mod member_tests {
         let parent = tempfile::tempdir().unwrap();
         let root = parent.path().join("project");
         std::fs::create_dir(&root).unwrap();
-        let parent_rules = parent.path().join("AGENTS.md");
+        let parent_rules = parent.path().join(AGENTS);
         std::fs::write(&parent_rules, "parent rules version one").unwrap();
-        std::fs::write(root.join("CLAUDE.md"), "workspace rules").unwrap();
+        std::fs::write(root.join(CLAUDE), "workspace rules").unwrap();
         let mut engine = engine_at(&root);
         let (before, _, _) = engine.prepare_loop_messages("hi", true, super::prompt::PromptPurpose::Turn);
         let before = &before[0].content;
@@ -1580,13 +1582,13 @@ mod member_tests {
     #[test]
     fn unchanged_project_files_are_not_stale() {
         let root = tempfile::tempdir().unwrap();
-        std::fs::write(root.path().join("CLAUDE.md"), "the rules").unwrap();
+        std::fs::write(root.path().join(CLAUDE), "the rules").unwrap();
         let mut engine = engine_at(root.path());
         engine.prepare_loop_messages("hi", true, crate::engine::prompt::PromptPurpose::Turn);
-        let cached = engine.cached_system_prompt.as_ref().map(|c| c.files_hash);
-        assert!(!super::streaming::check_context_staleness(cached, root.path()));
-        std::fs::write(root.path().join("CLAUDE.md"), "new rules").unwrap();
-        assert!(super::streaming::check_context_staleness(cached, root.path()));
+        let cached = engine.cached_system_prompt.as_ref().unwrap().files_hash;
+        assert_eq!(cached, engine.instruction_scope().load().fingerprint());
+        std::fs::write(root.path().join(CLAUDE), "new rules").unwrap();
+        assert_ne!(cached, engine.instruction_scope().load().fingerprint());
     }
 
     /// After parallel tools find the project files changed, the system
@@ -1595,7 +1597,7 @@ mod member_tests {
     #[tokio::test]
     async fn a_rebuilt_system_message_keeps_the_turns_dynamic_parts() {
         let root = tempfile::tempdir().unwrap();
-        std::fs::write(root.path().join("CLAUDE.md"), "the old rules").unwrap();
+        std::fs::write(root.path().join(CLAUDE), "the old rules").unwrap();
         std::fs::write(root.path().join("a.txt"), "a").unwrap();
         let mut engine = engine_at(root.path());
         let task = "[HIDDEN] the page says hello (lang en)";
@@ -1621,7 +1623,7 @@ mod member_tests {
             empty_response_streak: 0,
             progress_rx,
         };
-        std::fs::write(root.path().join("CLAUDE.md"), "the new rules").unwrap();
+        std::fs::write(root.path().join(CLAUDE), "the new rules").unwrap();
         let glob = |pattern: &str| super::ToolUse {
             action: super::ModelAction {
                 tool: "Glob".into(),

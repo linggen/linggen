@@ -1097,6 +1097,28 @@ fn check_grants(
     )
 }
 
+/// Automatic prompt reads cannot ask, use an allow-once, or send protected
+/// files to a provider, even when an interactive read has a named grant.
+pub(crate) fn allows_instruction_import(
+    target: &Path,
+    canonical: &Path,
+    cwd: &Path,
+    perms: &SessionPermissions,
+    coding: bool,
+    ceiling: Option<PermissionMode>,
+    origin: ReadOrigin,
+    declined: &super::DeclinedScopes,
+) -> bool {
+    if [target, canonical].into_iter().any(|path| super::sensitive::protected(path).is_some()) {
+        return false;
+    }
+    canonical.to_str().is_some_and(|path| matches!(
+        check_permission_at_turn("Read", None, Some(path), cwd, perms, None,
+            coding, ceiling, origin.unattended(), Some(declined)),
+        PermissionCheckResult::Allowed
+    ))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn check_read_target(
     target: &Path, cwd: &Path, perms: &SessionPermissions, summary: &str,

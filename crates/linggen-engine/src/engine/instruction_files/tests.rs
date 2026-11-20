@@ -1,0 +1,211 @@
+use super::*;
+use std::fs::{self, write};
+
+fn scope(root: &Path) -> InstructionScope {
+    InstructionScope {
+        root: root.to_owned(),
+        enabled: true,
+        permissions: SessionPermissions {
+            path_modes: vec![permission::PathMode {
+                path: root.display().to_string(),
+                mode: PermissionMode::Edit,
+            }],
+            ..Default::default()
+        },
+        declined: DeclinedScopes::default(),
+        origin: ReadOrigin::LocalOwner,
+        coding: true,
+        ceiling: None,
+    }
+}
+
+fn rendered(result: &Instructions) -> String {
+    result
+        .sections
+        .iter()
+        .map(|(_, text)| text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+#[cfg(unix)]
+fn imports_expand_relative_to_each_source_with_labels_and_cycles_end() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    fs::create_dir(root.join("nested")).unwrap();
+    write(root.join(CLAUDE), "@nested/first.md @nested/first.md").unwrap();
+    write(root.join("nested/first.md"), "First rule. @second.md").unwrap();
+    write(root.join("nested/second.md"), "Second rule. @first.md").unwrap();
+    let result = scope(root).load();
+    let text = rendered(&result);
+    assert!(
+        text.contains("[Imported from \"nested/first.md\"]\nFirst rule."),
+        "{text}"
+    );
+    assert!(
+        text.contains("[Imported from \"nested/second.md\"]\nSecond rule."),
+        "{text}"
+    );
+    assert_eq!(text.matches("First rule.").count(), 1);
+    assert!(!text.contains("@first.md"));
+    assert!(result
+        .files
+        .contains(&root.join("nested/second.md").canonicalize().unwrap()));
+}
+
+#[test]
+fn mentions_missing_files_and_markdown_code_stay_verbatim() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    write(root.join("rule.md"), "MUST NOT LOAD").unwrap();
+    let text = "@银月 @coder me@example.com @missing.md\n\n`@rule.md` ``code: @rule.md``\n\n```md\n@rule.md\n```\n\n> ~~~~\n> @rule.md\n> ~~~~";
+    write(root.join(AGENTS), text).unwrap();
+    let result = scope(root).load();
+    assert_eq!(
+        result
+            .sections
+            .iter()
+            .find(|(name, _)| name == AGENTS)
+            .unwrap()
+            .1,
+        text
+    );
+    assert!(!rendered(&result).contains("MUST NOT LOAD"));
+}
+
+#[test]
+#[cfg(unix)]
+fn an_upward_escape_absolute_secret_and_outward_symlink_each_leave_a_refusal() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("project");
+    fs::create_dir(&root).unwrap();
+    let outside = dir.path().join("outside.md");
+    write(&outside, "OUTSIDE CONTENT").unwrap();
+    std::os::unix::fs::symlink(outside, root.join("link.md")).unwrap();
+    let secret = crate::paths::linggen_home().join("credentials.json");
+    // Do not create or read the engine's credentials. The absolute fixture
+    // is another protected path, with invented contents in this test's home.
+    let fake_home = tempfile::tempdir().unwrap();
+    let fake_secret = fake_home
+        .path()
+        .join(".ssh")
+        .join(secret.file_name().unwrap());
+    fs::create_dir(fake_secret.parent().unwrap()).unwrap();
+    write(&fake_secret, "INVENTED SECRET").unwrap();
+    write(
+        root.join(CLAUDE),
+        format!("@../outside.md\n@{}\n@link.md", fake_secret.display()),
+    )
+    .unwrap();
+    let text = rendered(&scope(&root).load());
+    for token in ["../outside.md", fake_secret.to_str().unwrap(), "link.md"] {
+        assert!(
+            text.contains(&format!(
+                "[Import @{token} not loaded: outside the project.]"
+            )),
+            "{text}"
+        );
+    }
+    assert!(!text.contains("OUTSIDE CONTENT") && !text.contains("INVENTED SECRET"));
+}
+
+#[test]
+#[cfg(unix)]
+fn protected_places_are_not_imported_even_with_a_named_grant() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    write(root.join(".env"), "INVENTED SECRET").unwrap();
+    std::os::unix::fs::symlink(root.join(".env"), root.join("alias.md")).unwrap();
+    write(root.join(AGENTS), "@alias.md").unwrap();
+    let mut scope = scope(root);
+    scope.permissions.path_modes.push(permission::PathMode {
+        path: root.join(".env").display().to_string(),
+        mode: PermissionMode::Read,
+    });
+    let text = rendered(&scope.load());
+    assert!(
+        text.contains("[Import @alias.md not loaded: protected or requires approval.]"),
+        "{text}"
+    );
+    assert!(!text.contains("INVENTED SECRET"));
+}
+
+#[test]
+#[cfg(unix)]
+fn imports_respect_the_turn_ceiling_and_reject_binary_and_oversize_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    write(root.join(CLAUDE), "@notes.md @binary @large").unwrap();
+    write(root.join("notes.md"), "rule text").unwrap();
+    write(root.join("binary"), b"contains\0nul").unwrap();
+    write(root.join("large"), vec![b'x'; MAX_FILE + 1]).unwrap();
+    let mut scope = scope(root);
+    let text = rendered(&scope.load());
+    assert!(text.contains("rule text"));
+    assert_eq!(text.matches("over size limit").count(), 2);
+    scope.ceiling = Some(PermissionMode::Chat);
+    let text = rendered(&scope.load());
+    assert!(!text.contains("rule text"));
+    assert!(text.contains("[Import @notes.md not loaded: protected or requires approval.]"));
+}
+
+#[test]
+#[cfg(unix)]
+fn changing_only_an_import_changes_the_instruction_fingerprint() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    write(root.join(CLAUDE), "@notes.md").unwrap();
+    write(root.join("notes.md"), "before").unwrap();
+    let scope = scope(root);
+    let first = scope.load();
+    assert_eq!(first.fingerprint(), scope.load().fingerprint());
+    write(root.join("notes.md"), "after").unwrap();
+    let second = scope.load();
+    assert_ne!(first.fingerprint(), second.fingerprint());
+    assert!(rendered(&second).contains("after"));
+}
+
+#[test]
+fn root_home_and_machine_local_rules_load_but_home_parents_do_not() {
+    let home = dirs::home_dir().unwrap();
+    let dir = tempfile::tempdir_in(home).unwrap();
+    let home = dir.path().join("home");
+    let root = home.join("project");
+    fs::create_dir_all(&root).unwrap();
+    write(dir.path().join(CLAUDE), "above home").unwrap();
+    write(home.join(AGENTS), "home rule").unwrap();
+    write(root.join(CLAUDE), "root rule").unwrap();
+    write(root.join(LOCAL), "local rule").unwrap();
+    let mut scope = scope(&root);
+    let text = rendered(&scope.load_with_home(Some(&home)));
+    assert!(text.find("home rule").unwrap() < text.find("root rule").unwrap());
+    assert!(text.find("root rule").unwrap() < text.find("local rule").unwrap());
+    assert!(!text.contains("above home"));
+    scope.enabled = false;
+    assert!(scope.load_with_home(Some(&home)).sections.is_empty());
+}
+
+#[test]
+fn native_instruction_filenames_live_in_one_place() {
+    fn check(dir: &Path) {
+        for entry in fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                check(&path);
+            } else if path.extension().is_some_and(|ext| ext == "rs")
+                && !path.ends_with("engine/instruction_files.rs")
+            {
+                let source = fs::read_to_string(&path).unwrap();
+                for name in NAMES {
+                    assert!(
+                        !source.contains(&format!("\"{name}\"")),
+                        "{} repeats the native instruction name {name}",
+                        path.display()
+                    );
+                }
+            }
+        }
+    }
+    check(&Path::new(env!("CARGO_MANIFEST_DIR")).join("src/engine"));
+}
