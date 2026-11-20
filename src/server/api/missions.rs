@@ -1,3 +1,4 @@
+use crate::engine::permission::PermissionMode;
 use crate::extensions::missions::{self, MissionDraft, MissionPermission};
 use crate::server::chat::run_calls;
 use crate::server::{ServerEvent, ServerState};
@@ -10,8 +11,6 @@ use axum::{
 use serde::Deserialize;
 use std::sync::Arc;
 
-/// Accepted values for permission.mode.
-const VALID_MODES: &[&str] = &["read", "edit", "admin"];
 
 /// 409 for a change a skill mission's owner refuses (its file is the
 /// skill's), else `fallback`.
@@ -25,16 +24,22 @@ fn status_for(e: &anyhow::Error, fallback: StatusCode) -> StatusCode {
     }
 }
 
+/// A mission's `permission.mode`: a mode as `PermissionMode` prints it,
+/// above chat (`write` is refused here).
+fn mission_mode(mode: PermissionMode) -> bool {
+    mode != PermissionMode::Chat
+}
+
 fn validate_mode(mode: &str) -> Result<(), String> {
-    if VALID_MODES.contains(&mode) {
-        Ok(())
-    } else {
-        Err(format!(
-            "Invalid permission.mode '{}'. Allowed: {}",
-            mode,
-            VALID_MODES.join(", ")
-        ))
+    if PermissionMode::parse(mode).is_some_and(mission_mode) {
+        return Ok(());
     }
+    let allowed: Vec<&str> = PermissionMode::ALL
+        .into_iter()
+        .filter(|m| mission_mode(*m))
+        .map(PermissionMode::as_str)
+        .collect();
+    Err(format!("Invalid permission.mode '{mode}'. Allowed: {}", allowed.join(", ")))
 }
 
 /// GET /api/missions — list all global missions.
@@ -752,6 +757,21 @@ mod permission_tests {
             .iter()
             .map(|g| (g.path.clone(), g.mode.clone()))
             .collect()
+    }
+
+    /// What a mission's `permission_mode` takes, for every mode word and the
+    /// hosts' words, and what it says of the rest.
+    #[test]
+    fn a_mission_mode_is_read_edit_or_admin() {
+        for word in ["read", "edit", "admin"] {
+            assert_eq!(validate_mode(word), Ok(()), "{word}");
+        }
+        for word in ["chat", "write", "Admin", "", "plan", "default", "acceptEdits", "auto", "bypassPermissions"] {
+            assert_eq!(
+                validate_mode(word),
+                Err(format!("Invalid permission.mode '{word}'. Allowed: read, edit, admin")),
+            );
+        }
     }
 
     #[test]

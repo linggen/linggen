@@ -46,14 +46,44 @@ pub enum PermissionMode {
     Admin,
 }
 
+/// The one table of a mode's words: what it prints and stores as
+/// ([`Self::as_str`], the same as its serde word) and what reads it back
+/// ([`Self::parse`], [`Self::parse_written`]). Each caller narrows the
+/// parsed mode to what it takes; no caller matches the words itself
+/// (lock: `structure_lock_tests::a_permission_mode_word_is_parsed_in_one_place`).
+impl PermissionMode {
+    /// Every mode, lowest first.
+    pub const ALL: [Self; 4] = [Self::Chat, Self::Read, Self::Edit, Self::Admin];
+
+    /// The word a mode prints, stores and travels as.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Chat => "chat",
+            Self::Read => "read",
+            Self::Edit => "edit",
+            Self::Admin => "admin",
+        }
+    }
+
+    /// The mode `word` names, exactly as [`Self::as_str`] prints it.
+    pub fn parse(word: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|m| m.as_str() == word)
+    }
+
+    /// The mode a person wrote in a skill's or mission's YAML: the printed
+    /// words, and `write` for edit (people write "write"; the engine says
+    /// "edit"). The stored word is kept as written.
+    pub fn parse_written(word: &str) -> Option<Self> {
+        match word {
+            "write" => Some(Self::Edit),
+            _ => Self::parse(word),
+        }
+    }
+}
+
 impl std::fmt::Display for PermissionMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            PermissionMode::Chat => write!(f, "chat"),
-            PermissionMode::Read => write!(f, "read"),
-            PermissionMode::Edit => write!(f, "edit"),
-            PermissionMode::Admin => write!(f, "admin"),
-        }
+        f.write_str(self.as_str())
     }
 }
 
@@ -693,14 +723,11 @@ pub fn tool_action_tier(tool: &str) -> PermissionMode {
     }
 }
 
-/// Parse the `tier:` string from a skill tool's manifest into a `PermissionMode`.
+/// Parse the `tier:` string from a skill tool's manifest into a
+/// `PermissionMode` ([`PermissionMode::parse_written`]). `chat` is no tier:
+/// a tool that says it is falls back as an unknown one does.
 pub fn parse_skill_tier(tier: &str) -> Option<PermissionMode> {
-    match tier {
-        "read" => Some(PermissionMode::Read),
-        "edit" | "write" => Some(PermissionMode::Edit),
-        "admin" => Some(PermissionMode::Admin),
-        _ => None,
-    }
+    PermissionMode::parse_written(tier).filter(|mode| *mode != PermissionMode::Chat)
 }
 
 // ---------------------------------------------------------------------------

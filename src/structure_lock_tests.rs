@@ -8,8 +8,20 @@
 //!   (`from_id`, or a `from` / `from_id` taken from it) with one of its
 //!   names, as a literal or a `*_SENDER` constant. Agent ids are not locked.
 //!
-//! The module walk is the same as `permission_lock_tests.rs`'s; a third lock
-//! of this kind should share one walker.
+//! - Which turn runs under the owner's session policy is decided by
+//!   `chat::policy::turn_policy` alone: no other production code names
+//!   `SessionPolicy::owner` / `default` / `from_user_type`, or leaves a
+//!   turn's `policy` to `Default::default()`.
+//! - A permission-mode word (`chat`/`read`/`edit`/`write`/`admin`) is read
+//!   into a `PermissionMode` only by the engine's `PermissionMode::parse` /
+//!   `parse_written`: no other match arm on those words makes a mode, and no
+//!   other list of them is kept.
+//! - The words a calling host names its permission mode with (`agent_run`'s
+//!   `permission_mode`) are written once, in `mcp_agent::HostMode`: the
+//!   schema, its descriptions and the grant are made from it.
+//!
+//! The module walk is the same as `permission_lock_tests.rs`'s; new locks of
+//! this kind are added to this walker, not a third one.
 
 use std::path::{Path, PathBuf};
 use syn::visit::{self, Visit};
@@ -19,6 +31,12 @@ use syn::{Attribute, BinOp, Expr, ItemMod, Lit, Meta};
 const STORE_MAKER: &str = "crates/linggen-engine/src/state_fs/sessions.rs::global";
 /// The one place a row's sender is read.
 const AUTHOR_DECIDER: &str = "crates/linggen-engine/src/state_fs/row_author.rs";
+/// The one place that says which turn gets the owner's session policy.
+const POLICY_DECIDER: &str = "src/server/chat/policy.rs";
+/// The one place a permission-mode word becomes a `PermissionMode`.
+const MODE_WORDS_DECIDER: &str = "crates/linggen-engine/src/engine/permission/model.rs";
+/// The one place a host's permission-mode words are written.
+const HOST_WORDS_DECIDER: &str = "src/server/mcp_agent.rs::word";
 
 fn test_only(attrs: &[Attribute]) -> bool {
     attrs.iter().any(|attr| {
@@ -43,6 +61,51 @@ struct Found {
     stores: Vec<String>,
     /// `file::fn` of every production comparison of a sender with a literal.
     sender_literals: Vec<String>,
+    /// `file::fn` of every production use of `SessionPolicy::owner` /
+    /// `default` / `from_user_type`, or `policy: Default::default()`.
+    owner_policies: Vec<String>,
+    /// `file::fn` of every production match arm that turns a mode word into
+    /// a `PermissionMode`, and every list of mode words.
+    mode_parses: Vec<String>,
+    /// `file::fn` of every production string literal holding a host's mode
+    /// word `acceptEdits` or `bypassPermissions` (a macro body once).
+    host_words: Vec<String>,
+}
+
+/// The permission-mode words, the `write` alias with them.
+const MODE_WORDS: [&str; 5] = ["chat", "read", "edit", "write", "admin"];
+
+fn is_mode_word(lit: &Lit) -> bool {
+    matches!(lit, Lit::Str(s) if MODE_WORDS.contains(&s.value().as_str()))
+}
+
+fn has_mode_word(pat: &syn::Pat) -> bool {
+    match pat {
+        syn::Pat::Lit(lit) => is_mode_word(&lit.lit),
+        syn::Pat::Or(or) => or.cases.iter().any(has_mode_word),
+        syn::Pat::TupleStruct(t) => t.elems.iter().any(has_mode_word),
+        syn::Pat::Tuple(t) => t.elems.iter().any(has_mode_word),
+        _ => false,
+    }
+}
+
+/// The host words only `HostMode` writes.
+fn holds_host_word(text: &str) -> bool {
+    text.contains("acceptEdits") || text.contains("bypassPermissions")
+}
+
+/// Whether `expr` names `PermissionMode` anywhere in it.
+fn mentions_mode(expr: &Expr) -> bool {
+    struct Mentions(bool);
+    impl<'ast> Visit<'ast> for Mentions {
+        fn visit_path_segment(&mut self, seg: &'ast syn::PathSegment) {
+            self.0 |= seg.ident == "PermissionMode";
+            visit::visit_path_segment(self, seg);
+        }
+    }
+    let mut m = Mentions(false);
+    m.visit_expr(expr);
+    m.0
 }
 
 struct Scan<'a> {
@@ -153,6 +216,67 @@ impl<'ast> Visit<'ast> for Scan<'_> {
         visit::visit_expr_match(self, m);
     }
 
+    fn visit_expr_path(&mut self, path: &'ast syn::ExprPath) {
+        let names: Vec<String> = path.path.segments.iter().map(|s| s.ident.to_string()).collect();
+        let owner = ["owner", "default", "from_user_type"]
+            .iter()
+            .any(|f| names.ends_with(&["SessionPolicy".into(), (*f).into()]));
+        if owner {
+            let here = self.here();
+            self.found.owner_policies.push(here);
+        }
+        visit::visit_expr_path(self, path);
+    }
+
+    fn visit_field_value(&mut self, field: &'ast syn::FieldValue) {
+        let policy = matches!(&field.member, syn::Member::Named(n) if n == "policy");
+        let defaulted = matches!(&field.expr, Expr::Call(call)
+            if matches!(&*call.func, Expr::Path(p) if p.path.segments.iter().map(|s| s.ident.to_string()).collect::<Vec<_>>() == ["Default", "default"]));
+        if policy && defaulted {
+            let here = self.here();
+            self.found.owner_policies.push(here);
+        }
+        visit::visit_field_value(self, field);
+    }
+
+    fn visit_arm(&mut self, arm: &'ast syn::Arm) {
+        if has_mode_word(&arm.pat) && mentions_mode(&arm.body) {
+            let here = self.here();
+            self.found.mode_parses.push(here);
+        }
+        visit::visit_arm(self, arm);
+    }
+
+    fn visit_expr_array(&mut self, array: &'ast syn::ExprArray) {
+        let words = array
+            .elems
+            .iter()
+            .filter(|e| matches!(e, Expr::Lit(l) if is_mode_word(&l.lit)))
+            .count();
+        if words >= 2 {
+            let here = self.here();
+            self.found.mode_parses.push(here);
+        }
+        visit::visit_expr_array(self, array);
+    }
+
+    fn visit_lit_str(&mut self, lit: &'ast syn::LitStr) {
+        if holds_host_word(&lit.value()) {
+            let here = self.here();
+            self.found.host_words.push(here);
+        }
+    }
+
+    fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+        // A macro's tokens are not parsed: a body holding a host word
+        // counts once.
+        if holds_host_word(&mac.tokens.to_string()) {
+            let here = self.here();
+            self.found.host_words.push(here);
+        }
+        visit::visit_macro(self, mac);
+    }
+
     fn visit_item_mod(&mut self, item: &'ast ItemMod) {
         if test_only(&item.attrs) {
             return;
@@ -261,6 +385,68 @@ fn who_wrote_a_row_is_read_only_through_row_author() {
         found.is_empty(),
         "ask `RowAuthor::of` / `ChatMsg::author` instead of comparing a sender with a fixed name: {found:#?}"
     );
+}
+
+#[test]
+fn which_turn_gets_the_owner_policy_is_decided_in_one_place() {
+    let found: Vec<String> = production()
+        .owner_policies
+        .into_iter()
+        .filter(|at| at.starts_with("src/") && !at.starts_with(POLICY_DECIDER))
+        .collect();
+    assert!(
+        found.is_empty(),
+        "ask `chat::policy::turn_policy` for a turn's policy instead of choosing one here: {found:#?}"
+    );
+}
+
+#[test]
+fn a_permission_mode_word_is_parsed_in_one_place() {
+    let found: Vec<String> = production()
+        .mode_parses
+        .into_iter()
+        .filter(|at| !at.starts_with(MODE_WORDS_DECIDER))
+        .collect();
+    assert!(
+        found.is_empty(),
+        "parse a mode word with `PermissionMode::parse` / `parse_written` instead of matching it here: {found:#?}"
+    );
+}
+
+#[test]
+fn a_hosts_permission_words_are_written_once() {
+    assert_eq!(
+        production().host_words,
+        [HOST_WORDS_DECIDER, HOST_WORDS_DECIDER],
+        "make `agent_run`'s permission_mode words from `mcp_agent::HostMode`, never a second list"
+    );
+}
+
+#[test]
+fn the_scan_finds_policies_mode_words_and_host_words_but_not_test_fixtures() {
+    let parsed = syn::parse_file(
+        r#"fn a() { let p = SessionPolicy::owner(); let q = crate::engine::session_policy::SessionPolicy::default(); }
+           fn b(t: &str) { let c = Ctx { policy: Default::default() }; SessionPolicy::from_user_type(t, f); }
+           fn c(m: &str) -> PermissionMode { match m { "edit" | "write" => PermissionMode::Edit, _ => PermissionMode::Read } }
+           fn d(m: &str) -> &str { match m { "edit" => "edited", _ => "" } }
+           const VALID: &[&str] = &["read", "edit", "admin"];
+           fn e() { json!({"enum": ["plan", "acceptEdits"]}); let s = "default/bypassPermissions"; }
+           #[cfg(test)] mod tests { fn f() { SessionPolicy::owner(); let s = "acceptEdits"; } }
+           #[test] fn t() { match m { "read" => PermissionMode::Read, _ => x } }"#,
+    )
+    .unwrap();
+    let mut found = Found::default();
+    Scan {
+        root: Path::new(""),
+        file: Path::new("lib.rs"),
+        modules: Path::new(""),
+        func: String::new(),
+        found: &mut found,
+    }
+    .visit_file(&parsed);
+    assert_eq!(found.owner_policies, ["lib.rs::a", "lib.rs::a", "lib.rs::b", "lib.rs::b"]);
+    assert_eq!(found.mode_parses, ["lib.rs::c", "lib.rs::"]);
+    assert_eq!(found.host_words, ["lib.rs::e", "lib.rs::e"]);
 }
 
 #[test]

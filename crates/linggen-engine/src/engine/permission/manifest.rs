@@ -47,16 +47,12 @@ impl Grants {
     }
 }
 
-/// Parse a frontmatter mode string into the engine enum. Accepts `"write"`
-/// as an alias for `"edit"` because users naturally write "write" in YAML
-/// even though the engine's internal vocabulary says "edit". Unknown
-/// strings fall back to `Read` — the safest default.
+/// Parse a frontmatter mode string into the engine enum
+/// ([`PermissionMode::parse_written`], so `"write"` is edit, `"chat"` chat).
+/// Unknown strings fall back to `Read` — the safest default for a word
+/// that names no mode.
 pub fn parse_mode_str(m: &str) -> PermissionMode {
-    match m {
-        "edit" | "write" => PermissionMode::Edit,
-        "admin" => PermissionMode::Admin,
-        _ => PermissionMode::Read,
-    }
+    PermissionMode::parse_written(m).unwrap_or(PermissionMode::Read)
 }
 
 /// Apply every grant in `perm` to `session` via `set_path_mode`, in order.

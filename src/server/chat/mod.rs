@@ -31,6 +31,7 @@ pub(super) mod helpers;
 mod light;
 pub(crate) mod members;
 mod plan_flow;
+pub(crate) mod policy;
 pub(crate) mod presence;
 mod restored_tools;
 pub(crate) mod run_calls;

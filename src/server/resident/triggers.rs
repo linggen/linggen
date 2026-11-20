@@ -878,7 +878,7 @@ pub(super) async fn deliver_to_chat_agent(
             session_id: Some(session_id.clone()),
             clean_msg: message,
             images: Vec::new(),
-            policy: crate::engine::session_policy::SessionPolicy::owner(),
+            policy: crate::server::chat::policy::turn_policy(crate::server::chat::policy::TurnBy::Engine),
             sender: Some(from.clone()),
             origin: Origin::Person,
             place: delivered_place(&state, &session_id, app.as_deref()),

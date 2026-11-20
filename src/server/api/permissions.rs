@@ -64,6 +64,12 @@ pub(crate) struct UpdatePermissionRequest {
 /// from a skill iframe would only take effect after the session is
 /// reloaded, which is the bug skills like Pulse hit when replaying their
 /// runtime grants on iframe mount.
+/// The mode a session-permission PATCH asks for: one of the four words, as
+/// `PermissionMode` prints them (`write` is refused here).
+fn grant_mode(word: &str) -> Option<crate::engine::permission::PermissionMode> {
+    crate::engine::permission::PermissionMode::parse(word)
+}
+
 pub(crate) async fn update_session_permission(
     State(state): State<Arc<ServerState>>,
     Json(req): Json<UpdatePermissionRequest>,
@@ -78,14 +84,10 @@ pub(crate) async fn update_session_permission(
     {
         return StatusCode::BAD_REQUEST;
     }
-    use crate::engine::permission::{PermissionMode, SessionPermissions};
+    use crate::engine::permission::SessionPermissions;
 
-    let mode = match req.mode.as_str() {
-        "chat" => PermissionMode::Chat,
-        "read" => PermissionMode::Read,
-        "edit" => PermissionMode::Edit,
-        "admin" => PermissionMode::Admin,
-        _ => return StatusCode::BAD_REQUEST,
+    let Some(mode) = grant_mode(&req.mode) else {
+        return StatusCode::BAD_REQUEST;
     };
 
     // Persist to disk so the grant survives session restart.
@@ -109,4 +111,30 @@ pub(crate) async fn update_session_permission(
         .events_tx
         .send(crate::server::ServerEvent::StateUpdated);
     StatusCode::OK
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::engine::permission::PermissionMode;
+
+    /// What a PATCH takes, for every mode word and the hosts' words.
+    #[test]
+    fn a_session_grant_takes_the_four_printed_words_only() {
+        for (word, mode) in [
+            ("chat", Some(PermissionMode::Chat)),
+            ("read", Some(PermissionMode::Read)),
+            ("edit", Some(PermissionMode::Edit)),
+            ("admin", Some(PermissionMode::Admin)),
+            ("write", None),
+            ("Admin", None),
+            ("", None),
+            ("plan", None),
+            ("default", None),
+            ("acceptEdits", None),
+            ("auto", None),
+            ("bypassPermissions", None),
+        ] {
+            assert_eq!(super::grant_mode(word), mode, "{word}");
+        }
+    }
 }
