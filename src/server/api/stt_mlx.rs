@@ -44,10 +44,11 @@ const COMPRESSION_RATIO_MAX: f64 = 2.4;
 /// The line while the model is being got ready — said at a press, never kept.
 const PREPARING: &str = "Getting ready to listen…";
 
-/// How the person's language setting shapes what is heard: the language the
-/// clip is in when the setting names one, else the model finds it by itself;
-/// and for Simplified Chinese a prompt that keeps the script Simplified (the
-/// model otherwise picks a script at random).
+/// How the clip's language shapes what is heard: the language the clip is in
+/// when it names one the model hears, else the model finds it by itself; and
+/// for Simplified Chinese a prompt that keeps the script Simplified (the model
+/// otherwise picks a script at random). Which language the clip is in is
+/// `stt::language_to_hear`'s decision, never made here.
 #[derive(Debug, PartialEq)]
 struct Hint {
     language: Option<&'static str>,
@@ -59,9 +60,9 @@ struct Hint {
 const HEARD_LANGUAGES: [&str; 10] = ["zh", "en", "ja", "ko", "fr", "de", "es", "pt", "it", "ru"];
 const SIMPLIFIED_PROMPT: &str = "以下是普通话的句子。";
 
-/// The hint for `setting` (`language::setting()`: a BCP-47 tag, or none under Auto).
-fn hint_of(setting: Option<&str>) -> Hint {
-    let tag = setting.unwrap_or("").to_ascii_lowercase().replace('_', "-");
+/// The hint for `language`: a BCP-47 tag, or none.
+fn hint_of(language: Option<&str>) -> Hint {
+    let tag = language.unwrap_or("").to_ascii_lowercase().replace('_', "-");
     let mut parts = tag.split('-');
     let Some(language) = parts.next().and_then(|code| HEARD_LANGUAGES.iter().find(|l| **l == code)) else {
         return Hint { language: None, prompt: None };
@@ -185,8 +186,8 @@ impl MlxSttProvider {
     }
 
     /// The words in `samples`, from the sidecar.
-    async fn listen(&self, samples: &[i16]) -> anyhow::Result<Heard> {
-        let request = hear_request(samples, &hint_of(crate::language::setting().as_deref()));
+    async fn listen(&self, samples: &[i16], language: &str) -> anyhow::Result<Heard> {
+        let request = hear_request(samples, &hint_of(Some(language)));
         let wait = Duration::from_secs(BASE_WAIT_SECS + samples.len() as u64 / RATE as u64 / 2);
         let reply = self.sidecar.ask_to_hear(&request, wait).await?;
         let text = words_of(&reply).ok_or_else(|| anyhow::anyhow!("reply missing text"))?;
@@ -236,13 +237,23 @@ impl SttProvider for MlxSttProvider {
         }
     }
 
-    async fn hear(&self, samples: &[i16]) -> Result<Heard, Unavailable> {
+    /// At a start: a Mac that already holds the hearing model loads it, so
+    /// the first press does not wait. Only the load step — never a fetch (a
+    /// Mac that never fetched it does nothing until a press asks).
+    fn warm_if_fetched(&self) {
+        let lane_open = crate::runtime::lane_verdict(&crate::runtime::VOICE_LANE).is_ok();
+        if let Step::Load = next_step(lane_open, crate::runtime::hearing_ready(), self.sidecar.hearing_loaded()) {
+            self.loader.start();
+        }
+    }
+
+    async fn hear(&self, samples: &[i16], language: &str) -> Result<Heard, Unavailable> {
         // Never inside a hear's wait: a load is its own step.
         if !self.sidecar.hearing_loaded() {
             self.loader.start();
             return Err(Unavailable::fetching(PREPARING));
         }
-        self.listen(samples).await.map_err(|e| {
+        self.listen(samples, language).await.map_err(|e| {
             tracing::warn!("[stt] {e:#}");
             Unavailable::because("Hearing stopped for a moment. Try again.")
         })
@@ -353,11 +364,11 @@ done
         assert_eq!(next_step(false, true, false), Step::Nothing);
     }
 
-    /// Rule 3: the person's language setting is the clip's language when it
-    /// names one the model hears, with a Simplified prompt for Chinese and
-    /// never for a Traditional tag; under Auto nothing is forced.
+    /// The clip's language is the model's language when it names one the model
+    /// hears, with a Simplified prompt for Chinese and never for a Traditional
+    /// tag; a tag the model does not know is left to find it.
     #[test]
-    fn the_language_setting_is_the_hint_and_simplified_chinese_keeps_its_script() {
+    fn the_clips_language_is_the_hint_and_simplified_chinese_keeps_its_script() {
         let hint = |setting| hint_of(setting);
         assert_eq!(hint(None), Hint { language: None, prompt: None });
         assert_eq!(hint(Some("")), Hint { language: None, prompt: None });
@@ -417,7 +428,7 @@ done
     async fn the_providers_samples_reach_the_sidecar_and_its_words_come_back() {
         let dir = tempfile::tempdir().unwrap();
         let hearing = MlxSttProvider::new(fake_sidecar(dir.path()));
-        let heard = hearing.listen(&[100i16; 16_000]).await.unwrap();
+        let heard = hearing.listen(&[100i16; 16_000], "zh").await.unwrap();
         assert_eq!(heard.text, "今天有什么安排 and the budget", "the stock phrase the model reported as no speech is dropped");
         assert_eq!(heard.language, "zh");
     }
@@ -430,7 +441,7 @@ done
         let dir = tempfile::tempdir().unwrap();
         let sidecar = fake_sidecar(dir.path());
         let hearing = MlxSttProvider::new(sidecar.clone());
-        let refused = hearing.hear(&[100i16; 16_000]).await.unwrap_err();
+        let refused = hearing.hear(&[100i16; 16_000], "zh").await.unwrap_err();
         assert_eq!(refused, Unavailable::fetching(PREPARING));
         for _ in 0..100 {
             if sidecar.hearing_loaded() {
@@ -439,8 +450,21 @@ done
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
         assert!(sidecar.hearing_loaded(), "the load ran in its own task");
-        let heard = hearing.hear(&[100i16; 16_000]).await.unwrap();
+        let heard = hearing.hear(&[100i16; 16_000], "zh").await.unwrap();
         assert_eq!(heard.language, "zh");
+    }
+
+    /// A start loads only what is already here: a Mac without the hearing
+    /// model on disk (a test's world has none) starts neither a fetch nor a load.
+    #[tokio::test]
+    async fn a_start_on_a_mac_that_never_fetched_hearing_does_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let sidecar = fake_sidecar(dir.path());
+        let hearing = MlxSttProvider::new(sidecar.clone());
+        hearing.warm_if_fetched();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(hearing.loader.attempt.state(), AttemptState::Idle);
+        assert!(!sidecar.hearing_loaded());
     }
 
     /// After a call, no file anywhere this process writes holds the sound —
@@ -452,7 +476,7 @@ done
         let hearing = MlxSttProvider::new(fake_sidecar(dir.path()));
         // A pattern no other file holds.
         let samples: Vec<i16> = (0..16_000).map(|i| 0x1234 + (i % 7) as i16 * 0x0111).collect();
-        hearing.listen(&samples).await.unwrap();
+        hearing.listen(&samples, "zh").await.unwrap();
 
         let raw: Vec<u8> = samples.iter().flat_map(|s| s.to_le_bytes()).collect();
         let b64 = base64::engine::general_purpose::STANDARD.encode(&raw);

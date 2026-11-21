@@ -432,8 +432,24 @@ pub(crate) async fn language_of_turn(
     if named.is_some() || !origin.held() {
         return named;
     }
+    language_person_writes(state, session_id).await
+}
+
+/// The language of the latest line the person typed in this session, when it
+/// can be told from the line (`spoken::language_of_sample`: Chinese or
+/// nothing). The one reading of what the person writes: her engine-started
+/// turns follow it ([`language_of_turn`]) and so does what is heard of their
+/// voice (`api::stt::language_to_hear`).
+pub(crate) async fn language_person_writes(state: &Arc<ServerState>, session_id: &str) -> Option<String> {
     let sample = super::triggers::last_user_line(state, session_id).await;
     sample.as_deref().and_then(super::spoken::language_of_sample)
+}
+
+/// [`language_person_writes`] in her own thread (the day's session, or her
+/// rolling one).
+pub(crate) async fn language_person_writes_to_her(state: &Arc<ServerState>) -> Option<String> {
+    let session = super::session_roll::resolve_current_session(state).await;
+    language_person_writes(state, &session).await
 }
 
 /// Whether her turn at this table stands in an app, or the table is a

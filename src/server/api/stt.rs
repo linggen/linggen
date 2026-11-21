@@ -91,8 +91,9 @@ impl Unavailable {
 
 /// A hearing backend: samples in, words out. 16 kHz mono 16-bit, at most
 /// [`MAX_SECS`] and never silent — the route has judged that before the call.
-/// There is no path or URL in this interface: a backend is handed the sound
-/// and nothing to fetch it from or send it to.
+/// There is no path or URL in this interface: a backend is handed the sound,
+/// the language tag the clip is in ([`language_to_hear`]) and nothing to
+/// fetch it from or send it to.
 #[async_trait]
 pub trait SttProvider: Send + Sync {
     /// Can it hear now? Asking starts nothing and changes nothing: this is
@@ -102,7 +103,11 @@ pub trait SttProvider: Send + Sync {
     /// can be fetched and no fetch runs. Only a clip sent (a real press)
     /// calls this; the GET never does.
     fn begin_fetch(&self);
-    async fn hear(&self, samples: &[i16]) -> Result<Heard, Unavailable>;
+    /// Load what hearing needs now if it is already on this machine, never
+    /// fetching anything: what a start does so the first press does not wait
+    /// (`background::prewarm_voice`).
+    fn warm_if_fetched(&self);
+    async fn hear(&self, samples: &[i16], language: &str) -> Result<Heard, Unavailable>;
 }
 
 /// The daemon's hearing — the single switch point for the daemon's STT.
@@ -149,7 +154,29 @@ pub(crate) async fn stt_handler(
         .get(header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-    answer(state.stt.as_ref(), (level, content_type), &body).await
+    let language = language_to_hear(&state).await;
+    answer(state.stt.as_ref(), (level, content_type), &language, &body).await
+}
+
+/// The language a clip is in, as far as the engine knows it — the one place
+/// that decides it. Three sources, the first that has one: the person's own
+/// setting (Settings → Language); under Auto, the language of the line they
+/// last typed to her (`resident::language_person_writes_to_her`); else the
+/// language the page is in (`language::effective`: the Mac's, then English),
+/// which is what she writes to them in. The Mac's language is the last
+/// resort: it is a guess, and a line the person wrote is better evidence.
+async fn language_to_hear(state: &Arc<ServerState>) -> String {
+    let setting = crate::language::setting();
+    let written = match setting {
+        Some(_) => None,
+        None => crate::server::resident::language_person_writes_to_her(state).await,
+    };
+    heard_in(setting.as_deref(), written.as_deref(), &crate::language::effective())
+}
+
+/// [`language_to_hear`]'s rule, on what it reads.
+fn heard_in(setting: Option<&str>, written: Option<&str>, page: &str) -> String {
+    setting.or(written).unwrap_or(page).to_string()
 }
 
 /// The route's whole decision, on what it is handed (so a test needs no
@@ -157,7 +184,7 @@ pub(crate) async fn stt_handler(
 /// refused before anything starts), then whether this machine can hear at
 /// all (a press that finds it cannot starts the fetch it waits on), then
 /// what the body holds, whether that is speech, and only then the model.
-async fn answer(stt: &dyn SttProvider, (level, content_type): (PermissionMode, &str), body: &[u8]) -> Response {
+async fn answer(stt: &dyn SttProvider, (level, content_type): (PermissionMode, &str), language: &str, body: &[u8]) -> Response {
     if let Some(refused) = crate::server::person::owners_only(level) {
         return refused;
     }
@@ -178,7 +205,7 @@ async fn answer(stt: &dyn SttProvider, (level, content_type): (PermissionMode, &
         return Json(json!({ "text": "" })).into_response();
     }
     let started = Instant::now();
-    match stt.hear(&samples).await {
+    match stt.hear(&samples, language).await {
         Ok(heard) if heard.text.trim().is_empty() => Json(json!({ "text": "" })).into_response(),
         Ok(heard) => {
             let ms = started.elapsed().as_millis() as u64;
@@ -303,6 +330,8 @@ mod tests {
         calls: AtomicUsize,
         fetches: AtomicUsize,
         heard_samples: AtomicUsize,
+        /// The language tag of the last clip it was handed.
+        heard_in: std::sync::Mutex<Option<String>>,
     }
 
     impl Fake {
@@ -314,6 +343,7 @@ mod tests {
                 calls: AtomicUsize::new(0),
                 fetches: AtomicUsize::new(0),
                 heard_samples: AtomicUsize::new(0),
+                heard_in: std::sync::Mutex::new(None),
             }
         }
         /// A machine that cannot hear, for a reason that will not pass.
@@ -340,7 +370,9 @@ mod tests {
         fn begin_fetch(&self) {
             self.fetches.fetch_add(1, Ordering::SeqCst);
         }
-        async fn hear(&self, samples: &[i16]) -> Result<Heard, Unavailable> {
+        fn warm_if_fetched(&self) {}
+        async fn hear(&self, samples: &[i16], language: &str) -> Result<Heard, Unavailable> {
+            *self.heard_in.lock().unwrap() = Some(language.to_string());
             self.calls.fetch_add(1, Ordering::SeqCst);
             self.heard_samples.store(samples.len(), Ordering::SeqCst);
             self.says.clone()
@@ -361,7 +393,7 @@ mod tests {
     const OWNER: PermissionMode = PermissionMode::Admin;
 
     async fn ask(stt: &Fake, level: PermissionMode, content_type: &str, body: &[u8]) -> (StatusCode, serde_json::Value) {
-        let response = answer(stt, (level, content_type), body).await;
+        let response = answer(stt, (level, content_type), "en", body).await;
         let status = response.status();
         let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
         (status, serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null))
@@ -582,6 +614,53 @@ mod tests {
         }
     }
 
+    /// Rule 2: the clip is heard in the language the engine knows the person
+    /// to speak: the setting; under Auto the language of what they last typed
+    /// to her; the page's only last. A typed line that says nothing (English,
+    /// or none) on a Chinese Mac is the page's language, not a forced one
+    /// from nowhere, and a typed Chinese line beats an English Mac.
+    #[test]
+    fn a_clip_is_heard_in_the_language_the_engine_knows() {
+        // setting, typed line's language, page language -> the tag passed on
+        let cases = [
+            (Some("en"), None, "zh-Hans", "en"),
+            (Some("zh-Hant"), Some("zh-Hans"), "en", "zh-Hant"),
+            (Some("ja"), None, "en", "ja"),
+            (None, Some("zh-Hans"), "en", "zh-Hans"),
+            (None, None, "zh-Hans", "zh-Hans"),
+            (None, None, "en", "en"),
+        ];
+        for (setting, written, page, want) in cases {
+            assert_eq!(heard_in(setting, written, page), want, "{setting:?} {written:?} {page}");
+        }
+    }
+
+    /// The route hands the provider the language it was given, and only that.
+    #[tokio::test]
+    async fn the_route_hands_the_clips_language_to_the_hearing() {
+        let fake = Fake::saying("今天有什么安排", "zh");
+        let body = wav(speech(1.0));
+        for tag in ["zh-Hans", "en", "ja"] {
+            let response = answer(&fake, (OWNER, "audio/wav"), tag, &body).await;
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(fake.heard_in.lock().unwrap().as_deref(), Some(tag));
+        }
+    }
+
+    /// Lock: the clip's language is decided in `language_to_hear` and nowhere
+    /// below it: the hearing backend reads no language of its own.
+    #[test]
+    fn the_clips_language_is_decided_in_one_place() {
+        let mlx = include_str!("stt_mlx.rs");
+        let production = &mlx[..mlx.find("#[cfg(test)]").unwrap()];
+        for read in ["language::setting", "language::effective", "language_person_writes"] {
+            assert!(!production.contains(read), "stt_mlx.rs reads `{read}`: take the tag `hear` is handed");
+        }
+        let code = include_str!("stt.rs");
+        let production = &code[..code.find("#[cfg(test)]").unwrap()];
+        assert_eq!(production.matches("language::setting()").count(), 1, "the setting is read in language_to_hear alone");
+    }
+
     /// Lock: the provider is asked whether it hears in one place, the
     /// function both routes call, and the fetch is begun only by a clip sent.
     #[test]
@@ -627,10 +706,10 @@ mod tests {
         assert_eq!(seen, 2, "the hearing modules moved: update this lock");
     }
 
-    /// The provider is handed the sound and nothing else: samples, no path or URL.
+    /// The provider is handed the sound and the clip's language tag, nothing else: samples, no path or URL.
     #[test]
     fn a_hearing_backend_is_handed_samples_alone() {
         let code = include_str!("stt.rs");
-        assert!(code.contains("async fn hear(&self, samples: &[i16]) -> Result<Heard, Unavailable>;"));
+        assert!(code.contains("async fn hear(&self, samples: &[i16], language: &str) -> Result<Heard, Unavailable>;"));
     }
 }
