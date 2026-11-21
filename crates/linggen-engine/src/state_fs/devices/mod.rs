@@ -8,6 +8,7 @@
 //! `machine` (the owner's other computer, approved with Allow). Rows written
 //! before the kind existed are classified once on load (`classify`).
 
+use crate::engine::permission::PermissionMode;
 use rand::RngExt;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -74,7 +75,7 @@ pub struct PairedDevice {
     /// this Mac (`server::person::standing_of`); unset, read. The owner's own
     /// device stands at admin whatever this says.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub permission: Option<crate::engine::permission::PermissionMode>,
+    pub permission: Option<PermissionMode>,
     /// The contract number this phone said it speaks on its last
     /// `identify`; unset, it has said none (contract 0).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -155,8 +156,7 @@ pub const LEVEL_HEADER: &str = "x-linggen-level";
 
 /// The level a request stands at, from [`LEVEL_HEADER`]: absent is this
 /// machine, at admin; a value that is not a level is chat.
-pub fn caller_level(headers: &axum::http::HeaderMap) -> crate::engine::permission::PermissionMode {
-    use crate::engine::permission::PermissionMode;
+pub fn caller_level(headers: &axum::http::HeaderMap) -> PermissionMode {
     let Some(value) = headers.get(LEVEL_HEADER) else {
         return PermissionMode::Admin;
     };
