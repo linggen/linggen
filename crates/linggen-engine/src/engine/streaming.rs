@@ -488,11 +488,17 @@ impl AgentEngine {
         messages: &[ChatMessage],
         tools: Option<Vec<serde_json::Value>>,
     ) -> Result<StreamResult> {
-        let result = self.stream_on_chain(messages, tools).await;
-        if let Err(e) = &result {
-            self.note_cannot_run(e);
+        match self.stream_on_chain(messages, tools).await {
+            Ok(streamed) => Ok(streamed),
+            Err(e) => {
+                self.note_cannot_run(&e);
+                Err(crate::engine::model_choice::say_next_step(
+                    e,
+                    &self.model_manager,
+                    self.model_asker(),
+                ))
+            }
         }
-        result
     }
 
     /// Why a failed model call means the run cannot go on, typed here where

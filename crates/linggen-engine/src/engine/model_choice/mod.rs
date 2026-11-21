@@ -169,6 +169,57 @@ fn can_run_claude(config: &ModelConfig, signed_in: impl FnOnce() -> bool) -> boo
     }
 }
 
+/// The model a sign-in makes the default: when the default cannot run now,
+/// the first model that signs in the way the person just did and can run.
+/// A default that can run is never changed. The one place this is decided;
+/// the sign-in's end asks it.
+pub fn after_sign_in(
+    models: &ModelManager,
+    default: Option<&str>,
+    signed_in: SignIn,
+) -> Option<String> {
+    let default_ready = default
+        .and_then(|id| live(models, Asker::Owner, id).ok())
+        .and_then(|id| models.readiness(&id))
+        // A default only rate-limited for a minute still runs: a person who
+        // chose one keeps it. Only a missing sign-in or key strands it.
+        .is_some_and(|r| !r.lacks_credentials());
+    pick_after_sign_in(default_ready, &models.ready_in_order(), signed_in)
+}
+
+/// The one line a page says when a sign-in made `model` the default.
+pub fn made_default_line(model: &str) -> String {
+    format!("{model} is now your default model.")
+}
+
+/// A run that cannot start for want of a sign-in says what to do next:
+/// the owner is told the first ready model (or that none is). A room's
+/// guest is told nothing of the owner's models; a refusal that is not a
+/// missing sign-in is left as it was.
+pub fn say_next_step(err: anyhow::Error, models: &ModelManager, asker: Asker<'_>) -> anyhow::Error {
+    let signed_out = err.to_string().contains("AUTH_REQUIRED");
+    if !signed_out || !matches!(asker, Asker::Owner) {
+        return err;
+    }
+    anyhow::anyhow!("{err} {}", models.next_step())
+}
+
+/// [`after_sign_in`]'s rule, on facts: whether the default can run, and the
+/// ready models in the order they are offered.
+fn pick_after_sign_in(
+    default_ready: bool,
+    ready: &[&ModelConfig],
+    signed_in: SignIn,
+) -> Option<String> {
+    if default_ready {
+        return None;
+    }
+    ready
+        .iter()
+        .find(|m| m.sign_in() == signed_in)
+        .map(|m| m.id.clone())
+}
+
 /// The model a turn runs on: `asked` when it can run for this asker, else
 /// the standing model — unless switching is off, when an owner's turn keeps
 /// what it asked for and fails on it, named.

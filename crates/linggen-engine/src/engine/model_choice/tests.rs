@@ -306,3 +306,122 @@ fn the_first_claude_model_of_the_chain_that_can_run_is_found() {
     assert_eq!(first_claude(&m, &chain(&["gpt-6.2-sol", "ghost", "claude-a", "claude-b"])).as_deref(), Some("claude-a"));
     assert_eq!(first_claude(&m, &chain(&["gpt-6.2-sol", "gpt-6.1-terra"])), None);
 }
+
+// ---- a sign-in makes work possible ----
+
+/// A model signing in with ChatGPT, or (`false`) holding its own key.
+fn signed(id: &str, chatgpt: bool) -> ModelConfig {
+    let (provider, auth) = if chatgpt {
+        ("chatgpt", crate::config::AuthMode::ChatgptOauth.as_str())
+    } else {
+        ("acme", "api_key")
+    };
+    serde_json::from_value(serde_json::json!({
+        "id": id, "provider": provider, "url": "https://x", "model": id, "auth_mode": auth,
+    }))
+    .unwrap()
+}
+
+/// Rule: the default cannot run and a ChatGPT sign-in is made — the first
+/// ChatGPT model that can run becomes the default, whatever other ready
+/// models come before it.
+#[test]
+fn a_chatgpt_sign_in_makes_the_first_chatgpt_model_the_default() {
+    let key = signed("my-key-model", false);
+    let sol = signed("gpt-x-sol", true);
+    let luna = signed("gpt-x-luna", true);
+    let ready = [&key, &sol, &luna];
+    assert_eq!(
+        pick_after_sign_in(false, &ready, SignIn::ChatGpt).as_deref(),
+        Some("gpt-x-sol")
+    );
+}
+
+/// Rule: a default that can run is never changed by a sign-in.
+#[test]
+fn a_default_that_can_run_is_kept_through_a_sign_in() {
+    let sol = signed("gpt-x-sol", true);
+    assert_eq!(pick_after_sign_in(true, &[&sol], SignIn::ChatGpt), None);
+}
+
+/// A sign-in that made nothing ready changes nothing.
+#[test]
+fn a_sign_in_that_readies_no_model_changes_nothing() {
+    let key = signed("my-key-model", false);
+    assert_eq!(pick_after_sign_in(false, &[&key], SignIn::ChatGpt), None);
+    assert_eq!(pick_after_sign_in(false, &[], SignIn::LinggenAccount), None);
+}
+
+/// On the real registry: the default (Linggen Cloud, signed out in the test
+/// home) cannot run, the keyed model can; a sign-in of the keyed kind picks
+/// it, a missing default is "cannot run", and a ready default stays.
+#[test]
+fn after_sign_in_reads_the_registry() {
+    let _board = crate::provider::models::board_test_guard();
+    let keyed: ModelConfig = serde_json::from_value(serde_json::json!({
+        "id": "after-sign-in-keyed", "provider": "acme",
+        "url": "https://api.acme.example/v1", "model": "k", "api_key": "k",
+    }))
+    .unwrap();
+    let m = ModelManager::new_with_credentials(vec![keyed], &crate::credentials::Credentials::default());
+    let cloud = crate::provider::models::LINGGEN_CLOUD_MODEL_ID;
+    assert_eq!(after_sign_in(&m, Some(cloud), SignIn::Key).as_deref(), Some("after-sign-in-keyed"));
+    assert_eq!(after_sign_in(&m, None, SignIn::Key).as_deref(), Some("after-sign-in-keyed"));
+    assert_eq!(after_sign_in(&m, Some("after-sign-in-keyed"), SignIn::Key), None);
+}
+
+/// Rule: the line a sign-in says is short.
+#[test]
+fn the_default_line_is_at_most_twenty_words() {
+    let line = made_default_line("gpt-6.2-sol");
+    assert_eq!(line, "gpt-6.2-sol is now your default model.");
+    assert!(line.split_whitespace().count() <= 20);
+}
+
+/// Rule: a run that cannot start for want of a sign-in names a ready model,
+/// or says what to do when none is; a guest is told nothing of the owner's
+/// models; another refusal is left alone.
+#[test]
+fn a_sign_in_refusal_says_the_next_step_to_the_owner_only() {
+    let _board = crate::provider::models::board_test_guard();
+    let keyed: ModelConfig = serde_json::from_value(serde_json::json!({
+        "id": "next-step-keyed", "provider": "acme",
+        "url": "https://api.acme.example/v1", "model": "k", "api_key": "k",
+    }))
+    .unwrap();
+    let refusal = || anyhow::anyhow!("AUTH_REQUIRED: Not signed in to linggen.dev for model 'x'.");
+    let with_one = ModelManager::new_with_credentials(vec![keyed], &crate::credentials::Credentials::default());
+    let said = say_next_step(refusal(), &with_one, Asker::Owner).to_string();
+    assert!(said.ends_with("next-step-keyed is ready now; choose it as the model."), "{said}");
+    let shared = vec!["gpt-6.2-sol".to_string()];
+    let to_guest = say_next_step(refusal(), &with_one, Asker::Guest(&shared)).to_string();
+    assert!(!to_guest.contains("next-step-keyed"), "{to_guest}");
+    let other = say_next_step(anyhow::anyhow!("overloaded"), &with_one, Asker::Owner).to_string();
+    assert_eq!(other, "overloaded");
+    let none = ModelManager::new_with_credentials(vec![], &crate::credentials::Credentials::default());
+    let said = say_next_step(refusal(), &none, Asker::Owner).to_string();
+    assert!(said.ends_with(crate::provider::models::NONE_READY), "{said}");
+}
+
+/// A default only rate-limited for a minute still runs: a sign-in leaves it.
+#[test]
+fn a_default_that_is_only_rate_limited_is_kept_through_a_sign_in() {
+    let _board = crate::provider::models::board_test_guard();
+    let own = |id: &str| -> ModelConfig {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "provider": "acme",
+            "url": "https://api.acme.example/v1", "model": "k", "api_key": "k",
+        }))
+        .unwrap()
+    };
+    let m = ModelManager::new_with_credentials(
+        vec![own("sign-in-limited"), own("sign-in-other")],
+        &crate::credentials::Credentials::default(),
+    );
+    crate::provider::models::note_unavailable(
+        "sign-in-limited",
+        &anyhow::anyhow!("openai error (429 Too Many Requests): rate limit"),
+    );
+    assert_eq!(after_sign_in(&m, Some("sign-in-limited"), SignIn::Key), None);
+    crate::provider::models::note_healthy("sign-in-limited");
+}
