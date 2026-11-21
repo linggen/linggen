@@ -201,6 +201,10 @@ pub struct SessionMeta {
     pub params: std::collections::BTreeMap<String, String>,
 }
 
+/// The values one session is bound to, by declared name
+/// ([`SessionMeta::params`]). `engine::skill::params` re-exports it.
+pub type SessionParams = std::collections::BTreeMap<String, String>;
+
 /// One agent at a session's table.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(any(test, feature = "test-support"), derive(ts_rs::TS), ts(export))]
@@ -432,7 +436,7 @@ impl ChatMsg {
     pub fn place_in(&self, meta: &SessionMeta) -> String {
         match &self.place {
             Some(key) => key.clone(),
-            None => crate::engine::turn_place::TurnPlace::of_session(Some(meta))
+            None => super::turn_place::TurnPlace::of_session(Some(meta))
                 .key()
                 .to_string(),
         }

@@ -295,54 +295,44 @@ fn a_session_never_sets_its_own_work_tag() {
         .all(|(f, _, _)| !f.contains("/engine/tools/")));
 }
 
-/// Remaining upward references, by file, exact count, and reason.
-const UPWARD_EDGES: &[(&str, usize, &str)] = &[
-    (
-        "state_fs/row_place_tests.rs",
-        1,
-        "row persistence tests construct turn places",
-    ),
-    (
-        "state_fs/running_places.rs",
-        1,
-        "the store keeps the engine's TurnPlace value while a turn runs",
-    ),
-    (
-        "state_fs/sessions.rs",
-        1,
-        "the fallback row place",
-    ),
-];
-
+/// The store, the perception layer, the config and the paths sit below the
+/// engine: no production code in them names it, nor the extensions above it.
+/// What they need from it (the permission mode, a turn's place, the built-in
+/// agent ids, the project-root walk) lives in leaf modules they all share.
+/// Test code is not counted: a test may build an engine to check the config
+/// against it.
 #[test]
 fn store_and_perception_do_not_add_upward_edges() {
+    use crate::project_root::project_walk_tests::without_test_modules;
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    let mut listed: std::collections::BTreeMap<_, _> = UPWARD_EDGES
-        .iter()
-        .map(|&(file, count, why)| (root.join(file), (count, why)))
-        .collect();
-    for (dir, paths) in [
-        ("state_fs", &["crate::engine::", "crate::extensions::"][..]),
-        (
-            "perception",
-            &[
-                "crate::agent::",
-                "crate::engine::agent::",
-                "crate::extensions::",
-            ][..],
-        ),
-    ] {
-        let mut files = Vec::new();
-        rust_files(&root.join(dir), &mut files);
-        for file in files {
-            let text = std::fs::read_to_string(&file).unwrap();
-            let found: usize = paths.iter().map(|path| text.matches(path).count()).sum();
-            let (want, why) = listed.remove(&file).unwrap_or((0, "no upward edge allowed"));
-            let rel = file.strip_prefix(&root).unwrap();
-            assert_eq!(found, want, "{}: {why}", rel.display());
-        }
+    let upward: &[&str] = &["crate::engine::", "crate::extensions::"];
+    let mut scanned: Vec<(PathBuf, &[&str])> = vec![
+        (root.join("config.rs"), upward),
+        (root.join("paths.rs"), upward),
+    ];
+    let mut state_fs = Vec::new();
+    rust_files(&root.join("state_fs"), &mut state_fs);
+    scanned.extend(state_fs.into_iter().map(|file| (file, upward)));
+    let mut perception = Vec::new();
+    rust_files(&root.join("perception"), &mut perception);
+    let perception_upward: &[&str] = &[
+        "crate::agent::",
+        "crate::engine::agent::",
+        "crate::extensions::",
+    ];
+    scanned.extend(perception.into_iter().map(|file| (file, perception_upward)));
+    assert!(scanned.len() > 10, "the scan found no files");
+    for (file, paths) in scanned {
+        let text = without_test_modules(&std::fs::read_to_string(&file).unwrap());
+        let found: Vec<&&str> = paths.iter().filter(|path| text.contains(**path)).collect();
+        let rel = file.strip_prefix(&root).unwrap();
+        assert!(
+            found.is_empty(),
+            "{} names {found:?}: take it from a leaf module (permission_mode, agent_ids, \
+             state_fs::turn_place, project_root) instead",
+            rel.display()
+        );
     }
-    assert!(listed.is_empty(), "stale upward edge entries: {listed:?}");
 }
 
 #[test]

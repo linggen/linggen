@@ -58,7 +58,7 @@ fn home_forms(home: &Path) -> Vec<PathBuf> {
 }
 
 #[cfg(test)]
-mod project_walk_tests {
+pub(crate) mod project_walk_tests {
     use super::*;
     use ignore::WalkBuilder;
 
@@ -94,13 +94,15 @@ mod project_walk_tests {
     }
 
     /// `text` with each `#[cfg(test)] mod … { … }` cut out (braces counted).
-    fn without_test_modules(text: &str) -> String {
+    /// Locks that scan production code read files through it.
+    pub(crate) fn without_test_modules(text: &str) -> String {
         let mut out = String::new();
         let mut rest = text;
         while let Some(at) = rest.find("#[cfg(test)]") {
             out.push_str(&rest[..at]);
             let after = &rest[at + "#[cfg(test)]".len()..];
-            if !after.trim_start().starts_with("mod ") {
+            let item = after.trim_start();
+            if !item.starts_with("mod ") && !item.starts_with("pub(crate) mod ") {
                 rest = after;
                 continue;
             }
