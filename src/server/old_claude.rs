@@ -152,6 +152,7 @@ fn seed_row(meta: &SessionMeta, content: String) -> ChatMsg {
         images: Vec::new(),
         run_id: None,
         place: None,
+        heard: false,
     }
 }
 
@@ -227,6 +228,7 @@ mod tests {
             images: Vec::new(),
             run_id: None,
             place: None,
+            heard: false,
         }
     }
 

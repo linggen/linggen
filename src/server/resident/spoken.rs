@@ -771,6 +771,7 @@ async fn keep_row(
         failed: false,
         images: Vec::new(),
         place: place.map(str::to_string),
+        heard: false,
     };
     if let Err(e) = state.manager.global_sessions.add_chat_message(session, &msg) {
         tracing::warn!("[yinyue] her line was not kept as a row: {e}");

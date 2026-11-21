@@ -182,6 +182,7 @@ pub(crate) async fn compact_session(
         failed: false,
         images: Vec::new(),
         place: None,
+        heard: false,
     };
     let mut applied = false;
     let edited = store.edit_chat_history(session_id, |now| {
@@ -276,6 +277,7 @@ mod tests {
             failed: false,
             images: Vec::new(),
             place: None,
+            heard: false,
         }
     }
 

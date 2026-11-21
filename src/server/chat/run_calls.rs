@@ -356,6 +356,7 @@ mod tests {
             failed: false,
             images: Vec::new(),
             place: None,
+            heard: false,
         }
     }
     fn user(text: &str, ts: u64) -> ChatMsg {

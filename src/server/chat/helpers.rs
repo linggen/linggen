@@ -260,6 +260,7 @@ pub(crate) async fn persist_and_emit_with_images(
         via_note: via_note.map(str::to_string),
         images: kept,
         place: None,
+        heard: false,
     };
     // Saved before it is shown: a page never shows what a reload would not.
     if let Err(e) = store.add_chat_message(sid, &msg) {
@@ -293,8 +294,32 @@ pub(crate) async fn persist_message_only(
     is_observation: bool,
     run_id: Option<&str>,
 ) {
-    let sid = session_id.unwrap_or("default");
-    let msg = crate::state_fs::sessions::ChatMsg {
+    let row = chat_row((agent_id, from, to), content, is_observation, run_id);
+    file_row(manager, session_id, &row);
+}
+
+/// A person's words to `agent_id`, kept as the user's row of `session_id`.
+/// `heard`: they spoke them aloud (`/api/stt`) — the row says so, for a page
+/// that shows what was heard.
+pub(crate) fn persist_user_line(
+    manager: &Arc<AgentManager>,
+    agent_id: &str,
+    content: &str,
+    session_id: Option<&str>,
+    heard: bool,
+) {
+    let row = crate::state_fs::sessions::ChatMsg { heard, ..chat_row((agent_id, "user", agent_id), content, false, None) };
+    file_row(manager, session_id, &row);
+}
+
+/// A row as a turn writes it: `ids` are (agent, from, to).
+fn chat_row(
+    (agent_id, from, to): (&str, &str, &str),
+    content: &str,
+    is_observation: bool,
+    run_id: Option<&str>,
+) -> crate::state_fs::sessions::ChatMsg {
+    crate::state_fs::sessions::ChatMsg {
         run_id: run_id.map(str::to_string),
         via: None,
         via_note: None,
@@ -308,8 +333,13 @@ pub(crate) async fn persist_message_only(
         failed: false,
         images: Vec::new(),
         place: None,
-    };
-    if let Err(e) = manager.global_sessions.add_chat_message(sid, &msg) {
+        heard: false,
+    }
+}
+
+fn file_row(manager: &Arc<AgentManager>, session_id: Option<&str>, row: &crate::state_fs::sessions::ChatMsg) {
+    let sid = session_id.unwrap_or("default");
+    if let Err(e) = manager.global_sessions.add_chat_message(sid, row) {
         tracing::warn!("Failed to persist chat message: {}", e);
     }
 }

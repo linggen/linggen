@@ -252,6 +252,7 @@ async fn say_of_plan(
         failed: false,
         images: Vec::new(),
         place,
+        heard: false,
     };
     let event = ServerEvent::Message {
         from: from.to_string(),
@@ -559,6 +560,7 @@ async fn persist_plan_message(
         failed: false,
         images: Vec::new(),
         place,
+        heard: false,
     };
     manager.add_chat_message(root, session_id, &msg).await;
 }

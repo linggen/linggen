@@ -613,6 +613,7 @@ fn keep_world(ctx: &ChatRunCtx, engine: &mut crate::engine::AgentEngine) {
         failed: false,
         images: Vec::new(),
         place: None,
+        heard: false,
     };
     let sid = ctx.session_id.as_deref().unwrap_or("default");
     if let Err(e) = ctx.manager.global_sessions.add_chat_message(sid, &row) {

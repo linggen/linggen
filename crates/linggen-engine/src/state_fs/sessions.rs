@@ -424,6 +424,11 @@ pub struct ChatMsg {
     /// session's own place ([`ChatMsg::place_in`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub place: Option<String>,
+    /// A person's message they spoke aloud to Yinyue (`/api/stt`) and she
+    /// heard: the words are as typed, the row says they were spoken, so a
+    /// page can show it. Rows before 2026-11-21 have none.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub heard: bool,
 }
 
 pub use super::row_author::COMPACTION_SENDER;
@@ -1371,6 +1376,7 @@ mod tests {
             failed: false,
             images: Vec::new(),
             place: None,
+            heard: false,
         };
         let msg2 = ChatMsg {
             run_id: None,
@@ -1386,6 +1392,7 @@ mod tests {
             failed: false,
             images: Vec::new(),
             place: None,
+            heard: false,
         };
         store.add_chat_message("s1", &msg1).unwrap();
         store.add_chat_message("s1", &msg2).unwrap();
@@ -1414,6 +1421,7 @@ mod tests {
             failed: false,
             images: Vec::new(),
             place: None,
+            heard: false,
         };
         let kept = serde_json::to_string(&row(Some("c-1-ab"))).unwrap();
         let back: ChatMsg = serde_json::from_str(&kept).unwrap();
@@ -1474,6 +1482,7 @@ mod tests {
                     failed: false,
                     images: Vec::new(),
                     place: None,
+                    heard: false,
                 },
             )
             .unwrap();
@@ -1494,6 +1503,7 @@ mod tests {
                     failed: false,
                     images: Vec::new(),
                     place: None,
+                    heard: false,
                 },
             )
             .unwrap();
@@ -1551,6 +1561,7 @@ mod tests {
                     failed: false,
                     images: Vec::new(),
                     place: None,
+                    heard: false,
                 },
             )
             .unwrap();
@@ -1606,6 +1617,7 @@ mod tests {
                     failed: false,
                     images: Vec::new(),
                     place: None,
+                    heard: false,
                 },
             )
             .unwrap();
@@ -1719,6 +1731,7 @@ mod tests {
                     failed: false,
                     images: Vec::new(),
                     place: None,
+                    heard: false,
                 },
             )
             .unwrap();
