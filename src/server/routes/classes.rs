@@ -259,9 +259,9 @@ enum RoomPath {
 enum RoomReach {
     /// The route's own class ([`class_of`]), at least chat.
     AsItsClass,
-    /// Chat, though the route's class asks more. Kept as it was when the two
-    /// tables became one; a lock test names each such entry, so a new one
-    /// fails until it is looked at.
+    /// Chat, though the route's class asks more: something the guest's own
+    /// page needs. Each such entry says why beside it, and a lock test names
+    /// them, so a new one fails until it is looked at.
     AtChatBelowItsClass,
 }
 
@@ -289,6 +289,8 @@ const ROOM: &[(&str, RoomPath, RoomReach)] = &[
     // that is not the guest's (`a_room_entry_names_only_the_guests_own_sessions`).
     ("DELETE", Exact("/api/sessions/all"), AtChatBelowItsClass),
     ("GET", Prefix("/assets/"), AsItsClass),
+    // Read for a device; a room shares an app, and the guest's page is that
+    // app's own files — served to the guest at chat.
     ("GET", Prefix("/apps/"), AtChatBelowItsClass),
     ("GET", Prefix("/shared/"), AsItsClass),
     ("GET", Prefix("/api/workspace/state"), AsItsClass),

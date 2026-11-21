@@ -839,7 +839,6 @@ mod tests {
         }
     }
 
-    /// Composing refuses a name memory and the engine would both decide.
     /// `agent_run` publishes `HostMode`'s words, and its description names
     /// each of them, none left as a placeholder.
     #[test]
@@ -858,6 +857,7 @@ mod tests {
         }
     }
 
+    /// Composing refuses a name memory and the engine would both decide.
     #[test]
     fn composing_refuses_a_name_both_sides_define() {
         let clash = ToolDoc {

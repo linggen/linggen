@@ -54,6 +54,12 @@ pub(crate) struct UpdatePermissionRequest {
     mode: String,
 }
 
+/// The mode a session-permission PATCH asks for: one of the four words, as
+/// `PermissionMode` prints them (`write` is refused here).
+fn grant_mode(word: &str) -> Option<crate::engine::permission::PermissionMode> {
+    crate::engine::permission::PermissionMode::parse(word)
+}
+
 /// PATCH /api/sessions/permission
 /// Updates the mode for a specific path in the session's permission.json
 /// AND in the live engine's in-memory session_permissions (if the engine
@@ -64,12 +70,6 @@ pub(crate) struct UpdatePermissionRequest {
 /// from a skill iframe would only take effect after the session is
 /// reloaded, which is the bug skills like Pulse hit when replaying their
 /// runtime grants on iframe mount.
-/// The mode a session-permission PATCH asks for: one of the four words, as
-/// `PermissionMode` prints them (`write` is refused here).
-fn grant_mode(word: &str) -> Option<crate::engine::permission::PermissionMode> {
-    crate::engine::permission::PermissionMode::parse(word)
-}
-
 pub(crate) async fn update_session_permission(
     State(state): State<Arc<ServerState>>,
     Json(req): Json<UpdatePermissionRequest>,
