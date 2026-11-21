@@ -35,7 +35,9 @@ The phone's part ships with the phone app.
 ## [2.6.0] - unreleased — hold Yinyue and talk to her
 
 Built and tested with fakes; not yet tried on a real Mac (no microphone, no
-hearing model and no sound has run).
+hearing model and no sound has run). 2.6 is not complete with this: the tool
+redesign and the live talk it is planned around (`doc/plan-3.0.md`) are not
+started.
 
 ### Talk to Yinyue
 
