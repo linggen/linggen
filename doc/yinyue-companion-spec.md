@@ -110,8 +110,15 @@ typed line at the page stays text.
   can carry). Answer `{text, language, ms}`; nothing intelligible, or a clip
   that never rises above a quiet room's noise (the model is not asked: Whisper
   invents words from silence), is `{"text": ""}`; not that WAV 400; over 60 s
-  413; a machine that cannot hear 503 `{error: "unavailable", reason}` with a
-  reason of at most twenty words.
+  413; a machine that cannot hear 503 `{error: "unavailable", reason,
+  fetching}` with a reason of at most twenty words — said before the clip is
+  looked at, so a silent clip gets it too.
+- **Can she hear? `GET /api/stt`** (same door, owner only): `{"hears": true}`
+  or `{"hears": false, "reason", "fetching"}`, asked by the page at the press,
+  before the microphone opens. It is the POST's own judgement (one function,
+  `stt::hears_now`; a test holds that the two never disagree) and starts
+  nothing: only a clip sent begins the model fetch, so a refused press that
+  finds the model absent and not on its way sends an empty request to start it.
 - **The engine is Whisper large-v3 turbo on MLX** (`runtime::STT_MODEL`, named
   once beside the voice model), in the voice sidecar that already speaks her
   (`mlx_sidecar.rs`, one process, one slot; `mlx_voice.py`). Same machine
@@ -131,9 +138,12 @@ typed line at the page stays text.
   her thread with `heard: true` (one field of the row, for a page that shows
   it was spoken) and whose answer `speaks_aloud` (`api/yinyue.rs`, still the
   one place) says aloud unless muted. Quiet hours and the hourly limit do not
-  apply to it: she was asked. A line carried to an app's own chat (a private
-  app named, or her stage on an app page with a chat) is said there as typed
-  and follows that chat's rule; a turn replayed after a restart is not spoken.
+  apply to it: she was asked. A line that would be carried to an app's own chat
+  (a private app named, or her stage on an app page with a chat) is not: a
+  spoken one is refused at her door, 422 `{error: "not_by_voice", reason}`,
+  nothing kept or run (`yinyue::door_for`, the one place that decides where a
+  line goes); the page shows the reason. A typed line is carried as before,
+  and follows that chat's rule. A turn replayed after a restart is not spoken.
 
 ## Herald — what she tells of Ling's work, decided in one place
 

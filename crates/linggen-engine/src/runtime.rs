@@ -492,15 +492,22 @@ pub fn ensure_pictures_in_background() {
 /// it does not wait for quiet. One at a time: a second ask while it runs
 /// starts nothing.
 pub fn ensure_hearing_in_background() {
-    static FETCHING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-    if FETCHING.swap(true, std::sync::atomic::Ordering::SeqCst) {
+    if HEARING_FETCH.swap(true, std::sync::atomic::Ordering::SeqCst) {
         return;
     }
     tokio::spawn(async {
         let wanted = Wanted { voice: false, pictures: false, hearing: true };
         prewarm_lanes(wanted, progress_sink(), always_quiet()).await;
-        FETCHING.store(false, std::sync::atomic::Ordering::SeqCst);
+        HEARING_FETCH.store(false, std::sync::atomic::Ordering::SeqCst);
     });
+}
+
+/// Set while the hearing model's fetch runs ([`ensure_hearing_in_background`]).
+static HEARING_FETCH: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Is the hearing model being fetched now? Asking starts nothing.
+pub fn hearing_fetching() -> bool {
+    HEARING_FETCH.load(std::sync::atomic::Ordering::SeqCst)
 }
 
 /// Which lanes a stage set may run: each goes through the gate and a

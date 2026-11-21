@@ -426,6 +426,47 @@ async fn a_private_apps_trigger_in_the_day_leaves_no_row_there() {
     assert!(!day_text(&w, &day).contains("VAULT-"), "the day holds the trigger's words: {}", day_text(&w, &day));
 }
 
+/// Rule 3, the private app's exit: a line SPOKEN to her that names a private
+/// app is not carried to its chat — a spoken line would be heard back at a
+/// place whose talk stays there, and that chat has no way to hear it. Her door
+/// says so in one line; nothing of it is kept or run anywhere. The typed twin
+/// is carried exactly as before.
+#[tokio::test]
+async fn a_spoken_line_naming_a_private_app_is_refused_at_her_door_and_a_typed_one_is_carried() {
+    let setup = Setup::default()
+        .script(Agent::Ling, vec![text("VAULT-REPLY opened.")])
+        .script(Agent::Yinyue, vec![text("VAULT-REPLY hers.")]);
+    let (w, _) = day_world_at(12, setup).await;
+    let dir = w.home.linggen_home().join("skills/vault");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("SKILL.md"),
+        "---\nname: vault\ndescription: A private test vault.\nallowed-tools: []\n\
+         private-talk: true\ntrigger: \"vault:\"\nmembers: [ling, yinyue]\n---\n\nYou keep the vault.\n",
+    )
+    .unwrap();
+    w.api.post("/api/skills/reload", json!({})).await;
+    let day = w.api.get("/api/sessions/day").await["id"].as_str().unwrap().to_string();
+
+    let spoken = json!({"text": "vault: VAULT-SPOKEN open it", "asked_aloud": true});
+    let (status, body) = w.api.post_with_status("/api/yinyue/chat", spoken).await;
+    assert_eq!((status, body["error"].as_str()), (422, Some("not_by_voice")), "{body}");
+    let reason = body["reason"].as_str().unwrap_or_default();
+    assert!(!reason.is_empty() && reason.split_whitespace().count() <= 20, "{body}");
+    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+    let listed = w.api.get("/api/skill-sessions?skill=vault").await;
+    for sid in ids(&listed).into_iter().chain([day.clone()]) {
+        assert!(!day_text(&w, &sid).contains("VAULT-SPOKEN"), "the spoken line was kept in {sid}");
+    }
+
+    let mark = w.mark();
+    let typed = json!({"text": "vault: VAULT-TYPED open it", "asked_aloud": false});
+    assert_eq!(w.api.post("/api/yinyue/chat", typed).await, json!("ok"));
+    w.wait_agent(Agent::Yinyue, mark).await;
+    let held = ledger_like_session_with(&w, "vault", "VAULT-TYPED").await;
+    assert_ne!(held, day);
+}
+
 /// Wait until some session of `app` holds `marker`; that session's id.
 async fn ledger_like_session_with(w: &World, app: &str, marker: &str) -> String {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);

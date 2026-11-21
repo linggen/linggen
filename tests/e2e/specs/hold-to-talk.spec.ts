@@ -15,11 +15,13 @@ const HEARD = 'what is on today';
  *  assignment lands in `routed`, and the calls the proxy would take go there,
  *  the rest to the browser's fetch, `/api/stt` to the canned answer. Also
  *  keeps every microphone stream the page opens, to read its tracks later. */
-function fakeHearing(answer: { status: number; body: unknown }) {
+function fakeHearing(canned: { clip: { status: number; body: unknown }; hears?: unknown; door?: { status: number; body: unknown } }) {
+  const answer = canned.clip;
   const w = window as unknown as {
-    __stt: { body: string }[]; __chat: unknown[]; __streams: MediaStream[]; __sttAnswer: typeof answer;
+    __stt: { body: string }[]; __sttAsked: number; __chat: unknown[]; __streams: MediaStream[]; __sttAnswer: typeof answer;
   };
   w.__stt = [];
+  w.__sttAsked = 0;
   w.__chat = [];
   w.__streams = [];
   w.__sttAnswer = answer;
@@ -30,11 +32,19 @@ function fakeHearing(answer: { status: number; body: unknown }) {
   const wrapper = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const raw = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
     const path = new URL(raw, location.href).pathname;
+    // Can she hear: asked at the hold, before any microphone (a GET carries no clip).
+    if (path === '/api/stt' && (init?.method ?? 'GET').toUpperCase() === 'GET') {
+      w.__sttAsked++;
+      return new Response(JSON.stringify(canned.hears ?? { hears: true }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
     if (path === '/api/stt') {
       w.__stt.push({ body: String(init?.body ?? '') });
       return new Response(JSON.stringify(w.__sttAnswer.body), { status: w.__sttAnswer.status, headers: { 'Content-Type': 'application/json' } });
     }
-    if (path === '/api/yinyue/chat') w.__chat.push(JSON.parse(String(init?.body ?? '{}')));
+    if (path === '/api/yinyue/chat') {
+      w.__chat.push(JSON.parse(String(init?.body ?? '{}')));
+      if (canned.door) return new Response(JSON.stringify(canned.door.body), { status: canned.door.status, headers: { 'Content-Type': 'application/json' } });
+    }
     return routed && rides(path) ? routed(input, init) : native(input, init);
   }) as typeof fetch;
   Object.defineProperty(window, 'fetch', {
@@ -69,7 +79,7 @@ test.describe('asked aloud by a held press', () => {
 
   test('hold, speak, let go: the heard line shows, her turn runs on it, the microphone is off', async ({ page, context, world, request, httpRequests }) => {
     await context.grantPermissions(['microphone'], { origin: world.url });
-    await page.addInitScript(fakeHearing, { status: 200, body: { text: HEARD, language: 'en', ms: 400 } });
+    await page.addInitScript(fakeHearing, { clip: { status: 200, body: { text: HEARD, language: 'en', ms: 400 } } });
     await page.goto(world.url);
     await expectWebRtc(page, httpRequests);
     // She meets the person first (her door answers 409 before that).
@@ -107,7 +117,7 @@ test.describe('asked aloud by a held press', () => {
 
   test('a tap still opens the typing box, and opens no microphone', async ({ page, context, world, httpRequests }) => {
     await context.grantPermissions(['microphone'], { origin: world.url });
-    await page.addInitScript(fakeHearing, { status: 200, body: { text: HEARD } });
+    await page.addInitScript(fakeHearing, { clip: { status: 200, body: { text: HEARD } } });
     await page.goto(world.url);
     await expectWebRtc(page, httpRequests);
     await her(page).click();
@@ -121,7 +131,7 @@ test.describe('nothing heard', () => {
 
   test('one quiet line, no turn for her, the microphone off', async ({ page, context, world, request, httpRequests }) => {
     await context.grantPermissions(['microphone'], { origin: world.url });
-    await page.addInitScript(fakeHearing, { status: 200, body: { text: '' } });
+    await page.addInitScript(fakeHearing, { clip: { status: 200, body: { text: '' } } });
     await page.goto(world.url);
     await expectWebRtc(page, httpRequests);
     await request.post(`${world.url}/api/yinyue/chat`, { data: { text: 'Hello' } });
@@ -134,5 +144,51 @@ test.describe('nothing heard', () => {
     await expect(page.getByTestId('talk-state')).toHaveText("Didn't catch that.");
     expect(await liveTracks(page)).toBe(0);
     expect((await world.calls()).filter((c) => c.agent === 'yinyue')).toHaveLength(1);
+  });
+});
+
+test.describe('a Mac that cannot hear', () => {
+  test.use({ throttleFrames: true, scenario: { scripts: { yinyue: [{ text: "I'm here." }] } } });
+  const REASON = 'Hearing needs 16 GB of memory, this Mac has 8 GB.';
+
+  test('the first press shows why and opens no microphone', async ({ page, context, world, httpRequests }) => {
+    await context.grantPermissions(['microphone'], { origin: world.url });
+    await page.addInitScript(fakeHearing, {
+      clip: { status: 503, body: { error: 'unavailable', reason: REASON, fetching: false } },
+      hears: { hears: false, reason: REASON, fetching: false },
+    });
+    await page.goto(world.url);
+    await expectWebRtc(page, httpRequests);
+
+    await holdHer(page);
+    await expect(page.getByTestId('talk-state')).toHaveText(REASON);
+    await page.mouse.up();
+    const seen = await page.evaluate(() => {
+      const w = window as unknown as { __streams: unknown[]; __sttAsked: number };
+      return { streams: w.__streams.length, asked: w.__sttAsked };
+    });
+    expect(seen).toEqual({ streams: 0, asked: 1 });
+  });
+});
+
+test.describe('a spoken line her door will not carry', () => {
+  test.use({ throttleFrames: true, scenario: { scripts: { yinyue: [{ text: "I'm here." }] } } });
+  const REASON = "A spoken line can't go to an app's chat. Type it there.";
+
+  test("the door's one line is shown, and the heard words go", async ({ page, context, world, httpRequests }) => {
+    await context.grantPermissions(['microphone'], { origin: world.url });
+    await page.addInitScript(fakeHearing, {
+      clip: { status: 200, body: { text: HEARD } },
+      door: { status: 422, body: { error: 'not_by_voice', reason: REASON } },
+    });
+    await page.goto(world.url);
+    await expectWebRtc(page, httpRequests);
+
+    await holdHer(page);
+    await expect(page.getByTestId('talk-state')).toHaveText('Listening…');
+    await page.waitForTimeout(800);
+    await page.mouse.up();
+    await expect(page.getByTestId('talk-state')).toHaveText(REASON);
+    await expect(page.getByTestId('talk-heard')).toHaveCount(0);
   });
 });
