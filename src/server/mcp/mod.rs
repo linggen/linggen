@@ -358,6 +358,7 @@ pub(crate) async fn post_handler(
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Response {
+    use crate::engine::permission::ReadStart;
     use crate::memory_host::caller::{self, Caller};
     if !origin_allowed(&headers) {
         return one_shot((StatusCode::FORBIDDEN, "origin not allowed").into_response());
@@ -376,10 +377,11 @@ pub(crate) async fn post_handler(
             && crate::server::api::ling_mem_connect::is_at_this_mac(peer, &headers)
             && caller::token_from_headers(&headers).is_none()
         {
-            crate::engine::permission::ReadOrigin::LocalDelegate
+            ReadStart::HostAtThisMac
         } else {
-            Default::default()
-        },
+            ReadStart::NoStanding
+        }
+        .standing(),
     };
     match handle_rpc(&deps, view, &body).await {
         Some(response) => {

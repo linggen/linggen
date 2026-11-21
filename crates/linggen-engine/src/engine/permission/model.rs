@@ -9,7 +9,7 @@ use super::classify::{classify_bash, dequote, literal_shell_commands, reads_sed_
 use super::pattern_text::text_words;
 use super::shell_text::strip_heredoc_bodies;
 use super::store::SessionPermissions;
-use super::read_scope::{self, ReadDecision, ReadOrigin};
+use super::read_scope::{self, ReadDecision, ReadOrigin, ReadStart};
 use crate::util::expand_tilde;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -790,7 +790,7 @@ pub fn check_permission_for(
     ceiling: Option<PermissionMode>,
 ) -> PermissionCheckResult {
     check_permission_at_turn(tool, bash_command, file_path, session_cwd, session_perms,
-        action_tier_override, coding, ceiling, ReadOrigin::Other, None)
+        action_tier_override, coding, ceiling, ReadStart::NoStanding.standing(), None)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1284,7 +1284,7 @@ pub(crate) fn allows_instruction_import(
     }
     canonical.to_str().is_some_and(|path| matches!(
         check_permission_at_turn("Read", None, Some(path), cwd, perms, None,
-            coding, ceiling, origin.unattended(), Some(declined)),
+            coding, ceiling, ReadStart::Unattended(origin).standing(), Some(declined)),
         PermissionCheckResult::Allowed
     ))
 }

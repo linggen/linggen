@@ -11,12 +11,13 @@
 //!
 //! Not decided here, and why: the session policy (`policy::TurnBy` — decided
 //! before the start, because the owner's chat needs the policy's preset), and
-//! the starts the engine crate makes itself (a mission run, a Task child, the
-//! MCP door's headless run), which stand for reads through
-//! `ReadOrigin` directly.
+//! the starts the engine makes itself (a mission, a Task child, the MCP door's
+//! headless run). Those are members of the engine crate's own closed set,
+//! `ReadStart`, which `reads` projects onto and which alone says what any
+//! start may read (lock: `a_standing_for_reads_is_named_in_one_place`).
 
 use super::handler::TurnOrigin;
-use crate::engine::permission::ReadOrigin;
+use crate::engine::permission::{ReadOrigin, ReadStart};
 use crate::engine::turn_place::TurnSettings;
 use crate::engine::AgentEngine;
 use crate::server::resident::Origin;
@@ -87,14 +88,16 @@ impl TurnStart {
     /// What the turn stands as for reads, given what the session stood as
     /// when the turn before it ended: only the owner's own typing stands as
     /// the owner (a secret file may be asked of them); any other start keeps
-    /// how freely it may look and nothing more (`ReadOrigin::unattended`).
+    /// how freely it may look and nothing more. Projected onto the engine's
+    /// own closed set of starts, which says what each reads (`ReadStart`).
     fn reads(self, was: ReadOrigin) -> ReadOrigin {
         match self {
-            Self::OwnerHere => ReadOrigin::LocalOwner,
+            Self::OwnerHere => ReadStart::OwnerTyped,
             Self::Person | Self::Relayed | Self::Resumed | Self::Engine | Self::Hers(_) => {
-                was.unattended()
+                ReadStart::Unattended(was)
             }
         }
+        .standing()
     }
 
     /// Whether the turn answers a person's own words in this session: what
@@ -255,6 +258,43 @@ mod structure_lock {
         assert_eq!(
             calls,
             [("src/server/chat/handler.rs".to_string(), 1), ("src/server/chat/plan_flow.rs".to_string(), 1)],
+        );
+    }
+
+    /// What a turn may read without asking is decided by one exhaustive
+    /// `match` (`ReadStart::standing`, engine crate): no other production code
+    /// names a standing, derives one from another, or builds a start the
+    /// match does not list. A new kind of start does not compile until it
+    /// says what it reads.
+    #[test]
+    fn a_standing_for_reads_is_named_in_one_place() {
+        let home = "crates/linggen-engine/src/engine/permission/read_scope.rs";
+        let outside = |needle: &str| -> Vec<(String, usize)> {
+            found(needle).into_iter().filter(|(rel, _)| rel != home).collect()
+        };
+        for word in ["LocalOwner", "LocalDelegate", "LocalTask", "ReadOrigin::Other", "ReadOrigin::{", ".task_child(", ".unattended("] {
+            let named = outside(word);
+            assert!(named.is_empty(), "`{word}` names a standing for reads outside `read_scope.rs`: {named:?}");
+        }
+        // The starts that are made: each is one line at its own door.
+        let want = |rel: &str, n: usize| (rel.to_string(), n);
+        assert_eq!(
+            outside("ReadStart::"),
+            [
+                want("crates/linggen-engine/src/engine/permission/model.rs", 2), // a read nobody asked for; an instruction import
+                want("crates/linggen-engine/src/engine/tool_exec.rs", 2), // a place kept apart; a child's
+                want("src/server/chat/turn_start.rs", 2), // the owner's typing; any other start
+                want("src/server/mcp/mod.rs", 2), // a host at this Mac; any other caller
+            ],
+        );
+        // Where a standing is put on an engine or a child: it is only passed.
+        assert_eq!(
+            outside("read_origin ="),
+            [
+                want("crates/linggen-engine/src/engine/tools/delegation.rs", 1), // the child's, as given
+                want("src/server/chat/turn_start.rs", 1), // `stand_for_reads`
+                want("src/server/mcp_agent.rs", 1), // the door's, as given
+            ],
         );
     }
 

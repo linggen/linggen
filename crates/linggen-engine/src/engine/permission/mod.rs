@@ -51,7 +51,7 @@ mod outward_tests;
 
 pub use claude_rules::{is_refusal as is_claude_refusal, ClaudeRules};
 pub use declined::DeclinedScopes;
-pub use read_scope::ReadOrigin;
+pub use read_scope::{ReadOrigin, ReadStart};
 #[cfg(test)]
 use model::check_permission_at_turn;
 pub(crate) use model::{allows_instruction_import, check_permission_under_rules};

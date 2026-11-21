@@ -128,7 +128,7 @@ impl AgentEngine {
                         interactive: self.session_permissions.interactive,
                         work: self.tools.builtins.parent_work,
                         ceiling: self.tools.builtins.parent_ceiling,
-                        read_origin: self.read_origin().task_child(),
+                        read_origin: self.child_read_origin(),
                         background: da.run_in_background,
                         started: None,
                     });

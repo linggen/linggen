@@ -5,17 +5,67 @@ use super::sensitive::{self, Protected};
 use super::{PermissionMode, SessionPermissions};
 use std::path::Path;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// What a turn stands as for reads — how freely it may look, and whether a
+/// secret file may be asked of its person. Only [`ReadStart::standing`] says
+/// which turn stands as which; no other production code names a variant
+/// (lock: `turn_start::structure_lock::a_standing_for_reads_is_named_in_one_place`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReadOrigin {
-    #[default]
     Other,
     LocalOwner,
     LocalDelegate,
     LocalTask,
 }
 
+/// A turn that was started for no one in particular reads as nothing more
+/// than `ReadStart::NoStanding`.
+impl Default for ReadOrigin {
+    fn default() -> Self {
+        ReadStart::NoStanding.standing()
+    }
+}
+
+/// Who started a turn, as reading sees it: one closed set, every start made
+/// anywhere (the server's `TurnStart` projects onto it) and what it may read
+/// without asking decided in [`Self::standing`] alone — a new kind of start
+/// does not compile until it says.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReadStart {
+    /// The owner typed it, at this Mac, in their own chat: the only start a
+    /// secret file may be asked of its owner for.
+    OwnerTyped,
+    /// A run a host program at this Mac asked for through the owner's own
+    /// door (the MCP door, no token): it looks as freely as the owner's
+    /// coding chat, and no one is there to ask about a secret.
+    HostAtThisMac,
+    /// A turn nobody typed (a person's words from a remote surface, a
+    /// follow-up, the engine's own notice, an automatic prompt read) in a
+    /// session whose last turn stood as the given one: it keeps how freely
+    /// that looked, and the owner's say over a secret file does not carry
+    /// into it.
+    Unattended(ReadOrigin),
+    /// A `Task` child of a turn that stood as the given one: the same.
+    TaskChild(ReadOrigin),
+    /// No standing: a door that is not this Mac's, a mission, a private app's
+    /// or a skill's page, a session no start has been put on yet.
+    NoStanding,
+}
+
+impl ReadStart {
+    pub fn standing(self) -> ReadOrigin {
+        match self {
+            Self::OwnerTyped => ReadOrigin::LocalOwner,
+            Self::HostAtThisMac => ReadOrigin::LocalDelegate,
+            Self::Unattended(was) | Self::TaskChild(was) => was.looks_as_free_but_untyped(),
+            Self::NoStanding => ReadOrigin::Other,
+        }
+    }
+}
+
 impl ReadOrigin {
-    pub(crate) fn task_child(self) -> Self {
+    /// What a turn nobody typed stands as: the same freedom to look, never
+    /// the owner's say over a secret file.
+    fn looks_as_free_but_untyped(self) -> Self {
         match self {
             Self::Other => Self::Other,
             Self::LocalOwner | Self::LocalDelegate | Self::LocalTask => Self::LocalTask,
@@ -37,14 +87,6 @@ impl ReadOrigin {
             Self::Other => false,
             Self::LocalOwner | Self::LocalDelegate | Self::LocalTask => true,
         }
-    }
-
-    /// What a turn nobody typed stands as (a host's follow-up, the engine's
-    /// own notice): the session's last turn may have been its owner's, and
-    /// the owner's say over a secret file does not carry into this one.
-    /// Looking stays as free as it was.
-    pub fn unattended(self) -> Self {
-        self.task_child()
     }
 }
 
@@ -115,14 +157,28 @@ pub(super) fn decide(
 
 #[cfg(test)]
 mod unattended_tests {
-    use super::ReadOrigin;
+    use super::{ReadOrigin, ReadStart};
 
     /// A turn nobody typed never stands as the owner; a looker stays a looker.
     #[test]
     fn a_turn_nobody_typed_is_never_the_owners() {
-        assert_eq!(ReadOrigin::LocalOwner.unattended(), ReadOrigin::LocalTask);
-        assert_eq!(ReadOrigin::LocalDelegate.unattended(), ReadOrigin::LocalTask);
-        assert_eq!(ReadOrigin::LocalTask.unattended(), ReadOrigin::LocalTask);
-        assert_eq!(ReadOrigin::Other.unattended(), ReadOrigin::Other);
+        let untyped = |was| ReadStart::Unattended(was).standing();
+        assert_eq!(untyped(ReadOrigin::LocalOwner), ReadOrigin::LocalTask);
+        assert_eq!(untyped(ReadOrigin::LocalDelegate), ReadOrigin::LocalTask);
+        assert_eq!(untyped(ReadOrigin::LocalTask), ReadOrigin::LocalTask);
+        assert_eq!(untyped(ReadOrigin::Other), ReadOrigin::Other);
+    }
+
+    /// Every start, as the table says: the design table, executable.
+    #[test]
+    fn every_start_stands_as_the_table_says() {
+        use ReadOrigin::{LocalDelegate, LocalOwner, LocalTask, Other};
+        assert_eq!(ReadStart::OwnerTyped.standing(), LocalOwner);
+        assert_eq!(ReadStart::HostAtThisMac.standing(), LocalDelegate);
+        assert_eq!(ReadStart::NoStanding.standing(), Other);
+        assert_eq!(ReadOrigin::default(), Other);
+        for was in [LocalOwner, LocalDelegate, LocalTask, Other] {
+            assert_eq!(ReadStart::TaskChild(was).standing(), ReadStart::Unattended(was).standing(), "{was:?}");
+        }
     }
 }
