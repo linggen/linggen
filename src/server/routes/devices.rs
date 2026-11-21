@@ -9,6 +9,11 @@ pub(super) fn routes() -> Routes {
     Routes::new()
         // Companion
         .route("/api/tts", post(api::tts::tts_handler))
+        // A minute of audio is over the framework's body limit once it is JSON.
+        .route(
+            "/api/stt",
+            post(api::stt::stt_handler).layer(axum::extract::DefaultBodyLimit::max(api::stt::BODY_LIMIT)),
+        )
         .route("/api/yinyue/chat", post(api::yinyue::chat_handler))
         .route("/api/yinyue/event", post(api::yinyue::event_handler))
         .route("/api/yinyue/answer", post(api::yinyue::answer_handler))

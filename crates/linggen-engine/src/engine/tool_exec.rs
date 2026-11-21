@@ -1078,6 +1078,7 @@ impl AgentEngine {
                     failed: false,
                     images: Vec::new(),
                     place: None,
+                    heard: false,
                 },
             )
             .await;

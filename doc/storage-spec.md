@@ -58,11 +58,12 @@ Project path encoding: `/Users/foo/project` → `-Users-foo-project` (same conve
 ├── runtime/                          # Managed Python runtime (see src/runtime.rs)
 │   ├── py/                           # Pinned relocatable CPython (python-build-standalone)
 │   ├── envs/{name}/                  # Named venvs: tools (yt-dlp), tts (mlx-audio), pictures (mflux)
-│   ├── mlx_tts.py, mlx_picture.py    # Sidecar/runner scripts, rewritten from the binary at spawn
+│   ├── mlx_voice.py, mlx_picture.py  # Sidecar/runner scripts (voice: speech out and in), rewritten from the binary at spawn
 │   ├── tts-model.stamp               # Voice model warmed into models/hf-hub (the voice lane is ready)
+│   ├── stt-model.stamp               # Hearing model (Whisper) fetched into models/hf-hub on first use
 │   └── pictures-model.stamp          # Picture model warmed into models/hf-hub (the lane is ready)
 ├── models/
-│   ├── hf-hub/hub/                   # The one Hugging Face cache: Qwen3-TTS, FLUX.2 klein, Kokoro-82M
+│   ├── hf-hub/hub/                   # The one Hugging Face cache: Qwen3-TTS, Whisper large-v3 turbo (hearing, first use), FLUX.2 klein, Kokoro-82M
 │   └── kokoro-voices/{voice}.pt      # Kokoro voice packs (af_heart, zf_xiaoxiao)
 ├── workspace/                        # Where a new chat works until another folder is chosen for it (made on demand)
 ├── sessions/                         # All sessions (user, skill, mission — flat)
@@ -118,7 +119,7 @@ install, never on first use: a person never waits on one.
   the `tools` venv are small and start at once, as does a model stage whose
   snapshot is already in the cache (it only verifies and stamps).
 - **One at a time.** Every download holds the runtime's download slot.
-- **What.** Python + `tools`; the voice lane (`tts` venv + Qwen3-TTS, ~2.1 GB);
+- **What.** Python + `tools`; the voice lane (`tts` venv + Qwen3-TTS, ~2.1 GB; its hearing model, Whisper, ~1.6 GB, is fetched on first use, not at boot);
   the pictures lane (`pictures` venv + FLUX.2 klein 4B, ~4.3 GB); Kokoro's
   weights (~300 MB, the fallback voice, every platform). Voice and pictures
   run where the lane gate admits them, pet on or off.

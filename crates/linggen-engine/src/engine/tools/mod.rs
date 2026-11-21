@@ -877,6 +877,7 @@ mod tests {
             failed: false,
             images: Vec::new(),
             place: None,
+            heard: false,
         };
         let mut history = vec![
             msg("user", "[HIDDEN] [scene] opened", false),
@@ -930,6 +931,7 @@ mod tests {
             failed: false,
             images: Vec::new(),
             place: None,
+            heard: false,
         };
         for msg in [
             row("user", "hello", false),

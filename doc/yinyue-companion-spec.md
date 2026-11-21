@@ -97,6 +97,44 @@ The person is at that page when one of its own surfaces reads present
 gesture, never the talking loop, and fetches no audio — as when muted. When
 and how often she speaks up is unchanged. The phone has no spoken voice.
 
+### Asked aloud — answered aloud (2.6, engine half built)
+
+A person who speaks to her is not reading, so the rule above has one agreed
+exception: **asked aloud, answered aloud**, also with the page in view.
+Muted on this device she answers in words only — mute stays absolute — and a
+typed line at the page stays text.
+
+- **Hearing, `POST /api/stt`** (`server/api/stt.rs`, owner only, routed as
+  `/api/tts` is). Body: one clip, WAV 16 kHz mono 16-bit PCM, at most 60 s —
+  raw `audio/wav`, or `{"wav_b64": "…"}` as JSON (what a data-channel request
+  can carry). Answer `{text, language, ms}`; nothing intelligible, or a clip
+  that never rises above a quiet room's noise (the model is not asked: Whisper
+  invents words from silence), is `{"text": ""}`; not that WAV 400; over 60 s
+  413; a machine that cannot hear 503 `{error: "unavailable", reason}` with a
+  reason of at most twenty words.
+- **The engine is Whisper large-v3 turbo on MLX** (`runtime::STT_MODEL`, named
+  once beside the voice model), in the voice sidecar that already speaks her
+  (`mlx_sidecar.rs`, one process, one slot; `mlx_voice.py`). Same machine
+  needs as her voice (Apple Silicon, 16 GB — no lane of its own). Fetched at
+  first use, not at boot: the first ask answers 503 "Fetching the hearing
+  model", and the progress rides the `tasks` topic as her voice's does.
+- **The sound is never kept or sent.** The provider is handed samples (no path,
+  no URL); the sidecar gets them on stdin and gives them to the model as an
+  array — no file, no log line, nothing in the session; the model is read from
+  the local cache by path, never by a hub lookup. Locks:
+  `stt::a_hearing_has_no_way_to_keep_or_send_the_sound`,
+  `stt_mlx::no_sound_is_left_behind_on_disk`,
+  `stt_mlx::the_sidecar_script_keeps_what_it_hears_to_itself`.
+- **Her door takes `asked_aloud: true`** (`POST /api/yinyue/chat`). It is a fact
+  of the turn's start: `TurnStart::Aloud` (`chat/turn_start.rs`), a person's
+  words in every way a typed line is, whose line is kept as the user's row of
+  her thread with `heard: true` (one field of the row, for a page that shows
+  it was spoken) and whose answer `speaks_aloud` (`api/yinyue.rs`, still the
+  one place) says aloud unless muted. Quiet hours and the hourly limit do not
+  apply to it: she was asked. A line carried to an app's own chat (a private
+  app named, or her stage on an app page with a chat) is said there as typed
+  and follows that chat's rule; a turn replayed after a restart is not spoken.
+
 ## Herald — what she tells of Ling's work, decided in one place
 
 Terminal/blocked run events are already broadcast; `server/resident/triggers.rs`

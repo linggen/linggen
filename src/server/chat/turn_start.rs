@@ -1,7 +1,8 @@
 //! Who started a turn: one closed set, and everything a start decides read
 //! from it here — what the turn may read without asking, whether its words
-//! are a person's, and which kind of turn it is for Yinyue's reply (held or
-//! shown, which speaking contract, which finalizer).
+//! are a person's, whether they were spoken aloud (and so heard back), and
+//! which kind of turn it is for Yinyue's reply (held or shown, which speaking
+//! contract, which finalizer).
 //!
 //! A door says its start once, when it builds the turn's [`ChatRunCtx`]
 //! (`start`); nothing else names a kind of start. Each projection below is
@@ -30,6 +31,11 @@ pub(crate) enum TurnStart {
     /// A person's words through any other door: a remote surface, a room's
     /// guest, an app's or a skill's page, her avatar.
     Person,
+    /// A person's words spoken to her avatar and heard (`/api/stt`, then her
+    /// door's `asked_aloud`): a person's words in every way [`Self::Person`]
+    /// is, kept as a line they spoke, and answered aloud even where the page
+    /// shows the line. Built by [`Self::at_her_avatar`] alone.
+    Aloud,
     /// A chat message a speaker relayed in (`sender`): not the sender's words.
     Relayed,
     /// A message kept in a restart's plan and sent again.
@@ -76,6 +82,15 @@ impl TurnStart {
         Self::of_her_kind(origin, Self::Resumed)
     }
 
+    /// The start of a person's words to her avatar: spoken (heard, then
+    /// written as a line) or typed.
+    pub(crate) fn at_her_avatar(asked_aloud: bool) -> Self {
+        match asked_aloud {
+            true => Self::Aloud,
+            false => Self::Person,
+        }
+    }
+
     /// `origin` as a start: her kinds are `Hers`; `Origin::Person` is
     /// `person`, which the door chose.
     fn of_her_kind(origin: Origin, person: Self) -> Self {
@@ -93,7 +108,7 @@ impl TurnStart {
     fn reads(self, was: ReadOrigin) -> ReadOrigin {
         match self {
             Self::OwnerHere => ReadStart::OwnerTyped,
-            Self::Person | Self::Relayed | Self::Resumed | Self::Engine | Self::Hers(_) => {
+            Self::Person | Self::Aloud | Self::Relayed | Self::Resumed | Self::Engine | Self::Hers(_) => {
                 ReadStart::Unattended(was)
             }
         }
@@ -105,8 +120,18 @@ impl TurnStart {
     /// a waiting question (`answer_prompt`).
     fn person_spoke(self) -> bool {
         match self {
-            Self::OwnerHere | Self::Person => true,
+            Self::OwnerHere | Self::Person | Self::Aloud => true,
             Self::Relayed | Self::Resumed | Self::Engine | Self::Hers(_) => false,
+        }
+    }
+
+    /// Whether the person spoke these words aloud: the line is kept marked as
+    /// heard, and her answer is spoken even where the page shows it (a
+    /// person who asked by voice is not reading). Muted, it is still words only.
+    pub(crate) fn asked_aloud(self) -> bool {
+        match self {
+            Self::Aloud => true,
+            Self::OwnerHere | Self::Person | Self::Relayed | Self::Resumed | Self::Engine | Self::Hers(_) => false,
         }
     }
 
@@ -114,7 +139,7 @@ impl TurnStart {
     /// ([`Origin`]). Every start but hers is the answer path.
     pub(crate) fn origin(self) -> Origin {
         match self {
-            Self::OwnerHere | Self::Person | Self::Relayed | Self::Resumed | Self::Engine => {
+            Self::OwnerHere | Self::Person | Self::Aloud | Self::Relayed | Self::Resumed | Self::Engine => {
                 Origin::Person
             }
             Self::Hers(origin) => origin,
@@ -153,6 +178,7 @@ mod tests {
         let rows = [
             (TurnStart::OwnerHere, LocalOwner, LocalOwner, true, "user"),
             (TurnStart::Person, LocalTask, LocalTask, true, "user"),
+            (TurnStart::Aloud, LocalTask, LocalTask, true, "user"),
             (TurnStart::Relayed, LocalTask, LocalTask, false, "user"),
             (TurnStart::Resumed, LocalTask, LocalTask, false, "user"),
             (TurnStart::Engine, LocalTask, LocalTask, false, "user"),
@@ -164,6 +190,7 @@ mod tests {
             assert_eq!(start.reads(LocalTask), after_task, "{start:?}");
             assert_eq!(start.reads(Other), if start == TurnStart::OwnerHere { LocalOwner } else { Other }, "{start:?}");
             assert_eq!(start.person_spoke(), spoke, "{start:?}");
+            assert_eq!(start.asked_aloud(), start == TurnStart::Aloud, "{start:?}");
             assert_eq!(start.origin().name(), name, "{start:?}");
         }
     }
@@ -189,6 +216,22 @@ mod tests {
         assert_eq!(TurnStart::told("yinyue", Origin::TaskEnd), TurnStart::Hers(Origin::TaskEnd));
         // A delegated run in her session is not her person's words.
         assert_eq!(TurnStart::told("yinyue", Origin::Person), TurnStart::Engine);
+    }
+
+    /// Her avatar's door: spoken words are `Aloud`, typed ones `Person`, and
+    /// only a spoken one is asked aloud — a person's words in both.
+    #[test]
+    fn her_avatar_hears_a_spoken_line_as_asked_aloud_and_a_typed_one_not() {
+        assert_eq!(TurnStart::at_her_avatar(true), TurnStart::Aloud);
+        assert_eq!(TurnStart::at_her_avatar(false), TurnStart::Person);
+        assert!(TurnStart::at_her_avatar(true).asked_aloud());
+        assert!(!TurnStart::at_her_avatar(false).asked_aloud());
+        for start in [TurnStart::at_her_avatar(true), TurnStart::at_her_avatar(false)] {
+            assert!(start.person_spoke());
+            assert_eq!(start.origin(), Origin::Person);
+        }
+        // Said again from a restart's plan, no one speaks now.
+        assert!(!TurnStart::resent_at_her_door(Origin::Person).asked_aloud());
     }
 
     #[test]
@@ -241,8 +284,10 @@ mod structure_lock {
         // `ReadStart::OwnerTyped`, held to its one door by
         // `a_standing_for_reads_is_named_in_one_place`).
         only_here("OwnerHere");
-        // Whether a person spoke is the start's.
+        // Whether a person spoke is the start's, and so is whether they spoke
+        // aloud: the variant is named here alone, the door asks for it by flag.
         only_here("person_spoke");
+        only_here("Aloud");
         // A turn of hers is made only from an origin the constructors read.
         only_here("Hers(");
         // The standing is put on the engine by the start, at the turn core.
@@ -368,7 +413,6 @@ mod structure_lock {
         assert_eq!(
             used,
             [
-                want("src/server/api/yinyue.rs", 1),    // her avatar chat: a person's words
                 want("src/server/mcp_agent.rs", 1),     // a delegated run told into a session
                 want("src/server/resident/triggers.rs", 1), // `unprompted_source`: not unprompted
                 want("src/server/resident/turn.rs", 1), // the sender string

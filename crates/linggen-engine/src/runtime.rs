@@ -62,6 +62,21 @@ const VENVS: [(&str, &[&str]); 3] = [
 /// bf16 on none, and misread up to 15% of a line vs 4.7%.
 pub const TTS_MODEL: &str = "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16";
 
+/// The hearing model, served by the same sidecar as [`TTS_MODEL`] (the `tts`
+/// venv, `mlx-audio`): Whisper large-v3 turbo in MLX fp16, the Whisper repo
+/// `mlx-audio` itself lists for speech-to-text. Whisper is multilingual (one
+/// model hears Chinese, English and the two mixed in a sentence, language
+/// picked per clip), MIT-licensed (openai/whisper-large-v3-turbo's card,
+/// checked 2026-11-21; the MLX conversion states none); large-v3 turbo is the
+/// large-v3 with its decoder cut from 32 layers to 4, 809M parameters, 1.61 GB
+/// on disk, the fast large Whisper. Chosen over a smaller Whisper because a mis-heard
+/// word is a wrong question to her; over Qwen3-ASR and the like because
+/// Whisper is the one with years of use on Chinese-English speech.
+/// Unlike the voice model it is fetched on first use, not at boot
+/// ([`ensure_hearing_in_background`]). Never measured on this machine class
+/// here: its card states the size, the speed is the model family's.
+pub const STT_MODEL: &str = "mlx-community/whisper-large-v3-turbo-asr-fp16";
+
 /// The picture model the `pictures` venv runs: FLUX.2 klein 4B, 4-bit,
 /// in mflux's own weight layout (only that layout loads pre-quantized;
 /// other MLX conversions fail in the text encoder). Chosen 2026-09-15
@@ -381,10 +396,24 @@ pub async fn download_slot() -> tokio::sync::MutexGuard<'static, ()> {
 /// wait for `quiet`. `progress` receives each stage payload; the server
 /// wires it to the live topic bus + retained store.
 pub async fn prewarm(progress: Progress, quiet: Quiet) {
-    prewarm_lanes(true, true, progress, quiet).await
+    prewarm_lanes(BOOT, progress, quiet).await
 }
 
-async fn prewarm_lanes(with_tts: bool, with_pictures: bool, progress: Progress, quiet: Quiet) {
+/// What boot carries: both lanes' stages. Not the hearing model — that is
+/// fetched when someone first speaks to her ([`ensure_hearing_in_background`]).
+const BOOT: Wanted = Wanted { voice: true, pictures: true, hearing: false };
+
+/// Which lanes a prewarm is asked to carry. Hearing is part of the voice
+/// lane (same venv, same machine gate) and needs the voice stages under it,
+/// so `hearing` alone runs them too.
+#[derive(Clone, Copy)]
+struct Wanted {
+    voice: bool,
+    pictures: bool,
+    hearing: bool,
+}
+
+async fn prewarm_lanes(wanted: Wanted, progress: Progress, quiet: Quiet) {
     if !cfg!(target_os = "macos") {
         tracing::info!("[runtime] prewarm skipped: unsupported platform");
         return;
@@ -392,7 +421,7 @@ async fn prewarm_lanes(with_tts: bool, with_pictures: bool, progress: Progress, 
     export_python_env();
 
     for attempt in 0..3u32 {
-        match prewarm_stages(with_tts, with_pictures, &progress, &quiet).await {
+        match prewarm_stages(wanted, &progress, &quiet).await {
             Ok(()) => return,
             Err(e) if format!("{e:#}").contains("low disk") => {
                 // Not retryable on a timer — the disk won't free itself.
@@ -430,6 +459,16 @@ pub fn voice_ready() -> bool {
     env_bin("tts", "python3").exists() && stamp_matches(&tts_model_stamp(), TTS_MODEL)
 }
 
+/// Can the sidecar hear: the voice lane's venv and voice model (the sidecar
+/// starts with both) and the hearing model on disk.
+pub fn hearing_ready() -> bool {
+    voice_ready() && stamp_matches(&stt_model_stamp(), STT_MODEL)
+}
+
+fn stt_model_stamp() -> PathBuf {
+    runtime_dir().join("stt-model.stamp")
+}
+
 fn picture_model_stamp() -> PathBuf {
     runtime_dir().join("pictures-model.stamp")
 }
@@ -443,7 +482,25 @@ fn tts_model_stamp() -> PathBuf {
 /// beats it (or a boot prewarm that gave up). The person asked, so it does
 /// not wait for quiet — only for the download slot.
 pub fn ensure_pictures_in_background() {
-    tokio::spawn(prewarm_lanes(false, true, progress_sink(), always_quiet()));
+    let wanted = Wanted { voice: false, pictures: true, hearing: false };
+    tokio::spawn(prewarm_lanes(wanted, progress_sink(), always_quiet()));
+}
+
+/// Fetch the hearing model now, off the caller's path: the first time
+/// someone speaks to her. Reports on the same `tasks` topic as the boot
+/// prewarm, so the page shows it as it shows her voice. The person asked, so
+/// it does not wait for quiet. One at a time: a second ask while it runs
+/// starts nothing.
+pub fn ensure_hearing_in_background() {
+    static FETCHING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if FETCHING.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    tokio::spawn(async {
+        let wanted = Wanted { voice: false, pictures: false, hearing: true };
+        prewarm_lanes(wanted, progress_sink(), always_quiet()).await;
+        FETCHING.store(false, std::sync::atomic::Ordering::SeqCst);
+    });
 }
 
 /// Which lanes a stage set may run: each goes through the gate and a
@@ -472,6 +529,7 @@ fn stage_ready(stage: &str) -> bool {
     match stage {
         "python" => python_ready(),
         "tts-model" => stamp_matches(&tts_model_stamp(), TTS_MODEL),
+        "stt-model" => stamp_matches(&stt_model_stamp(), STT_MODEL),
         "pictures-model" => stamp_matches(&picture_model_stamp(), PICTURE_MODEL),
         venv => VENVS
             .iter()
@@ -485,6 +543,7 @@ fn stage_ready(stage: &str) -> bool {
 fn model_cached(stage: &str) -> bool {
     let repo = match stage {
         "tts-model" => TTS_MODEL,
+        "stt-model" => STT_MODEL,
         "pictures-model" => PICTURE_MODEL,
         _ => return false,
     };
@@ -498,23 +557,20 @@ fn hub_snapshot_present(hub: &Path, repo: &str) -> bool {
     std::fs::read_dir(snapshots).is_ok_and(|mut d| d.next().is_some())
 }
 
-async fn prewarm_stages(
-    with_tts: bool,
-    with_pictures: bool,
-    progress: &Progress,
-    quiet: &Quiet,
-) -> Result<()> {
+async fn prewarm_stages(wanted: Wanted, progress: &Progress, quiet: &Quiet) -> Result<()> {
     // Each lane goes through the lane gate (Apple Silicon, memory, disk);
     // a Mac that fails it keeps the runtime + tools and simply never grows
     // that lane. The reason is logged and rides on the progress payload so
     // Settings can say why.
-    let tts_on = lane_open(&VOICE_LANE, with_tts);
-    let pictures_on = lane_open(&PICTURES_LANE, with_pictures);
+    let tts_on = lane_open(&VOICE_LANE, wanted.voice || wanted.hearing);
+    let hearing_on = tts_on && wanted.hearing;
+    let pictures_on = lane_open(&PICTURES_LANE, wanted.pictures);
     let stages: &[(&str, bool)] = &[
         ("python", true),
         ("tools", true),
         ("tts", tts_on),
         ("tts-model", tts_on),
+        ("stt-model", hearing_on),
         ("pictures", pictures_on),
         ("pictures-model", pictures_on),
     ];
@@ -556,6 +612,7 @@ async fn run_stage(stage: &str) -> Result<()> {
             ensure_venv(stage).await?;
         }
         "tts-model" => ensure_tts_model().await?,
+        "stt-model" => ensure_stt_model().await?,
         "pictures-model" => ensure_picture_model().await?,
         _ => unreachable!(),
     }
@@ -749,6 +806,32 @@ async fn ensure_tts_model() -> Result<()> {
     .await?;
     std::fs::write(tts_model_stamp(), TTS_MODEL)?;
     tracing::info!("[runtime] tts model ready");
+    Ok(())
+}
+
+/// Fetch the hearing model into the same HF cache and stamp it, so
+/// [`hearing_ready`] is a file test. Downloaded, not loaded: the sidecar
+/// reads it from this cache by local path (`local_files_only`), so hearing
+/// never reaches the hub. `HF_ENDPOINT` as in [`ensure_tts_model`].
+async fn ensure_stt_model() -> Result<()> {
+    if stamp_matches(&stt_model_stamp(), STT_MODEL) {
+        return Ok(());
+    }
+    check_disk_headroom(&runtime_dir(), 3)?;
+    let code = format!(
+        "from huggingface_hub import snapshot_download; snapshot_download({STT_MODEL:?})"
+    );
+    run_ok(
+        tokio::process::Command::new(env_bin("tts", "python3"))
+            .arg("-c")
+            .arg(&code)
+            .env("HF_HOME", hf_home())
+            .env("HF_ENDPOINT", crate::hf_mirror::endpoint().await),
+        "fetch hearing model",
+    )
+    .await?;
+    std::fs::write(stt_model_stamp(), STT_MODEL)?;
+    tracing::info!("[runtime] hearing model ready");
     Ok(())
 }
 
@@ -1003,7 +1086,7 @@ mod tests {
 
     #[test]
     fn only_the_lane_stages_wait_for_quiet() {
-        for stage in ["tts", "tts-model", "pictures", "pictures-model"] {
+        for stage in ["tts", "tts-model", "stt-model", "pictures", "pictures-model"] {
             assert!(waits_for_quiet(stage), "{stage} should wait");
         }
         for stage in ["python", "tools"] {
@@ -1022,6 +1105,15 @@ mod tests {
         std::fs::create_dir_all(snaps.join("abc123")).unwrap();
         assert!(hub_snapshot_present(hub.path(), repo));
         assert!(!model_cached("tts"), "a venv stage is never a cached model");
+    }
+
+    #[test]
+    fn hearing_is_fetched_on_first_use_and_needs_what_her_voice_needs() {
+        assert!(!BOOT.hearing, "boot must not download the hearing model");
+        assert_ne!(STT_MODEL, TTS_MODEL);
+        assert!(!model_cached("tts"), "a venv stage is never a cached model");
+        // Hearing is a stage of the voice lane: no lane of its own.
+        assert!(LANES.iter().all(|l| l.name != "hearing"));
     }
 
     #[tokio::test]

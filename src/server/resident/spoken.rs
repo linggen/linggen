@@ -400,17 +400,29 @@ pub(crate) fn is_silent_reply(from_id: &str, content: &str) -> bool {
 pub(crate) struct Turned {
     text: String,
     origin: Origin,
+    /// The turn answers words the person spoke aloud: `start.asked_aloud()`.
+    asked_aloud: bool,
 }
 
 /// A reply to a person (or to an answer they asked for) that may be voiced:
-/// only a person-origin [`Turned`] makes one.
-pub(crate) struct Answer(Line);
+/// only a person-origin [`Turned`] makes one. `asked_aloud`: it answers words
+/// spoken aloud, and is said even where the page shows it.
+pub(crate) struct Answer {
+    line: Line,
+    asked_aloud: bool,
+}
 
 impl Turned {
     /// `text` as the turn of `origin` ended — `origin` the turn's own value,
     /// never a variant named where the reply is read (the lock test says so).
     pub(crate) fn of(text: String, origin: Origin) -> Self {
-        Self { text, origin }
+        Self { text, origin, asked_aloud: false }
+    }
+
+    /// `text` as the turn that began as `start` ended: its origin, and
+    /// whether the person asked aloud, are the start's own.
+    pub(crate) fn of_started(text: String, start: crate::server::chat::TurnStart) -> Self {
+        Self { text, origin: start.origin(), asked_aloud: start.asked_aloud() }
     }
 
     pub(crate) fn chars(&self) -> usize {
@@ -429,7 +441,7 @@ impl Turned {
         if self.origin.held() {
             return None;
         }
-        answer_line(&self.text).map(|line| Answer(Line::new(line)))
+        answer_line(&self.text).map(|line| self.answered(Line::new(line)))
     }
 
     /// Her reply to a person who talked to her on her own stage, as it
@@ -438,7 +450,11 @@ impl Turned {
         if self.origin.held() || self.text.eq_ignore_ascii_case(SILENT) {
             return None;
         }
-        Some(Answer(Line::new(self.text.clone())))
+        Some(self.answered(Line::new(self.text.clone())))
+    }
+
+    fn answered(&self, line: Line) -> Answer {
+        Answer { line, asked_aloud: self.asked_aloud }
     }
 }
 
@@ -449,7 +465,8 @@ pub(crate) fn speak_reply(
     answer: Answer,
     at: crate::server::api::yinyue::SaidAt<'_>,
 ) {
-    crate::server::api::yinyue::emit_speak(state, answer.0, None, at);
+    let at = crate::server::api::yinyue::SaidAt { asked_aloud: answer.asked_aloud, ..at };
+    crate::server::api::yinyue::emit_speak(state, answer.line, None, at);
 }
 
 /// The most a spoken line may be, in characters: an app moment's text is cut
@@ -661,7 +678,7 @@ impl Stage {
     }
 
     pub(super) fn at(&self) -> crate::server::api::yinyue::SaidAt<'_> {
-        crate::server::api::yinyue::SaidAt { session: self.said_session.as_deref(), app: self.app.as_deref() }
+        crate::server::api::yinyue::SaidAt { session: self.said_session.as_deref(), app: self.app.as_deref(), ..Default::default() }
     }
 }
 
@@ -772,6 +789,7 @@ async fn keep_row(
         failed: false,
         images: Vec::new(),
         place: place.map(str::to_string),
+        heard: false,
     };
     if let Err(e) = state.manager.global_sessions.add_chat_message(session, &msg) {
         tracing::warn!("[yinyue] her line was not kept as a row: {e}");
@@ -1062,8 +1080,9 @@ mod one_decision {
         check(ALL, &make, &[("src/server/resident/spoken.rs", 4)]);
         let literal = format!("{}{}", "Line { ", "text");
         check(ALL, &literal, &[]);
-        let answer = format!("{}{}", "Answer(", "Line");
-        check(ALL, &answer, &[("src/server/resident/spoken.rs", 3)]);
+        // The type, its one constructor (`Turned::answered`) and that one's return type.
+        let answer = format!("{}{}", "Answer {", " line");
+        check(ALL, &answer, &[("src/server/resident/spoken.rs", 1)]);
     }
 
     #[test]
@@ -1132,6 +1151,7 @@ mod one_decision {
             format!("{}{}", "ServerEvent::", "Message"),
             format!("{}{}", "persist_and_", "emit"),
             format!("{}{}", "persist_message_", "only"),
+            format!("{}{}", "persist_user_", "line("),
         ];
         let hers = ["COMPANION_AGENT_ID", "YINYUE_AGENT", "\"yinyue\"", "is_companion"];
         let mut found = Vec::new();

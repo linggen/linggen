@@ -79,8 +79,8 @@ pub trait TtsProvider: Send + Sync {
 /// Qwen3-TTS on the GPU via the managed runtime's sidecar, with Kokoro
 /// (and behind it `say`) as the automatic fallback chain, so the voice
 /// upgrade can never cost the pet her speech.
-pub fn default_provider() -> Arc<dyn TtsProvider> {
-    Arc::new(super::tts_mlx::MlxTtsProvider::new())
+pub fn default_provider(sidecar: Arc<super::mlx_sidecar::VoiceSidecar>) -> Arc<dyn TtsProvider> {
+    Arc::new(super::tts_mlx::MlxTtsProvider::new(sidecar))
 }
 
 /// Kokoro's own voice packs carry the LANGUAGE, not just the timbre: its

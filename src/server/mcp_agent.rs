@@ -372,6 +372,7 @@ pub async fn run(
             failed: false,
             images: Vec::new(),
             place: None,
+            heard: false,
         },
     );
 
@@ -1525,6 +1526,7 @@ mod wait_ready_tests {
             images: vec![],
             run_id: None,
             place: None,
+            heard: false,
         }
     }
 

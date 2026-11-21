@@ -25,6 +25,9 @@ use crate::server::{ServerEvent, ServerState};
 pub struct SaidAt<'a> {
     pub session: Option<&'a str>,
     pub app: Option<&'a str>,
+    /// The line answers words the person spoke aloud (`TurnStart::asked_aloud`,
+    /// carried by the reply): it is said even where the page shows it.
+    pub asked_aloud: bool,
 }
 
 /// Push a speak cue to the user's surfaces. The single producer — the
@@ -71,7 +74,7 @@ fn emit(
     {
         return false;
     }
-    let voice = speaks_aloud(state, at.app);
+    let voice = speaks_aloud(state, &at);
     let session = at.session;
     // Every line she says, from any path, restarts the quiet an app moment
     // waits for — a line an app had her say directly counts too.
@@ -94,12 +97,17 @@ fn emit(
 }
 
 /// The one place a line of hers is decided spoken: her words are said aloud
-/// only when the person cannot see them. At the page the line shows on
-/// (`app`, `None` the main page), or with her voice muted, it goes out as
-/// words only — the stage shows the bubble and does not talk.
-fn speaks_aloud(state: &ServerState, app: Option<&str>) -> bool {
+/// only when the person cannot see them — or when they asked aloud
+/// (`at.asked_aloud`), who is not reading. At the page the line shows on
+/// (`at.app`, `None` the main page), or with her voice muted, it goes out as
+/// words only — the stage shows the bubble and does not talk. Muted is
+/// absolute: a spoken question gets words too.
+fn speaks_aloud(state: &ServerState, at: &SaidAt<'_>) -> bool {
     use crate::server::resident::{user_sees, Sight};
-    !state.manager.pet_muted() && !user_sees(state, Sight::Line(app))
+    if state.manager.pet_muted() {
+        return false;
+    }
+    at.asked_aloud || !user_sees(state, Sight::Line(at.app))
 }
 
 /// `/mute` → turn her voice off, `/unmute` → back on; any other message is
@@ -297,6 +305,11 @@ async fn absent_for_moment(state: &Arc<ServerState>, app: &str, session: Option<
 #[derive(Deserialize)]
 pub(crate) struct ChatRequest {
     pub text: String,
+    /// The words were spoken aloud (heard through `/api/stt`): the line is kept
+    /// as heard and her answer is spoken, the page in view or not. Read once,
+    /// into the turn's start (`TurnStart::at_her_avatar`).
+    #[serde(default)]
+    pub asked_aloud: bool,
     /// The caller's person (the channel and the LAN gate set it): her own
     /// thread is the builder's day, so with the daily session on another
     /// person is refused it.
@@ -304,7 +317,7 @@ pub(crate) struct ChatRequest {
     pub user_id: Option<String>,
 }
 
-/// POST /api/yinyue/chat — `{ text }`. The user talks to Yinyue directly (e.g.
+/// POST /api/yinyue/chat — `{ text, asked_aloud? }`. The user talks to Yinyue directly (e.g.
 /// clicking the desktop avatar). Her turn runs in the background and her reply
 /// is spoken over the event spine; returns immediately so the UI isn't blocked.
 pub(crate) async fn chat_handler(
@@ -354,8 +367,9 @@ pub(crate) async fn chat_handler(
     // can relay the answer with `answer_prompt` rather than just chatting — the
     // user's reply and the open prompt land in the same turn (no cross-turn recall).
     let task = frame_with_pending_prompt(&state, &text).await;
+    let start = crate::server::chat::TurnStart::at_her_avatar(req.asked_aloud);
     tokio::spawn(async move {
-        if let Some(reply) = crate::server::resident::run_yinyue_turn(&state, task, crate::server::resident::Origin::Person).await {
+        if let Some(reply) = crate::server::resident::run_avatar_turn(&state, task, start).await {
             if let Some(answer) = reply.whole_answer() {
                 crate::server::resident::speak_reply(&state, answer, Default::default());
             }
@@ -524,6 +538,12 @@ mod one_voice_rule {
         check(&send, &[("src/server/api/yinyue.rs", 1)]);
         let voice = format!("{}{}", "speaks_", "aloud(");
         check(&voice, &[("src/server/api/yinyue.rs", 2)]);
+        // Whether the person asked aloud is read from the turn's start at her
+        // door once, carried on the reply, and weighed in that one place.
+        let at_door = format!("{}{}", "at_her_", "avatar(");
+        check(&at_door, &[("src/server/api/yinyue.rs", 1), ("src/server/chat/turn_start.rs", 1)]);
+        let asked = format!("{}{}", "at.asked_", "aloud ||");
+        check(&asked, &[("src/server/api/yinyue.rs", 1)]);
         let seen = format!("{}{}", "Sight::", "Line");
         check(&seen, &[("src/server/api/yinyue.rs", 1), ("src/server/resident/triggers.rs", 1)]);
         // The helper that answers "is a page in front" decides when a condition

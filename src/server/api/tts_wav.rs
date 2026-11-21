@@ -31,6 +31,25 @@ struct Format {
 /// Decode a RIFF/WAVE clip (PCM16 or float32, any channel count — the
 /// first channel is kept). Walks the chunks; never assumes a 44-byte header.
 pub fn decode(bytes: &[u8]) -> anyhow::Result<Pcm> {
+    let (fmt, data) = chunks(bytes)?;
+    samples(data, &fmt)
+}
+
+/// The samples of a clip that is exactly `rate` Hz, mono, 16-bit PCM — the
+/// form a person's voice is heard in — and an error saying so for any other.
+/// [`decode`] is lenient (it serves clips from several voices); a clip a
+/// person's device made is not taken on trust.
+pub fn mono_pcm16(bytes: &[u8], rate: u32) -> anyhow::Result<Vec<i16>> {
+    let (fmt, data) = chunks(bytes)?;
+    anyhow::ensure!(
+        (fmt.tag, fmt.channels, fmt.bits, fmt.rate) == (1, 1, 16, rate),
+        "not {rate} Hz mono 16-bit PCM WAV"
+    );
+    Ok(samples(data, &fmt)?.samples)
+}
+
+/// The `fmt ` chunk and the bytes of the `data` chunk.
+fn chunks(bytes: &[u8]) -> anyhow::Result<(Format, &[u8])> {
     anyhow::ensure!(
         bytes.get(0..4) == Some(b"RIFF") && bytes.get(8..12) == Some(b"WAVE"),
         "not a WAV clip"
@@ -44,7 +63,7 @@ pub fn decode(bytes: &[u8]) -> anyhow::Result<Pcm> {
             b"fmt " => fmt = read_format(bytes, body),
             b"data" => {
                 let f = fmt.ok_or_else(|| anyhow::anyhow!("WAV data before fmt"))?;
-                return samples(&bytes[body..end], &f);
+                return Ok((f, &bytes[body..end]));
             }
             _ => {}
         }
