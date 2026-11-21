@@ -8,3 +8,6 @@ export const isOldClaude = (session?: { runtime?: string } | null): boolean =>
 
 /** The line the page shows in place of the composer (≤ 20 words). */
 export const OLD_CLAUDE_LINE = 'Claude sessions now run as Linggen sessions, so this one is read-only.';
+
+/** What the page says once the new session is made: the model it runs on (≤ 20 words). */
+export const continuedLine = (model: string): string => `Continuing in a new session on ${model}.`;

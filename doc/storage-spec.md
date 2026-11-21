@@ -27,7 +27,7 @@ Two-tier layout, aligned with Claude Code's `~/.claude/` + `{repo}/.claude/` con
 |-----------|---------|
 | `~/.linggen/` | Global home (override with `$LINGGEN_HOME`) |
 | `~/.linggen/sessions/` | All sessions (flat, creator/project tracked in metadata) |
-| `~/.linggen/runtimes/claude-agent-sdk/` | Left by 2.5.1: the retired Claude Agent SDK's install and its transcripts (about 280 MB). Nothing reads it; the engine has no clean-up for retired folders, so it stays until removed by hand |
+| `~/.linggen/runtimes/claude-agent-sdk/` | Left by 2.5.1: the retired Claude Agent SDK's install and the conversations of old Claude sessions, cleared and deleted ones too (about 280 MB). Nothing reads it; the engine has no clean-up for retired folders, so it stays until removed by hand |
 | `~/.linggen/workspace/` | Default working folder of a new chat (`session-spec.md` § Default workspace) |
 | `~/.linggen/memory/` | Global memory |
 | `~/.linggen/missions/` | Mission definitions and run history |

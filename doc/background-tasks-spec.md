@@ -39,7 +39,7 @@ subagent. It runs beside the chat, never in front of it.
    long it has run, its latest output or activity, how it ended. Any
    running task can be stopped from the list. Stopping one never stops the
    turn or the other tasks; Stop on the turn never stops background tasks.
-4. **One list, one surface.** Both runtimes feed one session task list. The
+4. **One list, one surface.** One session task list. The
    subagent pane shows it together with the session's subagents, each item
    once (a background subagent is one row, not a task and a subagent):
    running on top, ended folded below. A row opens its detail in the same

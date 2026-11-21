@@ -1,7 +1,7 @@
 // What a Bash call reads as in the chat: its tool row (`Bash(<label>)`) and
 // its line in the turn's activity log ("Running command: <label>").
-// Both runtimes reach the UI the same way — a tool_use block with the call's
-// args — so this is the one place the label is made.
+// A Bash call reaches the UI as a tool_use block with the call's args, so
+// this is the one place the label is made.
 //
 // - The call says what it does: its `description` (Claude Code's Bash has
 //   one; native Bash takes one too). That is the label.

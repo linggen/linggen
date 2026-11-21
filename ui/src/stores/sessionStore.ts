@@ -61,7 +61,7 @@ interface SessionState {
 
   createSession: () => Promise<void>;
   /** Go on from an old Claude session in a new Linggen session, and open it (lib/oldClaude.mts). */
-  continueOldClaude: (id: string) => Promise<void>;
+  continueOldClaude: (id: string) => Promise<string | undefined>;
   /** A New chat being made: a message sent meanwhile waits for it — it
    *  belongs to the new chat, not the one on screen before the click. */
   newChat: Promise<string | null> | null;
@@ -120,6 +120,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const data = await sessionsApi.continueOld(id);
     set((s) => afterNewChat(s.allSessions, { id: data.id, title: `${old?.title ?? 'Claude session'} (continued)`, cwd: data.cwd }, Math.floor(Date.now() / 1000)));
     window.localStorage.setItem(ACTIVE_SESSION_STORAGE_KEY, data.id);
+    return data.model;
   },
 
   removeSession: async (id) => {

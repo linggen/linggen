@@ -50,7 +50,7 @@ import { boxSlot } from '../../lib/chatDrafts.mts';
  * Hidden by default — only visible when the user clicks the session bar open.
  */
 const ChatDebugActions: React.FC<{ projectRoot?: string | null; sessionId?: string | null }> = ({ projectRoot, sessionId }) => {
-  const claude = useSessionStore((s) => isOldClaude(s.allSessions.find((session) => session.id === sessionId)));
+  const oldClaude = useSessionStore((s) => isOldClaude(s.allSessions.find((session) => session.id === sessionId)));
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'error'>('idle');
   const [spStatus, setSpStatus] = useState<'idle' | 'copied' | 'error'>('idle');
   const { copyChat, clearChat } = useChatActions(() => {}, {}, projectRoot);
@@ -126,7 +126,7 @@ const ChatDebugActions: React.FC<{ projectRoot?: string | null; sessionId?: stri
         <Copy size={12} />
         <span>{labelFor(copyStatus, 'Chat')}</span>
       </button>
-      {!claude && <button data-testid="copy-system-prompt" onClick={handleCopySystemPrompt} className={btnClass(spStatus)} title="Copy system prompt + tool schemas to clipboard">
+      {!oldClaude && <button data-testid="copy-system-prompt" onClick={handleCopySystemPrompt} className={btnClass(spStatus)} title="Copy system prompt + tool schemas to clipboard">
         <FileText size={12} />
         <span>{labelFor(spStatus, 'System Prompt')}</span>
       </button>}
