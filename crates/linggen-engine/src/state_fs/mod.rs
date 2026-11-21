@@ -6,6 +6,8 @@ pub mod session_images;
 pub mod session_usage;
 pub mod sessions;
 #[cfg(test)]
+mod old_claude_lock_tests;
+#[cfg(test)]
 mod row_place_tests;
 
 use anyhow::Result;

@@ -103,7 +103,7 @@ pub(crate) fn load_session_start(
 
 /// An owner session's memory section, for a session standing in `cwd`:
 /// core (or the empty-store bootstrap when there is none), then the shared
-/// tail. Native and Claude sessions start with the same text.
+/// tail.
 pub fn owner_block(
     store: &crate::prompts::PromptStore,
     cwd: &std::path::Path,

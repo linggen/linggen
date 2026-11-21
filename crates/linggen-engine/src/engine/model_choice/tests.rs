@@ -265,3 +265,44 @@ async fn an_engine_on_its_own_model_runs_a_shared_one_for_a_guest() {
     child.run_on_own_model("test").await;
     assert_eq!(child.model_id, "gpt-6.2-sol");
 }
+
+fn claude_config(json: serde_json::Value) -> ModelConfig {
+    let mut base = serde_json::json!({
+        "id": "claude-x", "provider": "anthropic",
+        "url": "https://api.anthropic.com", "model": "claude-x",
+    });
+    base.as_object_mut().unwrap().extend(json.as_object().unwrap().clone());
+    serde_json::from_value(base).unwrap()
+}
+
+/// A Claude conversation goes on only on an Anthropic model that has what it
+/// needs: a key, or a Claude sign-in that is good now.
+#[test]
+fn only_an_anthropic_model_with_a_key_or_a_sign_in_runs_claude() {
+    let keyed = claude_config(serde_json::json!({"api_key": "sk-test"}));
+    let keyless = claude_config(serde_json::json!({"api_key": ""}));
+    let mut signed = claude_config(serde_json::json!({}));
+    signed.auth_mode = Some(crate::config::AuthMode::ClaudeOauth);
+    let other = claude_config(serde_json::json!({"provider": "openai", "api_key": "sk-test"}));
+    assert!(can_run_claude(&keyed, || false));
+    assert!(!can_run_claude(&keyless, || true), "no key is no model");
+    assert!(can_run_claude(&signed, || true));
+    assert!(!can_run_claude(&signed, || false), "an expired sign-in is no model");
+    assert!(!can_run_claude(&other, || true), "another vendor is not Claude");
+}
+
+/// The chain is walked in order; an id this machine does not have is passed
+/// over, and none found is none.
+#[test]
+fn the_first_claude_model_of_the_chain_that_can_run_is_found() {
+    let m = ModelManager::new_with_credentials(
+        vec![
+            claude_config(serde_json::json!({"id": "claude-b", "api_key": "sk-test-b"})),
+            claude_config(serde_json::json!({"id": "claude-a", "api_key": "sk-test-a"})),
+        ],
+        &crate::credentials::Credentials::default(),
+    );
+    let chain = |ids: &[&str]| ids.iter().map(|id| id.to_string()).collect::<Vec<_>>();
+    assert_eq!(first_claude(&m, &chain(&["gpt-6.2-sol", "ghost", "claude-a", "claude-b"])).as_deref(), Some("claude-a"));
+    assert_eq!(first_claude(&m, &chain(&["gpt-6.2-sol", "gpt-6.1-terra"])), None);
+}

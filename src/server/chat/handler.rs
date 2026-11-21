@@ -1237,7 +1237,7 @@ pub(crate) async fn start_turn(
             .flatten()
     });
     // An old Claude session takes no turn (`server::old_claude`).
-    if meta.as_ref().is_some_and(crate::server::old_claude::is_read_only) {
+    if meta.as_ref().is_some_and(|m| m.is_old_claude()) {
         return (StatusCode::GONE, crate::server::old_claude::READ_ONLY).into_response();
     }
     // Where this turn stands: the page's app, else the session's own.

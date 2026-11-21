@@ -109,7 +109,7 @@ export const sessions = {
     apiPost<SessionCreateResponse>('/api/sessions', req),
   /** A new Linggen session that goes on from an old Claude session (lib/oldClaude.mts). */
   continueOld: (sessionId: string) =>
-    apiPost<{ id: string; cwd?: string }>('/api/sessions/continue', { session_id: sessionId }),
+    apiPost<{ id: string; cwd?: string; model?: string }>('/api/sessions/continue', { session_id: sessionId }),
   remove: (req: SessionDeleteRequest) =>
     apiDelete<void>('/api/sessions/all', req),
   rename: (req: SessionRenameRequest) =>

@@ -86,7 +86,7 @@ function SessionStatusCard({ status }: { status: { session_id: string; title?: s
       href={`/?session=${encodeURIComponent(status.session_id)}`}
       className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 dark:border-white/10 px-3 py-2 text-[13px] hover:bg-slate-50 dark:hover:bg-white/5"
     >
-      <span className="truncate">{status.title || 'Claude session'}</span>
+      <span className="truncate">{status.title || 'Session'}</span>
       <span className={`shrink-0 text-[12px] capitalize ${SESSION_STATUS_TONE[state] || 'text-slate-500'}`}>{state}</span>
     </a>
   );

@@ -18,7 +18,7 @@ pub use preset::{is_companion_thread, is_kept_apart, preset_of, Preset, HANDOFF_
 
 use super::permission::PermissionMode;
 use super::session_policy::SessionPolicy;
-use crate::state_fs::sessions::{SessionMeta, SessionRuntime};
+use crate::state_fs::sessions::SessionMeta;
 pub use crate::state_fs::sessions::Work;
 use std::collections::HashSet;
 
@@ -28,8 +28,6 @@ pub struct SessionSpec {
     pub preset: Preset,
     /// The kind of work the session is for, when its preset accepts it.
     pub work: Option<Work>,
-    /// Which runtime hosts it (a Claude session never gets a native engine).
-    pub runtime: SessionRuntime,
     /// Who leads it.
     pub seat: Seat,
     /// Where it works when it is made.
@@ -298,7 +296,6 @@ impl SessionSpec {
         Self {
             preset,
             work: if preset.takes_work() { meta.work } else { None },
-            runtime: meta.runtime,
             seat: row.seat,
             folder: row.folder,
             tools,
@@ -321,7 +318,6 @@ impl SessionSpec {
         Self {
             preset: Preset::Chat,
             work: None,
-            runtime: SessionRuntime::Linggen,
             seat: Seat::Ling,
             folder: Folder::Workspace,
             tools: Tools::Lead,

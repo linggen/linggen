@@ -55,15 +55,23 @@
   default was the only default you had set, it becomes your default.
 - **An old Claude session opens read-only.** It keeps its history, renames,
   clears and deletes. **Continue in Linggen** starts a new Coding session in
-  its folder with its conversation (your messages and Claude's replies; tool
-  calls stay behind), on its own model when it had one, else your default.
+  its folder with its conversation (your messages and Claude's replies; a
+  long reply keeps its opening and its closing; tool calls, pictures and
+  subagents' output stay behind, and the first row says so). It runs on the
+  model the old session used when you still have it, else the first Claude
+  model that can run now, else your default; the first row and a notice name
+  it. Clearing an old Claude session also removes its resume pointer.
+- **A message you had queued in an old Claude session before the upgrade is
+  not sent.** It is kept in `~/.linggen/restart/unrecovered-<time>.json` and
+  Yinyue tells you.
 - **No longer supported:**
   - Claude Code hooks.
   - A project's `.mcp.json`: add its servers in Settings → Tools and MCP.
   - A worktree made automatically for each session.
 - The SDK a Claude session downloaded stays in
-  `~/.linggen/runtimes/claude-agent-sdk` (about 280 MB); nothing uses it now,
-  so you can delete it.
+  `~/.linggen/runtimes/claude-agent-sdk` (about 280 MB). Nothing uses it now,
+  but it holds the conversations of your old Claude sessions, cleared and
+  deleted ones too; delete it when you want them gone.
 
 ## [2.5.1] - 2026-11-20 — a coding session that asks less and says what it cost
 

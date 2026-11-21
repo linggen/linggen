@@ -139,7 +139,7 @@ pub(crate) async fn seat(manager: &AgentManager, session_id: &str, id: &str) -> 
     };
     let ok = store
         .edit(session_id, |meta| {
-            if crate::server::old_claude::is_read_only(&meta) {
+            if meta.is_old_claude() {
                 return false;
             }
             let current = effective(meta, skill.as_ref());

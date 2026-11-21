@@ -32,6 +32,18 @@ pub(crate) async fn clear_chat_history_api(
         .clear_chat_history(&session_id)
     {
         Ok(removed) => {
+            // An old Claude session also loses what could bring the cleared
+            // conversation back (its resume pointer, its subagents' records).
+            if state
+                .manager
+                .global_sessions
+                .get_session_meta(&session_id)
+                .ok()
+                .flatten()
+                .is_some_and(|m| m.is_old_claude())
+            {
+                state.manager.global_sessions.forget_old_claude_files(&session_id);
+            }
             if state.tasks.forget(&session_id) {
                 crate::server::tasks::emit(&state, &session_id);
             }
@@ -300,7 +312,7 @@ pub(crate) async fn compact_chat_api(
         .get_session_meta(&session_id)
         .ok()
         .flatten()
-        .is_some_and(|m| crate::server::old_claude::is_read_only(&m))
+        .is_some_and(|m| m.is_old_claude())
     {
         return (StatusCode::GONE, crate::server::old_claude::READ_ONLY).into_response();
     }

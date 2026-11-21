@@ -14,6 +14,7 @@ import { UNSPOKEN_SENDERS } from '../messageUtils';
 import { interruptedResend, INTERRUPTED_TEXT } from '../interruptedTurn.mts';
 import { stillOn } from '../sessionLoad.mts';
 import { sessionRootOf } from '../sessionRoot.mts';
+import { isOldClaude } from '../oldClaude.mts';
 import { isPermissionSuppressed } from './_shared';
 import { listedAsk, settleAsks } from '../askQueue.mts';
 import { noteUiBuild, type PageFacts } from '../uiBuild.mts';
@@ -163,10 +164,10 @@ function applyScopedState(ps: PageState): void {
 }
 
 /** The runs settle the visible session's subagent rows only when the push
- *  is for that session, and the session is known to run on the engine — a
- *  Claude session's children are the SDK's, not engine runs. */
+ *  is for that session, and the session is known to run on the engine — an
+ *  old Claude session has no engine runs. */
 function reconcilesSubagents(ps: PageState): boolean {
-  return isForActiveSession(ps) && ps.session_runtime === 'linggen';
+  return isForActiveSession(ps) && !!ps.session_runtime && !isOldClaude({ runtime: ps.session_runtime });
 }
 
 /** The push's queue, tasks and permission view may be written here

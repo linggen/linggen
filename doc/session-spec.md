@@ -35,15 +35,23 @@ A Claude session kept from before (`runtime: claude_agent_sdk` in its
   `engine/agent/mod.rs`); an engine restart does not continue it;
 - in place of the composer the page says one line and offers **Continue in
   Linggen**: `POST /api/sessions/continue` makes a new Linggen Coding
-  session (`work: code`) in the same folder — on the model the old session
-  pinned when this engine runs it, else the default chain (not the retired
-  Claude sessions' default). Its first row carries the conversation: the
-  person's messages and Claude's replies, the newest kept, up to 40,000
-  characters; tool calls and their results stay behind (the files they
-  touched are in the folder). The row is a compaction row, so every member
+  session (`work: code`) in the same folder — on a Claude model: the one the
+  old session pinned when this engine has it, else the first Anthropic model
+  of `routing.default_models` then the configured models that can run now (a
+  key or the Claude sign-in), else the default chain; the reply names the
+  model, and so does the first row. Its first row carries the conversation:
+  the person's messages and Claude's replies, the newest kept, up to 40,000
+  characters (counted as characters, not bytes); a line over 4,000 keeps its
+  opening and its closing. Tool calls and their results, pictures and
+  subagents' output stay behind, and the row says so (the files they touched
+  are in the folder). The row is a compaction row, so every member
   reads it as a system note (`shared-session-spec.md` § The thread), and the
   page shows its first line as a divider. The old session is left as it was.
-  A message queued in it before the upgrade is not sent.
+  A message queued in it before the upgrade is not sent: the restart plan
+  keeps it in `restart/unrecovered-<time>.json` and Yinyue tells the person.
+  Clear on it also removes the files the SDK left in the session's folder
+  (`SessionStore::forget_old_claude_files`); the SDK's own transcripts under
+  `runtimes/claude-agent-sdk` stay, and `storage-spec.md` says so.
 
 `src/server/old_claude.rs` holds this; `ui/src/lib/oldClaude.mts` is the one
 place the page tells such a session apart. A request that still names the
@@ -207,8 +215,8 @@ one, carries none of the owner's memory (the store is the owner's), and
 runs no MCP tool ungated — each is judged by its tier under the ceiling.
 A `Task` child keeps its parent turn's ceiling. The owner's turns, and this
 machine's, have none, so a session the owner started keeps its grants for
-the owner's turns. A session another runtime hosts (Claude) and the
-companion's own thread take no turn below admin.
+the owner's turns. An old Claude session takes no turn at all, and the
+companion's own thread takes none below admin.
 
 ### Creator inheritance
 
@@ -415,8 +423,7 @@ the cached prefix:
   of a table. Nothing when it has no open notes.
 
 The prompt export (`GET /api/chat/system-prompt`, "Copy System Prompt") shows
-under `beside_turn` the room, the notes and the block the next turn would keep. Sessions
-run by the Claude runtime are built elsewhere and get neither yet.
+under `beside_turn` the room, the notes and the block the next turn would keep.
 
 Layers 5-7 are sensitive to the working folder. When the session transitions between home mode and project mode, the system prompt is rebuilt with the appropriate project instructions and memory.
 

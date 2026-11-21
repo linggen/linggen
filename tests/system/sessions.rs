@@ -223,6 +223,7 @@ async fn an_old_claude_session_opens_read_only_and_continues_in_linggen() {
 
     let made = w.api.post("/api/sessions/continue", json!({"session_id": OLD_CLAUDE})).await;
     let sid = made["id"].as_str().unwrap_or_else(|| panic!("no new session: {made}")).to_string();
+    let named = made["model"].as_str().unwrap_or_else(|| panic!("the new session names no model: {made}")).to_string();
     assert_ne!(sid, OLD_CLAUDE);
     assert_eq!(made["cwd"], w.work(), "the new session left the old one's folder");
     let made_meta = std::fs::read_to_string(w.home.linggen_home().join("sessions").join(&sid).join("session.yaml")).unwrap();
@@ -234,13 +235,51 @@ async fn an_old_claude_session_opens_read_only_and_continues_in_linggen() {
     assert!(opening.1.contains("Move the tram 28 timetable into tram28.md."), "{opening:?}");
     assert!(opening.1.contains("first car at 06:15"), "{opening:?}");
     assert!(!opening.1.contains("Tool Write"), "tool rows were carried: {opening:?}");
+    assert!(opening.1.contains(&named), "the first row does not name the model {named}: {opening:?}");
+    assert!(opening.1.contains("Left behind"), "the first row does not say what was left out: {opening:?}");
 
+    // What the 2.5.1 host kept beside the conversation: a resume pointer and
+    // the subagents' and usage records. Clear takes them all.
+    assert!(dir.join("claude.json").exists(), "the fixture has no resume pointer");
+    for name in ["claude-subagents.json", "claude-usage.json"] {
+        std::fs::write(dir.join(name), "{}").unwrap();
+    }
     w.api.post("/api/chat/clear", json!({"session_id": OLD_CLAUDE})).await;
     let cleared = w.api.history(OLD_CLAUDE, &w.work()).await;
     assert_eq!(cleared["messages"].as_array().map_or(0, Vec::len), 0, "{cleared}");
+    for name in ["claude.json", "claude-subagents.json", "claude-usage.json"] {
+        assert!(!dir.join(name).exists(), "a cleared old session still has {name}");
+    }
+    assert!(dir.join("session.yaml").exists(), "clear removed the session itself");
     w.api.delete("/api/sessions/all", json!({"session_id": OLD_CLAUDE})).await;
     assert!(!dir.exists(), "the old session was not deleted");
     w.assert_all_scripted();
+}
+
+/// Rule: every door that refuses an old Claude session says why, in the same
+/// words, in one short line.
+#[tokio::test]
+async fn every_door_refuses_an_old_claude_session_with_the_same_line() {
+    let w = World::start(Setup::default()).await;
+    let client = reqwest::Client::new();
+    let base = w.engine.base_url();
+    let work = w.work();
+    let doors = [
+        client.post(format!("{base}/api/chat")).json(&json!({"session_id": OLD_CLAUDE, "project_root": work, "message": "Hello"})),
+        client.post(format!("{base}/api/chat/compact")).json(&json!({"session_id": OLD_CLAUDE, "project_root": work})),
+        client.patch(format!("{base}/api/sessions")).json(&json!({"session_id": OLD_CLAUDE, "agent_id": "ling", "model_id": "test"})),
+        client.patch(format!("{base}/api/sessions/permission")).json(&json!({"session_id": OLD_CLAUDE, "path": work, "mode": "edit"})),
+        client.get(format!("{base}/api/skill-sessions/state")).query(&[("skill", "any"), ("session_id", OLD_CLAUDE)]),
+    ];
+    let mut lines = Vec::new();
+    for door in doors {
+        let answer = door.send().await.unwrap();
+        assert_eq!(answer.status(), 410);
+        lines.push(answer.text().await.unwrap());
+    }
+    assert!(lines.windows(2).all(|pair| pair[0] == pair[1]), "the doors say different things: {lines:?}");
+    assert!(lines[0].split_whitespace().count() <= 20, "{}", lines[0]);
+    assert!(lines[0].contains("read-only"), "{}", lines[0]);
 }
 
 /// Rule: a request that still names the Claude Agent SDK runtime (a 2.5.1

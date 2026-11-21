@@ -1,6 +1,6 @@
 //! A session's background tasks (doc/background-tasks-spec.md): work an agent
-//! started and did not wait for. Both runtimes feed this one list; the subagent
-//! pane shows it and stops a task through it. In engine memory only: a task
+//! started and did not wait for. This one list is what the subagent
+//! pane shows and stops a task through it. In engine memory only: a task
 //! never outlives the engine that ran it.
 use crate::engine::events::{BackgroundTask, ServerEvent};
 use crate::server::resident::Origin;
@@ -61,50 +61,6 @@ impl Tasks {
                     true
                 }
             }
-        })
-    }
-
-    /// Change one task in place. False when it is not listed.
-    #[cfg(test)]
-    pub fn update(&self, session: &str, id: &str, f: impl FnOnce(&mut BackgroundTask)) -> bool {
-        self.with(|all| {
-            let Some(tasks) = all.get_mut(session) else {
-                return false;
-            };
-            let Some(task) = tasks.iter_mut().find(|t| t.id == id) else {
-                return false;
-            };
-            f(task);
-            tidy(tasks);
-            true
-        })
-    }
-
-    #[cfg(test)]
-    pub fn finish(&self, session: &str, id: &str, status: &str, summary: Option<String>) -> bool {
-        self.update(session, id, |task| {
-            task.end(status);
-            if summary.is_some() {
-                task.summary = summary;
-            }
-        })
-    }
-
-    /// What ran them is gone (a runner ended, the engine stopped them):
-    /// whatever still runs is interrupted. False when nothing ran.
-    #[cfg(test)]
-    pub fn interrupt_running(&self, session: &str) -> bool {
-        self.with(|all| {
-            let Some(tasks) = all.get_mut(session) else {
-                return false;
-            };
-            let mut changed = false;
-            for task in tasks.iter_mut().filter(|t| t.is_running()) {
-                task.end("interrupted");
-                changed = true;
-            }
-            tidy(tasks);
-            changed
         })
     }
 
@@ -348,7 +304,7 @@ async fn tell_in_place(
     else {
         return; // the session was deleted meanwhile
     };
-    if crate::server::old_claude::is_read_only(&meta) {
+    if meta.is_old_claude() {
         return;
     }
     let root = std::path::PathBuf::from(meta.project.clone().unwrap_or_else(|| meta.cwd.clone()));
@@ -528,6 +484,51 @@ pub(crate) fn emit(state: &super::ServerState, session: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // What a test does to a listed task: the engine's own paths end tasks
+    // through `upsert`; these are not production code.
+    impl Tasks {
+        /// Change one task in place. False when it is not listed.
+        pub fn update(&self, session: &str, id: &str, f: impl FnOnce(&mut BackgroundTask)) -> bool {
+            self.with(|all| {
+                let Some(tasks) = all.get_mut(session) else {
+                    return false;
+                };
+                let Some(task) = tasks.iter_mut().find(|t| t.id == id) else {
+                    return false;
+                };
+                f(task);
+                tidy(tasks);
+                true
+            })
+        }
+
+        pub fn finish(&self, session: &str, id: &str, status: &str, summary: Option<String>) -> bool {
+            self.update(session, id, |task| {
+                task.end(status);
+                if summary.is_some() {
+                    task.summary = summary;
+                }
+            })
+        }
+
+        /// What ran them is gone (a runner ended, the engine stopped them):
+        /// whatever still runs is interrupted. False when nothing ran.
+        pub fn interrupt_running(&self, session: &str) -> bool {
+            self.with(|all| {
+                let Some(tasks) = all.get_mut(session) else {
+                    return false;
+                };
+                let mut changed = false;
+                for task in tasks.iter_mut().filter(|t| t.is_running()) {
+                    task.end("interrupted");
+                    changed = true;
+                }
+                tidy(tasks);
+                changed
+            })
+        }
+    }
 
     #[test]
     fn stale_subagent_task_is_interrupted() {

@@ -364,11 +364,16 @@ async fn a_plan_naming_an_old_claude_session_skips_it_and_retires() {
         before,
         "the old Claude session was written to"
     );
-    // Not tried and given up on: it was never a turn to give.
-    let given_up = std::fs::read_dir(w.home.linggen_home().join("restart"))
+    // Its queued message is not lost: the record keeps it, and says why it
+    // was not sent (the person is told from that record).
+    let kept: Vec<String> = std::fs::read_dir(w.home.linggen_home().join("restart"))
         .unwrap()
         .flatten()
         .filter(|e| e.file_name().to_string_lossy().starts_with("unrecovered-"))
-        .count();
-    assert_eq!(given_up, 0, "the old Claude session's turn was tried and given up on");
+        .map(|e| std::fs::read_to_string(e.path()).unwrap())
+        .collect();
+    assert_eq!(kept.len(), 1, "the queued message of the old Claude session was not kept: {kept:?}");
+    assert!(kept[0].contains("keep going"), "{}", kept[0]);
+    assert!(kept[0].contains("read-only"), "{}", kept[0]);
+    assert!(!kept[0].contains("Back on the new build"), "the native session's turn was kept as given up on");
 }
