@@ -345,7 +345,7 @@ pub struct AgentConfig {
     pub write_safety_mode: WriteSafetyMode,
     /// Default permission for new sessions (chat/read/edit/admin). Defaults to read.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub default_permission_mode: Option<crate::engine::permission::PermissionMode>,
+    pub default_permission_mode: Option<crate::permission_mode::PermissionMode>,
     #[serde(default)]
     pub prompt_loop_breaker: Option<String>,
     #[serde(default = "default_max_delegation_depth")]

@@ -34,7 +34,7 @@ const AUTHOR_DECIDER: &str = "crates/linggen-engine/src/state_fs/row_author.rs";
 /// The one place that says which turn gets the owner's session policy.
 const POLICY_DECIDER: &str = "src/server/chat/policy.rs";
 /// The one place a permission-mode word becomes a `PermissionMode`.
-const MODE_WORDS_DECIDER: &str = "crates/linggen-engine/src/engine/permission/model.rs";
+const MODE_WORDS_DECIDER: &str = "crates/linggen-engine/src/permission_mode.rs";
 /// The one place a host's permission-mode words are written.
 const HOST_WORDS_DECIDER: &str = "src/server/mcp_agent.rs::word";
 

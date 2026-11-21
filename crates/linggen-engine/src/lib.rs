@@ -19,6 +19,7 @@ pub mod message;
 pub mod mirror;
 pub mod notes;
 pub mod paths;
+pub mod permission_mode;
 pub mod perception;
 pub mod pictures;
 pub mod prompts;

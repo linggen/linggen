@@ -298,11 +298,6 @@ fn a_session_never_sets_its_own_work_tag() {
 /// Remaining upward references, by file, exact count, and reason.
 const UPWARD_EDGES: &[(&str, usize, &str)] = &[
     (
-        "state_fs/devices/mod.rs",
-        1,
-        "paired-device records and HTTP callers use the engine's permission mode",
-    ),
-    (
         "state_fs/row_place_tests.rs",
         1,
         "row persistence tests construct turn places",

@@ -8,7 +8,7 @@
 //! `machine` (the owner's other computer, approved with Allow). Rows written
 //! before the kind existed are classified once on load (`classify`).
 
-use crate::engine::permission::PermissionMode;
+use crate::permission_mode::PermissionMode;
 use rand::RngExt;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
