@@ -669,4 +669,20 @@ mod tests {
         );
         assert!(!migrate_retired_models(&mut s));
     }
+
+    /// A row written before levels were a person's still carries its level
+    /// under the old key, to be read once (`server::people`); once cleared it
+    /// is not written again.
+    #[test]
+    fn a_rows_old_level_is_read_under_its_old_key_and_not_written_again() {
+        use crate::engine::permission::PermissionMode;
+        let mut old: PairedDevice = serde_json::from_str(
+            r#"{"id":"a","name":"n","secret":"s","created_at":0,"permission":"edit"}"#,
+        )
+        .unwrap();
+        assert_eq!(old.legacy_permission, Some(PermissionMode::Edit));
+        assert!(serde_json::to_string(&old).unwrap().contains(r#""permission":"edit""#), "kept until read");
+        old.legacy_permission = None;
+        assert!(!serde_json::to_string(&old).unwrap().contains("permission"), "not written again");
+    }
 }
