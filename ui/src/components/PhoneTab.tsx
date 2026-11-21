@@ -23,8 +23,8 @@ interface PairDevice {
   /// A phone (code pairing) sees its own person's memory; a computer (Allow
   /// on this Mac) is the owner's other machine and sees all of it.
   kind?: 'phone' | 'machine';
-  /// Whose it is: the owner's (verified), one claiming this Mac's account
-  /// not yet verified, another account's, or signed out.
+  /// Whose it is: the owner's (verified), one claiming an account the relay
+  /// has not vouched for, another account's (vouched), or signed out.
   whose?: Whose;
   /// A phone out of step with this Mac's contract.
   needs_update?: boolean;
@@ -33,7 +33,7 @@ interface PairDevice {
 type Whose = 'owner' | 'unverified' | 'other' | 'signed_out';
 
 const WHOSE: Record<Exclude<Whose, 'owner'>, string> = {
-  unverified: 'Your account, not verified',
+  unverified: 'Account not verified',
   other: 'Another account',
   signed_out: 'Signed out',
 };

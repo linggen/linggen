@@ -72,12 +72,11 @@ pub(super) fn handle_control_message(
             let account: Option<crate::server::api::pair::AccountRef> = msg
                 .get("account")
                 .and_then(|v| serde_json::from_value(v.clone()).ok());
-            // The relay vouched for this channel's account: a claim of this
-            // Mac's own account is verified by it (`set_device_account`).
+            // The account the relay vouched for on this channel: a claim of
+            // that account is verified by it (`set_device_account`).
             let vouched_for = user_ctx
-                .account_vouched
-                .then(|| crate::server::person::mac_account())
-                .flatten();
+                .vouched
+                .account(crate::server::person::mac_account().as_deref());
             let contract = crate::server::rtc::contract::told(&msg);
             let before = crate::server::person::of_token(token);
             let identified = crate::server::api::pair::set_device_account(
@@ -86,17 +85,17 @@ pub(super) fn handle_control_message(
                 vouched_for.as_deref(),
                 contract,
             );
-            // Who it is now decides what is carried — a phone that signs in
-            // keeps what the owner chose for it, or the account's own
-            // (`people::person_changed`); one that claims this Mac's account
-            // unverified is still its device.
+            // Who it is now decides what is carried — a phone the relay
+            // vouches for as an account keeps what the owner chose for it, or
+            // the account's own (`people::person_changed`); one whose claim
+            // is not vouched for is still its device.
             if let (Some(before), Some(after)) = (before, crate::server::person::of_token(token)) {
                 crate::server::people::person_changed(&before, &after);
             }
             // A phone that wrote memory while signed out did so under its
-            // device id; now that it is somebody — or now that it is verified
-            // as the owner's — those rows become theirs. Here, because this
-            // is the only place a sign-in or a verification is seen.
+            // device id; now that it is somebody the relay vouches for — or
+            // the owner — those rows become theirs. Here, because this is the
+            // only place a sign-in or a verification is seen.
             if let Some(id) = identified.as_ref() {
                 let gained = id.signed_in.clone().or_else(|| {
                     id.verified_now.as_ref().and(account.clone())
@@ -132,7 +131,7 @@ pub(super) fn handle_control_message(
             let standing = standing_for(user_ctx, device.as_deref());
             let unverified = device
                 .as_deref()
-                .is_some_and(crate::server::person::claims_the_owners_unverified);
+                .map_or(crate::server::person::Unvouched::No, crate::server::person::unvouched_claim);
             if let Some(mut ch) = rtc.channel(channel_id) {
                 let msg = super::user_info_msg(user_ctx, now_identified, (&standing, unverified));
                 let _ = ch.write(false, msg.to_string().as_bytes());

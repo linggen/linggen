@@ -239,13 +239,12 @@ fn context_for_offer(
     }
     if data["paired"].as_bool() == Some(true) {
         // A device we paired, dialling on the grant we minted for it. Its
-        // standing follows its account (`person::standing_of`); `owner` says
-        // the relay checked the account credential it sent beside the grant
-        // and that account owns this instance.
-        let vouched = data["owner"].as_bool() == Some(true);
-        info!("Received paired-device offer (nonce: {nonce}, owner account: {vouched})");
+        // standing follows its account (`person::standing_of`); the relay
+        // says which account the credential it sent beside the grant is.
+        let vouched = vouched_by_relay(data);
+        info!("Received paired-device offer (nonce: {nonce}, account vouched: {})", vouched != super::Vouched::Nobody);
         return Some(super::UserContext {
-            account_vouched: vouched,
+            vouched,
             ..super::UserContext::paired()
         });
     }
@@ -278,9 +277,22 @@ fn context_for_offer(
     // The owner's own account dialled: the relay checked it owns this instance.
     info!("Received remote offer (nonce: {nonce})");
     Some(super::UserContext {
-        account_vouched: true,
+        vouched: super::Vouched::Owner,
         ..super::UserContext::owner(None)
     })
+}
+
+/// What the relay vouched for on a paired offer: the account it names
+/// (`vouched_account`), or — from a relay that names none — this Mac's own
+/// when it says the credential is the instance owner's (`owner`). Only the
+/// relay writes either.
+fn vouched_by_relay(data: &serde_json::Value) -> super::Vouched {
+    let named = data["vouched_account"].as_str().map(str::trim).filter(|id| !id.is_empty());
+    match (named, data["owner"].as_bool() == Some(true)) {
+        (Some(id), _) => super::Vouched::Account(id.to_string()),
+        (None, true) => super::Vouched::Owner,
+        (None, false) => super::Vouched::Nobody,
+    }
 }
 
 /// Process a remote SDP offer: create peer connection and post answer back.
@@ -331,19 +343,40 @@ mod tests {
     use super::context_for_offer;
     use serde_json::json;
 
-    /// A paired offer's account is vouched for only when the relay says it
-    /// owns the instance; the owner's own offer always is; a pairing offer
-    /// never is.
+    /// A paired offer's account is the one the relay names (`vouched_account`),
+    /// or this Mac's own when only `owner` says so (a relay that names none);
+    /// nothing a body says adds one; the owner's own offer is this Mac's
+    /// account; a pairing offer has none.
     #[test]
     fn an_offer_is_vouched_only_as_the_relay_says() {
-        let paired = context_for_offer(&json!({"paired": true}), "n", true).unwrap();
-        assert!(!paired.account_vouched);
+        use crate::server::rtc::Vouched::*;
+        let vouched = |data: serde_json::Value| context_for_offer(&data, "n", true).unwrap().vouched;
+        assert_eq!(vouched(json!({"paired": true})), Nobody);
+        assert_eq!(vouched(json!({"paired": true, "owner": false})), Nobody);
+        assert_eq!(vouched(json!({"paired": true, "owner": true})), Owner);
+        assert_eq!(vouched(json!({"paired": true, "vouched_account": "u-friend"})), Account("u-friend".into()));
+        assert_eq!(
+            vouched(json!({"paired": true, "owner": true, "vouched_account": "u-owner"})),
+            Account("u-owner".into())
+        );
+        assert_eq!(vouched(json!({"paired": true, "vouched_account": "  "})), Nobody);
+        // Nothing but the relay's two fields counts.
+        assert_eq!(vouched(json!({"paired": true, "account": "u-friend", "sdp": "vouched_account"})), Nobody);
         let owners = context_for_offer(&json!({"paired": true, "owner": true}), "n", true).unwrap();
-        assert!(owners.account_vouched);
         assert_eq!(owners.kind, crate::server::rtc::PeerKind::Paired);
-        assert!(context_for_offer(&json!({}), "n", true).unwrap().account_vouched);
-        let pairing = context_for_offer(&json!({"pairing": true, "owner": true}), "n", true).unwrap();
-        assert!(!pairing.account_vouched);
+        assert_eq!(vouched(json!({})), Owner, "the owner's own offer");
+        assert_eq!(vouched(json!({"pairing": true, "owner": true, "vouched_account": "u-friend"})), Nobody);
+    }
+
+    /// What the relay vouched for is an account only with this Mac's account
+    /// to name for the owner.
+    #[test]
+    fn a_vouch_names_an_account() {
+        use crate::server::rtc::Vouched::*;
+        assert_eq!(Nobody.account(Some("u-owner")), None);
+        assert_eq!(Owner.account(Some("u-owner")).as_deref(), Some("u-owner"));
+        assert_eq!(Owner.account(None), None, "a Mac signed out has no account to vouch");
+        assert_eq!(Account("u-friend".into()).account(Some("u-owner")).as_deref(), Some("u-friend"));
     }
 
     /// With rooms off no room consumer gets a peer, while the owner, a

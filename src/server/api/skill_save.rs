@@ -197,6 +197,11 @@ mod tests {
             ..claimed
         };
         assert_eq!(verified_account_of(Some(&verified)), Ok(Some("u1")));
+        // Another account the relay vouched for is still not this Mac's.
+        assert_eq!(
+            verified_account_of(Some(&verified)).and_then(|a| same_account(Some("u-owner"), a)),
+            Err(Refused::OtherAccount)
+        );
         assert_eq!(verified_account_of(None), Ok(None));
         assert_eq!(
             verified_account_of(Some(&PairedDevice::default())),

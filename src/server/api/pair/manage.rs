@@ -418,6 +418,8 @@ mod tests {
         assert!(keyed(&d), "verified: the owner's");
         d.account = Some(claim("u-other"));
         assert!(!keyed(&d), "no longer the owner's");
+        d.verified_account = Some("u-other".into());
+        assert!(!keyed(&d), "another account the relay vouched for is not the owner's");
     }
 
     /// The level is set only at this Mac: a paired device's request through

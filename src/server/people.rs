@@ -338,6 +338,19 @@ fn tidy(names: Vec<String>) -> Vec<String> {
         .collect()
 }
 
+/// Whose a row's old level was: the account the row claims — the owner chose
+/// it for that account's phone, and it waits for the relay to vouch for it
+/// (until then the phone is its device at read) — else who the row is now.
+/// Only the first file asks this; nothing after it reads a claim for a person.
+fn of_legacy_row(row: &PairedDevice, mac: Option<&str>) -> Person {
+    let now = crate::server::person::of_device(row, mac);
+    let claimed = row.account.as_ref().map(|a| crate::server::person::asking(Some(&a.id)));
+    match (now.is_device(), claimed) {
+        (true, Some(account)) if account.is_another() && !account.is_device() => account,
+        _ => now,
+    }
+}
+
 /// The people file as the device rows made it: each person's level is the
 /// lowest any of their rows held (a row with none held read), never more
 /// than any one of them had. A person none of whose rows held a level, the
@@ -346,7 +359,7 @@ fn first_people(devices: &[PairedDevice], mac: Option<&str>) -> People {
     // Per person: whether any of their rows held a level, and the lowest.
     let mut held: BTreeMap<String, (bool, PermissionMode)> = BTreeMap::new();
     for row in devices {
-        let person = crate::server::person::of_device(row, mac);
+        let person = of_legacy_row(row, mac);
         if !person.is_another() {
             continue;
         }
@@ -652,8 +665,10 @@ mod tests {
         patch.as_object().cloned().unwrap()
     }
 
+    /// A phone signed in to `account`, vouched for by the relay.
     fn row(id: &str, account: Option<&str>, level: Option<PermissionMode>) -> PairedDevice {
         PairedDevice {
+            verified_account: account.map(str::to_string),
             id: id.into(),
             kind: Some(DeviceKind::Phone),
             account: account.map(|a| AccountRef {
@@ -805,6 +820,63 @@ mod tests {
             3,
             "the owner's row and unset rows are not kept"
         );
+    }
+
+    /// Rows from before levels belonged to a person, of one account the
+    /// relay has not vouched for yet: the account gets the lowest level any
+    /// of them held, never the higher of two; each phone is its device, at
+    /// read, until the relay vouches for the account.
+    #[test]
+    fn rows_not_yet_vouched_for_give_their_account_the_lowest_level() {
+        use PermissionMode::{Chat, Edit};
+        let mac = Some("u-owner");
+        let unvouched = |id: &str, level| PairedDevice {
+            verified_account: None,
+            ..row(id, Some("u-friend"), Some(level))
+        };
+        let rows = vec![unvouched("a", Edit), unvouched("b", Chat)];
+        let people = first_people(&rows, mac);
+        assert_eq!(people.settings_of(&friend()).level, Some(Chat));
+        assert_eq!(people.settings_of(&Person::for_test(Some(&stamp_of("a")))).level, None);
+        for r in &rows {
+            let person = crate::server::person::of_device(r, mac);
+            assert_eq!(people.level_of(&person), PermissionMode::Read, "its device, at read");
+        }
+        // The first one vouched for stands at the account's level, not its own.
+        let vouched = PairedDevice { verified_account: Some("u-friend".into()), ..rows[0].clone() };
+        let after = crate::server::person::of_device(&vouched, mac);
+        assert_eq!(people.level_of(&after), Chat);
+    }
+
+    /// A claim of an account is that account only once the relay vouched
+    /// for it: until then the phone is its device, and what was chosen for
+    /// the device moves to the account, once, when the vouching lands. An
+    /// account no longer vouched for leaves the phone its device again, and
+    /// the account keeps its own.
+    #[test]
+    fn a_phones_settings_reach_its_account_when_the_relay_vouches_for_it() {
+        let mac = Some("u-owner");
+        let level = |l: &str| settings(serde_json::json!({"level": l}));
+        let mut d = PairedDevice {
+            verified_account: None,
+            ..row("p1", Some("u-friend"), None)
+        };
+        let unvouched = crate::server::person::of_device(&d, mac);
+        assert_eq!(unvouched, Person::for_test(Some(&stamp_of("p1"))));
+        let mut people = People::default();
+        people.set(&unvouched, &level("edit")).unwrap();
+        d.verified_account = Some("u-friend".into());
+        let vouched = crate::server::person::of_device(&d, mac);
+        assert_eq!(vouched, friend());
+        assert_eq!(people.follow(&unvouched, &vouched), Some(Arrival::Moved));
+        assert_eq!(people.settings_of(&friend()).level, Some(PermissionMode::Edit));
+        assert_eq!(people.follow(&vouched, &vouched), None, "once");
+        d.verified_account = None;
+        let again = crate::server::person::of_device(&d, mac);
+        assert_eq!(again, unvouched);
+        assert_eq!(people.follow(&vouched, &again), None);
+        assert_eq!(people.settings_of(&friend()).level, Some(PermissionMode::Edit), "the account keeps its own");
+        assert_eq!(people.settings_of(&again), PersonSettings::default());
     }
 
     /// A phone that signs in: its settings become the account's when the
