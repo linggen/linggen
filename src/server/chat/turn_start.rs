@@ -157,7 +157,7 @@ mod tests {
             (TurnStart::Resumed, LocalTask, LocalTask, false, "user"),
             (TurnStart::Engine, LocalTask, LocalTask, false, "user"),
             (TurnStart::Hers(Origin::Asked), LocalTask, LocalTask, false, "asked"),
-            (TurnStart::Hers(Origin::Glance), LocalTask, LocalTask, false, "timer"),
+            (TurnStart::Hers(Origin::Glance), LocalTask, LocalTask, false, "glance"),
         ];
         for (start, after_owner, after_task, spoke, name) in rows {
             assert_eq!(start.reads(LocalOwner), after_owner, "{start:?}");

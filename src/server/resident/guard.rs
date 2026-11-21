@@ -13,6 +13,7 @@
 //! at an app's table her line would already be a row of its chat. What a
 //! guardrail held is written once to the activity log (verb `hold`).
 
+use super::spoken::Origin;
 use crate::config::PetConfig;
 use std::collections::VecDeque;
 use std::sync::Mutex;
@@ -35,14 +36,22 @@ pub(crate) enum Source {
 }
 
 impl Source {
+    /// The kind of turn of hers this source is. The two share one name per
+    /// kind (`Origin::name`): a log line and the activity log's `hold`
+    /// record never call the same kind two things.
+    pub(crate) fn origin(self) -> Origin {
+        match self {
+            Source::Glance => Origin::Glance,
+            Source::Moment => Origin::Moment,
+            Source::InUse => Origin::InUse,
+            Source::Note => Origin::Note,
+            Source::Fault => Origin::Fault,
+        }
+    }
+
     /// The word the activity log's `hold` record carries.
     pub(crate) fn name(self) -> &'static str {
-        match self {
-            Source::Glance => "glance",
-            Source::Moment | Source::InUse => "moment",
-            Source::Note => "note",
-            Source::Fault => "fault",
-        }
+        self.origin().name()
     }
 
     /// Whether her line counts toward the hourly ceiling.

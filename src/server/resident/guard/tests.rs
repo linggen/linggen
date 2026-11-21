@@ -203,8 +203,11 @@ fn a_fault_waits_through_quiet_hours_and_is_outside_the_ceiling() {
 }
 
 #[test]
-fn a_source_is_named_by_what_the_record_says() {
-    assert_eq!(Source::InUse.name(), "moment");
+fn a_kind_of_unprompted_line_has_one_name_in_every_log() {
+    for source in [Source::Glance, Source::Moment, Source::InUse, Source::Note, Source::Fault] {
+        assert_eq!(source.name(), source.origin().name(), "{source:?}");
+    }
+    assert_eq!(Source::Glance.name(), "glance");
+    assert_eq!(Source::InUse.name(), "moment-in-use");
     assert_eq!(Source::Moment.name(), "moment");
-    assert_eq!(Source::Fault.name(), "fault");
 }
