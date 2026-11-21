@@ -153,6 +153,13 @@ impl Choice {
         }
     }
 
+    /// Whether the asker was given no model that can run: the choice names
+    /// the standing model, which a turn's stream refuses (`Why::NothingShared`).
+    /// A call made outside a stream (a summary, a push line) must not run it.
+    pub fn nothing_given(&self) -> bool {
+        self.outcome == Outcome::Replaced(Why::NothingShared)
+    }
+
     /// Whether a model a session keeps for the member should be cleared: it
     /// was replaced, so keeping it would make every turn ask for it again.
     pub fn clears_pin(&self) -> bool {

@@ -50,11 +50,6 @@ const CHECK_CALLERS: &[(&str, usize, &str)] = &[
         1,
         "continuing an old Claude session keeps its pinned model when it is here",
     ),
-    (
-        "src/server/push/compose.rs",
-        1,
-        "a push line names her model: the Pet setting when here, else her chain",
-    ),
 ];
 
 const CHECK_CALLS: &[&str] = &["model_choice::live(", "model_choice::is_here("];

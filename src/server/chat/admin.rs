@@ -225,19 +225,15 @@ async fn seat_for_export(
         .find(|m| m.id == agent_id)
         .cloned()
         .unwrap_or_else(|| crate::state_fs::sessions::SessionMember::new(agent_id));
-    let Some(model) = super::members::model_of(&state.manager, root, &member).await else {
+    // A preview, not a turn: the model `members::model_of` names, for the
+    // asker the export's own policy has (the owner's).
+    let shared = engine.guest_models();
+    let asker = shared
+        .as_deref()
+        .map_or(crate::engine::model_choice::Asker::Owner, crate::engine::model_choice::Asker::Guest);
+    let Some(choice) = super::members::model_of(&state.manager, root, &member, asker).await else {
         return;
     };
-    // A preview, not a turn: the member's model as `model_of` names it.
-    let choice = crate::engine::model_choice::resolve(
-        &engine.model_manager,
-        Some(&model),
-        &engine.model_id,
-        crate::engine::model_choice::Rule {
-            asker: crate::engine::model_choice::Asker::Owner,
-            may_switch: true,
-        },
-    );
     engine.run_on(&choice, "prompt preview").await;
 }
 
