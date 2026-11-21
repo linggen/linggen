@@ -541,9 +541,12 @@ impl AgentEngine {
 
         // Two switches decide whether this call may move to another model: the
         // routing config's, and the session's own (`SessionMeta::model_fallback`,
-        // off for a session a host made through `agent_run`). Read once per call.
-        let session_switch = self.session_allows_fallback();
-        let may_switch = self.allow_model_fallback && session_switch;
+        // off for a session a host made through `agent_run`). Asked once per
+        // call (`model_choice::Switching`); the stored session's switch is read
+        // then, so the picker's takes hold on the next call of a turn running.
+        let switching = self.switching(self.session_id.as_deref());
+        let session_switch = switching.session_allows();
+        let may_switch = switching.may();
 
         // A room's guest runs only what the room shares — before any call,
         // whatever the session's switch says.
@@ -664,17 +667,6 @@ impl AgentEngine {
                 }
             }
         }
-    }
-
-    /// Whether the session this engine speaks in lets a failed model call
-    /// move to another model (`SessionMeta::model_fallback`; yes when there is
-    /// no session). Read from the stored session, so the picker's switch takes
-    /// hold on the next call of a turn already running.
-    pub(crate) fn session_allows_fallback(&self) -> bool {
-        let (Some(manager), Some(session_id)) = (self.tools.get_manager(), &self.session_id) else {
-            return true;
-        };
-        manager.global_sessions.model_fallback_allowed(session_id)
     }
 
     /// Record on the run which model answered (or failed) its latest model

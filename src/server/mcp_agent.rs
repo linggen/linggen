@@ -581,14 +581,14 @@ async fn drive(
     engine.respec(|spec| spec.read_origin = read_origin);
     if let Some(model) = model {
         // Checked (or chosen by the agent's chain) already; a delegated run
-        // never switches models.
+        // never switches models (`model_choice::DELEGATED_RUN_MAY_SWITCH`).
         let choice = crate::engine::model_choice::resolve(
             &engine.model_manager,
             Some(&model),
             &engine.model_id,
             crate::engine::model_choice::Rule {
                 asker: crate::engine::model_choice::Asker::Owner,
-                may_switch: false,
+                may_switch: crate::engine::model_choice::DELEGATED_RUN_MAY_SWITCH,
             },
         );
         engine.run_on(&choice, "agent_run").await;

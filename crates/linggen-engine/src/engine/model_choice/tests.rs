@@ -425,3 +425,68 @@ fn a_default_that_is_only_rate_limited_is_kept_through_a_sign_in() {
     assert_eq!(after_sign_in(&m, Some("sign-in-limited"), SignIn::Key), None);
     crate::provider::models::note_healthy("sign-in-limited");
 }
+
+/// The two switches, one answer: a turn may switch only when the routing
+/// config's and the session's are both on; the session's alone is what says
+/// "switching is off for this session". No session, or none stored, never
+/// forbids; an engine with no manager reads only the config's.
+#[tokio::test]
+async fn the_two_switches_make_one_answer() {
+    use crate::engine::agent::AgentManager;
+    use crate::engine::{AgentEngine, AgentRole, EngineConfig, InterfaceMode};
+    let root = tempfile::tempdir().unwrap();
+    let config = crate::config::Config::default();
+    let (mut manager, _events) = AgentManager::new(
+        config.clone(),
+        None,
+        std::sync::Arc::new(crate::engine::test_registries::Empty),
+        std::sync::Arc::new(crate::engine::test_registries::Empty),
+        std::sync::Arc::new(crate::engine::test_registries::Empty),
+        InterfaceMode::Web,
+    );
+    std::sync::Arc::get_mut(&mut manager)
+        .expect("a fresh manager")
+        .global_sessions = crate::state_fs::SessionStore::leaked(root.path().join("sessions"));
+    for (id, flag) in [("s-on", None), ("s-yes", Some(true)), ("s-off", Some(false))] {
+        manager
+            .global_sessions
+            .add_session(&crate::state_fs::sessions::SessionMeta {
+                id: id.into(),
+                model_fallback: flag,
+                ..Default::default()
+            })
+            .unwrap();
+    }
+    let engine_with = |config_on: bool, with_manager: bool| {
+        let cfg = EngineConfig::from_app_config(&config, root.path().into(), InterfaceMode::Web);
+        let mut engine =
+            AgentEngine::new(cfg, std::sync::Arc::new(models()), STANDING.into(), AgentRole::Lead)
+                .unwrap();
+        engine.agent_id = Some("ling".into());
+        engine.allow_model_fallback = config_on;
+        if with_manager {
+            engine.set_manager_context(manager.clone());
+        }
+        engine
+    };
+    // (config, session) -> (may switch, the session's own)
+    for (config_on, session, may, session_allows) in [
+        (true, Some("s-on"), true, true),
+        (true, Some("s-yes"), true, true),
+        (true, Some("s-off"), false, false),
+        (false, Some("s-on"), false, true),
+        (false, Some("s-off"), false, false),
+        (true, None, true, true),
+        (false, None, false, true),
+        (true, Some("nowhere"), true, true),
+    ] {
+        let got = engine_with(config_on, true).switching(session);
+        assert_eq!(
+            (got.may(), got.session_allows()),
+            (may, session_allows),
+            "config {config_on}, session {session:?}"
+        );
+    }
+    let bare = engine_with(true, false).switching(Some("s-off"));
+    assert!(bare.may(), "no manager, no session store to read");
+}

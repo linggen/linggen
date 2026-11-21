@@ -43,6 +43,41 @@ pub struct Rule<'a> {
     pub may_switch: bool,
 }
 
+/// Whether a turn may move to another model, from the two switches that say
+/// so: the routing config's (`routing.model_fallback`, held by the engine
+/// as it last read its settings) and the session's own
+/// (`SessionMeta::model_fallback`). Only [`AgentEngine::switching`] reads
+/// them (lock: `lock_tests::the_two_switches_are_each_read_in_one_place`);
+/// every door and the mid-call fallback ask it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Switching {
+    config: bool,
+    session: bool,
+}
+
+impl Switching {
+    /// Whether the turn may move to another model: both switches are on.
+    pub fn may(self) -> bool {
+        self.config && self.session
+    }
+
+    /// The session's switch alone. A session that may not switch fails on a
+    /// model this machine lacks, and says that switching is off for the
+    /// session — which a config that is off for every session does not.
+    pub fn session_allows(self) -> bool {
+        self.session
+    }
+}
+
+/// A delegated run (`agent_run`) never switches: a model that cannot run
+/// fails the run, named.
+pub const DELEGATED_RUN_MAY_SWITCH: bool = false;
+
+/// Asking outside a turn (the prompt preview, a summary, a push line, a
+/// member's named model) always lets an unavailable asked model give way to
+/// the standing one: there is no turn to fail on it.
+pub const OUTSIDE_A_TURN_MAY_SWITCH: bool = true;
+
 /// Why the model asked for is not the one that runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Why {
@@ -306,6 +341,21 @@ impl AgentEngine {
     pub async fn read_live_state(&mut self, manager: &crate::engine::agent::AgentManager) {
         self.model_manager = manager.models.read().await.clone();
         self.read_changes_if_any(manager).await;
+    }
+
+    /// What the two switches let the turn in session `session_id` do (`None`:
+    /// no session, which never forbids). The one reader of both: the config's
+    /// is the engine's last reading of its settings, so a door asks after
+    /// [`Self::read_live_state`].
+    pub fn switching(&self, session_id: Option<&str>) -> Switching {
+        let session = match (self.tools.get_manager(), session_id) {
+            (Some(manager), Some(id)) => manager.global_sessions.model_fallback_allowed(id),
+            _ => true,
+        };
+        Switching {
+            config: self.allow_model_fallback,
+            session,
+        }
     }
 
     /// The agent's default model, read again after a change of settings

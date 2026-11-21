@@ -159,3 +159,85 @@ fn the_scan_sees_a_write_and_a_check() {
     );
     assert_eq!(checks("m.resolve_id(a); m.has_model(b)"), 2);
 }
+
+/// Reads of `name` as a field or a call: the text `name` where it is not a
+/// declaration (`name:`), an initialiser, or an assignment (`name =`), and
+/// not the start of a longer name.
+fn reads(text: &str, name: &str) -> usize {
+    text.match_indices(name)
+        .filter(|(at, _)| {
+            let after = &text[at + name.len()..];
+            let ident = |c: char| c.is_alphanumeric() || c == '_';
+            let longer = name.ends_with(ident) && after.starts_with(ident);
+            let rest = after.trim_start();
+            let written = rest.starts_with(':') || (rest.starts_with('=') && !rest.starts_with("=="));
+            !longer && !written
+        })
+        .count()
+}
+
+/// The two switches that say whether a turn may move to another model, and
+/// who may read each outside `model_choice`: how many reads, and why.
+/// `AgentEngine::switching` is the one that reads them both; a door or the
+/// mid-call fallback asks it.
+const SWITCH_READS: &[(&str, &[(&str, usize, &str)])] = &[
+    (
+        // The session's switch, by the store: `model_fallback_allowed(` is the
+        // store's reader of a stored session.
+        ".model_fallback_allowed(",
+        &[(
+            "crates/linggen-engine/src/state_fs/sessions.rs",
+            6,
+            "the store's own test of it",
+        )],
+    ),
+    (
+        // The session's switch, on a meta.
+        ".allows_model_fallback(",
+        &[
+            (
+                "crates/linggen-engine/src/state_fs/sessions.rs",
+                1,
+                "the store's reader of a stored session",
+            ),
+            (
+                "src/server/mcp_agent.rs",
+                2,
+                "a test of a delegated run's new session",
+            ),
+        ],
+    ),
+    (
+        // The config's switch, as the engine holds it.
+        ".allow_model_fallback",
+        &[(
+            "crates/linggen-engine/src/engine/types.rs",
+            1,
+            "a test of a new engine's default",
+        )],
+    ),
+];
+
+#[test]
+fn the_two_switches_are_each_read_in_one_place() {
+    for (needle, listed) in SWITCH_READS {
+        for (rel, text) in scanned() {
+            let want = listed
+                .iter()
+                .find(|(f, _, _)| *f == rel)
+                .map_or(0, |e| e.1);
+            assert_eq!(
+                reads(&text, needle),
+                want,
+                "{rel} reads `{needle}`: ask AgentEngine::switching (model_choice::Switching), or list it"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_switch_scan_sees_a_read_and_not_a_write() {
+    assert_eq!(reads("a.allow_model_fallback; b.allow_model_fallback = c", ".allow_model_fallback"), 1);
+    assert_eq!(reads("x.model_fallback_allowed(s)", ".model_fallback_allowed("), 1);
+    assert_eq!(reads("pub allow_model_fallback: bool", "allow_model_fallback"), 0);
+}

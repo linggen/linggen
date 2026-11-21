@@ -662,8 +662,7 @@ pub(super) async fn resolve_effective_model(
     manager: &Arc<AgentManager>,
 ) {
     use crate::engine::model_choice::{self, Rule};
-    let may_switch =
-        session_id.is_none_or(|sid| manager.global_sessions.model_fallback_allowed(sid));
+    let may_switch = engine.switching(session_id).may();
     let choice = model_choice::resolve(
         &engine.model_manager,
         asked.id(),
@@ -1632,6 +1631,77 @@ pub(crate) async fn start_turn(
 
 #[cfg(test)]
 mod tests {
+    /// A door asks `model_choice::Switching` whether the turn may switch
+    /// models, which holds both switches — the routing config's and the
+    /// session's: with either off, an asked model this machine lacks is
+    /// kept and the turn fails on it, named; with both on it gives way to
+    /// the standing one.
+    #[tokio::test]
+    async fn a_door_lets_a_turn_switch_models_only_when_both_switches_are_on() {
+        use super::{resolve_effective_model, TurnModel};
+        use crate::engine::agent::AgentManager;
+        use crate::engine::{AgentEngine, AgentRole, EngineConfig, InterfaceMode};
+        use crate::engine::model_choice::Asker;
+        use std::sync::Arc;
+        let root = tempfile::tempdir().unwrap();
+        let (spec, body) = crate::extensions::agents::parse_agent_markdown(include_str!("../../../agents/ling.md")).unwrap();
+        for (config_on, session_switch, kept) in [
+            (true, None, false),
+            (true, Some(true), false),
+            (false, None, true),
+            (true, Some(false), true),
+            (false, Some(false), true),
+        ] {
+            let session = format!("s-door-{config_on}-{session_switch:?}");
+            // The routing config's switch reaches the engine as it does in
+            // a turn: its settings are read as the turn starts.
+            let mut config = crate::config::Config::default();
+            config.routing.model_fallback = config_on;
+            let (mut manager, _events) = AgentManager::new(
+                config.clone(),
+                None,
+                Arc::new(crate::engine::test_registries::Empty),
+                Arc::new(crate::engine::test_registries::Empty),
+                Arc::new(crate::engine::test_registries::Empty),
+                InterfaceMode::Web,
+            );
+            Arc::get_mut(&mut manager).expect("a fresh manager").global_sessions =
+                crate::state_fs::SessionStore::leaked(root.path().join(format!("sessions-{session}")));
+            manager
+                .global_sessions
+                .add_session(&crate::state_fs::sessions::SessionMeta {
+                    id: session.clone(),
+                    model_fallback: session_switch,
+                    agents: vec![crate::state_fs::sessions::SessionMember::new("ling")],
+                    ..Default::default()
+                })
+                .unwrap();
+            let cfg = EngineConfig::from_app_config(&config, root.path().into(), InterfaceMode::Web);
+            let models = Arc::new(crate::provider::models::ModelManager::new_with_credentials(
+                vec![],
+                &crate::credentials::Credentials::default(),
+            ));
+            let mut engine = AgentEngine::new(cfg, models, "gpt-6-luna".into(), AgentRole::Lead).unwrap();
+            engine.set_spec("ling".into(), spec.clone(), body.clone());
+            engine.set_manager_context(manager.clone());
+            engine.read_changes_if_any(&manager).await;
+            let standing = engine.default_model_id.clone();
+            resolve_effective_model(
+                &mut engine,
+                Asker::Owner,
+                &TurnModel::Member("ghost-model".into()),
+                (Some(&session), "ling"),
+                &manager,
+            )
+            .await;
+            let want = if kept { "ghost-model" } else { standing.as_str() };
+            assert_eq!(
+                engine.model_id, want,
+                "config {config_on}, session {session_switch:?}"
+            );
+        }
+    }
+
     /// A queued message is kept before it leaves the queue, the queue locked
     /// throughout: a restart's snapshot (which takes the same lock) never
     /// finds it neither queued nor kept. A message removed meanwhile is not
