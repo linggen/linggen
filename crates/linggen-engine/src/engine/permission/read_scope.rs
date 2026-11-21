@@ -18,7 +18,24 @@ impl ReadOrigin {
     pub(crate) fn task_child(self) -> Self {
         match self {
             Self::Other => Self::Other,
-            _ => Self::LocalTask,
+            Self::LocalOwner | Self::LocalDelegate | Self::LocalTask => Self::LocalTask,
+        }
+    }
+
+    /// Whether a secret file may be asked of this origin's person: the
+    /// owner's own typing only.
+    fn may_ask_for_secret(self) -> bool {
+        match self {
+            Self::LocalOwner => true,
+            Self::LocalDelegate | Self::LocalTask | Self::Other => false,
+        }
+    }
+
+    /// Whether a coding session reads a file it can open without asking.
+    fn looks_freely_when_coding(self) -> bool {
+        match self {
+            Self::Other => false,
+            Self::LocalOwner | Self::LocalDelegate | Self::LocalTask => true,
         }
     }
 
@@ -66,7 +83,7 @@ pub(super) fn decide(
     let mode = effective_mode_for_path(&perms.path_modes, &real);
     let protection = sensitive::protected(target);
     if let Some(Protected::Secret(file)) = &protection {
-        if under_ceiling || origin != ReadOrigin::LocalOwner || !perms.interactive {
+        if under_ceiling || !origin.may_ask_for_secret() || !perms.interactive {
             return ReadDecision::Refuse;
         }
         let named = perms.path_modes.iter().filter(|g| g.path != "*").any(|g| {
@@ -88,7 +105,7 @@ pub(super) fn decide(
         return if named && mode >= Some(PermissionMode::Read) { ReadDecision::Allow } else { ReadDecision::Ask };
     }
     if mode >= Some(PermissionMode::Read) || is_under_temp(&real)
-        || (coding && origin != ReadOrigin::Other && !under_ceiling && target.canonicalize().is_ok())
+        || (coding && origin.looks_freely_when_coding() && !under_ceiling && target.canonicalize().is_ok())
     {
         ReadDecision::Allow
     } else {
