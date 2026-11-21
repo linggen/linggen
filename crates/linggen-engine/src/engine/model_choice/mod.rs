@@ -298,11 +298,29 @@ pub fn next_down(
 }
 
 impl AgentEngine {
-    /// Choose among the machine's models as they are now: a model
-    /// registered after this engine was built (a room's proxy model, joined
-    /// mid-session) is one its turn can run on.
-    pub async fn use_live_models(&mut self, manager: &crate::engine::agent::AgentManager) {
+    /// Start a turn on the machine as it is now: the models as they are (a
+    /// model registered after this engine was built — a room's proxy model,
+    /// joined mid-session — is one its turn can run on), and whatever
+    /// settings or skills changed since (`read_changes_if_any`). Called by
+    /// every door before it chooses the turn's model.
+    pub async fn read_live_state(&mut self, manager: &crate::engine::agent::AgentManager) {
         self.model_manager = manager.models.read().await.clone();
+        self.read_changes_if_any(manager).await;
+    }
+
+    /// The agent's default model, read again after a change of settings
+    /// (`read_changes_if_any`): an engine that followed its default follows
+    /// the new one, and one on a model this machine no longer has goes to
+    /// it — a removed model is not a later turn's. `None`: the chain gave
+    /// none, and the standing default is kept.
+    pub(crate) fn follow_default_model(&mut self, default: Option<String>) {
+        let following = self.model_id == self.default_model_id;
+        if let Some(default) = default {
+            self.default_model_id = default;
+        }
+        if following || !is_here(&self.model_manager, &self.model_id) {
+            self.model_id = self.default_model_id.clone();
+        }
     }
 
     /// Run this turn on `choice`. The one writer of the turn's model before

@@ -103,6 +103,7 @@ impl AgentEngine {
     pub fn tune_recall(&mut self, count: usize, min_score: Option<f32>) {
         self.cfg.memory_recall_count = count;
         self.cfg.memory_inject_min_score = min_score;
+        self.cfg.recall_tuned = true;
     }
 
     /// Whether a mission is in charge of this engine.

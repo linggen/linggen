@@ -576,6 +576,7 @@ async fn drive(
     // A run is a turn of its own: it starts with nothing an earlier turn
     // in the session set, and puts back what it set when it ends.
     engine.begin_turn(Default::default());
+    engine.read_live_state(&state.manager).await;
     engine.respec(|spec| spec.read_origin = read_origin);
     if let Some(model) = model {
         // Checked (or chosen by the agent's chain) already; a delegated run

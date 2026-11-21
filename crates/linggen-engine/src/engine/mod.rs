@@ -33,6 +33,8 @@ pub(crate) mod spend_tests;
 #[cfg(test)]
 mod session_lock_tests;
 #[cfg(test)]
+mod settings_change_tests;
+#[cfg(test)]
 mod skills_change_tests;
 pub mod shown_images;
 pub mod skill;
@@ -352,9 +354,9 @@ impl AgentEngine {
         self.session_id = session_id.map(|s| s.to_string());
         // What the person declined last run is asked again in this one.
         self.declined_scopes.clear();
-        // Skills changed on disk since the last run: this one lists them.
+        // Skills or settings changed since the last run: this one reads them.
         if let Some(manager) = self.tools.get_manager() {
-            self.read_skills_if_changed(&manager).await;
+            self.read_changes_if_any(&manager).await;
         }
 
         if let Some(sid) = session_id {

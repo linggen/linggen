@@ -285,16 +285,17 @@ pub(crate) async fn set_chatgpt_stay(
 }
 
 /// Rebuild the model manager from the config in force (fresh keys, tokens,
-/// catalog), drop the session engines holding the old one, and restore the
-/// proxy models the rebuild drops.
+/// catalog) and restore the proxy models the rebuild drops. Session engines
+/// are kept: each reads the new models at its next turn
+/// (`AgentManager::mark_settings_changed`).
 pub(crate) async fn reload_models(state: &std::sync::Arc<crate::server::ServerState>) {
     let config = state.manager.get_config_snapshot().await;
     let new_models = std::sync::Arc::new(crate::provider::models::ModelManager::new(
         config.models.clone(),
     ));
     *state.manager.models.write().await = new_models;
-    state.manager.session_engines.lock().await.clear();
     crate::server::rtc::proxy_room::reapply_proxy_models(state).await;
+    state.manager.mark_settings_changed();
 }
 
 /// A sign-in was made: the default model follows it when it could not run
@@ -550,6 +551,28 @@ mod tests {
         assert_eq!(
             after.endpoint_key("openai", "https://api.example.com/v1"),
             Some("sk-new")
+        );
+    }
+}
+
+#[cfg(test)]
+mod keeps_engines {
+    /// A reload of models tells live engines to read the new list
+    /// (`AgentManager::mark_settings_changed`); it never drops them (engine
+    /// side: `a_change_of_config_keeps_every_live_engine`).
+    #[test]
+    fn reload_models_keeps_every_live_engine() {
+        let text = include_str!("config.rs");
+        let start = text.find("pub(crate) async fn reload_models(").expect("reload_models");
+        let body = &text[start..];
+        let body = &body[..body.find("\n}\n").expect("its end")];
+        assert!(
+            body.contains(["mark_settings_changed", "()"].concat().as_str()),
+            "reload_models must mark the change"
+        );
+        assert!(
+            !body.contains(["session_", "engines"].concat().as_str()),
+            "reload_models must not drop the session engines"
         );
     }
 }

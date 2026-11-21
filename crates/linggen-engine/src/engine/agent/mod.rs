@@ -61,8 +61,12 @@ pub struct AgentManager {
     pub agents: Arc<dyn AgentRegistry>,
     /// Global flat session store at `~/.linggen/sessions/`.
     pub global_sessions: &'static SessionStore,
-    /// Live engines, one per (session, member agent).
-    pub session_engines: Mutex<HashMap<(String, String), Arc<Mutex<AgentEngine>>>>,
+    /// Live engines, one per (session, member agent). Private: engines are
+    /// added by `get_or_create_session_agent` and removed only with their
+    /// session (`remove_session_engine`). A change of settings, models or
+    /// skills never drops them — it is `mark_settings_changed` /
+    /// `mark_skills_changed`, and each engine reads it at its next turn.
+    session_engines: Mutex<HashMap<(String, String), Arc<Mutex<AgentEngine>>>>,
     /// Each session's turn lock: one agent speaks at a time in a session,
     /// whoever it is. Held for the whole turn, taken before the engine's.
     session_turns: std::sync::Mutex<HashMap<String, Arc<Mutex<()>>>>,
@@ -105,10 +109,12 @@ pub struct AgentManager {
     /// `config.agent.daily_session`, readable without the config lock —
     /// her voice's fan-out, which is sync, reads it per line.
     daily_session: AtomicBool,
-    /// How many times the skills on disk have changed since boot. Only
-    /// [`Self::mark_skills_changed`] moves it; each engine compares it at its
-    /// next turn and reads its skill list again (`read_skills_if_changed`).
-    skills_generation: std::sync::atomic::AtomicU64,
+    /// How many times what engines read from outside themselves has changed
+    /// since boot: the skills on disk or the settings and models. Only
+    /// [`Self::mark_skills_changed`] and [`Self::mark_settings_changed`] move
+    /// it; each engine compares it at its next turn and reads again
+    /// (`read_changes_if_any`).
+    changes_generation: std::sync::atomic::AtomicU64,
     /// Which agents appear only once met, and which have been
     /// (`met.rs`) — the one gate every surface asks.
     pub met: met::MetGate,
@@ -245,6 +251,18 @@ impl AgentManager {
             .ok_or_else(|| anyhow::anyhow!(crate::cannot_run::NO_MODELS_CONFIGURED))
     }
 
+    /// The model an agent runs on by its own chain, as a fresh engine of it
+    /// would get (`resolve_model_id`) — for an engine reading it again.
+    pub(crate) fn default_model_for(
+        config: &Config,
+        models: &ModelManager,
+        agent_id: &str,
+        frontmatter_model: Option<String>,
+    ) -> Option<String> {
+        let normalized = Self::normalize_agent_id(agent_id);
+        Self::resolve_model_id(config, models, &normalized, frontmatter_model, true).ok()
+    }
+
     /// `ling01-mh3k9x`: the agent's count this process, then the moment the
     /// process began (base 36). Rows keep a run's id (`ChatMsg::run_id`), so
     /// it must never repeat after a restart — the chat binds by it alone.
@@ -304,8 +322,6 @@ impl AgentManager {
             AgentRole::Lead,
         )?;
 
-        engine.default_models = config.routing.default_models.clone();
-        engine.auto_fallback = config.routing.auto_fallback;
         engine.set_spec(
             normalized_id.to_string(),
             agent_spec.spec,
@@ -316,7 +332,8 @@ impl AgentManager {
             engine.set_delegation_depth(0, config.agent.max_delegation_depth);
         }
         engine.load_skill_tools(self.skills.as_ref()).await;
-        engine.read_skills_if_changed(self).await;
+        // Skills, routing chain, models: the one reader, as every turn has it.
+        engine.read_changes_if_any(self).await;
         engine
             .load_available_agents_metadata(self.agents.as_ref(), project_root)
             .await;
@@ -371,7 +388,7 @@ impl AgentManager {
                 pet_muted,
                 signed_in_default: std::sync::Mutex::new(None),
                 daily_session,
-                skills_generation: Default::default(),
+                changes_generation: Default::default(),
                 met: met::MetGate::new(crate::paths::met_dir()),
                 background: Default::default(),
                 run_messages: Default::default(),
@@ -387,13 +404,26 @@ impl AgentManager {
     /// person declined, its prompt, its plan) and stays the session's.
     /// Called only from the server's one follow-up, `skills_changed`.
     pub fn mark_skills_changed(&self) {
-        self.skills_generation
+        self.mark_changed();
+    }
+
+    /// The config or the model list changed: every engine, live or cached,
+    /// reads its limits, routing chain, models and default model again at
+    /// its next turn — dropping none, as for skills. Called by
+    /// `apply_config` and the server's `reload_models`, the two places the
+    /// settings or models are replaced.
+    pub fn mark_settings_changed(&self) {
+        self.mark_changed();
+    }
+
+    fn mark_changed(&self) {
+        self.changes_generation
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     }
 
-    /// Which change of skills an engine's list reflects (`mark_skills_changed`).
-    pub(crate) fn skills_generation(&self) -> u64 {
-        self.skills_generation
+    /// Which change an engine's copies reflect (`mark_*_changed`).
+    pub(crate) fn changes_generation(&self) -> u64 {
+        self.changes_generation
             .load(std::sync::atomic::Ordering::SeqCst)
     }
 
@@ -611,6 +641,20 @@ impl AgentManager {
             .filter(|((sid, _), _)| sid == session_id)
             .map(|(_, e)| e.clone())
             .collect()
+    }
+
+    /// Put a live engine in a session, as `get_or_create_session_agent` does.
+    #[cfg(test)]
+    pub(crate) async fn insert_session_engine(
+        &self,
+        session_id: &str,
+        agent_id: &str,
+        engine: Arc<Mutex<AgentEngine>>,
+    ) {
+        self.session_engines
+            .lock()
+            .await
+            .insert((session_id.to_string(), agent_id.to_string()), engine);
     }
 
     /// Remove a session's engines when the session is deleted.
@@ -933,13 +977,8 @@ impl AgentManager {
             crate::logging::set_log_level(level);
         }
 
-        // Invalidate all cached agents so they pick up new config on next use.
-        // Two caches to clear:
-        //   1. Project-level cached agents (ctx.agents) — rarely used on the chat path.
-        //   2. Per-session engines (session_engines) — THIS is where live chat engines
-        //      live. Without clearing this, existing sessions keep using whatever
-        //      model/routing they were built with and config changes have no effect
-        //      on running chats.
+        // Project-level cached agents are rebuilt on next use; session
+        // engines are kept — each reads the new settings at its next turn.
         let keys: Vec<String> = {
             let projects = self.projects.lock().await;
             projects.keys().cloned().collect()
@@ -948,10 +987,7 @@ impl AgentManager {
             let root = PathBuf::from(&key);
             let _ = self.invalidate_agent_cache(&root, None).await;
         }
-        {
-            let mut engines = self.session_engines.lock().await;
-            engines.clear();
-        }
+        self.mark_settings_changed();
 
         let _ = self.events.send((AgentEvent::StateUpdated, None));
         Ok(())
