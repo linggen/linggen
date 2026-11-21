@@ -236,3 +236,35 @@ fn the_switch_scan_sees_a_read_and_not_a_write() {
     assert_eq!(reads("x.model_fallback_allowed(s)", ".model_fallback_allowed("), 1);
     assert_eq!(reads("pub allow_model_fallback: bool", "allow_model_fallback"), 0);
 }
+
+/// Callers of `SessionMeta::set_member_model`, the write of the model a
+/// session keeps for a member, by file: how many, and why. Every write of a
+/// stored session goes through `session_members::set_model`; a new caller
+/// fails here until it is looked at and listed.
+const MEMBER_MODEL_WRITERS: &[(&str, usize, &str)] = &[
+    (
+        "crates/linggen-engine/src/engine/session_members.rs",
+        1,
+        "the one writer: a picked model, a cleared one and a pinned fallback all go through it",
+    ),
+    (
+        "src/server/mcp_agent.rs",
+        1,
+        "a delegated run's new session, built before it is stored",
+    ),
+];
+
+#[test]
+fn one_place_writes_the_model_a_session_keeps_for_a_member() {
+    for (rel, text) in scanned() {
+        let want = MEMBER_MODEL_WRITERS
+            .iter()
+            .find(|(f, _, _)| *f == rel)
+            .map_or(0, |e| e.1);
+        assert_eq!(
+            text.matches(".set_member_model(").count(),
+            want,
+            "{rel} writes a member's kept model: go through session_members::set_model, or list it"
+        );
+    }
+}

@@ -711,9 +711,8 @@ impl AgentEngine {
         let Some(agent) = self.agent_id.as_deref() else {
             return;
         };
-        let _ = manager.global_sessions.edit(session_id, |meta| {
-            meta.set_member_model(agent, Some(model_id.to_string()));
-        });
+        // The one writer of a member's kept model, as a picked one is written.
+        crate::engine::session_members::set_model(&manager, session_id, agent, Some(model_id.to_string())).await;
     }
 
     /// Emit a ModelFallback event via the agent manager.
@@ -1212,6 +1211,52 @@ mod fallback_window_tests {
         assert!(said.contains(&format!("'{primary}'")), "{said}");
         assert!(said.contains("not shared in this room"), "{said}");
         assert!(asked.is_empty(), "no model is called: {asked:?}");
+    }
+
+    /// The model a fallback pins as the member's goes through the writer a
+    /// picked model does (`session_members::set_model`): a member the session
+    /// had not seated yet joins the table as the lead's guest, and the lead
+    /// stays at it.
+    #[tokio::test]
+    async fn a_pinned_model_is_written_as_a_picked_one_is() {
+        let root = tempfile::tempdir().unwrap();
+        let config = crate::config::Config::default();
+        let cfg = EngineConfig::from_app_config(&config, root.path().into(), InterfaceMode::Web);
+        let models = Arc::new(ModelManager::new_with_credentials(
+            vec![],
+            &crate::credentials::Credentials::default(),
+        ));
+        let mut engine = AgentEngine::new(cfg, models, "gpt-6-luna".into(), AgentRole::Lead).unwrap();
+        engine.agent_id = Some("yinyue".into());
+        let (mut manager, _events) = AgentManager::new(
+            config,
+            None,
+            Arc::new(crate::engine::test_registries::Empty),
+            Arc::new(crate::engine::test_registries::Empty),
+            Arc::new(crate::engine::test_registries::Empty),
+            InterfaceMode::Web,
+        );
+        Arc::get_mut(&mut manager)
+            .expect("a fresh manager")
+            .global_sessions = crate::state_fs::SessionStore::leaked(root.path().join("sessions"));
+        manager
+            .global_sessions
+            .add_session(&crate::state_fs::sessions::SessionMeta {
+                id: "s-pin".into(),
+                agents: vec![],
+                ..Default::default()
+            })
+            .unwrap();
+        engine.set_manager_context(manager.clone());
+        engine.session_id = Some("s-pin".into());
+        engine.pin_session_model("gpt-6.1-terra").await;
+        let meta = manager.global_sessions.get_session_meta("s-pin").unwrap().unwrap();
+        let seated: Vec<(&str, Option<&str>)> = meta
+            .agents
+            .iter()
+            .map(|m| (m.id.as_str(), m.model.as_deref()))
+            .collect();
+        assert_eq!(seated, [("ling", None), ("yinyue", Some("gpt-6.1-terra"))]);
     }
 
     #[tokio::test]
