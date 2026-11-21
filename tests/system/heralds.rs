@@ -365,13 +365,231 @@ async fn an_external_runs_wait_is_never_told() {
     w.api.answer(&ask, "Deny").await;
 }
 
-// NOT COVERED HERE: two questions of one turn waiting at once (a subagent's
-// beside its parent's, or two subagents') — one telling, and the folded one
-// told when the first telling came to nothing. The two system tests of it
-// used a prop that is gone. The bookkeeping is held by the unit tests of
-// `src/server/resident/herald/waits.rs`; `herald::wait_key` (which run a
-// question belongs to) and the re-tell loop are run by no test until these
-// are rebuilt on Task children.
+/// Ling's script for a turn tree with two questions waiting at once: the
+/// chat's first call starts a subagent beside itself (`Task`, in the
+/// background), then the chat and the subagent each ask to write outside
+/// the folder. The fake model answers by call order, so which of the two
+/// takes which `Write` is not told — both are questions of the one turn.
+/// The calls after those are what each says once its question is answered.
+fn two_questions_of_one_turn() -> Vec<crate::support::model::Reply> {
+    vec![
+        tool(
+            "Task",
+            serde_json::json!({"target_agent_id": "ling", "run_in_background": true,
+                "task": "Write outside the folder"}),
+        ),
+        tool(
+            "Write",
+            serde_json::json!({"path": "~/outside-1.txt", "content": "x"}),
+        ),
+        tool(
+            "Write",
+            serde_json::json!({"path": "~/outside-2.txt", "content": "x"}),
+        ),
+        text("Could not."),
+        text("Could not either."),
+        text("The helper could not."),
+    ]
+}
+
+/// Every question waiting now, in any session.
+async fn every_ask(w: &World) -> Vec<Value> {
+    w.api
+        .get("/api/pending-ask-user")
+        .await
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// Wait until `n` questions wait.
+async fn until_asks(w: &World, n: usize) -> Vec<Value> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        let now = every_ask(w).await;
+        if now.len() == n {
+            return now;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "{n} asks never waited, {} did; log:\n{}",
+            now.len(),
+            w.engine.log()
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+/// The question ids her wake-up kickoffs named, in order. A kickoff for a
+/// wait carries the id her `answer_prompt` is to relay to.
+fn questions_she_was_woken_for(w: &World, asks: &[Value]) -> Vec<String> {
+    w.model
+        .calls_of(Agent::Yinyue)
+        .iter()
+        .skip(1)
+        .filter_map(|c| c.thread().last().map(|(_, said)| said.clone()))
+        .filter(|said| said.contains("waiting on the user"))
+        .map(|said| {
+            asks.iter()
+                .map(|a| a["question_id"].as_str().unwrap_or_default().to_string())
+                .find(|id| said.contains(id.as_str()))
+                .unwrap_or_default()
+        })
+        .collect()
+}
+
+async fn answer_all(w: &World) {
+    for ask in every_ask(w).await {
+        w.api.answer(&ask, "Deny").await;
+    }
+}
+
+/// A subagent's question waits beside its parent's, the person away: one
+/// telling for the turn (the key is the turn tree's root run, not the
+/// question nor the session). The cue names one of the waiting questions;
+/// both cards carry the mark.
+#[tokio::test]
+async fn one_telling_per_waiting_turn() {
+    let setup = Setup::default()
+        .script(Agent::Ling, two_questions_of_one_turn())
+        .script(
+            Agent::Yinyue,
+            vec![
+                text("I'm here."),
+                crate::support::say("WAIT-LINE they need you."),
+                crate::support::say("SECOND-TELLING"),
+            ],
+        );
+    let w = World::start(setup).await;
+    meet_then_away(&w).await;
+    let sid = w
+        .api
+        .create_session(serde_json::json!({"title": "Outside"}))
+        .await;
+    w.api.chat(&sid, &w.work(), "Write outside, twice").await;
+    away(&w).await;
+    let pending = until_asks(&w, 2).await;
+    // The prop is what it claims: a second run, the first one's child.
+    assert!(
+        w.engine.log().contains("parent_run_id=Some("),
+        "no subagent run began; log:\n{}",
+        w.engine.log()
+    );
+    let cue = |e: &Value| e["kind"] == "pet_speak" && e["text"] == "WAIT-LINE they need you.";
+    until("her notice", &w, || w.events().iter().any(cue)).await;
+    tokio::time::sleep(Duration::from_secs(4)).await;
+    assert_eq!(
+        her_wakes(&w, "waiting on the user"),
+        1,
+        "one waiting turn, told more than once"
+    );
+    assert!(!w.events().iter().any(|e| e["text"] == "SECOND-TELLING"));
+    let said = w.events().into_iter().find(|e| cue(e)).unwrap();
+    let ids: Vec<&Value> = pending.iter().map(|a| &a["question_id"]).collect();
+    assert!(
+        ids.contains(&&said["data"]["question_id"]),
+        "the cue names a waiting question: {said}"
+    );
+    assert!(
+        !every_row(&w).contains("WAIT-LINE"),
+        "the notice became a row"
+    );
+    answer_all(&w).await;
+}
+
+/// Two questions of one turn wait; the first telling comes to nothing (she
+/// writes no line): the other, still waiting, is told — the one not tried.
+#[tokio::test]
+async fn a_question_folded_into_a_telling_that_came_to_nothing_is_told() {
+    let setup = Setup::default()
+        .script(Agent::Ling, two_questions_of_one_turn())
+        .script(
+            Agent::Yinyue,
+            vec![
+                text("I'm here."),
+                // Slow: the second question comes while this telling still runs.
+                crate::support::model::slow(text("He is away, so no line from me now.")),
+                crate::support::say("SECOND-TOLD they need you."),
+            ],
+        );
+    let w = World::start(setup).await;
+    meet_then_away(&w).await;
+    let sid = w
+        .api
+        .create_session(serde_json::json!({"title": "Outside"}))
+        .await;
+    w.api.chat(&sid, &w.work(), "Write outside, twice").await;
+    away(&w).await;
+    let pending = until_asks(&w, 2).await;
+    let cue = |e: &Value| e["kind"] == "pet_speak" && e["text"] == "SECOND-TOLD they need you.";
+    until("the folded question's telling", &w, || {
+        w.events().iter().any(cue)
+    })
+    .await;
+    let said = w.events().into_iter().find(|e| cue(e)).unwrap();
+    assert_eq!(her_wakes(&w, "waiting on the user"), 2);
+    let woken = questions_she_was_woken_for(&w, &pending);
+    assert_eq!(woken.len(), 2, "{woken:?}");
+    assert_ne!(woken[0], woken[1], "the same question told twice");
+    assert_eq!(said["data"]["question_id"], woken[1], "{said}");
+    answer_all(&w).await;
+}
+
+/// Two turns of two different sessions wait at once: two waits, each told.
+#[tokio::test]
+async fn waits_of_two_sessions_are_each_told() {
+    let setup = Setup::default()
+        .script(
+            Agent::Ling,
+            vec![
+                tool(
+                    "Write",
+                    serde_json::json!({"path": "~/outside-1.txt", "content": "x"}),
+                ),
+                tool(
+                    "Write",
+                    serde_json::json!({"path": "~/outside-2.txt", "content": "x"}),
+                ),
+                text("Could not."),
+                text("Could not either."),
+            ],
+        )
+        .script(
+            Agent::Yinyue,
+            vec![
+                text("I'm here."),
+                crate::support::say("FIRST-WAIT they need you."),
+                crate::support::say("OTHER-WAIT they need you."),
+            ],
+        );
+    let w = World::start(setup).await;
+    meet_then_away(&w).await;
+    for title in ["Shelf", "Lamp"] {
+        let sid = w
+            .api
+            .create_session(serde_json::json!({"title": title}))
+            .await;
+        w.api.chat(&sid, &w.work(), "Write outside").await;
+    }
+    away(&w).await;
+    let pending = until_asks(&w, 2).await;
+    assert_ne!(pending[0]["session_id"], pending[1]["session_id"]);
+    let told = |events: &[Value], line: &str| {
+        events
+            .iter()
+            .any(|e| e["kind"] == "pet_speak" && e["text"] == line)
+    };
+    until("both waits told", &w, || {
+        let events = w.events();
+        told(&events, "FIRST-WAIT they need you.") && told(&events, "OTHER-WAIT they need you.")
+    })
+    .await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert_eq!(her_wakes(&w, "waiting on the user"), 2);
+    let woken = questions_she_was_woken_for(&w, &pending);
+    assert_ne!(woken[0], woken[1], "one wait told twice: {woken:?}");
+    answer_all(&w).await;
+}
 
 /// The wait is answered while her line is being made: nothing of it is
 /// said, marked or written — then or later.
