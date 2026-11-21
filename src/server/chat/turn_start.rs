@@ -252,7 +252,29 @@ mod structure_lock {
             .into_iter()
             .filter(|(rel, _)| rel != "src/server/chat/turn_start.rs")
             .collect();
-        assert_eq!(calls, [("src/server/chat/handler.rs".to_string(), 1)]);
+        assert_eq!(
+            calls,
+            [("src/server/chat/handler.rs".to_string(), 1), ("src/server/chat/plan_flow.rs".to_string(), 1)],
+        );
+    }
+
+    /// A turn that can read gets its standing from its start, afresh: never
+    /// what the turn before it left. Every file that builds a turn's context
+    /// puts the standing on the engine (the turn core does) — but the light
+    /// reply, which has no tools and reads nothing.
+    #[test]
+    fn a_turn_that_can_read_stands_for_reads_from_its_own_start() {
+        const READS_NOTHING: &[&str] = &["src/server/chat/light.rs"];
+        for (rel, code) in production_code(&["src"]) {
+            let builds = code.replace("struct ChatRunCtx {", "").replace("impl ChatRunCtx {", "").contains("ChatRunCtx {");
+            if !builds || rel.ends_with("tests.rs") || READS_NOTHING.contains(&rel.as_str()) {
+                continue;
+            }
+            assert!(
+                code.contains("stand_for_reads(") || code.contains("run_session_turn("),
+                "{rel} builds a turn's context and never stands it for reads: it would read as the turn before it did"
+            );
+        }
     }
 
     /// `Origin::Person` has been the default for "not hers". Each use is
