@@ -1,8 +1,8 @@
-//! Her hearing, through the real route (`POST /api/stt`): the router, the
-//! body limit and the handler, as a page's request reaches them. Only silent
-//! or invalid clips are sent here: a clip with speech in it would reach the
-//! machine's hearing, and a world must never start that model's download.
-//! What is heard from a clip — the words, the owner's door, the 503 — is
+//! Her hearing, through the real route (`/api/stt`): the router, the body
+//! limit and the handlers, as a page's request reaches them. The world is a
+//! machine with 8 GB of memory, which the voice lane's gate refuses: it
+//! cannot hear, and no model fetch can start in a test. What is heard from a
+//! clip — the words, the owner's door, the GET beside the POST — is
 //! `api/stt.rs`'s unit tests, with a fake hearing engine.
 
 use crate::support::{Setup, World};
@@ -29,30 +29,38 @@ fn silence(secs: usize) -> Vec<u8> {
     wav
 }
 
+const NO_MEMORY: &str = "Hearing needs 16 GB of memory, this Mac has 8 GB.";
+
+async fn deaf_world() -> World {
+    World::start(Setup { machine_memory_gb: Some(8), ..Setup::default().setting_off() }).await
+}
+
+/// Rule 1: whether she hears is asked before a microphone opens, and a
+/// machine that cannot says why in words.
 #[tokio::test]
-async fn a_silent_clip_is_empty_text() {
-    let w = World::start(Setup::default().setting_off()).await;
+async fn a_machine_that_cannot_hear_says_so_before_any_clip() {
+    let w = deaf_world().await;
+    let said = w.api.get("/api/stt").await;
+    assert_eq!(said, json!({ "hears": false, "reason": NO_MEMORY, "fetching": false }));
+}
+
+/// The POST says the same, silence or not: the reason, never "nothing heard".
+#[tokio::test]
+async fn a_silent_clip_on_a_machine_that_cannot_hear_gets_the_reason() {
+    let w = deaf_world().await;
     let (status, body) = w.api.post_bytes("/api/stt", "audio/wav", silence(2)).await;
-    assert_eq!((status, body), (200, json!({ "text": "" })));
+    assert_eq!(status, 503);
+    assert_eq!(body, json!({ "error": "unavailable", "reason": NO_MEMORY, "fetching": false }));
 }
 
 /// A minute of audio as JSON is over the framework's body limit; this route
 /// reads it, which is what lets a page's data-channel request carry a clip.
+/// (Read, and then judged: 503, not the framework's 413.)
 #[tokio::test]
 async fn a_minute_of_audio_in_the_json_form_is_read() {
-    let w = World::start(Setup::default().setting_off()).await;
+    let w = deaf_world().await;
     let b64 = base64::engine::general_purpose::STANDARD.encode(silence(60));
     assert!(b64.len() > 2 * 1024 * 1024, "the clip is over the default body limit");
     let (status, body) = w.api.post_with_status("/api/stt", json!({ "wav_b64": b64 })).await;
-    assert_eq!((status, body), (200, json!({ "text": "" })));
-}
-
-#[tokio::test]
-async fn a_body_that_is_not_that_wav_is_refused() {
-    let w = World::start(Setup::default().setting_off()).await;
-    let (status, body) = w.api.post_bytes("/api/stt", "audio/wav", b"not a clip".to_vec()).await;
-    assert_eq!(status, 400);
-    assert_eq!(body["error"], "bad_audio");
-    let (status, body) = w.api.post_bytes("/api/stt", "audio/wav", silence(61)).await;
-    assert_eq!((status, body["error"].as_str()), (413, Some("too_long")));
+    assert_eq!((status, body["error"].as_str()), (503, Some("unavailable")));
 }

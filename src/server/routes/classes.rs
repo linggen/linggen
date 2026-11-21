@@ -51,6 +51,7 @@ pub(crate) const CLASSES: &[(&str, &str, RouteClass)] = &[
     ("POST", "/api/yinyue/event", At(Chat)),
     ("POST", "/api/tts", At(Chat)),
     ("POST", "/api/stt", At(Chat)),
+    ("GET", "/api/stt", At(Chat)),
     ("GET", "/api/user/language", At(Chat)),
     // -- The way in: health, pairing's bootstrap, the channel's signaling,
     // and the page shell (the LAN gate leaves the first three open).

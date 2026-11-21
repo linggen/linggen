@@ -8,7 +8,8 @@
 //! (`mlx_voice.py`; `the_sidecar_script_keeps_what_it_hears_to_itself`).
 //! The model is named once, `runtime::STT_MODEL`; the machine it needs is the
 //! voice lane's. Where hearing cannot happen the answer is a reason in words
-//! ([`Unavailable`]): this machine's, or that the model is being fetched.
+//! ([`Unavailable`]): this machine's, or that the model is not here yet or
+//! is being fetched.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -31,17 +32,15 @@ impl MlxSttProvider {
         Self { sidecar }
     }
 
-    /// Can this machine hear now? `Err` is what to tell the person. The
-    /// first ask on a machine that can, but has not the model, starts the
-    /// fetch (the same runtime path and progress as her voice's model).
-    fn can_hear() -> Result<(), Unavailable> {
-        crate::runtime::lane_verdict(&crate::runtime::VOICE_LANE)
-            .map_err(|reason| Unavailable(format!("Hearing {reason}.")))?;
-        if crate::runtime::hearing_ready() {
-            return Ok(());
+    /// What this machine can do now, as the one verdict: the voice lane's
+    /// gate, then the hearing model on disk, then whether it is on its way.
+    fn verdict(lane: Result<(), String>, ready: bool, fetching: bool) -> Result<(), Unavailable> {
+        lane.map_err(|reason| Unavailable::because(format!("Hearing {reason}.")))?;
+        match (ready, fetching) {
+            (true, _) => Ok(()),
+            (false, true) => Err(Unavailable::fetching("Fetching the hearing model (1.6 GB). Try again when it is done.")),
+            (false, false) => Err(Unavailable::because("The hearing model (1.6 GB) is not on this Mac yet.")),
         }
-        crate::runtime::ensure_hearing_in_background();
-        Err(Unavailable("Fetching the hearing model (1.6 GB) first. Try again when it is done.".into()))
     }
 
     /// The words in `samples`, from the sidecar.
@@ -64,11 +63,24 @@ impl MlxSttProvider {
 
 #[async_trait]
 impl SttProvider for MlxSttProvider {
+    fn can_hear(&self) -> Result<(), Unavailable> {
+        let lane = crate::runtime::lane_verdict(&crate::runtime::VOICE_LANE);
+        Self::verdict(lane, crate::runtime::hearing_ready(), crate::runtime::hearing_fetching())
+    }
+
+    /// The same runtime path and progress as her voice's model, only on a
+    /// machine whose voice lane is open and which lacks the model.
+    fn begin_fetch(&self) {
+        let lane_open = crate::runtime::lane_verdict(&crate::runtime::VOICE_LANE).is_ok();
+        if lane_open && !crate::runtime::hearing_ready() {
+            crate::runtime::ensure_hearing_in_background();
+        }
+    }
+
     async fn hear(&self, samples: &[i16]) -> Result<Heard, Unavailable> {
-        Self::can_hear()?;
         self.listen(samples).await.map_err(|e| {
             tracing::warn!("[stt] {e:#}");
-            Unavailable("Hearing stopped for a moment. Try again.".into())
+            Unavailable::because("Hearing stopped for a moment. Try again.")
         })
     }
 }
@@ -106,6 +118,25 @@ done
                     out.push(path.display().to_string());
                 }
             }
+        }
+    }
+
+    /// Every state a machine can be in has one verdict, and a no is always in
+    /// words for a person, short enough to read at a glance.
+    #[test]
+    fn the_verdict_names_each_state_a_machine_can_be_in() {
+        let verdict = MlxSttProvider::verdict;
+        assert_eq!(verdict(Ok(()), true, false), Ok(()));
+        assert_eq!(verdict(Ok(()), true, true), Ok(()), "the model arrived");
+        let lane_closed = verdict(Err("needs an Apple Silicon Mac".into()), false, false).unwrap_err();
+        assert_eq!(lane_closed, Unavailable::because("Hearing needs an Apple Silicon Mac."));
+        let lane_closed_fetching = verdict(Err("needs a Mac".into()), false, true).unwrap_err();
+        assert!(!lane_closed_fetching.fetching, "a machine that cannot hear is not fetching");
+        let missing = verdict(Ok(()), false, false).unwrap_err();
+        let fetching = verdict(Ok(()), false, true).unwrap_err();
+        assert!(!missing.fetching && fetching.fetching);
+        for no in [lane_closed, missing, fetching] {
+            assert!(no.reason.split_whitespace().count() <= 20, "{}", no.reason);
         }
     }
 

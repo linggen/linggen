@@ -5,12 +5,18 @@
 //! rewrite. The daemon's hearing is Whisper on MLX in the voice lane's
 //! sidecar ([`super::stt_mlx`]).
 //!
+//! `GET /api/stt` — can she hear now? `{"hears": true}`, or `{"hears": false,
+//! "reason", "fetching"}`, asked before the microphone opens. It is the same
+//! judgement the POST makes ([`hears_now`], the only place that asks the
+//! provider), so the two cannot disagree; asking starts nothing.
+//!
 //! The body is one clip, WAV, 16 kHz mono 16-bit PCM, at most 60 seconds —
 //! raw (`audio/wav`), or `{"wav_b64": "…"}` as JSON, the form a request on
 //! the data channel can carry (it sends every body as JSON). The answer is
 //! `{text, language, ms}`; nothing intelligible is `{"text": ""}`; a machine
-//! that cannot hear is 503 `{error: "unavailable", reason}`, the reason in
-//! words a person can read.
+//! that cannot hear is 503 `{error: "unavailable", reason, fetching}`, the
+//! reason in words a person can read — said before the clip is looked at, so
+//! a silent clip on such a machine gets the reason, not "Didn't catch that".
 //!
 //! The sound is only ever heard, never kept: the provider is handed samples
 //! (no path, no URL), nothing here writes a file or opens a connection, and
@@ -59,9 +65,28 @@ pub struct Heard {
 }
 
 /// This machine cannot hear now. The reason is words for the person, not for
-/// a log: what stops it, or what is being done about it.
+/// a log: what stops it, or what is being done about it. `fetching`: the
+/// hearing model is on its way, so trying again soon will do.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Unavailable(pub String);
+pub struct Unavailable {
+    pub reason: String,
+    pub fetching: bool,
+}
+
+impl Unavailable {
+    pub fn because(reason: impl Into<String>) -> Self {
+        Self { reason: reason.into(), fetching: false }
+    }
+
+    pub fn fetching(reason: impl Into<String>) -> Self {
+        Self { reason: reason.into(), fetching: true }
+    }
+
+    /// The fields a person's page reads, in both answers that carry a no.
+    fn fields(&self) -> serde_json::Value {
+        json!({ "reason": self.reason, "fetching": self.fetching })
+    }
+}
 
 /// A hearing backend: samples in, words out. 16 kHz mono 16-bit, at most
 /// [`MAX_SECS`] and never silent — the route has judged that before the call.
@@ -69,12 +94,45 @@ pub struct Unavailable(pub String);
 /// and nothing to fetch it from or send it to.
 #[async_trait]
 pub trait SttProvider: Send + Sync {
+    /// Can it hear now? Asking starts nothing and changes nothing: this is
+    /// the one judgement behind both the GET's answer and the POST's 503.
+    fn can_hear(&self) -> Result<(), Unavailable>;
+    /// Start fetching what hearing waits on, if it waits on something that
+    /// can be fetched and no fetch runs. Only a clip sent (a real press)
+    /// calls this; the GET never does.
+    fn begin_fetch(&self);
     async fn hear(&self, samples: &[i16]) -> Result<Heard, Unavailable>;
 }
 
 /// The daemon's hearing — the single switch point for the daemon's STT.
 pub fn default_provider(sidecar: Arc<super::mlx_sidecar::VoiceSidecar>) -> Arc<dyn SttProvider> {
     Arc::new(super::stt_mlx::MlxSttProvider::new(sidecar))
+}
+
+/// GET /api/stt — can she hear now, before a microphone is opened. Owner
+/// only, as the POST is; classed as it is.
+pub(crate) async fn stt_status_handler(State(state): State<Arc<ServerState>>, headers: HeaderMap) -> Response {
+    answer_status(state.stt.as_ref(), crate::server::api::pair::caller_level(&headers))
+}
+
+fn answer_status(stt: &dyn SttProvider, level: PermissionMode) -> Response {
+    if let Some(refused) = crate::server::person::owners_only(level) {
+        return refused;
+    }
+    match hears_now(stt) {
+        Ok(()) => Json(json!({ "hears": true })).into_response(),
+        Err(no) => {
+            let mut body = no.fields();
+            body["hears"] = json!(false);
+            Json(body).into_response()
+        }
+    }
+}
+
+/// The one judgement of whether she can hear, asked of the provider here
+/// and nowhere else (`hearing_is_judged_in_one_place`).
+fn hears_now(stt: &dyn SttProvider) -> Result<(), Unavailable> {
+    stt.can_hear()
 }
 
 /// POST /api/stt — a clip in, `{text, language, ms}` out. Her own thread
@@ -94,11 +152,18 @@ pub(crate) async fn stt_handler(
 }
 
 /// The route's whole decision, on what it is handed (so a test needs no
-/// server): who asks, then what the body is, then whether it holds speech,
-/// and only then the model.
+/// server): who asks, then whether this machine can hear at all (a press
+/// that finds it cannot starts the fetch it waits on), then what the body
+/// is, then whether it holds speech, and only then the model.
 async fn answer(stt: &dyn SttProvider, (level, content_type): (PermissionMode, &str), body: &[u8]) -> Response {
     if let Some(refused) = crate::server::person::owners_only(level) {
         return refused;
+    }
+    // Before the clip is looked at: a silent clip on a machine that cannot
+    // hear gets the reason, as a loud one does.
+    stt.begin_fetch();
+    if let Err(no) = hears_now(stt) {
+        return unavailable(&no);
     }
     let samples = match samples_of(content_type, body) {
         Ok(samples) => samples,
@@ -116,10 +181,14 @@ async fn answer(stt: &dyn SttProvider, (level, content_type): (PermissionMode, &
             tracing::info!("[stt] heard {} chars in {ms} ms", heard.text.chars().count());
             Json(json!({ "text": heard.text.trim(), "language": heard.language, "ms": ms })).into_response()
         }
-        Err(Unavailable(reason)) => {
-            (StatusCode::SERVICE_UNAVAILABLE, Json(json!({ "error": "unavailable", "reason": reason }))).into_response()
-        }
+        Err(no) => unavailable(&no),
     }
+}
+
+fn unavailable(no: &Unavailable) -> Response {
+    let mut body = no.fields();
+    body["error"] = json!("unavailable");
+    (StatusCode::SERVICE_UNAVAILABLE, Json(body)).into_response()
 }
 
 /// A request refused for what its body is.
@@ -195,25 +264,48 @@ mod tests {
     /// Hears what it was told to, counting the calls.
     struct Fake {
         says: Result<Heard, Unavailable>,
+        /// What `can_hear` answers.
+        verdict: Result<(), Unavailable>,
         calls: AtomicUsize,
+        fetches: AtomicUsize,
         heard_samples: AtomicUsize,
     }
 
     impl Fake {
         fn saying(text: &str, language: &str) -> Self {
             let says = Ok(Heard { text: text.into(), language: language.into() });
-            Fake { says, calls: AtomicUsize::new(0), heard_samples: AtomicUsize::new(0) }
+            Fake {
+                says,
+                verdict: Ok(()),
+                calls: AtomicUsize::new(0),
+                fetches: AtomicUsize::new(0),
+                heard_samples: AtomicUsize::new(0),
+            }
         }
+        /// A machine that cannot hear, for a reason that will not pass.
         fn deaf(reason: &str) -> Self {
-            Fake { says: Err(Unavailable(reason.into())), ..Fake::saying("", "") }
+            Fake { verdict: Err(Unavailable::because(reason)), ..Fake::saying("", "") }
+        }
+        /// A machine whose hearing model is on its way.
+        fn fetching(reason: &str) -> Self {
+            Fake { verdict: Err(Unavailable::fetching(reason)), ..Fake::saying("", "") }
         }
         fn calls(&self) -> usize {
             self.calls.load(Ordering::SeqCst)
+        }
+        fn fetches(&self) -> usize {
+            self.fetches.load(Ordering::SeqCst)
         }
     }
 
     #[async_trait]
     impl SttProvider for Fake {
+        fn can_hear(&self) -> Result<(), Unavailable> {
+            self.verdict.clone()
+        }
+        fn begin_fetch(&self) {
+            self.fetches.fetch_add(1, Ordering::SeqCst);
+        }
         async fn hear(&self, samples: &[i16]) -> Result<Heard, Unavailable> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             self.heard_samples.store(samples.len(), Ordering::SeqCst);
@@ -346,7 +438,103 @@ mod tests {
         let fake = Fake::deaf(reason);
         let (status, body) = ask(&fake, OWNER, "audio/wav", &wav(speech(1.0))).await;
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-        assert_eq!(body, json!({ "error": "unavailable", "reason": reason }));
+        assert_eq!(body, json!({ "error": "unavailable", "reason": reason, "fetching": false }));
+        assert_eq!(fake.calls(), 0);
+    }
+
+    /// Rule 1: the reason is not kept behind the silence check. Every clip a
+    /// deaf machine is sent — silent, a click, a bad body — gets it.
+    #[tokio::test]
+    async fn a_silent_clip_on_a_machine_that_cannot_hear_gets_the_reason_not_a_shrug() {
+        let fake = Fake::deaf("Hearing needs an Apple Silicon Mac.");
+        for clip in [vec![0i16; RATE as usize * 2], speech(0.1)] {
+            let (status, body) = ask(&fake, OWNER, "audio/wav", &wav(clip)).await;
+            assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+            assert_eq!(body["reason"], "Hearing needs an Apple Silicon Mac.");
+        }
+        let (status, _) = ask(&fake, OWNER, "audio/wav", b"").await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "an empty body is a press knocking, not a bad clip");
+        assert_eq!(fake.calls(), 0);
+    }
+
+    /// A press that finds the model missing starts the fetch it waits on:
+    /// the clip sent is how a real press begins it (the GET never does).
+    #[tokio::test]
+    async fn a_press_that_finds_no_model_starts_the_fetch_once_per_press() {
+        let fake = Fake::fetching("Fetching the hearing model (1.6 GB). Try again when it is done.");
+        let (status, body) = ask(&fake, OWNER, "audio/wav", &wav(speech(1.0))).await;
+        assert_eq!((status, body["fetching"].as_bool()), (StatusCode::SERVICE_UNAVAILABLE, Some(true)));
+        assert_eq!(fake.fetches(), 1);
+        // A refused caller starts nothing.
+        ask(&fake, PermissionMode::Chat, "audio/wav", &wav(speech(1.0))).await;
+        assert_eq!(fake.fetches(), 1);
+    }
+
+    async fn status_of(stt: &Fake, level: PermissionMode) -> (StatusCode, serde_json::Value) {
+        let response = answer_status(stt, level);
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        (status, serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null))
+    }
+
+    #[tokio::test]
+    async fn asking_whether_she_hears_says_yes_or_the_reason_and_starts_nothing() {
+        let hears = Fake::saying("ok", "en");
+        assert_eq!(status_of(&hears, OWNER).await, (StatusCode::OK, json!({ "hears": true })));
+        let deaf = Fake::deaf("Hearing needs an Apple Silicon Mac.");
+        let (status, body) = status_of(&deaf, OWNER).await;
+        assert_eq!(
+            (status, body),
+            (StatusCode::OK, json!({ "hears": false, "reason": "Hearing needs an Apple Silicon Mac.", "fetching": false }))
+        );
+        let fetching = Fake::fetching("Fetching the hearing model (1.6 GB). Try again when it is done.");
+        let (_, body) = status_of(&fetching, OWNER).await;
+        assert_eq!((body["hears"].as_bool(), body["fetching"].as_bool()), (Some(false), Some(true)));
+        for fake in [&hears, &deaf, &fetching] {
+            assert_eq!(fake.fetches() + fake.calls(), 0, "asking started something");
+        }
+    }
+
+    /// The answer the GET gives and the POST's are one judgement: for every
+    /// state a machine can be in, `hears` is true exactly when a clip is
+    /// heard, and a no carries the same reason and `fetching`.
+    #[tokio::test]
+    async fn the_gets_answer_and_the_posts_503_never_disagree() {
+        let states = [
+            Fake::saying("ok", "en"),
+            Fake::deaf("Hearing needs an Apple Silicon Mac."),
+            Fake::fetching("Fetching the hearing model (1.6 GB). Try again when it is done."),
+        ];
+        for fake in &states {
+            let (_, got) = status_of(fake, OWNER).await;
+            let (status, posted) = ask(fake, OWNER, "audio/wav", &wav(speech(1.0))).await;
+            assert_eq!(got["hears"].as_bool().unwrap(), status == StatusCode::OK, "{got} vs {status}");
+            if status == StatusCode::SERVICE_UNAVAILABLE {
+                assert_eq!((&got["reason"], &got["fetching"]), (&posted["reason"], &posted["fetching"]));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn only_the_owner_is_told_whether_she_hears() {
+        let fake = Fake::saying("ok", "en");
+        for level in [PermissionMode::Chat, PermissionMode::Read, PermissionMode::Edit] {
+            let (status, body) = status_of(&fake, level).await;
+            assert_eq!((status, body["error"].as_str()), (StatusCode::FORBIDDEN, Some("beyond_level")), "{level}");
+        }
+    }
+
+    /// Lock: the provider is asked whether it hears in one place, the
+    /// function both routes call, and the fetch is begun only by a clip sent.
+    #[test]
+    fn hearing_is_judged_in_one_place() {
+        let code = include_str!("stt.rs");
+        let production = &code[..code.find("#[cfg(test)]").unwrap()];
+        assert_eq!(production.matches("stt.can_hear()").count(), 1, "ask through hears_now alone");
+        assert_eq!(production.matches("hears_now(").count(), 3, "the function, the GET's answer, the POST");
+        assert_eq!(production.matches("stt.begin_fetch()").count(), 1, "only a clip sent begins a fetch");
+        let status = &production[production.find("fn stt_status_handler").unwrap()..production.find("fn hears_now").unwrap()];
+        assert!(!status.contains("begin_fetch"), "asking whether she hears starts nothing");
     }
 
     /// The route is `/api/tts`'s class, and her door's: any device may reach
@@ -355,6 +543,7 @@ mod tests {
     fn the_route_is_classed_as_her_voice_is() {
         use crate::server::routes::classes::class_of;
         assert_eq!(class_of("POST", "/api/stt"), class_of("POST", "/api/tts"));
+        assert_eq!(class_of("GET", "/api/stt"), class_of("POST", "/api/tts"));
         assert_eq!(class_of("POST", "/api/stt").needs(), PermissionMode::Chat);
     }
 
