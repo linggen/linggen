@@ -541,9 +541,12 @@ impl AgentEngine {
 
         // Two switches decide whether this call may move to another model: the
         // routing config's, and the session's own (`SessionMeta::model_fallback`,
-        // off for a session a host made through `agent_run`). Read once per call.
-        let session_switch = self.session_allows_fallback();
-        let may_switch = self.allow_model_fallback && session_switch;
+        // off for a session a host made through `agent_run`). Asked once per
+        // call (`model_choice::Switching`); the stored session's switch is read
+        // then, so the picker's takes hold on the next call of a turn running.
+        let switching = self.switching(self.session_id.as_deref());
+        let session_switch = switching.session_allows();
+        let may_switch = switching.may();
 
         // A room's guest runs only what the room shares — before any call,
         // whatever the session's switch says.
@@ -567,6 +570,10 @@ impl AgentEngine {
             ));
         }
 
+        // Not `model_choice`'s: the cooldown skip and the stall retry below are
+        // this call's own, about a model that failed a moment ago — `resolve`
+        // chooses a turn's model before it starts, not during the call.
+        //
         // A model that has already told us it is rate-limited is not worth a
         // round trip: spend the turn on something that can answer. Only when
         // the chain has an alternative — otherwise try it anyway and let the
@@ -666,17 +673,6 @@ impl AgentEngine {
         }
     }
 
-    /// Whether the session this engine speaks in lets a failed model call
-    /// move to another model (`SessionMeta::model_fallback`; yes when there is
-    /// no session). Read from the stored session, so the picker's switch takes
-    /// hold on the next call of a turn already running.
-    pub(crate) fn session_allows_fallback(&self) -> bool {
-        let (Some(manager), Some(session_id)) = (self.tools.get_manager(), &self.session_id) else {
-            return true;
-        };
-        manager.global_sessions.model_fallback_allowed(session_id)
-    }
-
     /// Record on the run which model answered (or failed) its latest model
     /// call — what `agent_status` reports as the run's `model`.
     fn note_run_model(&self, model_id: &str) {
@@ -719,9 +715,8 @@ impl AgentEngine {
         let Some(agent) = self.agent_id.as_deref() else {
             return;
         };
-        let _ = manager.global_sessions.edit(session_id, |meta| {
-            meta.set_member_model(agent, Some(model_id.to_string()));
-        });
+        // The one writer of a member's kept model, as a picked one is written.
+        crate::engine::session_members::set_model(&manager, session_id, agent, Some(model_id.to_string())).await;
     }
 
     /// Emit a ModelFallback event via the agent manager.
@@ -1220,6 +1215,52 @@ mod fallback_window_tests {
         assert!(said.contains(&format!("'{primary}'")), "{said}");
         assert!(said.contains("not shared in this room"), "{said}");
         assert!(asked.is_empty(), "no model is called: {asked:?}");
+    }
+
+    /// The model a fallback pins as the member's goes through the writer a
+    /// picked model does (`session_members::set_model`): a member the session
+    /// had not seated yet joins the table as the lead's guest, and the lead
+    /// stays at it.
+    #[tokio::test]
+    async fn a_pinned_model_is_written_as_a_picked_one_is() {
+        let root = tempfile::tempdir().unwrap();
+        let config = crate::config::Config::default();
+        let cfg = EngineConfig::from_app_config(&config, root.path().into(), InterfaceMode::Web);
+        let models = Arc::new(ModelManager::new_with_credentials(
+            vec![],
+            &crate::credentials::Credentials::default(),
+        ));
+        let mut engine = AgentEngine::new(cfg, models, "gpt-6-luna".into(), AgentRole::Lead).unwrap();
+        engine.agent_id = Some("yinyue".into());
+        let (mut manager, _events) = AgentManager::new(
+            config,
+            None,
+            Arc::new(crate::engine::test_registries::Empty),
+            Arc::new(crate::engine::test_registries::Empty),
+            Arc::new(crate::engine::test_registries::Empty),
+            InterfaceMode::Web,
+        );
+        Arc::get_mut(&mut manager)
+            .expect("a fresh manager")
+            .global_sessions = crate::state_fs::SessionStore::leaked(root.path().join("sessions"));
+        manager
+            .global_sessions
+            .add_session(&crate::state_fs::sessions::SessionMeta {
+                id: "s-pin".into(),
+                agents: vec![],
+                ..Default::default()
+            })
+            .unwrap();
+        engine.set_manager_context(manager.clone());
+        engine.session_id = Some("s-pin".into());
+        engine.pin_session_model("gpt-6.1-terra").await;
+        let meta = manager.global_sessions.get_session_meta("s-pin").unwrap().unwrap();
+        let seated: Vec<(&str, Option<&str>)> = meta
+            .agents
+            .iter()
+            .map(|m| (m.id.as_str(), m.model.as_deref()))
+            .collect();
+        assert_eq!(seated, [("ling", None), ("yinyue", Some("gpt-6.1-terra"))]);
     }
 
     #[tokio::test]

@@ -87,6 +87,10 @@ pub(crate) async fn continue_api(
     Json(serde_json::json!({ "id": meta.id, "cwd": meta.cwd, "model": named })).into_response()
 }
 
+/// Not asked through `model_choice::resolve`: a continued Claude session
+/// stays on a Claude model, which `resolve` has no way to say (`first_claude`
+/// is its own question, kept in `model_choice`).
+///
 /// The model a continued session asks for: the one the old session pinned
 /// when this engine has it; else the first Anthropic model of `chain` that
 /// can run now (a Claude conversation goes on on a Claude model); else none,

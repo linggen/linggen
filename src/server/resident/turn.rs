@@ -476,11 +476,8 @@ async fn apply_her_model(
         .and_then(|m| m.model.clone());
     let pinned = kept.is_some();
     let wanted = kept.or_else(|| resolve_pet_model(&pet.model));
-    let may_switch = state
-        .manager
-        .global_sessions
-        .model_fallback_allowed(session_id);
     engine.read_live_state(&state.manager).await;
+    let may_switch = engine.switching(Some(session_id)).session_allows();
     let choice = her_choice(engine, wanted.as_deref(), may_switch);
     engine.run_on(&choice, "[yinyue]").await;
     // A kept model she cannot run is cleared, as a chat turn clears it: the

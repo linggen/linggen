@@ -6,46 +6,15 @@
 //! `@name` addresses a member and seats one who isn't there yet, for good.
 
 use crate::engine::agent::{AgentManager, COMPANION_AGENT_ID, LEAD_AGENT_ID};
+use crate::engine::model_choice::Choice;
 use crate::engine::skill::Skill;
 use crate::state_fs::sessions::{SessionMember, SessionMeta};
 
-/// The members a new session starts with: the skill's declared members, or
-/// the lead agent alone.
-pub(crate) fn default_members(skill: Option<&Skill>) -> Vec<SessionMember> {
-    let declared: Vec<SessionMember> = skill
-        .map(|s| s.members.iter().map(|id| SessionMember::new(id)).collect())
-        .unwrap_or_default();
-    if declared.is_empty() {
-        return vec![SessionMember::new(LEAD_AGENT_ID)];
-    }
-    declared
-}
-
-/// The session's members as they stand: its skill's declared members first
-/// (in the skill's order, each with the model the session keeps for it),
-/// then anyone else the session seated; a session with none seats the
-/// defaults.
-pub(crate) fn effective(meta: &SessionMeta, skill: Option<&Skill>) -> Vec<SessionMember> {
-    let mut out: Vec<SessionMember> = skill
-        .map(|s| s.members.as_slice())
-        .unwrap_or_default()
-        .iter()
-        .map(|id| {
-            meta.member(id)
-                .cloned()
-                .unwrap_or_else(|| SessionMember::new(id))
-        })
-        .collect();
-    for m in &meta.agents {
-        if !out.iter().any(|o| o.id == m.id) {
-            out.push(m.clone());
-        }
-    }
-    if out.is_empty() {
-        return default_members(skill);
-    }
-    out
-}
+// The members of a session, and the one writer of a member's kept model,
+// live in the engine (`engine::session_members`): the engine's mid-call
+// fallback writes through the same one. Re-exported so every caller reads
+// as it did.
+pub(crate) use crate::engine::session_members::{default_members, effective, set_model};
 
 /// Who answers a message that names nobody, on the Mac: the lead agent when
 /// it is a member, else the session's first member.
@@ -156,76 +125,47 @@ pub(crate) async fn seat(manager: &AgentManager, session_id: &str, id: &str) -> 
     ok
 }
 
-/// Keep `model` as `id`'s model in the session (`None` clears it). True
-/// when the meta changed.
-pub(crate) async fn set_model(
-    manager: &AgentManager,
-    session_id: &str,
-    id: &str,
-    model: Option<String>,
-) -> bool {
-    let store = &manager.global_sessions;
-    let skill = match store
-        .get_session_meta(session_id)
-        .ok()
-        .flatten()
-        .and_then(|m| m.skill)
-    {
-        Some(name) => manager.skills.get_skill(&name).await,
-        None => None,
-    };
-    store
-        .edit(session_id, |meta| {
-            // The members as the skill makes them, kept only if the model changed.
-            let members = effective(meta, skill.as_ref());
-            let stored = std::mem::replace(&mut meta.agents, members);
-            if meta.set_member_model(id, model) {
-                return true;
-            }
-            meta.agents = stored;
-            false
-        })
-        .unwrap_or(false)
-}
-
-/// The model `member` runs on in its session: the model the session keeps
-/// for it, else (the companion) her pet setting — when this machine has
-/// it — else its own chain, as its turn would.
+/// The model `member`'s turn runs on in its session, for a call made outside
+/// the turn (the summary of a compaction, the prompt preview, her push
+/// line): what `model_choice::resolve` answers for it — the model the
+/// session keeps for the member, else (the companion) her Pet setting, asked
+/// as `asker` (the turn's own: a person's turn never names a model they were
+/// not given), standing on the agent's own chain. `None`: the agent has no
+/// model, or `asker` was given none.
 pub(crate) async fn model_of(
     manager: &AgentManager,
     root: &std::path::Path,
     member: &SessionMember,
-) -> Option<String> {
+    asker: crate::engine::model_choice::Asker<'_>,
+) -> Option<Choice> {
     let models = manager.models.read().await.clone();
-    let pet = is_companion(&member.id).then(|| async {
-        crate::server::resident::resolve_pet_model(&manager.get_config_snapshot().await.pet.model)
-    });
-    let pet = match pet {
-        Some(f) => f.await,
-        None => None,
+    let pet = match is_companion(&member.id) {
+        true => crate::server::resident::resolve_pet_model(&manager.get_config_snapshot().await.pet.model),
+        false => None,
     };
-    match asked_of(&models, member.model.clone(), pet) {
-        Some(m) => Some(m),
-        None => manager.agent_model_id(root, &member.id).await,
-    }
+    let standing = manager.agent_model_id(root, &member.id).await;
+    turn_model_of(&models, (member.model.clone(), pet), standing.as_deref(), asker)
 }
 
-/// The model a member's turn asks for — the kept one, else the pet
-/// setting, as the turn asks (`turn_model`) — when it runs as asked
-/// (`model_choice::resolve`). `None`: the turn runs on the agent's own.
-fn asked_of(
+/// [`model_of`] on the facts: the kept and the Pet models, the agent's own.
+pub(crate) fn turn_model_of(
     models: &crate::provider::models::ModelManager,
-    kept: Option<String>,
-    pet: Option<String>,
-) -> Option<String> {
-    use crate::engine::model_choice::{resolve, Asker, Rule};
-    let asked = kept.or(pet)?;
+    (kept, pet): (Option<String>, Option<String>),
+    standing: Option<&str>,
+    asker: crate::engine::model_choice::Asker<'_>,
+) -> Option<Choice> {
+    use crate::engine::model_choice::{resolve, Rule, OUTSIDE_A_TURN_MAY_SWITCH};
+    let asked = kept.or(pet);
     let rule = Rule {
-        asker: Asker::Owner,
-        may_switch: true,
+        asker,
+        may_switch: OUTSIDE_A_TURN_MAY_SWITCH,
     };
-    let choice = resolve(models, Some(&asked), "", rule);
-    choice.is_asked().then(|| choice.model().to_string())
+    let choice = resolve(models, asked.as_deref(), standing.unwrap_or(""), rule);
+    if choice.nothing_given() {
+        return None;
+    }
+    // With no standing model, only a model that was asked for and runs counts.
+    (standing.is_some() || choice.is_asked()).then_some(choice)
 }
 
 /// Whether `id` is the companion.
@@ -237,22 +177,87 @@ pub(crate) fn is_companion(id: &str) -> bool {
 mod tests {
     use super::*;
 
+    /// The model the summary of a compaction names for `member`.
+    async fn said_for(
+        manager: &AgentManager,
+        root: &std::path::Path,
+        member: &SessionMember,
+        asker: crate::engine::model_choice::Asker<'_>,
+    ) -> Option<String> {
+        let members = [member.clone()];
+        let models = crate::server::chat::compact_rows::session_models(manager, root, &members, asker).await?;
+        Some(models.summarizer)
+    }
+
     /// The preview and compaction name the model the member's turn runs
     /// on: a kept model this machine lacks means the agent's own model, as
     /// in the turn — not the pet setting behind it.
     #[test]
     fn the_member_model_named_is_the_one_its_turn_runs_on() {
+        use crate::engine::model_choice::Asker;
         let models = crate::provider::models::ModelManager::new_with_credentials(
             vec![],
             &crate::credentials::Credentials::default(),
         );
         let luna = Some("gpt-6-luna".to_string());
+        let named = |kept: Option<&str>, pet: Option<String>, standing: Option<&str>| {
+            turn_model_of(&models, (kept.map(Into::into), pet), standing, Asker::Owner)
+                .map(|c| c.model().to_string())
+        };
         assert_eq!(
-            asked_of(&models, Some("gpt-6-sol".into()), luna.clone()).as_deref(),
+            named(Some("gpt-6-sol"), luna.clone(), Some("own")).as_deref(),
             Some("gpt-6.2-sol")
         );
-        assert_eq!(asked_of(&models, None, luna.clone()), luna);
-        assert_eq!(asked_of(&models, Some("ghost".into()), luna), None);
+        assert_eq!(named(None, luna.clone(), Some("own")), luna);
+        assert_eq!(named(Some("ghost"), luna, Some("own")).as_deref(), Some("own"));
+        assert_eq!(named(Some("ghost"), None, None), None, "no model of its own");
+    }
+
+    /// The turn, its summary and its preview agree on one model: what
+    /// `model_choice::resolve` answers for the member's turn, for the asker
+    /// the turn has — whoever asks, and whatever the member keeps. A person
+    /// given models never has one named that they were not given, and given
+    /// one, they get that one for all three.
+    #[tokio::test]
+    async fn the_turn_its_summary_and_its_preview_name_one_model() {
+        use crate::engine::model_choice::{resolve, Asker, Rule};
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("agents")).unwrap();
+        std::fs::write(
+            root.path().join("agents/ling.md"),
+            "---\nname: ling\ndescription: d\ntools: []\nmodel: gpt-6.2-sol\n---\nYou are ling.\n",
+        )
+        .unwrap();
+        let config = crate::config::Config::default();
+        let (manager, _events) = AgentManager::new(
+            config,
+            None,
+            std::sync::Arc::new(crate::engine::test_registries::Empty),
+            std::sync::Arc::new(crate::extensions::agents::AgentLoader::new()),
+            std::sync::Arc::new(crate::engine::test_registries::Empty),
+            crate::engine::InterfaceMode::Web,
+        );
+        let models = manager.models.read().await.clone();
+        let standing = manager.agent_model_id(root.path(), "ling").await.unwrap();
+        assert_eq!(standing, "gpt-6.2-sol", "the agent's own chain");
+        let two = vec!["gpt-6.1-terra".to_string(), "gpt-6.2-sol".to_string()];
+        let one = vec!["gpt-6.1-terra".to_string()];
+        let none: Vec<String> = vec![];
+        for given in [Some(&two), Some(&one), Some(&none), None] {
+            let asker = given.map_or(Asker::Owner, |g| Asker::Guest(g));
+            for kept in [None, Some("ghost-model"), Some("gpt-6.2-sol"), Some("gpt-6.1-terra")] {
+                let member = SessionMember { id: "ling".into(), model: kept.map(Into::into) };
+                let turn = resolve(&models, kept, &standing, Rule { asker, may_switch: true });
+                let wanted = (!turn.nothing_given()).then(|| turn.model().to_string());
+                let said = said_for(&manager, root.path(), &member, asker).await;
+                assert_eq!(said, wanted, "given {given:?}, kept {kept:?}");
+                if let Some(given) = given.filter(|g| !g.is_empty()) {
+                    let said = said.expect("they were given models");
+                    let own = |id: &str| resolve(&models, Some(id), "", Rule { asker: Asker::Owner, may_switch: true }).model().to_string();
+                    assert!(given.iter().any(|g| own(g) == said), "{said} not given: {given:?}, kept {kept:?}");
+                }
+            }
+        }
     }
 
     fn skill(members: &[&str]) -> Skill {

@@ -32,16 +32,85 @@ pub enum Asker<'a> {
     Guest(&'a [String]),
 }
 
+/// Who asks, as an owner of what a guest's [`Asker`] borrows: a call that
+/// needs the asker across an `await` or beside a mutable use of the engine
+/// holds this, and takes [`AskedBy::asker`] from it. The one place that turns
+/// "the models this asker was given, if it was given a list" into an
+/// [`Asker`] (lock: `lock_tests::an_asker_is_made_in_one_place`).
+#[derive(Debug, Clone)]
+pub struct AskedBy(Option<Vec<String>>);
+
+impl AskedBy {
+    /// `shared`: the models a guest or a household person was given; `None`
+    /// is the owner.
+    pub fn of(shared: Option<Vec<String>>) -> Self {
+        Self(shared)
+    }
+
+    pub fn asker(&self) -> Asker<'_> {
+        match &self.0 {
+            Some(shared) => Asker::Guest(shared),
+            None => Asker::Owner,
+        }
+    }
+}
+
 /// What the session lets the choice do.
 #[derive(Debug, Clone, Copy)]
 pub struct Rule<'a> {
     pub asker: Asker<'a>,
-    /// The session's model-switching switch (`SessionMeta::model_fallback`).
+    /// Whether an asked model that cannot run gives way to the standing one:
+    /// `Switching::session_allows` at a door, or a named constant of this
+    /// module for a place with no switch of its own.
+    ///
     /// Off, an owner's turn keeps an unavailable asked model and fails on it,
     /// named. A guest's list is an access rule, not a failure: it holds
     /// whatever the switch says.
     pub may_switch: bool,
 }
+
+/// The two switches that say whether a turn moves to another model: the
+/// routing config's (`routing.model_fallback`, held by the engine as it last
+/// read its settings) and the session's own (`SessionMeta::model_fallback`).
+/// Each answers its own question, and who asks it:
+///
+/// - [`Switching::session_allows`] — may a model asked for before the turn
+///   starts, which this machine lacks, give way to the standing one? Only the
+///   session's switch says no. Asked by the doors (chat, her turn, a mission)
+///   and by the stream for a model this machine lacks.
+/// - [`Switching::may`] — may a call that failed move down the chain? Both
+///   switches must be on. Asked by the mid-call fallback.
+///
+/// Only [`AgentEngine::switching`] reads them (lock:
+/// `lock_tests::the_two_switches_are_each_read_in_one_place`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Switching {
+    config: bool,
+    session: bool,
+}
+
+impl Switching {
+    /// Whether a failed call may move to another model: both switches are on.
+    pub fn may(self) -> bool {
+        self.config && self.session
+    }
+
+    /// The session's switch alone: whether an asked model this machine lacks
+    /// gives way to the standing one. A session that may not switch fails on
+    /// it, and says that switching is off for the session.
+    pub fn session_allows(self) -> bool {
+        self.session
+    }
+}
+
+/// A delegated run (`agent_run`) never switches: a model that cannot run
+/// fails the run, named.
+pub const DELEGATED_RUN_MAY_SWITCH: bool = false;
+
+/// Asking outside a turn (the prompt preview, a summary, a push line, a
+/// member's named model) always lets an unavailable asked model give way to
+/// the standing one: there is no turn to fail on it.
+pub const OUTSIDE_A_TURN_MAY_SWITCH: bool = true;
 
 /// Why the model asked for is not the one that runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -116,6 +185,13 @@ impl Choice {
             Outcome::Kept(why) | Outcome::Replaced(why) => Some(why),
             Outcome::Asked | Outcome::Standing => None,
         }
+    }
+
+    /// Whether the asker was given no model that can run: the choice names
+    /// the standing model, which a turn's stream refuses (`Why::NothingShared`).
+    /// A call made outside a stream (a summary, a push line) must not run it.
+    pub fn nothing_given(&self) -> bool {
+        self.outcome == Outcome::Replaced(Why::NothingShared)
     }
 
     /// Whether a model a session keeps for the member should be cleared: it
@@ -308,6 +384,21 @@ impl AgentEngine {
         self.read_changes_if_any(manager).await;
     }
 
+    /// What the two switches let the turn in session `session_id` do (`None`:
+    /// no session, which never forbids). The one reader of both: the config's
+    /// is the engine's last reading of its settings, so a door asks after
+    /// [`Self::read_live_state`].
+    pub fn switching(&self, session_id: Option<&str>) -> Switching {
+        let session = match (self.tools.get_manager(), session_id) {
+            (Some(manager), Some(id)) => manager.global_sessions.model_fallback_allowed(id),
+            _ => true,
+        };
+        Switching {
+            config: self.allow_model_fallback,
+            session,
+        }
+    }
+
     /// The agent's default model, read again after a change of settings
     /// (`read_changes_if_any`): an engine that followed its default follows
     /// the new one, and one on a model this machine no longer has goes to
@@ -351,11 +442,16 @@ impl AgentEngine {
         self.run_on(&choice, place).await;
     }
 
-    /// The models a guest's policy on this engine shares, if it is a
-    /// guest's.
-    pub fn guest_models(&self) -> Option<Vec<String>> {
-        let policy = self.tools.builtins.session_policy.as_ref()?;
-        policy.allowed_models.clone()
+    /// Who asks for models on this engine, by its policy: the models a
+    /// guest's policy shares, or the owner.
+    pub fn asked_by(&self) -> AskedBy {
+        let shared = self
+            .tools
+            .builtins
+            .session_policy
+            .as_ref()
+            .and_then(|policy| policy.allowed_models.clone());
+        AskedBy::of(shared)
     }
 
     async fn tell_replaced(&self, choice: &Choice) {

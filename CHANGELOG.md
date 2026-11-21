@@ -32,6 +32,16 @@ The phone's part ships with the phone app.
 - **A phone that signs in keeps what you set for it** when its account has no
   settings yet; when the account has its own, those stand.
 
+### Which model a turn runs on
+
+- **A session's summary, the prompt preview and Yinyue's pushed line run on
+  the model the turn itself runs on.** For a person given models, the summary
+  and its window now follow the models they were given, as their turn does:
+  their first given model, not the agent's default when both are given.
+  Nothing outside what a person was given is named.
+- **A model a failed call moves a member to is kept as a picked one is.** A
+  member the session had not seated yet now joins with the lead first.
+
 ## [2.6.0] - unreleased — hold Yinyue and talk to her
 
 Built and tested with fakes; not yet tried on a real Mac (no microphone, no

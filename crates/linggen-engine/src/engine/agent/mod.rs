@@ -167,6 +167,9 @@ impl AgentManager {
         })
     }
 
+    /// Not asked through `model_choice::resolve`: this chain is what `resolve`
+    /// starts from (the standing model it falls back to), so it cannot ask it.
+    ///
     /// Resolve the model ID for an agent, using the following priority chain:
     /// 1. Config agent override (if exists in configured models)
     /// 2. Frontmatter model (if exists in configured models)

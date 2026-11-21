@@ -125,10 +125,10 @@ async fn ready(ctx: &ChatRunCtx, engine: &mut crate::engine::AgentEngine) {
         crate::server::resident::resolve_pet_model(&pet.model),
     );
     // A guest's session keeps to the models the room shares here too.
-    let shared = engine.guest_models();
+    let by = engine.asked_by();
     super::handler::resolve_effective_model(
         engine,
-        shared.as_deref().map_or(crate::engine::model_choice::Asker::Owner, crate::engine::model_choice::Asker::Guest),
+        by.asker(),
         &asked,
         (Some(sid), &ctx.agent_id),
         &ctx.manager,

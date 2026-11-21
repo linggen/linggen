@@ -50,11 +50,6 @@ const CHECK_CALLERS: &[(&str, usize, &str)] = &[
         1,
         "continuing an old Claude session keeps its pinned model when it is here",
     ),
-    (
-        "src/server/push/compose.rs",
-        1,
-        "a push line names her model: the Pet setting when here, else her chain",
-    ),
 ];
 
 const CHECK_CALLS: &[&str] = &["model_choice::live(", "model_choice::is_here("];
@@ -158,4 +153,149 @@ fn the_scan_sees_a_write_and_a_check() {
         1
     );
     assert_eq!(checks("m.resolve_id(a); m.has_model(b)"), 2);
+}
+
+/// Reads of `name` as a field or a call: the text `name` where it is not a
+/// declaration (`name:`), an initialiser, or an assignment (`name =`), and
+/// not the start of a longer name.
+fn reads(text: &str, name: &str) -> usize {
+    text.match_indices(name)
+        .filter(|(at, _)| {
+            let after = &text[at + name.len()..];
+            let ident = |c: char| c.is_alphanumeric() || c == '_';
+            let longer = name.ends_with(ident) && after.starts_with(ident);
+            let rest = after.trim_start();
+            let written = rest.starts_with(':') || (rest.starts_with('=') && !rest.starts_with("=="));
+            !longer && !written
+        })
+        .count()
+}
+
+/// The two switches that say whether a turn may move to another model, and
+/// who may read each outside `model_choice`: how many reads, and why.
+/// `AgentEngine::switching` is the one that reads them both; a door or the
+/// mid-call fallback asks it.
+const SWITCH_READS: &[(&str, &[(&str, usize, &str)])] = &[
+    (
+        // The session's switch, by the store: `model_fallback_allowed(` is the
+        // store's reader of a stored session.
+        ".model_fallback_allowed(",
+        &[(
+            "crates/linggen-engine/src/state_fs/sessions.rs",
+            6,
+            "the store's own test of it",
+        )],
+    ),
+    (
+        // The session's switch, on a meta.
+        ".allows_model_fallback(",
+        &[
+            (
+                "crates/linggen-engine/src/state_fs/sessions.rs",
+                1,
+                "the store's reader of a stored session",
+            ),
+            (
+                "src/server/mcp_agent.rs",
+                2,
+                "a test of a delegated run's new session",
+            ),
+        ],
+    ),
+    (
+        // The switch as a field: the config's (`routing.model_fallback`), a
+        // stored session's (`meta.model_fallback`) and the copy a spec carries.
+        ".model_fallback",
+        &[
+            ("crates/linggen-engine/src/config.rs", 8, "the config's own tests of its switch"),
+            ("crates/linggen-engine/src/engine/types.rs", 3, "the engine takes the config's switch when it reads its settings (`read_settings`); its default; a test"),
+            ("crates/linggen-engine/src/engine/streaming.rs", 1, "a comment"),
+            ("crates/linggen-engine/src/state_fs/sessions.rs", 3, "the store's getter of a session's switch (`allows_model_fallback`); a comment; a test"),
+            ("crates/linggen-engine/src/engine/session_spec/mod.rs", 1, "the spec's copy of a session's switch, read by no door"),
+            ("crates/linggen-engine/src/engine/session_spec/tests.rs", 1, "a test of that copy"),
+            ("src/server/api/sessions.rs", 1, "the picker's request field, written to the store"),
+            ("src/server/mcp_agent.rs", 3, "tests of a delegated run's new session"),
+        ],
+    ),
+    (
+        // The config's switch, as the engine holds it.
+        ".allow_model_fallback",
+        &[(
+            "crates/linggen-engine/src/engine/types.rs",
+            1,
+            "a test of a new engine's default",
+        )],
+    ),
+];
+
+#[test]
+fn the_two_switches_are_each_read_in_one_place() {
+    for (needle, listed) in SWITCH_READS {
+        for (rel, text) in scanned() {
+            let want = listed
+                .iter()
+                .find(|(f, _, _)| *f == rel)
+                .map_or(0, |e| e.1);
+            assert_eq!(
+                reads(&text, needle),
+                want,
+                "{rel} reads `{needle}`: ask AgentEngine::switching (model_choice::Switching), or list it"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_switch_scan_sees_a_read_and_not_a_write() {
+    assert_eq!(reads("a.allow_model_fallback; b.allow_model_fallback = c", ".allow_model_fallback"), 1);
+    assert_eq!(reads("x.model_fallback_allowed(s)", ".model_fallback_allowed("), 1);
+    assert_eq!(reads("pub allow_model_fallback: bool", "allow_model_fallback"), 0);
+}
+
+/// Callers of `SessionMeta::set_member_model`, the write of the model a
+/// session keeps for a member, by file: how many, and why. Every write of a
+/// stored session goes through `session_members::set_model`; a new caller
+/// fails here until it is looked at and listed.
+const MEMBER_MODEL_WRITERS: &[(&str, usize, &str)] = &[
+    (
+        "crates/linggen-engine/src/engine/session_members.rs",
+        1,
+        "the one writer: a picked model, a cleared one and a pinned fallback all go through it",
+    ),
+    (
+        "src/server/mcp_agent.rs",
+        1,
+        "a delegated run's new session, built before it is stored",
+    ),
+];
+
+#[test]
+fn one_place_writes_the_model_a_session_keeps_for_a_member() {
+    for (rel, text) in scanned() {
+        let want = MEMBER_MODEL_WRITERS
+            .iter()
+            .find(|(f, _, _)| *f == rel)
+            .map_or(0, |e| e.1);
+        assert_eq!(
+            text.matches(".set_member_model(").count(),
+            want,
+            "{rel} writes a member's kept model: go through session_members::set_model, or list it"
+        );
+    }
+}
+
+/// An asker is made from "the models it was given" in one place:
+/// `AskedBy::asker`. The path `Asker::Guest` handed on as a function (as in
+/// `.map_or(Asker::Owner, Asker::Guest)`) is how that decision was once
+/// written at each door; it fails here wherever it is written again. (The
+/// scan sees that spelling, not every way of writing the same decision.)
+#[test]
+fn an_asker_is_made_in_one_place() {
+    for (rel, text) in scanned() {
+        assert_eq!(
+            text.matches("Asker::Guest)").count(),
+            0,
+            "{rel} makes an asker from a list of models: use AskedBy::of(..).asker()"
+        );
+    }
 }

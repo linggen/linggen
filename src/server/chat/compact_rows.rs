@@ -105,7 +105,9 @@ pub(crate) struct SessionModels {
 }
 
 /// Read every member's window, and the default member's model to summarize
-/// with — each member's model as it would run (`members::model_of`).
+/// with — each member's model as its turn would run it for `asker`
+/// (`members::model_of`): a guest's or a household person's summary and
+/// windows are on the models they were given, as their turn is.
 pub(crate) async fn session_models(
     manager: &AgentManager,
     root: &Path,
@@ -115,34 +117,23 @@ pub(crate) async fn session_models(
     let models = manager.models.read().await.clone();
     let mut windows = Vec::new();
     for m in members {
-        let window = match super::members::model_of(manager, root, m).await {
-            Some(id) => models.context_window(&id).await.ok().flatten(),
+        let window = match super::members::model_of(manager, root, m, asker).await {
+            Some(choice) => models.context_window(choice.model()).await.ok().flatten(),
             None => None,
         };
         windows.push(window);
     }
     let summarizer_id = super::members::default_responder(members);
     let member = members.iter().find(|m| m.id == summarizer_id)?;
-    let summarizer = within(&models, asker, super::members::model_of(manager, root, member).await?)?;
+    let summarizer = super::members::model_of(manager, root, member, asker)
+        .await?
+        .model()
+        .to_string();
     Some(SessionModels {
         windows,
         summarizer,
         summarizer_id,
     })
-}
-
-/// The model `asker` may summarize with: the owner's is `model` as it is; a
-/// guest's or a household person's one of the models they were given — the
-/// summary is a call on this Mac's model, paid like a turn. `None` when they
-/// were given none.
-fn within(models: &crate::provider::models::ModelManager, asker: crate::engine::model_choice::Asker<'_>, model: String) -> Option<String> {
-    use crate::engine::model_choice::{live, resolve, Asker, Rule};
-    if matches!(asker, Asker::Owner) {
-        return Some(model);
-    }
-    let rule = Rule { asker, may_switch: true };
-    let choice = resolve(models, Some(&model), &model, rule);
-    live(models, asker, choice.model()).ok()
 }
 
 /// Compact the session's thread into one summary row. Returns the summary
@@ -241,11 +232,8 @@ pub(super) async fn compact_if_due(engine: &mut AgentEngine, ctx: &ChatRunCtx) -
         return false;
     };
     let members = super::members::of_session(&ctx.manager, sid).await;
-    let shared = engine.guest_models();
-    let asker = shared
-        .as_deref()
-        .map_or(crate::engine::model_choice::Asker::Owner, crate::engine::model_choice::Asker::Guest);
-    let Some(models) = session_models(&ctx.manager, &ctx.root, &members, asker).await else {
+    let by = engine.asked_by();
+    let Some(models) = session_models(&ctx.manager, &ctx.root, &members, by.asker()).await else {
         return false;
     };
     let threshold = engine
@@ -356,9 +344,9 @@ mod tests {
     }
 
     /// A summary is a call on this Mac's model, paid like a turn: the owner's
-    /// is the model asked for as it is; a guest's or a household person's one
-    /// of the models they were given, the first when theirs is not one of them;
-    /// and none at all when they were given none.
+    /// is the model its turn runs on; a guest's or a household person's one
+    /// of the models they were given, the first when theirs is not one of
+    /// them; and none at all when they were given none.
     #[test]
     fn a_summary_runs_only_on_a_model_its_asker_was_given() {
         use crate::engine::model_choice::Asker;
@@ -367,9 +355,13 @@ mod tests {
             &crate::credentials::Credentials::default(),
         );
         let given = vec!["gpt-6.1-terra".to_string()];
-        let said = |asker, model: &str| within(&models, asker, model.to_string());
+        let standing = Some("gpt-6.2-sol");
+        let said = |asker, kept: &str| {
+            super::super::members::turn_model_of(&models, (Some(kept.to_string()), None), standing, asker)
+                .map(|c| c.model().to_string())
+        };
         assert_eq!(said(Asker::Owner, "gpt-6.2-sol"), Some("gpt-6.2-sol".to_string()));
-        assert_eq!(said(Asker::Owner, "not-here"), Some("not-here".to_string()), "the owner's, as ever");
+        assert_eq!(said(Asker::Owner, "not-here"), Some("gpt-6.2-sol".to_string()), "the owner's turn gives way to its own model");
         assert_eq!(said(Asker::Guest(&given), "gpt-6.1-terra"), Some("gpt-6.1-terra".to_string()));
         assert_eq!(said(Asker::Guest(&given), "gpt-6.2-sol"), Some("gpt-6.1-terra".to_string()), "the member's own is not theirs");
         assert_eq!(said(Asker::Guest(&[]), "gpt-6.2-sol"), None, "given none");

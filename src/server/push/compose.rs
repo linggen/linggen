@@ -11,6 +11,7 @@ use crate::engine::skill::{NoticeDecl, Skill};
 use crate::message::ChatMessage;
 use crate::provider::models::StreamChunk;
 use crate::server::ServerState;
+use crate::state_fs::sessions::SessionMember;
 
 const TITLE_MAX: usize = 60;
 const TEXT_MAX: usize = 320;
@@ -126,19 +127,16 @@ async fn her_soul(state: &Arc<ServerState>) -> Result<String, String> {
     ))
 }
 
-/// The model her turns run on: her pet setting when this Mac has it, else
-/// her own chain.
+/// The model her turns run on, as `members::model_of` names it: her Pet
+/// setting when this Mac has it, else her own chain. A push line is asked
+/// as her own turn is, by the policy the engine's turns run under.
 async fn her_model(state: &Arc<ServerState>) -> Option<String> {
-    let setting = state.manager.get_config_snapshot().await.pet.model.clone();
-    let models = state.manager.models.read().await.clone();
-    let live = crate::server::resident::resolve_pet_model(&setting).and_then(|m| {
-        crate::engine::model_choice::live(&models, crate::engine::model_choice::Asker::Owner, &m)
-            .ok()
-    });
-    if live.is_some() {
-        return live;
-    }
-    state.manager.agent_model_id(&her_root(), COMPANION).await
+    use crate::server::chat::policy::{turn_policy, TurnBy};
+    let her = SessionMember::new(COMPANION);
+    let policy = turn_policy(TurnBy::Engine);
+    let asker = policy.asker();
+    let choice = crate::server::chat::members::model_of(&state.manager, &her_root(), &her, asker).await?;
+    Some(choice.model().to_string())
 }
 
 async fn ask(
