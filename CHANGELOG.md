@@ -1,5 +1,35 @@
 # Changelog
 
+## [2.6.0] - unreleased — hold Yinyue and talk to her
+
+Built and tested with fakes; not yet tried on a real Mac (no microphone, no
+hearing model and no sound has run).
+
+### Talk to Yinyue
+
+- **Hold her and speak; let go and she answers aloud.** A hold of a third of
+  a second starts listening; a shorter press is still a tap. The words you
+  said show as your line in her thread, marked as heard.
+- **Hearing runs on your Mac.** The first hold fetches the hearing model
+  (about 1.6 GB, once) and says so; nothing you say leaves the machine, and
+  the words never reach a log.
+- **She does not talk over you.** While a hold is on, a line of hers is shown
+  and not voiced.
+- **An answer to a waiting permission question may be spoken — exactly.**
+  "Allow once" or "Deny" (允许一次, 拒绝), the whole of it and nothing near it;
+  anything else relays nothing and she says what she heard. A grant for every
+  folder is always answered on screen.
+- **The microphone is asked for once**, in her own window only; an app's page
+  is never given it.
+- **A Mac that has the hearing model loads it at start**, after her voice, so
+  the first hold does not wait.
+
+### For other programs
+
+- `POST /api/stt` hears a clip (WAV 16 kHz mono up to 60 s, or JSON
+  `{"wav_b64"}`) for the owner and answers `{text, language, ms}`;
+  `GET /api/stt` says whether this Mac can hear and why not.
+
 ## [2.5.2] - unreleased — the Mac app shows the web UI; rule files can import
 
 ### One UI
