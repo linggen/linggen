@@ -352,42 +352,65 @@ pub(crate) fn asking(user_id: Option<&str>) -> Person {
     }
 }
 
-/// Whether paired device `device` is a phone whose account claim is this
-/// Mac's own account but not verified yet (`PairedDevice::verified_claim`):
-/// what the greeting tells it, so it can dial the relay once to be vouched
-/// for. Nothing of the account itself is told.
-pub(crate) fn claims_the_owners_unverified(device: &str) -> bool {
+/// What the relay has not yet vouched for in a phone's claim (what the
+/// greeting tells it, so it can dial the relay once; the account itself is
+/// never told).
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub(crate) enum Unvouched {
+    /// Nothing: not a phone, signed out, or the claim is vouched for.
+    No,
+    /// It claims an account the relay has not vouched for.
+    Claim,
+    /// It claims this Mac's own account, not vouched for.
+    OwnersClaim,
+}
+
+/// The [`Unvouched`] of paired device `device`.
+pub(crate) fn unvouched_claim(device: &str) -> Unvouched {
     let mac = mac_account();
     let devices = crate::state_fs::devices::load_devices();
     devices
         .iter()
         .find(|d| d.id == device)
-        .is_some_and(|d| claims_unverified(d, mac.as_deref()))
+        .map_or(Unvouched::No, |d| unvouched_claim_in(d, mac.as_deref()))
+}
+
+/// [`unvouched_claim`] for a row, with this Mac's account `mac`. A claim that
+/// is not an account's own id ([`names_an_account`]) is no claim.
+fn unvouched_claim_in(device: &crate::state_fs::devices::PairedDevice, mac: Option<&str>) -> Unvouched {
+    let phone = device.kind() == crate::state_fs::devices::DeviceKind::Phone;
+    let Some(claim) = device.account.as_ref().map(|a| a.id.as_str()) else {
+        return Unvouched::No;
+    };
+    if !phone || device.verified_claim().is_some() {
+        return Unvouched::No;
+    }
+    if mac.is_some_and(|m| !m.is_empty() && m == claim) {
+        return Unvouched::OwnersClaim;
+    }
+    match names_an_account(claim, mac) {
+        true => Unvouched::Claim,
+        false => Unvouched::No,
+    }
 }
 
 /// Whose paired device `device` is, as Settings shows it, with this Mac's
 /// account `mac`: `owner` (an approved machine, or a phone whose claim of
-/// this Mac's account is verified), `unverified` (it claims this Mac's
-/// account, not verified yet), `other` (another account), `signed_out` (no
-/// account of its own, [`of_device`]).
+/// this Mac's account is vouched for), `unverified` (it claims an account
+/// the relay has not vouched for), `other` (another account, vouched for),
+/// `signed_out` (no account of its own, [`of_device`]).
 pub(crate) fn whose_device(device: &crate::state_fs::devices::PairedDevice, mac: Option<&str>) -> &'static str {
     let person = of_device(device, mac);
     if person.is_owner() {
         return "owner";
     }
-    if claims_unverified(device, mac) {
+    if unvouched_claim_in(device, mac) != Unvouched::No {
         return "unverified";
     }
     match person.is_device() {
         true => "signed_out",
         false => "other",
     }
-}
-
-fn claims_unverified(device: &crate::state_fs::devices::PairedDevice, mac: Option<&str>) -> bool {
-    let claim = device.account.as_ref().map(|a| a.id.as_str());
-    let phone = device.kind() == crate::state_fs::devices::DeviceKind::Phone;
-    phone && mac.is_some_and(|m| !m.is_empty() && claim == Some(m)) && device.verified_claim().is_none()
 }
 
 /// Whether paired device row `device` stands as the owner's with this Mac's
@@ -399,17 +422,17 @@ pub(crate) fn is_owners_device(device: &crate::state_fs::devices::PairedDevice, 
 
 /// Who paired device `device` is, with this Mac's account `mac`: the owner
 /// for the owner's device (an approved machine, or a phone whose claim of
-/// this Mac's account is verified, `PairedDevice::is_owners`); else the
-/// account it is signed in to, or its device — signed out, claiming this
-/// Mac's account unverified, or claiming an id that is not an account's
-/// own ([`names_an_account`]). The one answer a device's standing, its day
-/// and memory's stamp take.
+/// this Mac's account the relay vouched for, `PairedDevice::is_owners`); else
+/// the account the relay vouched for (`PairedDevice::verified_claim`); else
+/// its device — signed out, or claiming an account the relay has not vouched
+/// for, or an id that is not an account's own ([`names_an_account`]). The one
+/// answer a device's standing, its day and memory's stamp take.
 pub(crate) fn of_device(device: &crate::state_fs::devices::PairedDevice, mac: Option<&str>) -> Person {
     if device.is_owners(mac) {
         return Person::owner();
     }
-    match &device.account {
-        Some(a) if names_an_account(&a.id, mac) => Person::account(&a.id),
+    match device.verified_claim() {
+        Some(id) if names_an_account(id, mac) => Person::account(id),
         _ => Person::device(&device.id),
     }
 }
@@ -784,6 +807,14 @@ mod tests {
         }
     }
 
+    /// A phone signed in to `account`, which the relay vouched for.
+    fn vouched(account: &str) -> crate::state_fs::devices::PairedDevice {
+        crate::state_fs::devices::PairedDevice {
+            verified_account: Some(account.into()),
+            ..phone(Some(account))
+        }
+    }
+
     /// A phone below this Mac's oldest contract (one that never said, too)
     /// stands at chat at most, owner's or not; a machine is not a phone.
     #[test]
@@ -836,8 +867,10 @@ mod tests {
         let claimed = standing_in(Some(&phone(Some("u-owner"))), Some("u-owner"));
         assert_eq!((claimed.person().wire(), claimed.level()), ("device:dev-1".to_string(), Read));
         assert!(!crate::server::day_session::is_builder(claimed.person()), "not the builder's day");
-        let friend = standing_in(Some(&phone(Some("u-friend"))), Some("u-owner"));
+        let friend = standing_in(Some(&vouched("u-friend")), Some("u-owner"));
         assert_eq!((friend.person().wire(), friend.level()), ("u-friend".to_string(), Read));
+        let unvouched = standing_in(Some(&phone(Some("u-friend"))), Some("u-owner"));
+        assert_eq!(unvouched.person(), &super::Person::device("dev-1"), "an account not vouched for");
         // The level is the person's: set for them, it holds for every phone
         // of theirs, whatever a row once said; admin is not one to give.
         let set = |person: &str, level: &str| {
@@ -849,7 +882,7 @@ mod tests {
             super::standing_in(Some(d), Some("u-owner"), people).level()
         };
         let raised = set("u-friend", "edit").unwrap();
-        assert_eq!(at(&raised, &phone(Some("u-friend"))), Edit);
+        assert_eq!(at(&raised, &vouched("u-friend")), Edit);
         assert!(set("u-friend", "admin").is_err(), "admin is the owner's alone");
         let lowered = set(&crate::server::person::stamp_of("dev-1"), "chat").unwrap();
         assert_eq!(at(&lowered, &phone(None)), Chat);
@@ -876,29 +909,64 @@ mod tests {
                 assert_eq!(super::whose_device(&d, mac), "signed_out", "{claim:?}");
             }
         }
-        let friend = phone(Some("u-friend"));
+        let friend = vouched("u-friend");
         assert_eq!(standing_in(Some(&friend), None).person(), &super::Person::account("u-friend"));
+        // Vouched or not, an id that is no account's own is its device.
+        for claim in claims {
+            let d = crate::state_fs::devices::PairedDevice {
+                verified_account: Some(claim.into()),
+                ..phone(Some(claim))
+            };
+            assert_eq!(super::of_device(&d, Some("u-owner")), super::Person::device("dev-1"), "vouched {claim:?}");
+        }
     }
 
-    /// A phone claiming this Mac's account unverified is told so; verified,
-    /// another account, signed out, or a machine is not.
+    /// A claim of any account is that account only when the relay vouched
+    /// for it: unvouched, the phone is its device, whichever account it
+    /// names; Settings says its account is not verified.
     #[test]
-    fn a_phone_is_told_its_claim_of_the_owners_account_is_unverified() {
-        let claimed = phone(Some("u-owner"));
-        assert!(super::claims_unverified(&claimed, Some("u-owner")));
-        let verified = crate::state_fs::devices::PairedDevice {
-            verified_account: Some("u-owner".into()),
-            ..phone(Some("u-owner"))
+    fn a_claim_is_an_account_only_when_the_relay_vouched_for_it() {
+        for mac in [Some("u-owner"), None] {
+            let claimed = phone(Some("u-friend"));
+            assert_eq!(super::of_device(&claimed, mac), super::Person::device("dev-1"), "{mac:?}");
+            assert_eq!(super::whose_device(&claimed, mac), "unverified");
+            let vouched = crate::state_fs::devices::PairedDevice {
+                verified_account: Some("u-friend".into()),
+                ..phone(Some("u-friend"))
+            };
+            assert_eq!(super::of_device(&vouched, mac), super::Person::account("u-friend"), "{mac:?}");
+            assert_eq!(super::whose_device(&vouched, mac), "other");
+            assert!(!super::is_owners_device(&vouched, mac), "vouched is not the owner's");
+        }
+        // A vouch recorded for one account does not stand for a claim of another.
+        let stale = crate::state_fs::devices::PairedDevice {
+            verified_account: Some("u-friend".into()),
+            ..phone(Some("u-pal"))
         };
-        assert!(!super::claims_unverified(&verified, Some("u-owner")));
-        assert!(!super::claims_unverified(&phone(Some("u-friend")), Some("u-owner")));
-        assert!(!super::claims_unverified(&phone(None), Some("u-owner")));
-        assert!(!super::claims_unverified(&claimed, None), "a Mac signed out");
+        assert_eq!(super::of_device(&stale, Some("u-owner")), super::Person::device("dev-1"));
+    }
+
+    /// Any phone whose claim the relay has not vouched for is told so, to
+    /// dial it once; only one claiming this Mac's account is told it as
+    /// the owner's.
+    #[test]
+    fn a_phone_is_told_when_its_claim_is_not_vouched_for() {
+        use super::Unvouched::*;
+        let told = |d: &crate::state_fs::devices::PairedDevice, mac| super::unvouched_claim_in(d, mac);
+        assert_eq!(told(&phone(Some("u-friend")), Some("u-owner")), Claim);
+        assert_eq!(told(&phone(Some("u-friend")), None), Claim);
+        assert_eq!(told(&phone(Some("u-owner")), Some("u-owner")), OwnersClaim);
+        assert_eq!(told(&phone(None), Some("u-owner")), No);
+        let vouched = crate::state_fs::devices::PairedDevice {
+            verified_account: Some("u-friend".into()),
+            ..phone(Some("u-friend"))
+        };
+        assert_eq!(told(&vouched, Some("u-owner")), No);
         let machine = crate::state_fs::devices::PairedDevice {
             kind: Some(crate::state_fs::devices::DeviceKind::Machine),
-            ..phone(Some("u-owner"))
+            ..phone(Some("u-friend"))
         };
-        assert!(!super::claims_unverified(&machine, Some("u-owner")));
+        assert_eq!(told(&machine, Some("u-owner")), No);
     }
 
     /// Settings is told whose each device is.
@@ -911,7 +979,12 @@ mod tests {
         };
         assert_eq!(super::whose_device(&verified, mac), "owner");
         assert_eq!(super::whose_device(&phone(Some("u-owner")), mac), "unverified");
-        assert_eq!(super::whose_device(&phone(Some("u-friend")), mac), "other");
+        let vouched = crate::state_fs::devices::PairedDevice {
+            verified_account: Some("u-friend".into()),
+            ..phone(Some("u-friend"))
+        };
+        assert_eq!(super::whose_device(&vouched, mac), "other");
+        assert_eq!(super::whose_device(&phone(Some("u-friend")), mac), "unverified");
         assert_eq!(super::whose_device(&phone(None), mac), "signed_out");
         let machine = crate::state_fs::devices::PairedDevice {
             kind: Some(crate::state_fs::devices::DeviceKind::Machine),
@@ -1070,7 +1143,7 @@ mod tests {
         let row = |id: &str, level| crate::state_fs::devices::PairedDevice {
             id: id.into(),
             legacy_permission: Some(level),
-            ..phone(Some("u-friend"))
+            ..vouched("u-friend")
         };
         let mut people = crate::server::people::People::default();
         let at = |people: &crate::server::people::People, d: &crate::state_fs::devices::PairedDevice| {

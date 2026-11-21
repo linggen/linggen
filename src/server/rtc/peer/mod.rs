@@ -76,7 +76,7 @@ pub(super) type PeerActor = Arc<std::sync::Mutex<Option<crate::server::api::pair
 pub(super) fn user_info_msg(
     user_ctx: &super::UserContext,
     identified: bool,
-    (standing, unverified_owner): (&crate::server::person::Standing, bool),
+    (standing, unvouched): (&crate::server::person::Standing, crate::server::person::Unvouched),
 ) -> serde_json::Value {
     // The channel's account (on the LAN, this Mac's owner) is told only to
     // the owner and to a room consumer, whose own it is; any other peer is
@@ -89,9 +89,14 @@ pub(super) fn user_info_msg(
         "avatar_url": if told { user_ctx.avatar_url.clone() } else { None },
         "level": standing.level(),
     });
-    // Its claim is this Mac's own account, not verified yet: it may dial the
-    // relay once to be vouched for (doc/webrtc-spec.md § Verifying a phone).
-    if unverified_owner {
+    // Its claim is an account the relay has not vouched for yet: it may dial
+    // the relay once to be vouched for (doc/webrtc-spec.md § Verifying a
+    // phone). `unverified_owner` is the same for this Mac's own account, as a
+    // phone of before told only that one.
+    if unvouched != crate::server::person::Unvouched::No {
+        user["unverified"] = true.into();
+    }
+    if unvouched == crate::server::person::Unvouched::OwnersClaim {
         user["unverified_owner"] = true.into();
     }
     let mut data = if user_ctx.is_consumer() {
@@ -758,7 +763,7 @@ impl PeerLoop {
             // what the channel knows; `identify` answers with a
             // second one of these, with the device's level.
             let standing = self.standing();
-            let info_msg = user_info_msg(&self.user_ctx, false, (&standing, false));
+            let info_msg = user_info_msg(&self.user_ctx, false, (&standing, crate::server::person::Unvouched::No));
             self.queue_text(id, info_msg.to_string());
             // Privacy warning for consumers
             if self.user_ctx.is_consumer() {
@@ -1397,7 +1402,7 @@ mod greeting_tests {
     #[test]
     fn the_greeting_says_the_level() {
         let read = crate::server::person::for_test("u-friend", PermissionMode::Read);
-        let msg = super::user_info_msg(&crate::server::rtc::UserContext::paired(), true, (&read, false));
+        let msg = super::user_info_msg(&crate::server::rtc::UserContext::paired(), true, (&read, crate::server::person::Unvouched::No));
         assert_eq!(msg["kind"], "user_info");
         assert_eq!(msg["data"]["user"]["level"], "read");
         assert_eq!(msg["data"]["user"]["user_type"], "paired");
@@ -1417,22 +1422,27 @@ mod greeting_tests {
             ..lan
         };
         let below = crate::server::person::standing_of("not-paired");
-        let msg = super::user_info_msg(&lan, true, (&below, true));
+        let msg = super::user_info_msg(&lan, true, (&below, crate::server::person::Unvouched::OwnersClaim));
         let told = msg.to_string();
         assert!(!told.contains("u-owner") && !told.contains("Owner Name"), "{told}");
         assert_eq!(msg["data"]["user"]["unverified_owner"], true);
+        assert_eq!(msg["data"]["user"]["unverified"], true);
+        let other = super::user_info_msg(&lan, true, (&below, crate::server::person::Unvouched::Claim));
+        assert_eq!(other["data"]["user"]["unverified"], true);
+        assert!(other["data"]["user"].get("unverified_owner").is_none(), "only the owner's claim");
         let owner = crate::server::person::unnamed(true);
-        let msg = super::user_info_msg(&lan, true, (&owner, false));
+        let msg = super::user_info_msg(&lan, true, (&owner, crate::server::person::Unvouched::No));
         assert_eq!(msg["data"]["user"]["user_id"], "u-owner");
         assert_eq!(msg["data"]["user"]["user_name"], "Owner Name");
         assert!(msg["data"]["user"].get("unverified_owner").is_none());
+        assert!(msg["data"]["user"].get("unverified").is_none());
     }
 
     /// The greeting carries this Mac's contract numbers.
     #[test]
     fn the_greeting_says_the_contract() {
         let read = crate::server::person::for_test("u-friend", PermissionMode::Read);
-        let msg = super::user_info_msg(&crate::server::rtc::UserContext::paired(), true, (&read, false));
+        let msg = super::user_info_msg(&crate::server::rtc::UserContext::paired(), true, (&read, crate::server::person::Unvouched::No));
         assert_eq!(msg["data"]["contract"], crate::server::rtc::contract::CONTRACT);
         assert_eq!(msg["data"]["oldest_peer"], crate::server::rtc::contract::OLDEST_PEER);
     }

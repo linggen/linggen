@@ -193,9 +193,9 @@ fn scope_phone(verb: &str, args: &mut Value, person: Option<&Person>) -> Result<
 type Refusal = (StatusCode, String, &'static str);
 
 /// Where a device's rows go when it gains `gained`: `Some(true)` to the
-/// owner (the device is the owner's, verified), `Some(false)` to that
-/// account, `None` nowhere (this Mac's account, claimed but not verified,
-/// or an id that is not an account's own: `person::names_an_account`).
+/// owner (the device is the owner's, vouched for), `Some(false)` to that
+/// account (the relay vouched for it: `person::of_device`), `None` nowhere
+/// (the claim is not vouched for, or not an account's own id).
 fn restamp_to_owner(device_id: &str, gained: &str, owner: Option<&str>) -> Option<bool> {
     let devices = crate::state_fs::devices::load_devices();
     let device = devices.iter().find(|d| d.id == device_id);
@@ -207,10 +207,12 @@ fn owners_rows(
     gained: &str,
     owner: Option<&str>,
 ) -> Option<bool> {
-    if owner != Some(gained) {
-        return crate::server::person::names_an_account(gained, owner).then_some(false);
+    let person = crate::server::person::of_device(device?, owner);
+    if person.is_owner() {
+        return Some(true);
     }
-    device.is_some_and(|d| d.is_owners(owner)).then_some(true)
+    let account = !person.is_device() && person.wire() == gained;
+    account.then_some(false)
 }
 
 /// Memory's refusal, in the shape the door answers its own refusals with
@@ -352,8 +354,12 @@ mod tests {
     use super::*;
     use crate::server::api::pair::{AccountRef, PairedDevice};
 
+    /// A phone signed in to `account` that the relay vouched for (the
+    /// account is what it claims); a claim the relay did not vouch for is
+    /// one with `verified_account` cleared.
     fn device(account: Option<(&str, Option<&str>)>) -> PairedDevice {
         PairedDevice {
+            verified_account: account.map(|(id, _)| id.to_string()),
             id: "dev-1".into(),
             name: "Alex's iPhone".into(),
             secret: "s".into(),
@@ -411,7 +417,10 @@ mod tests {
     /// wrote signed out go to no one when it says it signed in.
     #[test]
     fn an_unverified_claim_of_the_owners_account_is_its_device() {
-        let claimed = device(Some(("u-owner", Some("Alex"))));
+        let claimed = PairedDevice {
+            verified_account: None,
+            ..device(Some(("u-owner", Some("Alex"))))
+        };
         let p = person_for(&claimed, Some("u-owner")).unwrap();
         assert_eq!(p.id, "device:dev-1");
         assert_eq!(owners_rows(Some(&claimed), "u-owner", Some("u-owner")), None);
@@ -420,7 +429,21 @@ mod tests {
             ..claimed
         };
         assert_eq!(owners_rows(Some(&verified), "u-owner", Some("u-owner")), Some(true));
-        assert_eq!(owners_rows(None, "u-2", Some("u-owner")), Some(false));
+        assert_eq!(owners_rows(None, "u-2", Some("u-owner")), None, "no row, no word of the relay's");
+    }
+
+    /// A phone's rows go to the account it signed in to only once the relay
+    /// vouched for it; until then they stay the device's, and a claim of
+    /// one account never carries them to another.
+    #[test]
+    fn a_phones_rows_go_to_an_account_only_when_the_relay_vouched_for_it() {
+        let claimed = PairedDevice {
+            verified_account: None,
+            ..device(Some(("u-2", Some("Mei"))))
+        };
+        assert_eq!(owners_rows(Some(&claimed), "u-2", Some("u-owner")), None);
+        assert_eq!(owners_rows(Some(&device(Some(("u-2", None)))), "u-2", Some("u-owner")), Some(false));
+        assert_eq!(owners_rows(Some(&device(Some(("u-2", None)))), "u-3", Some("u-owner")), None);
     }
 
     /// A claimed account id that reads as another kind of person is no
@@ -436,7 +459,7 @@ mod tests {
                 assert_eq!(owners_rows(Some(&d), claim, mac), None, "{claim:?} {mac:?}");
             }
         }
-        assert_eq!(owners_rows(None, "u-2", None), Some(false));
+        assert_eq!(owners_rows(Some(&device(Some(("u-2", None)))), "u-2", None), Some(false));
     }
 
     #[test]

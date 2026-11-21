@@ -78,11 +78,34 @@ pub struct UserContext {
     /// How the peer's channel was opened. Decides what the tunnel tells a
     /// handler about a peer that has not named a device ([`Self::tunnel_mark`]).
     pub reached_by: Reach,
-    /// The relay said this peer's account owns this Mac's instance: it dialled
-    /// with that account's credential (the owner's offer), or sent it beside
-    /// its device grant (`owner` on a paired offer). What `identify` verifies
-    /// a phone's claim by; nothing else sets it.
-    pub account_vouched: bool,
+    /// What the relay said of this peer's account: it dialled with that
+    /// account's credential (the owner's offer), or sent it beside its
+    /// device grant (a paired offer). What `identify` verifies a phone's
+    /// claim by; nothing else sets it.
+    pub vouched: Vouched,
+}
+
+/// What the relay vouched for about a peer's account.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Vouched {
+    /// The relay said nothing: no credential, or none it knows.
+    Nobody,
+    /// The credential is the account that owns this Mac's instance (the
+    /// owner's own dial, or `owner` on a paired offer): this Mac's account.
+    Owner,
+    /// The credential is this account (`vouched_account` on a paired offer).
+    Account(String),
+}
+
+impl Vouched {
+    /// The account vouched for, with this Mac's account `mac`.
+    pub fn account(&self, mac: Option<&str>) -> Option<String> {
+        match self {
+            Vouched::Nobody => None,
+            Vouched::Owner => mac.filter(|m| !m.is_empty()).map(str::to_string),
+            Vouched::Account(id) => Some(id.clone()),
+        }
+    }
 }
 
 /// How a peer's channel was opened.
@@ -115,7 +138,7 @@ impl UserContext {
             room_name: None,
             consumer_type: None,
             reached_by: Reach::Relay,
-            account_vouched: false,
+            vouched: Vouched::Nobody,
         }
     }
 
@@ -154,7 +177,7 @@ impl UserContext {
             room_name: None,
             consumer_type: None,
             reached_by: Reach::Relay,
-            account_vouched: false,
+            vouched: Vouched::Nobody,
         }
     }
 
@@ -176,7 +199,7 @@ impl UserContext {
             room_name,
             consumer_type: Some(consumer_type),
             reached_by: Reach::Relay,
-            account_vouched: false,
+            vouched: Vouched::Nobody,
         }
     }
 

@@ -62,8 +62,10 @@ enum Who {
     SignedOutPhone,
 }
 
+/// A phone signed in to `account`, which the relay vouched for.
 fn phone(id: &str, account: Option<(&str, &str)>) -> PairedDevice {
     PairedDevice {
+        verified_account: account.map(|(id, _)| id.to_string()),
         id: id.into(),
         name: format!("{id} phone"),
         secret: "s".into(),

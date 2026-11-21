@@ -64,10 +64,12 @@ pub struct PairedDevice {
     #[serde(default)]
     pub account: Option<AccountRef>,
     /// The account the relay vouched for this phone: linggen.dev said, when
-    /// the phone dialled, that the account credential it sent owns this Mac's
-    /// instance, and the phone's claim named that account. Kept only while the
-    /// claim stays that account — a different claim, or signing out, clears
-    /// it ([`refresh_account`]); a reconnect with no relay keeps it.
+    /// the phone dialled, which account the credential it sent belongs to,
+    /// and the phone's claim named that account. Kept only while the claim
+    /// stays that account — a different claim, a sign-out, or the relay
+    /// naming another account clears it ([`refresh_account`]); a reconnect
+    /// with no relay keeps it. Whose the phone is turns on this alone
+    /// (`server::person::of_device`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verified_account: Option<String>,
     /// The level this row held before levels belonged to a person
@@ -408,8 +410,7 @@ pub struct Identified {
 /// Refresh the account a phone claims. Sign-in and sign-out both happen long
 /// after pairing, so the connect-time claim wins over the pair-time one —
 /// including `None`, which is how a sign-out is recorded. `vouched_for` is
-/// the account the relay vouched for on this channel (this Mac's own, when
-/// the relay said the phone's account owns the instance).
+/// the account the relay vouched for on this channel (`None`: no relay said).
 pub fn set_device_account(
     token: &str,
     account: Option<AccountRef>,
@@ -433,8 +434,9 @@ pub fn set_device_account(
 }
 
 /// The claim replaces the last one. A verification is kept only while the
-/// claim stays the account it was made for; it is made only when the relay
-/// vouched for exactly the account claimed. A claim alone never verifies.
+/// claim stays the account it was made for and the relay has not named
+/// another; it is made only when the relay vouched for exactly the account
+/// claimed. A claim alone never verifies.
 fn refresh_account(
     d: &mut PairedDevice,
     account: Option<AccountRef>,
@@ -452,10 +454,10 @@ fn refresh_account(
     if d.verified_account != claim {
         d.verified_account = None;
     }
-    if let (Some(v), Some(c)) = (vouched_for, claim.as_deref()) {
-        if v == c {
-            d.verified_account = Some(c.to_string());
-        }
+    // What the relay says now settles it: the claim's own account, verified;
+    // any other, not.
+    if let Some(v) = vouched_for {
+        d.verified_account = (claim.as_deref() == Some(v)).then(|| v.to_string());
     }
     let verified_now = d
         .verified_claim()
@@ -575,6 +577,23 @@ mod tests {
         refresh_account(&mut d, claim("u-owner"), Some("u-owner"));
         refresh_account(&mut d, None, None);
         assert_eq!(d.verified_account, None, "signing out cleared it");
+    }
+
+    /// The relay vouches for any account, not only this Mac's: a claim is
+    /// verified when the account vouched for is the one claimed; a vouch for
+    /// another account takes an earlier verification away; a reconnect that
+    /// no relay vouched on keeps it while the claim stays.
+    #[test]
+    fn a_claim_of_any_account_is_verified_by_the_relays_word_for_it() {
+        let mut d = row("p", Some(DeviceKind::Phone));
+        let id = refresh_account(&mut d, claim("u-friend"), Some("u-friend"));
+        assert_eq!(d.verified_claim(), Some("u-friend"));
+        assert_eq!(id.verified_now.as_deref(), Some("u-friend"));
+        assert!(!d.is_owners(Some("u-owner")), "verified is not the owner's");
+        refresh_account(&mut d, claim("u-friend"), None);
+        assert_eq!(d.verified_claim(), Some("u-friend"), "kept with no relay");
+        refresh_account(&mut d, claim("u-friend"), Some("u-other"));
+        assert_eq!(d.verified_claim(), None, "the relay named another account");
     }
 
     /// A machine approved with Allow is the owner's with no verification.

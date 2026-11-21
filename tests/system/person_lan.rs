@@ -36,11 +36,13 @@ fn share_the_model_with(w: &World, people: &[&str]) {
     std::fs::write(w.home.linggen_home().join("people.json"), file.to_string()).unwrap();
 }
 
-/// A phone paired to this Mac and signed in to another person's account.
+/// A phone paired to this Mac and signed in to another person's account,
+/// which the relay vouched for.
 fn pair_friends_phone(w: &World) {
     let row = json!([{
         "id": "phone-friend", "name": "Friend's phone", "secret": TOKEN, "created_at": 0,
         "kind": "phone", "account": {"id": "u-friend", "name": "Friend"},
+        "verified_account": "u-friend",
     }]);
     std::fs::write(w.home.linggen_home().join("paired-devices.json"), row.to_string()).unwrap();
 }
@@ -508,11 +510,13 @@ async fn a_body_past_the_limit_is_answered_over_the_lan_as_here() {
     assert!(wrong.is_empty(), "{wrong:#?}");
 }
 
-/// The friend's phone row with `extra` fields (its contract, its level).
+/// The friend's phone row with `extra` fields (its contract, its level); its
+/// account is vouched for by the relay unless `extra` says otherwise.
 fn pair_friends_phone_with(w: &World, extra: Value) {
     let mut row = json!({
         "id": "phone-friend", "name": "Friend's phone", "secret": TOKEN, "created_at": 0,
         "kind": "phone", "account": {"id": "u-friend", "name": "Friend"},
+        "verified_account": "u-friend",
     });
     for (k, v) in extra.as_object().cloned().unwrap_or_default() {
         row[k] = v;
@@ -903,4 +907,46 @@ async fn the_household_is_set_only_at_this_mac() {
     let (status, bad) = w.api.put_json("/api/people/u-friend", json!({"level": "admin"})).await;
     assert_eq!(status, 400, "{bad}");
     assert_eq!(w.api.get("/api/people").await["people"][0]["level"], "edit", "a bad setting left a trace");
+}
+
+/// A phone is the account the relay vouched for and nothing more: the same
+/// row, with what the owner chose for that account, stands at it only once
+/// vouched; until then it is its device, at read.
+#[tokio::test]
+async fn a_phone_is_the_account_the_relay_vouched_for_and_nothing_more() {
+    let w = World::start(Setup { lan: true, ..Setup::default() }).await;
+    set_people(&w, json!({"people": {"u-friend": {"level": "edit"}}})).await;
+    let lan = Lan::new(&w);
+    let beyond = json!({"error": "beyond_level", "level": "read", "needs": "edit"});
+    async fn at_backup(lan: &Lan) -> (u16, Value) {
+        lan.send(reqwest::Method::POST, "/api/media/backup", Some(json!({}))).await
+    }
+    let mut wrong = Vec::new();
+
+    pair_friends_phone_with(&w, json!({"contract": 1, "verified_account": null}));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let unvouched = loop {
+        let got = at_backup(&lan).await;
+        if got.0 == 403 || std::time::Instant::now() > deadline {
+            break got;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    };
+    if unvouched != (403, beyond.clone()) {
+        wrong.push(format!("a claim the relay did not vouch for stood at the account's level: {unvouched:?}"));
+    }
+
+    pair_friends_phone_with(&w, json!({"contract": 1}));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let vouched = loop {
+        let got = at_backup(&lan).await;
+        if got.1 != beyond || std::time::Instant::now() > deadline {
+            break got;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    };
+    if vouched.1.get("error") == Some(&json!("beyond_level")) {
+        wrong.push(format!("a vouched account did not stand at its level: {vouched:?}"));
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
 }
