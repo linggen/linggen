@@ -5,8 +5,10 @@
  * the page avatar and the pet window both bind it (components/yinyue/
  * YinyueAvatar.tsx, through lib/yinyueTalk.ts) and neither records.
  *
- * The microphone is opened here and nowhere else (a test fails on a second
- * `getUserMedia` in src/), and only while held: release, cancel, the window
+ * Whether she can hear is asked of the engine (`GET /api/stt`) at the hold,
+ * before the microphone opens: on a Mac that cannot, the press shows the reason
+ * and records nothing. The microphone is opened here and nowhere else (a test
+ * fails on a second `getUserMedia` in src/), and only while held: release, cancel, the window
  * hidden or blurred, the page unloaded, the 60 s cap — each stops the tracks.
  * What is sent to hear is one WAV clip (lib/speechWav.mts) to `POST /api/stt`
  * on this machine's own engine; what was heard goes to her door as a typed
@@ -28,8 +30,10 @@ const MIN_CLIP_MS = 250;
 export const NOTE_MS = 4000;
 /** How long the heard line stays after it was sent to her. */
 export const HEARD_MS = 20_000;
-/** After a 503, a press shows its reason without opening the microphone. */
-export const UNAVAILABLE_MS = 15_000;
+/** How long a "yes, she can hear" is kept before the next press asks again.
+ *  A "no" is never kept: the model may have arrived since. A 503 from a clip
+ *  forgets the yes at once (the state can change between the two requests). */
+export const HEARS_MS = 60_000;
 /** One hearing may take this long (the model's turn comes later, on her door). */
 const HEAR_BUDGET_MS = 60_000;
 
@@ -49,7 +53,7 @@ export type TalkPhase =
   | 'pressed' // down, not yet a hold
   | 'opening' // a hold; the microphone is being asked for
   | 'listening' // the microphone is open
-  | 'refused' // a hold that cannot record (the machine cannot hear, no microphone); waits for the release
+  | 'refused' // a hold that cannot record (she cannot hear on this Mac, no microphone); waits for the release
   | 'hearing' // let go; the clip is being heard, then sent
   | 'replying'; // sent; her answer is on its way
 
@@ -103,14 +107,18 @@ interface Listenable {
   removeEventListener(type: string, fn: () => void): void;
 }
 
+/** What her door did with a line: took it, or refused — with its own one line
+ *  of reason when it gave one (a spoken line cannot go to an app's chat). */
+export type LineSent = { sent: true } | { sent: false; reason: string | null };
+
 export interface TalkDeps {
   /** `navigator.mediaDevices`, or undefined where the page has none. */
   mediaDevices: () => { getUserMedia(c: unknown): Promise<StreamLike> } | undefined;
   newAudioContext: () => AudioContextLike;
   /** The page's own `fetch` (data channel); read at call time. */
-  fetch: (url: string, init: { method: string; headers: Record<string, string>; body: string }) => Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>;
-  /** Her door: the line as a typed one would go, marked asked aloud. True when it went. */
-  sendLine: (text: string) => Promise<boolean>;
+  fetch: (url: string, init: { method: string; headers: Record<string, string>; body?: string }) => Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>;
+  /** Her door: the line as a typed one would go, marked asked aloud. */
+  sendLine: (text: string) => Promise<LineSent>;
   /** The one stop her mute uses. */
   cutOff: () => void;
   now: () => number;
@@ -150,7 +158,7 @@ export function createHoldToTalk(deps: TalkDeps): HoldToTalk {
   let lingering: Source | null = null;
   let generation = 0; // bumped when a hold starts or ends: older answers are dropped
   let take: Take | null = null;
-  let unavailable: { reason: string; until: number } | null = null;
+  let hearsUntil = 0; // she could hear when last asked, until this time
   const phaseNow = (): TalkPhase => (held !== 'none' ? held : after === 'none' ? 'idle' : after);
   let snapshot: TalkView = { phase: 'idle', heard, note };
   const listeners = new Set<() => void>();
@@ -238,6 +246,37 @@ export function createHoldToTalk(deps: TalkDeps): HoldToTalk {
     }
   }
 
+  /** One request to `/api/stt`; null when the channel failed. */
+  async function request(method: 'GET' | 'POST', init: { headers: Record<string, string>; body?: string }) {
+    try {
+      const reply = await deps.fetch('/api/stt', { method, ...init });
+      const body = (await reply.json().catch(() => ({}))) as Record<string, unknown>;
+      return { ok: reply.ok, status: reply.status, body };
+    } catch {
+      return null;
+    }
+  }
+
+  const reasonOf = (body: Record<string, unknown>) => (typeof body.reason === 'string' && body.reason ? body.reason : null);
+
+  /** Can she hear on this Mac: asked once at a hold, kept a minute when yes.
+   *  A no that is not a fetch on its way sends one knock — a request with no
+   *  clip — because the first real press is what starts the model's fetch (the
+   *  question itself starts nothing); what the knock answers is the reason. */
+  async function canHear(): Promise<{ hears: true } | { hears: false; reason: string }> {
+    if (deps.now() < hearsUntil) return { hears: true };
+    const asked = await request('GET', { headers: {} });
+    if (!asked?.ok) return { hears: false, reason: WORDS.failed };
+    if (asked.body.hears === true) {
+      hearsUntil = deps.now() + HEARS_MS;
+      return { hears: true };
+    }
+    const reason = reasonOf(asked.body) ?? WORDS.cannotHear;
+    if (asked.body.fetching === true) return { hears: false, reason };
+    const knocked = await request('POST', { headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    return { hears: false, reason: (knocked?.status === 503 ? reasonOf(knocked.body) : null) ?? reason };
+  }
+
   async function beginHold(): Promise<void> {
     timers.hold = undefined;
     const mine = ++generation; // an earlier hearing's answer is dropped
@@ -247,14 +286,16 @@ export function createHoldToTalk(deps: TalkDeps): HoldToTalk {
     note = null;
     after = 'none';
     deps.cutOff(); // pressing to talk stops what she is saying
-    if (unavailable && deps.now() < unavailable.until) {
-      held = 'refused';
-      say(unavailable.reason);
+    held = 'opening';
+    emit();
+    const verdict = await canHear();
+    if (mine !== generation) return; // let go (or hidden) while she was asked
+    if (!verdict.hears) {
+      held = 'refused'; // still held; the release ends it
+      say(verdict.reason);
       emit();
       return;
     }
-    held = 'opening';
-    emit();
     let opened: Take;
     try {
       opened = await openTake();
@@ -310,9 +351,8 @@ export function createHoldToTalk(deps: TalkDeps): HoldToTalk {
     const body = (await reply.json().catch(() => ({}))) as { text?: unknown; reason?: unknown };
     if (mine !== generation) return;
     if (reply.status === 503) {
-      const reason = typeof body.reason === 'string' && body.reason ? body.reason : WORDS.cannotHear;
-      unavailable = { reason, until: deps.now() + UNAVAILABLE_MS };
-      fail(reason);
+      hearsUntil = 0;
+      fail(reasonOf(body) ?? WORDS.cannotHear);
       return;
     }
     if (!reply.ok) return fail(WORDS.failed);
@@ -323,7 +363,7 @@ export function createHoldToTalk(deps: TalkDeps): HoldToTalk {
     emit();
     const sent = await deps.sendLine(text);
     if (mine !== generation) return;
-    if (!sent) return fail(WORDS.failed);
+    if (!sent.sent) return fail(sent.reason ?? WORDS.failed);
     after = 'replying';
     startTimer('heard', HEARD_MS, () => { heard = null; after = 'none'; emit(); });
     emit();

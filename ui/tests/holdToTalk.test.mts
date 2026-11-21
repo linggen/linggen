@@ -7,7 +7,7 @@ import { join, relative } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
-  createHoldToTalk, HEARD_MS, HOLD_MS, isTalkKey, NOTE_MS, talkLabel, UNAVAILABLE_MS, WORDS,
+  createHoldToTalk, HEARD_MS, HOLD_MS, HEARS_MS, isTalkKey, NOTE_MS, talkLabel, WORDS,
   type TalkDeps, type TalkView,
 } from '../src/lib/holdToTalk.mts';
 
@@ -43,14 +43,20 @@ interface Rig {
   clk: ReturnType<typeof clock>;
   win: EventTarget;
   doc: EventTarget & { hidden: boolean };
-  fetched: { url: string; init: { method: string; headers: Record<string, string>; body: string } }[];
+  fetched: { url: string; init: { method: string; headers: Record<string, string>; body?: string } }[];
   sent: string[];
   cuts: number;
   streams: { tracks: { stopped: number }[] }[];
   asked: number; // getUserMedia calls
   open(): number; // microphone tracks not yet stopped
   heardAs: { value: { status: number; body: unknown } | 'throw' };
+  /** What `GET /api/stt` answers: can she hear. */
+  hearsAs: { value: { status: number; body: unknown } | 'throw' | 'wait' };
+  /** Answer a GET held by `hearsAs = 'wait'`. */
+  answerHears(a: { status: number; body: unknown }): void;
   sendOk: { value: boolean };
+  /** What her door said when it refused the line (null: nothing). */
+  sendReason: { value: string | null };
   /** Hold the microphone request until `release()` is called. */
   gate(): { release(): void; fail(name: string): void };
   speak(ms: number, rate?: number): void;
@@ -64,8 +70,10 @@ function rig(): Rig {
   const r = {
     fetched: [] as Rig['fetched'], sent: [] as string[], cuts: 0, streams: [] as Rig['streams'], asked: 0,
     heardAs: { value: { status: 200, body: { text: 'what is on today' } } } as Rig['heardAs'],
-    sendOk: { value: true }, views: [] as TalkView[],
+    sendOk: { value: true }, sendReason: { value: null as string | null }, views: [] as TalkView[],
+    hearsAs: { value: { status: 200, body: { hears: true } } } as Rig['hearsAs'],
   };
+  let heldGet: ((a: { status: number; body: unknown }) => void) | null = null;
   let gated: { resolve(): void; reject(e: Error): void; promise: Promise<void> } | null = null;
   let processor: { onaudioprocess: ((e: { inputBuffer: { getChannelData(c: number): Float32Array } }) => void) | null } | null = null;
   let rate = 48_000;
@@ -94,18 +102,25 @@ function rig(): Rig {
     }),
     fetch: async (url, init) => {
       r.fetched.push({ url, init });
-      if (r.heardAs.value === 'throw') throw new Error('channel down');
-      const { status, body } = r.heardAs.value;
+      const asking = init.method === 'GET';
+      const answer = asking ? r.hearsAs.value : r.heardAs.value;
+      if (answer === 'throw') throw new Error('channel down');
+      if (answer === 'wait') {
+        const a = await new Promise<{ status: number; body: unknown }>((res) => { heldGet = res; });
+        return { ok: a.status >= 200 && a.status < 300, status: a.status, json: async () => a.body };
+      }
+      const { status, body } = answer;
       return { ok: status >= 200 && status < 300, status, json: async () => body };
     },
-    sendLine: async (text) => { r.sent.push(text); return r.sendOk.value; },
+    sendLine: async (text) => { r.sent.push(text); return r.sendOk.value ? { sent: true } : { sent: false, reason: r.sendReason.value }; },
     cutOff: () => { r.cuts++; },
     now: clk.now, setTimer: clk.setTimer, clearTimer: clk.clearTimer, win, doc,
   };
+  const answerHears = (a: { status: number; body: unknown }) => { heldGet?.(a); heldGet = null; };
   const talk = createHoldToTalk(deps);
   talk.subscribe(() => r.views.push(talk.view()));
   return Object.assign(r, {
-    talk, clk, win, doc,
+    talk, clk, win, doc, answerHears,
     open: () => r.streams.flatMap((s) => s.tracks).filter((t) => t.stopped === 0).length,
     gate() {
       let resolve!: () => void;
@@ -133,6 +148,9 @@ async function hold(r: Rig, by: 'pointer' | 'key' = 'pointer') {
 }
 
 const phase = (r: Rig) => r.talk.view().phase;
+/** The requests that carry a clip, or knock for one: not the question whether she hears. */
+const posts = (r: Rig) => r.fetched.filter((f) => f.init.method === 'POST');
+const asks = (r: Rig) => r.fetched.filter((f) => f.init.method === 'GET');
 
 // ── Rule 6: a tap is a tap ─────────────────────────────────────────────
 
@@ -144,7 +162,7 @@ test('a press shorter than the hold is a tap: no microphone, no cut-off, no requ
   await r.clk.advance(HOLD_MS * 4);
   assert.equal(r.asked, 0);
   assert.equal(r.cuts, 0);
-  assert.equal(r.fetched.length, 0);
+  assert.equal(r.fetched.length, 0, 'a tap asks nothing of the engine either');
   assert.equal(phase(r), 'idle');
 });
 
@@ -199,12 +217,12 @@ test('what is sent is one WAV, 16 kHz mono 16-bit, base64 in JSON, to /api/stt',
   r.speak(1500, 48_000);
   r.talk.release('pointer');
   await r.clk.advance(0);
-  assert.equal(r.fetched.length, 1);
-  const { url, init } = r.fetched[0];
+  assert.equal(posts(r).length, 1);
+  const { url, init } = posts(r)[0];
   assert.equal(url, '/api/stt');
   assert.equal(init.method, 'POST');
   assert.equal(init.headers['Content-Type'], 'application/json');
-  const wav = Buffer.from(JSON.parse(init.body).wav_b64, 'base64');
+  const wav = Buffer.from(JSON.parse(init.body ?? '{}').wav_b64, 'base64');
   assert.equal(wav.toString('latin1', 0, 4), 'RIFF');
   assert.equal(wav.readUInt16LE(22), 1, 'mono');
   assert.equal(wav.readUInt32LE(24), 16_000);
@@ -219,7 +237,7 @@ test('nothing but the one /api/stt request carries sound, and it stays on this o
   r.talk.release('pointer');
   await r.clk.advance(0);
   for (const f of r.fetched) assert.match(f.url, /^\/api\//, 'a path on the engine, never another host');
-  assert.equal(r.fetched.filter((f) => f.init.body.includes('wav_b64')).length, 1);
+  assert.equal(r.fetched.filter((f) => f.init.body?.includes('wav_b64')).length, 1);
 });
 
 test('at 60 seconds the clip is stopped and sent without a release', async () => {
@@ -228,10 +246,10 @@ test('at 60 seconds the clip is stopped and sent without a release', async () =>
   r.speak(1000);
   await r.clk.advance(60_000);
   assert.equal(r.open(), 0);
-  assert.equal(r.fetched.length, 1);
+  assert.equal(posts(r).length, 1);
   assert.equal(r.talk.release('pointer'), 'talk', 'the press was already ended, but it was a hold: its click is not a tap');
   assert.equal(r.talk.release('pointer'), 'tap');
-  assert.equal(r.fetched.length, 1, 'the release sent nothing more');
+  assert.equal(posts(r).length, 1, 'the release sent nothing more');
 });
 
 // ── Rule 2: the microphone is open only while held ─────────────────────
@@ -252,7 +270,7 @@ test('cancel stops the tracks and sends nothing', async () => {
   r.talk.cancel();
   await r.clk.advance(0);
   assert.equal(r.open(), 0);
-  assert.equal(r.fetched.length, 0);
+  assert.equal(posts(r).length, 0);
   assert.equal(phase(r), 'idle');
 });
 
@@ -268,7 +286,7 @@ for (const [name, end] of [
     end(r);
     await r.clk.advance(0);
     assert.equal(r.open(), 0);
-    assert.equal(r.fetched.length, 0);
+    assert.equal(posts(r).length, 0);
     assert.equal(phase(r), 'idle');
   });
 }
@@ -291,7 +309,7 @@ test('let go before the microphone answered: it is stopped the moment it does', 
   await r.clk.advance(0);
   assert.equal(r.streams.length, 1);
   assert.equal(r.open(), 0, 'a stream that arrives late is stopped');
-  assert.equal(r.fetched.length, 0);
+  assert.equal(posts(r).length, 0);
   assert.equal(phase(r), 'idle');
 });
 
@@ -352,33 +370,131 @@ test('a clip too short to hold a sentence is not sent at all', async () => {
   r.speak(100);
   r.talk.release('pointer');
   await r.clk.advance(0);
-  assert.equal(r.fetched.length, 0);
+  assert.equal(posts(r).length, 0);
   assert.equal(r.talk.view().note, "Didn't catch that.");
 });
 
-test('a 503 shows the reason it carries; the next press opens no microphone until it lapses', async () => {
+test('a 503 from the clip shows its reason and forgets that she could hear: the next press asks again', async () => {
   const r = rig();
-  r.heardAs.value = { status: 503, body: { error: 'unavailable', reason: 'Fetching the hearing model first. Try again when it is done.' } };
+  r.heardAs.value = { status: 503, body: { error: 'unavailable', reason: 'Hearing stopped for a moment. Try again.', fetching: false } };
   await hold(r);
   r.speak(900);
   r.talk.release('pointer');
   await r.clk.advance(0);
-  assert.equal(r.talk.view().note, 'Fetching the hearing model first. Try again when it is done.');
+  assert.equal(r.talk.view().note, 'Hearing stopped for a moment. Try again.');
   assert.deepEqual(r.sent, []);
-  assert.equal(r.asked, 1);
+  assert.equal(asks(r).length, 1);
 
   await r.clk.advance(NOTE_MS);
   await hold(r);
-  assert.equal(r.asked, 1, 'no microphone opened');
-  assert.equal(phase(r), 'refused');
-  assert.equal(r.talk.view().note, 'Fetching the hearing model first. Try again when it is done.');
-  assert.equal(r.talk.release('pointer'), 'talk');
-
-  await r.clk.advance(UNAVAILABLE_MS);
-  r.heardAs.value = { status: 200, body: { text: 'hello' } };
-  await hold(r);
-  assert.equal(r.asked, 2, 'asked again once the memory lapsed');
+  assert.equal(asks(r).length, 2, 'a yes is forgotten once the clip found otherwise');
   r.talk.cancel();
+});
+
+// ── Rule 2 (V1b): whether she can hear is asked before the microphone opens ──
+
+const CANNOT = { status: 200, body: { hears: false, reason: 'Hearing needs 16 GB of memory, this Mac has 8 GB.', fetching: false } };
+const FETCHING = { status: 200, body: { hears: false, reason: 'Fetching the hearing model (1.6 GB). Try again when it is done.', fetching: true } };
+
+test('the question is asked at the hold, once, before any microphone', async () => {
+  const r = rig();
+  r.talk.press('pointer');
+  assert.equal(asks(r).length, 0, 'not at the pointer-down');
+  await r.clk.advance(HOLD_MS);
+  assert.equal(asks(r).length, 1);
+  assert.equal(asks(r)[0].url, '/api/stt');
+  assert.equal(r.asked, 1, 'she hears: the microphone opened after');
+  r.talk.cancel();
+});
+
+test('a Mac that cannot hear: its reason from the first press, no microphone, no clip', async () => {
+  const r = rig();
+  r.hearsAs.value = CANNOT;
+  await hold(r);
+  assert.equal(r.asked, 0, 'no microphone was asked for');
+  assert.equal(phase(r), 'refused');
+  assert.equal(r.talk.view().note, 'Hearing needs 16 GB of memory, this Mac has 8 GB.');
+  assert.equal(r.talk.release('pointer'), 'talk');
+  await r.clk.advance(NOTE_MS);
+  assert.equal(posts(r).length, 1, 'only the knock that starts a fetch, never a clip');
+  assert.equal(r.open(), 0);
+  assert.deepEqual(r.sent, []);
+});
+
+test('a fetch already on its way is told as it is and is not knocked on again', async () => {
+  const r = rig();
+  r.hearsAs.value = FETCHING;
+  await hold(r);
+  assert.equal(r.talk.view().note, FETCHING.body.reason);
+  assert.equal(posts(r).length, 0);
+  assert.equal(r.asked, 0);
+  r.talk.release('pointer');
+});
+
+test('model not here and no fetch running: the press knocks once to start it, and shows what the knock answers', async () => {
+  const r = rig();
+  r.hearsAs.value = { status: 200, body: { hears: false, reason: 'The hearing model (1.6 GB) is not on this Mac yet.', fetching: false } };
+  r.heardAs.value = { status: 503, body: { error: 'unavailable', reason: FETCHING.body.reason, fetching: true } };
+  await hold(r);
+  assert.equal(posts(r).length, 1);
+  assert.equal(posts(r)[0].url, '/api/stt');
+  assert.ok(!posts(r)[0].init.body?.includes('wav_b64'), 'a knock carries no sound');
+  assert.equal(r.talk.view().note, FETCHING.body.reason);
+  assert.equal(r.asked, 0);
+  r.talk.release('pointer');
+});
+
+test('a no is never remembered: the next press asks again and listens once she can', async () => {
+  const r = rig();
+  r.hearsAs.value = FETCHING;
+  await hold(r);
+  r.talk.release('pointer');
+  await r.clk.advance(NOTE_MS);
+  r.hearsAs.value = { status: 200, body: { hears: true } };
+  await hold(r);
+  assert.equal(asks(r).length, 2);
+  assert.equal(r.asked, 1);
+  assert.equal(phase(r), 'listening');
+  r.talk.cancel();
+});
+
+test('a yes is remembered for a short while only, then asked again', async () => {
+  const r = rig();
+  for (let n = 1; n <= 2; n++) {
+    await hold(r);
+    r.speak(600);
+    r.talk.release('pointer');
+    await r.clk.advance(NOTE_MS);
+  }
+  assert.equal(asks(r).length, 1, 'the second press did not ask');
+  await r.clk.advance(HEARS_MS);
+  await hold(r);
+  assert.equal(asks(r).length, 2);
+  r.talk.cancel();
+});
+
+test('let go while she is being asked: the microphone is never opened', async () => {
+  const r = rig();
+  r.hearsAs.value = 'wait';
+  await hold(r);
+  assert.equal(r.talk.release('pointer'), 'talk');
+  r.answerHears({ status: 200, body: { hears: true } });
+  await r.clk.advance(0);
+  assert.equal(r.asked, 0);
+  assert.equal(phase(r), 'idle');
+});
+
+test('the question failing is one line, and no microphone either', async () => {
+  const r = rig();
+  r.hearsAs.value = 'throw';
+  await hold(r);
+  assert.equal(r.talk.view().note, WORDS.failed);
+  assert.equal(r.asked, 0);
+  r.talk.release('pointer');
+  r.hearsAs.value = { status: 403, body: { error: 'beyond_level' } };
+  await hold(r);
+  assert.equal(r.talk.view().note, WORDS.failed);
+  assert.equal(r.asked, 0);
 });
 
 test('a 503 without a reason still says one thing', async () => {
@@ -402,6 +518,19 @@ test('a failed request is one line and leaves nothing half-open', async () => {
   assert.equal(phase(r), 'idle');
   assert.equal(r.open(), 0);
   assert.deepEqual(r.sent, []);
+});
+
+test('her door refusing the line with a reason: that reason is the one line, and the heard words go', async () => {
+  const r = rig();
+  r.sendOk.value = false;
+  r.sendReason.value = "A spoken line can't go to an app's chat. Type it there.";
+  await hold(r);
+  r.speak(900);
+  r.talk.release('pointer');
+  await r.clk.advance(0);
+  assert.equal(r.talk.view().note, "A spoken line can't go to an app's chat. Type it there.");
+  assert.equal(r.talk.view().heard, null);
+  assert.equal(phase(r), 'idle');
 });
 
 test('her door refusing the line is one line too, and the heard words go', async () => {
