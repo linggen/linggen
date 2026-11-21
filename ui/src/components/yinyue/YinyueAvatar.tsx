@@ -5,9 +5,10 @@
  * so lip-sync stays in step with the voice it doesn't own; expression follows
  * the current speech's emotion.
  *
- * Click her to talk: a small input opens and the message is sent to the Yinyue
- * agent (`POST /api/yinyue/chat`); her reply comes back over the event spine
- * (she speaks + the bubble). While a stage on an app page with a chat holds
+ * Click her to type: a small input opens and the message is sent to the Yinyue
+ * agent (`lib/askYinyue.ts`); her reply comes back over the event spine
+ * (she speaks + the bubble). Hold her (or the space bar) to speak instead:
+ * lib/holdToTalk.mts hears the line and sends it the same way, asked aloud. While a stage on an app page with a chat holds
  * her, the engine says it in that chat instead — as the user's `@银月 …` line,
  * answered there. The click also satisfies browser autoplay so her
  * voice can play.
@@ -22,6 +23,9 @@ import { loadIntents, pickClip } from './petActions';
 import { getMouthOpening } from '../../lib/eventHandlers/yinyue';
 import { useUiStore } from '../../stores/uiStore';
 import { postToParent } from '../../lib/parentFrame';
+import { askYinyue } from '../../lib/askYinyue';
+import { talk, useTalk } from '../../lib/yinyueTalk';
+import { DRAG_PX, isTalkKey } from '../../lib/holdToTalk.mts';
 
 // Validate the wire strings against the renderer's vocabularies.
 const EMOTION_NAMES: EmotionName[] = ['neutral', 'happy', 'angry', 'sad', 'relaxed'];
@@ -31,15 +35,22 @@ const asEmotion = (e?: string): EmotionName | null =>
 const asAction = (a?: string): ActionName | null =>
   (ACTION_NAMES as string[]).includes(a ?? '') ? (a as ActionName) : null;
 
+/** The pet window has no page around her: the space bar is hers there, whoever
+ *  has focus (a field keeps it). On the page it is hers only while she has focus. */
+const IN_PET_WINDOW = new URLSearchParams(window.location.search).get('pet') === '1';
+
 export const YinyueAvatar: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stageRef = useRef<PetStage | null>(null);
-  const thinkTimer = useRef<number>(0);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const pressedAt = useRef<{ x: number; y: number } | null>(null);
+  const swallowClick = useRef(false); // the click that ends a hold is not a tap
   const express = useUiStore((s) => s.petExpress);
   const thinking = useUiStore((s) => s.petThinking);
   const speaking = useUiStore((s) => s.petSpeaking);
   const [composing, setComposing] = useState(false);
   const [draft, setDraft] = useState('');
+  const { view: heardView, label: talkState } = useTalk();
 
   // Mount the renderer + drive the mouth from the live audio signal each frame.
   // The renderer module (three.js) is imported here so it stays out of the
@@ -156,40 +167,90 @@ export const YinyueAvatar: React.FC = () => {
     return () => window.removeEventListener('blur', close);
   }, []);
 
+  // Hold to talk (lib/holdToTalk.mts is the one control; this only binds it):
+  // the space bar while she has focus (anywhere in the pet window), and the
+  // press on her body below. Leaving ends a hold, so the microphone never stays.
+  useEffect(() => {
+    const target: HTMLElement | Window | null = IN_PET_WINDOW ? window : wrapRef.current;
+    if (!target) return;
+    const down = (e: Event) => {
+      const k = e as KeyboardEvent;
+      if (!isTalkKey(k)) return;
+      k.preventDefault();
+      talk.press('key');
+    };
+    const up = (e: Event) => {
+      if ((e as KeyboardEvent).code === 'Space') talk.release('key');
+    };
+    target.addEventListener('keydown', down);
+    target.addEventListener('keyup', up);
+    return () => {
+      target.removeEventListener('keydown', down);
+      target.removeEventListener('keyup', up);
+      talk.cancel();
+    };
+  }, []);
+
+  function pressBody(e: React.PointerEvent<HTMLCanvasElement>) {
+    if (e.button !== 0) return;
+    pressedAt.current = { x: e.clientX, y: e.clientY };
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* a synthetic pointer: no capture */ }
+    talk.press('pointer');
+  }
+  // Moving before the hold begins is a drag of the pet window, not a talk.
+  function moveBody(e: React.PointerEvent<HTMLCanvasElement>) {
+    const from = pressedAt.current;
+    if (!from || talk.view().phase !== 'pressed') return;
+    if (Math.hypot(e.clientX - from.x, e.clientY - from.y) > DRAG_PX) talk.cancel();
+  }
+  function releaseBody() {
+    pressedAt.current = null;
+    if (talk.release('pointer') !== 'talk') return;
+    swallowClick.current = true;
+    window.setTimeout(() => { swallowClick.current = false; }, 0);
+  }
+
   async function send() {
     const text = draft.trim();
     setDraft('');
     setComposing(false);
     if (!text) return;
-    const { setPetThinking } = useUiStore.getState();
-    setPetThinking(true); // ponder until her reply arrives over the event spine
-    window.clearTimeout(thinkTimer.current);
-    thinkTimer.current = window.setTimeout(() => setPetThinking(false), 30000); // safety net
-    try {
-      const resp = await fetch('/api/yinyue/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
-      });
-      if (!resp.ok) throw new Error(`yinyue chat ${resp.status}`);
-      // Her reply arrives over the event spine → handlePetSpeak clears thinking.
-    } catch (e) {
-      console.error('[yinyue] chat failed', e);
-      setPetThinking(false);
-      window.clearTimeout(thinkTimer.current);
-    }
+    await askYinyue(text);
   }
 
   // Click her to talk: the input opens + focuses; it hides again on blur. Her
   // body is also a drag handle in the pet window, so the input is data-no-drag.
   return (
-    <div className="relative h-full w-full">
+    <div
+      ref={wrapRef}
+      tabIndex={0}
+      className="relative h-full w-full outline-none"
+      onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) talk.cancel(); }}
+    >
       <canvas
         ref={canvasRef}
-        className="h-full w-full cursor-pointer"
-        title="Talk to Yinyue"
-        onClick={() => setComposing((c) => !c)}
+        className="h-full w-full cursor-pointer touch-none select-none"
+        title="Click to type, hold to talk"
+        onPointerDown={pressBody}
+        onPointerMove={moveBody}
+        onPointerUp={releaseBody}
+        onPointerCancel={() => { pressedAt.current = null; talk.cancel(); }}
+        onClick={() => { if (!swallowClick.current) setComposing((c) => !c); }}
       />
+      {!composing && (heardView.heard || heardView.note || talkState) && (
+        <div data-testid="talk-status" className="pointer-events-none absolute inset-x-2 bottom-20 flex flex-col items-center gap-1 text-center">
+          {heardView.heard && (
+            <p data-testid="talk-heard" data-no-i18n className="rounded-lg bg-zinc-900/90 px-3 py-1 text-[12px] text-zinc-200 ring-1 ring-violet-400/30">
+              “{heardView.heard}”
+            </p>
+          )}
+          {(heardView.note ?? talkState) && (
+            <p data-testid="talk-state" className="rounded-full bg-violet-500/80 px-3 py-0.5 text-[12px] font-medium text-white">
+              {heardView.note ?? talkState}
+            </p>
+          )}
+        </div>
+      )}
       {composing && (
         <div className="absolute inset-x-2 bottom-20" data-no-drag>
           <input

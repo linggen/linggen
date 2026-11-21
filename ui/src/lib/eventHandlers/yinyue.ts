@@ -101,8 +101,9 @@ export function handleYinyuePresent(item: UiEventOf<'yinyue_present'>): void {
 /// the in-flight ones.
 let voiceGeneration = 0;
 
-/// Stop her voice here: the playing clip, and any line still on its way.
-function hush(): void {
+/// Stop her voice here: the playing clip, and any line still on its way. The one
+/// stop: her mute uses it, and so does a press to talk (lib/yinyueTalk.ts).
+export function hush(): void {
   voiceGeneration++;
   synthInFlight = false;
   stopQueued();
