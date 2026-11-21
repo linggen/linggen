@@ -318,7 +318,9 @@ pub(crate) struct ChatRequest {
 }
 
 /// POST /api/yinyue/chat — `{ text, asked_aloud? }`. The user talks to Yinyue directly (e.g.
-/// clicking the desktop avatar). Her turn runs in the background and her reply
+/// clicking the desktop avatar). A spoken line (`asked_aloud`) that would go
+/// to another chat (a private app named, her stage on an app's chat) is
+/// refused with 422 `not_by_voice` and a reason ([`door_for`]). Her turn runs in the background and her reply
 /// is spoken over the event spine; returns immediately so the UI isn't blocked.
 pub(crate) async fn chat_handler(
     State(state): State<Arc<ServerState>>,
@@ -351,16 +353,20 @@ pub(crate) async fn chat_handler(
         run_voice_command(&state, muted).await;
         return (StatusCode::OK, "ok").into_response();
     }
-    // A private app taken up by name is carried to its own chat, words and
-    // all: nothing of it is a row of her thread.
-    if let Some(app) = crate::server::day_session::private_app_named(&state.manager, &text).await {
-        let companion = crate::engine::agent::COMPANION_AGENT_ID;
-        crate::server::chat::say_in_app(state.clone(), &app, companion, &text).await;
-        return (StatusCode::OK, "ok").into_response();
-    }
-    if let Some(session_id) = presenting_in_chat(&state, req.user_id.as_deref()).await {
-        say_at_table(&state, session_id, &text).await;
-        return (StatusCode::OK, "ok").into_response();
+    match door_for(taken_elsewhere(&state, &text, req.user_id.as_deref()).await, req.asked_aloud) {
+        Door::NotByVoice => return not_by_voice(),
+        // A private app taken up by name is carried to its own chat, words and
+        // all: nothing of it is a row of her thread.
+        Door::Carry(Elsewhere::PrivateApp(app)) => {
+            let companion = crate::engine::agent::COMPANION_AGENT_ID;
+            crate::server::chat::say_in_app(state.clone(), &app, companion, &text).await;
+            return (StatusCode::OK, "ok").into_response();
+        }
+        Door::Carry(Elsewhere::Table(session_id)) => {
+            say_at_table(&state, session_id, &text).await;
+            return (StatusCode::OK, "ok").into_response();
+        }
+        Door::Her => {}
     }
     tracing::info!("[yinyue] chat from user ({} chars)", text.len());
     // If a worker agent is currently blocked on a prompt, frame this turn so she
@@ -376,6 +382,59 @@ pub(crate) async fn chat_handler(
         }
     });
     (StatusCode::OK, "ok").into_response()
+}
+
+/// Another chat a line said at her door goes to instead of her own thread,
+/// as if typed there.
+#[derive(Debug, PartialEq)]
+enum Elsewhere {
+    /// The private app the words name: its own chat.
+    PrivateApp(String),
+    /// The app chat her stage stands in.
+    Table(String),
+}
+
+/// What her door does with a line.
+#[derive(Debug, PartialEq)]
+enum Door {
+    /// Her own thread: her turn, her answer.
+    Her,
+    /// Another chat takes it.
+    Carry(Elsewhere),
+    /// It was spoken and that chat is another's: her door says so and keeps
+    /// nothing. Those chats take typed lines only — they have no way to hear a
+    /// line back — and a private app's talk is never weakened to make one.
+    NotByVoice,
+}
+
+/// The one place a line's way is decided: where it goes, and whether a spoken
+/// line may go there.
+fn door_for(elsewhere: Option<Elsewhere>, asked_aloud: bool) -> Door {
+    match (elsewhere, asked_aloud) {
+        (None, _) => Door::Her,
+        (Some(_), true) => Door::NotByVoice,
+        (Some(elsewhere), false) => Door::Carry(elsewhere),
+    }
+}
+
+fn not_by_voice() -> axum::response::Response {
+    (
+        StatusCode::UNPROCESSABLE_ENTITY,
+        Json(serde_json::json!({
+            "error": "not_by_voice",
+            "reason": "A spoken line can't go to an app's chat. Type it there.",
+        })),
+    )
+        .into_response()
+}
+
+/// Where else than her thread the words go: the private app they name, else
+/// the app chat she is presenting in.
+async fn taken_elsewhere(state: &Arc<ServerState>, text: &str, user_id: Option<&str>) -> Option<Elsewhere> {
+    if let Some(app) = crate::server::day_session::private_app_named(&state.manager, text).await {
+        return Some(Elsewhere::PrivateApp(app));
+    }
+    presenting_in_chat(state, user_id).await.map(Elsewhere::Table)
 }
 
 /// The app chat she is presenting in for the caller `user_id` names — a
@@ -565,7 +624,32 @@ mod one_voice_rule {
 
 #[cfg(test)]
 mod voice_tests {
-    use super::voice_command;
+    use super::{door_for, voice_command, Door, Elsewhere};
+
+    /// Rule 3: a spoken line is never carried to another chat — either of the
+    /// two ways there — and a typed one goes exactly where it did.
+    #[test]
+    fn a_spoken_line_is_not_carried_to_another_chat_and_a_typed_one_is() {
+        let vault = || Elsewhere::PrivateApp("vault".into());
+        let table = || Elsewhere::Table("sess-1".into());
+        assert_eq!(door_for(Some(vault()), true), Door::NotByVoice);
+        assert_eq!(door_for(Some(table()), true), Door::NotByVoice);
+        assert_eq!(door_for(Some(vault()), false), Door::Carry(vault()));
+        assert_eq!(door_for(Some(table()), false), Door::Carry(table()));
+        // Lock: her door sends a line to another chat in one place, after
+        // `door_for` has said whether it may go.
+        let code = include_str!("yinyue.rs");
+        let production = &code[..code.find("#[cfg(test)]").unwrap()];
+        let decided = production.find("match door_for(").unwrap();
+        for sends in ["say_in_app(", "say_at_table("] {
+            let calls: Vec<_> = production.match_indices(sends).map(|(at, _)| at).collect();
+            // One call site, plus (for the table) the function's own line.
+            assert!(calls.iter().filter(|&&at| at > decided).count() >= 1, "{sends} is called before door_for");
+            assert!(calls.iter().all(|&at| at > decided || production[at.saturating_sub(12)..at].contains("fn ")), "{sends}");
+        }
+        assert_eq!(door_for(None, true), Door::Her, "a spoken line to her own thread is hers");
+        assert_eq!(door_for(None, false), Door::Her);
+    }
 
     #[test]
     fn mute_and_unmute_are_commands_and_nothing_else_is() {
