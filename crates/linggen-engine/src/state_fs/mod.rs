@@ -5,6 +5,7 @@ pub mod running_places;
 pub mod session_images;
 pub mod session_usage;
 pub mod sessions;
+pub mod turn_place;
 #[cfg(test)]
 mod old_claude_lock_tests;
 #[cfg(test)]

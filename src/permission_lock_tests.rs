@@ -105,7 +105,7 @@ fn the_engine_defines_the_only_permission_ladder() {
     assert_eq!(
         ladders,
         [(
-            root.join("crates/linggen-engine/src/engine/permission/model.rs"),
+            root.join("crates/linggen-engine/src/permission_mode.rs"),
             "PermissionMode".into()
         )],
         "reuse the engine's PermissionMode instead of defining another permission ladder"

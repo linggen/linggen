@@ -13,8 +13,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-/// The values one session is bound to, by declared name.
-pub type SessionParams = BTreeMap<String, String>;
+pub use crate::state_fs::sessions::SessionParams;
 
 /// What a skill declares about one session parameter.
 #[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, Eq)]

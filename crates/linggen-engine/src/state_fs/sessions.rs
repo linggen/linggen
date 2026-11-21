@@ -201,6 +201,10 @@ pub struct SessionMeta {
     pub params: std::collections::BTreeMap<String, String>,
 }
 
+/// The values one session is bound to, by declared name
+/// ([`SessionMeta::params`]). `engine::skill::params` re-exports it.
+pub type SessionParams = std::collections::BTreeMap<String, String>;
+
 /// One agent at a session's table.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(any(test, feature = "test-support"), derive(ts_rs::TS), ts(export))]
@@ -289,7 +293,7 @@ impl SessionMeta {
         let id = legacy
             .agent_id
             .or_else(|| answered().into_iter().next())
-            .unwrap_or_else(|| crate::engine::agent::LEAD_AGENT_ID.to_string());
+            .unwrap_or_else(|| crate::agent_ids::LEAD_AGENT_ID.to_string());
         self.agents = vec![SessionMember {
             id,
             model: legacy.model_id,
@@ -343,8 +347,7 @@ pub fn fallback_cwd(skill: Option<&str>) -> String {
 /// folder is in, even from a subdirectory — its root and its name. None
 /// outside any repo.
 pub fn project_of(cwd: &str) -> (Option<String>, Option<String>) {
-    let Some(root) = crate::engine::tools::search_exec_find_git_root(std::path::Path::new(cwd))
-    else {
+    let Some(root) = crate::project_root::find_git_root(std::path::Path::new(cwd)) else {
         return (None, None);
     };
     let name = root.file_name().map(|n| n.to_string_lossy().to_string());
@@ -438,7 +441,7 @@ impl ChatMsg {
     pub fn place_in(&self, meta: &SessionMeta) -> String {
         match &self.place {
             Some(key) => key.clone(),
-            None => crate::engine::turn_place::TurnPlace::of_session(Some(meta))
+            None => super::turn_place::TurnPlace::of_session(Some(meta))
                 .key()
                 .to_string(),
         }

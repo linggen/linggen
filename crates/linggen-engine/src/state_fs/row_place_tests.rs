@@ -2,7 +2,7 @@
 //! as the session's own.
 
 use super::sessions::{ChatMsg, SessionMeta, SessionStore};
-use crate::engine::turn_place::{TurnPlace, HOME_KEY};
+use super::turn_place::{TurnPlace, HOME_KEY};
 
 fn row(content: &str) -> ChatMsg {
     ChatMsg {

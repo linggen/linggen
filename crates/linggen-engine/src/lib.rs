@@ -2,6 +2,7 @@
 //! server, its CLI and `main` (doc/architecture-review.md § 2, step 3.2).
 
 pub mod account;
+pub mod agent_ids;
 pub mod assets;
 pub mod cannot_run;
 pub mod config;
@@ -19,8 +20,10 @@ pub mod message;
 pub mod mirror;
 pub mod notes;
 pub mod paths;
+pub mod permission_mode;
 pub mod perception;
 pub mod pictures;
+pub mod project_root;
 pub mod prompts;
 pub mod provider;
 pub mod reach;

@@ -42,7 +42,7 @@ pub const ENGINE_VERBS: [&str; 7] = [
 /// is a stranger's words in the resident's head.
 pub const ACTORS: [&str; 4] = [
     "user",
-    crate::engine::agent::COMPANION_AGENT_ID,
+    crate::agent_ids::COMPANION_AGENT_ID,
     "ling",
     "system",
 ];

@@ -1,7 +1,7 @@
 //! The place of the turn that holds a session's turn lock, kept beside the
 //! lock while the turn runs.
 
-use crate::engine::turn_place::TurnPlace;
+use super::turn_place::TurnPlace;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
