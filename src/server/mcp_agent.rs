@@ -34,7 +34,7 @@ use crate::engine::session_spec::delegate::tool_scope as delegate_tool_scope;
 use crate::engine::session_spec::delegate::TOOLS_PARAM;
 use crate::engine::session_spec::{Covered, PresetGrants, SessionSpec, Tools};
 use crate::engine::turn_place::entrance::{
-    LiveState, MaySwitch, ModelStep, Seat, SessionOnTools, SessionTurn, SessionsWithheld, StandingModel,
+    LiveState, MaySwitch, ModelStep, Seat, SessionOnTools, SessionTurn,
 };
 
 /// The folder a caller may hand a run — as `write_dir` or in a preset grant.
@@ -583,31 +583,25 @@ async fn drive(
     // in the session set, and puts back what it set when it ends. It reads
     // the machine's live state, chooses the model a caller named (a
     // delegated run never switches models, `model_choice::DELEGATED_RUN_MAY_SWITCH`)
-    // and applies the session's withheld tools; it does not bind the session
-    // on the tools or seat itself (`seat_delegate` does, below) — kept as
-    // found, 2026-11: see R4 stage 2.
-    let model_step = match &model {
-        // Checked (or chosen by the agent's chain) already.
-        Some(asked) => ModelStep::Chosen {
-            asked: Some(asked.as_str()),
-            // Kept as found, 2026-11: see R4 stage 2 (`model_id`, where a
-            // mission and a chat pass `default_model_id`).
-            standing: StandingModel::CurrentAsFound,
-            may_switch: MaySwitch::DelegatedRun,
-            place: "agent_run".into(),
-        },
-        None => ModelStep::AtTheDoorAsFound,
+    // and applies the session's withheld tools. Its session is not bound on
+    // the tools, and `seat_delegate` seats it, below.
+    // The model a caller named, checked (or chosen by the agent's chain)
+    // already; none named asks for none — the agent's default.
+    let model_step = ModelStep::Chosen {
+        asked: model.as_deref(),
+        asked_by: None,
+        may_switch: MaySwitch::DelegatedRun,
+        place: "agent_run".into(),
     };
     engine
         .open_session_turn(SessionTurn {
             manager: &state.manager,
             session: Some(&session_id),
             settings: Default::default(),
-            session_on_tools: SessionOnTools::UnboundAsFound,
+            session_on_tools: SessionOnTools::NotBound,
             live_state: LiveState::Read,
             model: model_step,
-            seat: Seat::LeftAsFound,
-            withheld: SessionsWithheld::Applied,
+            seat: Seat::SeatedByTheDoor,
         })
         .await;
     engine.respec(|spec| spec.read_origin = read_origin);

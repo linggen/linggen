@@ -8,16 +8,14 @@
 //! `server/chat/entrance_lock.rs`).
 //!
 //! The order: the session on the tools, the turn's settings, the machine's
-//! live state, the model, the seat, the session's withheld tools. What each
-//! door adds stays at the door: standing for reads, her recall and her
-//! model, the place and its mission, a mission's grants and kickoff, a
+//! live state, the model, the seat, the session's withheld tools (always).
+//! What each door adds stays at the door: standing for reads, her recall and
+//! her model, the place and its mission, a mission's grants and kickoff, a
 //! delegate's toolset and bridges, the loop and the end of the turn.
 //!
-//! STAGE 1 (R4, 2026-11): each door's behaviour is kept exactly as it was,
-//! including the steps it does not take. A step a door does not take is a
-//! named variant ending in `AsFound`; stage 2 decides each (a fault — fixed
-//! and named in the changelog — or meant, with a comment at the door).
-//! `grep AsFound` lists them all.
+//! A turn that continues a person's session is set up as that session's
+//! turns are. A door skips a step only when the step cannot apply to it, and
+//! the variant says why. `grep AsFound` lists what is left undecided.
 //!
 //! Not in the entrance, and why: a light reply (no tools, no loop; it begins
 //! a turn for its language alone), a delegated child (a fresh engine its
@@ -26,61 +24,59 @@
 //! skills, the policy and the page events.
 
 use crate::engine::agent::AgentManager;
-use crate::engine::model_choice::{resolve, Asker, Rule, DELEGATED_RUN_MAY_SWITCH};
+use crate::engine::model_choice::{resolve, AskedBy, Rule, DELEGATED_RUN_MAY_SWITCH};
 use crate::engine::turn_place::TurnSettings;
 use crate::engine::AgentEngine;
 
-/// Whether the session is put on the engine's tools (`set_session_id`): what
-/// a delegated task and a memory write are stamped with.
+/// Whether the session is put on the engine's tools (`set_session_id`).
+/// What reads it: a skill tool's `LINGGEN_SESSION_ID`; a background shell or
+/// Task (`run_in_background` needs a session); `SendMessage`, `TaskList`;
+/// the loop-break of `agent_chat`; a memory write's `source_session` stamp;
+/// the session's own place and folder for a call no turn made; a Task child
+/// joining the session's live permissions; the perception world block.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionOnTools {
     Bound,
-    /// Not bound: an approved plan's run, `agent_run`'s run and a mission
-    /// (kept as found, 2026-11: see R4 stage 2).
-    UnboundAsFound,
+    /// Not bound: `agent_run`'s run and a mission have no person's chat to
+    /// continue — each runs in a session made for it, and every reader above
+    /// then sees no session (decided 2026-11: leave; see the R4 report's
+    /// findings before binding).
+    NotBound,
 }
 
 /// Whether the turn starts on the machine as it is now (`read_live_state`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LiveState {
     Read,
-    /// Not read by the entrance (kept as found, 2026-11: see R4 stage 2):
-    /// a person's chat and her turn read it at their own doors before the
-    /// turn; a task's end, a delivered message and an approved plan's run
-    /// do not read it before the loop at all (the loop reads a changed skill
-    /// list and settings when it starts; what a door does before the loop
-    /// sees the last reading).
-    NotReadAsFound,
+    /// Read by the door before the entrance, because the door chooses the
+    /// model right after reading it and the model choice needs the live
+    /// state first: a person's chat and her turn. Meant.
+    ReadAtTheDoor,
 }
 
 /// Which model the turn's door asks for here, and on what rule.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum ModelStep<'a> {
+    /// The entrance chooses by the one rule (`model_choice::resolve`) against
+    /// the agent's own default, and runs the turn on it.
     Chosen {
         /// The model the door asks for; `None` asks for none.
         asked: Option<&'a str>,
-        standing: StandingModel,
+        /// Who asks; `None` is whoever the engine's policy says
+        /// (`AgentEngine::asked_by`).
+        asked_by: Option<AskedBy>,
         may_switch: MaySwitch,
         /// Names the turn in the log and in a fallback's notice.
         place: String,
     },
-    /// Chosen at the door, before the turn (a person's chat, her turn), or
-    /// not chosen: the engine runs on the model it was left on (a task's
-    /// end, a delivered message, an approved plan's run) — kept as found,
-    /// 2026-11: see R4 stage 2.
-    AtTheDoorAsFound,
-}
-
-/// The model an asked one gives way to when it cannot run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StandingModel {
-    /// The agent's default (`default_model_id`): a mission.
-    Default,
-    /// The model the engine runs on now (`model_id`): `agent_run`
-    /// (kept as found, 2026-11: see R4 stage 2). Its rule never switches,
-    /// so the standing model is not what runs there either way
-    /// (`a_delegated_runs_rule_never_answers_with_the_standing_model`).
-    CurrentAsFound,
+    /// The door chooses it by `resolve_effective_model` (the member's own
+    /// model, with its kept-model rules): a person's chat and her turn before
+    /// the entrance, a plan's run right after it.
+    ChosenByTheDoor,
+    /// Not chosen: a task's end and a delivered message run on the model the
+    /// engine was left on (kept as found, 2026-11: see R4 stage 2 — not
+    /// settled; after a restart a member's kept model is not the engine's).
+    NotChosenAsFound,
 }
 
 /// Whether an asked model that cannot run may be replaced.
@@ -88,8 +84,7 @@ pub enum StandingModel {
 pub enum MaySwitch {
     /// A delegated run never switches (`DELEGATED_RUN_MAY_SWITCH`).
     DelegatedRun,
-    /// What the session's switch and the config allow, read after the live
-    /// state (`switching`).
+    /// The session's own switch alone (`switching(session).session_allows()`).
     SessionAllows,
 }
 
@@ -98,22 +93,13 @@ pub enum MaySwitch {
 pub enum Seat {
     /// At a lead's table with the lead's tools, or the lead itself (`None`).
     At(Option<(String, Option<Vec<String>>)>),
-    /// Not set by the entrance: a turn with no session, and the doors that
-    /// seat themselves or not at all (an approved plan's run, `agent_run`'s
-    /// run — `seat_delegate` — and a mission): kept as found, 2026-11: see
-    /// R4 stage 2.
-    LeftAsFound,
-}
-
-/// Whether the session's own withheld tools are applied
-/// (`withhold_session_tools`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SessionsWithheld {
-    Applied,
-    /// Not applied: an approved plan's run and a mission (kept as found,
-    /// 2026-11: see R4 stage 2). The engine keeps what an earlier turn read
-    /// from the record (`session_withheld`), which a rebuilt engine lacks.
-    SkippedAsFound,
+    /// The turn has no session, so no table to sit at.
+    NoSession,
+    /// A mission runs alone in the session made for it: it has no table.
+    AMissionHasNone,
+    /// Seated by the door: `agent_run`'s run takes the delegate's seat with
+    /// its toolset (`seat_delegate`).
+    SeatedByTheDoor,
 }
 
 /// What a door hands the entrance.
@@ -125,7 +111,6 @@ pub struct SessionTurn<'a> {
     pub live_state: LiveState,
     pub model: ModelStep<'a>,
     pub seat: Seat,
-    pub withheld: SessionsWithheld,
 }
 
 impl AgentEngine {
@@ -141,7 +126,6 @@ impl AgentEngine {
             live_state,
             model,
             seat,
-            withheld,
         } = turn;
         if session_on_tools == SessionOnTools::Bound {
             // Delegated tasks must inherit the session, whoever drives the turn.
@@ -151,34 +135,31 @@ impl AgentEngine {
         if live_state == LiveState::Read {
             self.read_live_state(manager).await;
         }
-        if let ModelStep::Chosen { asked, standing, may_switch, place } = model {
-            self.take_model(session, (asked, standing, may_switch), &place).await;
+        if let ModelStep::Chosen { asked, asked_by, may_switch, place } = model {
+            self.take_model(session, (asked, asked_by, may_switch), &place).await;
         }
         if let Seat::At(lead) = seat {
             self.seat_at(lead);
         }
-        if withheld == SessionsWithheld::Applied {
-            self.withhold_session_tools(&manager.global_sessions, session);
-        }
+        // The session's own withheld tools, whoever the door is: a plan's
+        // run on a rebuilt engine holds what the record withholds.
+        self.withhold_session_tools(&manager.global_sessions, session);
     }
 
-    /// The turn's model by the one rule, as the owner asks for it.
+    /// The turn's model by the one rule, against the agent's own default.
     async fn take_model(
         &mut self,
         session: Option<&str>,
-        (asked, standing, may_switch): (Option<&str>, StandingModel, MaySwitch),
+        (asked, asked_by, may_switch): (Option<&str>, Option<AskedBy>, MaySwitch),
         place: &str,
     ) {
         let may_switch = match may_switch {
             MaySwitch::DelegatedRun => DELEGATED_RUN_MAY_SWITCH,
             MaySwitch::SessionAllows => self.switching(session).session_allows(),
         };
-        let standing = match standing {
-            StandingModel::Default => self.default_model_id.clone(),
-            StandingModel::CurrentAsFound => self.model_id.clone(),
-        };
-        let rule = Rule { asker: Asker::Owner, may_switch };
-        let choice = resolve(&self.model_manager, asked, &standing, rule);
+        let asked_by = asked_by.unwrap_or_else(|| self.asked_by());
+        let rule = Rule { asker: asked_by.asker(), may_switch };
+        let choice = resolve(&self.model_manager, asked, &self.default_model_id, rule);
         self.run_on(&choice, place).await;
     }
 }

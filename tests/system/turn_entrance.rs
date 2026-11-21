@@ -171,13 +171,13 @@ async fn a_plan_run_on_the_live_engine_still_withholds_what_the_record_withholds
 }
 
 /// (c) The same plan approved after the engine restarted: the session's
-/// engine is built again, and the plan's run never reads the record's
-/// withheld tools — it offers the tool the record withholds.
+/// engine is built again, and the plan's run reads the record's withheld
+/// tools as the chat's turns do — the tool stays withheld.
 #[tokio::test]
-async fn a_plan_run_on_a_rebuilt_engine_offers_what_the_record_withholds() {
+async fn a_plan_run_on_a_rebuilt_engine_still_withholds_what_the_record_withholds() {
     let (planning, run) = withheld_plan_run(true).await;
     assert!(!planning.tool_names().contains(&"Glob".to_string()), "the record's tool was offered when planning");
-    assert!(run.tool_names().contains(&"Glob".to_string()), "the plan's run on a rebuilt engine withheld it");
+    assert!(!run.tool_names().contains(&"Glob".to_string()), "the plan's run on a rebuilt engine offered it");
 }
 
 /// The planning call and the plan's run call, in a session that withholds
@@ -241,11 +241,10 @@ fn rpc(name: &str, args: Value) -> Value {
 
 /// (b) A host that continues a session with `agent: "yinyue"` (`agent_run`
 /// with a session id) tells her a turn through the task-end door
-/// (`tell_from`), as the engine's start: no recall tuning, no Pet model. Her
-/// engine in that session runs on the routing default, not on the model her
-/// own door gives her (`an_agent_chat_to_her_runs_at_her_own_door…`).
+/// (`tell_from`): it is prepared as her own door prepares a turn — her Pet
+/// model (`an_agent_chat_to_her_runs_at_her_own_door…`).
 #[tokio::test]
-async fn a_turn_told_to_her_through_the_task_end_door_runs_on_the_routing_default() {
+async fn a_turn_told_to_her_through_the_task_end_door_runs_on_her_model() {
     let w = World::start(
         Setup::default()
             .setting_off()
@@ -262,10 +261,10 @@ async fn a_turn_told_to_her_through_the_task_end_door_runs_on_the_routing_defaul
     let said = ran["result"]["content"][0]["text"].as_str().unwrap_or_default().to_string();
     assert_ne!(ran["result"]["isError"], true, "{said}");
     until_calls(&w, Agent::Yinyue, 1).await;
-    assert_eq!(call(&w, Agent::Yinyue, 0).model(), "fake-ling-1", "her Pet model was not applied");
+    assert_eq!(call(&w, Agent::Yinyue, 0).model(), "fake-yinyue-1", "her Pet model was not applied");
 }
 
-// ---- R4 stage 2: a plan run, a task's end and her told turn on a rebuilt engine ----
+// ---- R4 stage 2: a plan run, a task's end and her told turn ----
 
 /// The session's members, in order, written as the record keeps them:
 /// the first leads.
@@ -305,9 +304,9 @@ async fn rebuilt_plan_run(prepare: impl FnOnce(&World, &str) -> Option<Value>) -
     (call(&w, Agent::Ling, 0), run, call(&w, Agent::Ling, planned + 1))
 }
 
-/// (stage 2) A member that does not lead the session sits at the lead's
-/// table: the lead's tools are the session's set. The plan's run on a
-/// rebuilt engine sits nowhere: it is offered the member's own tools.
+/// A member that does not lead the session sits at the lead's table: the
+/// lead's tools are the session's set — in the plan's run on a rebuilt
+/// engine too.
 #[tokio::test]
 async fn a_plan_run_on_a_rebuilt_engine_sits_at_the_leads_table() {
     let (_, run, typed) = rebuilt_plan_run(|w, sid| {
@@ -316,61 +315,61 @@ async fn a_plan_run_on_a_rebuilt_engine_sits_at_the_leads_table() {
     })
     .await;
     assert!(!typed.tool_names().contains(&"Bash".to_string()), "a typed turn sits at her table: {:?}", typed.tool_names());
-    assert!(run.tool_names().contains(&"Bash".to_string()), "{:?}", run.tool_names());
+    assert!(!run.tool_names().contains(&"Bash".to_string()), "the plan's run sits nowhere: {:?}", run.tool_names());
 }
 
-/// (stage 2) The model a member keeps (the picker's) is the one its turns
-/// ask for. The plan's run on a rebuilt engine names the default instead.
+/// The model a member keeps (the picker's) is the one its turns ask for —
+/// the plan's run on a rebuilt engine too.
 #[tokio::test]
 async fn a_plan_run_on_a_rebuilt_engine_runs_on_the_members_kept_model() {
     let (planning, run, _) = rebuilt_plan_run(|_, sid| Some(json!({"session_id": sid, "agent_id": "ling", "model_id": "fake-eye"}))).await;
     assert_eq!(planning.model(), "fake-eye-1", "the kept model runs the planning turn");
-    assert_eq!(run.model(), "fake-ling-1");
+    assert_eq!(run.model(), "fake-eye-1");
 }
 
-/// (stage 2) A task's end is told in a turn of its own; what it reads before
-/// its loop (the thread's compaction threshold) is the setting it last read.
+/// A task's end is told in a turn of its own; what it reads before its loop
+/// (the thread's compaction threshold) is the setting as it stands.
 #[tokio::test]
-async fn a_task_end_turn_compacts_by_the_threshold_the_engine_last_read() {
+async fn a_task_end_turn_compacts_by_the_threshold_as_it_stands() {
     let w = World::start(
         Setup::default()
             .setting_off()
             .script(
                 Agent::Ling,
                 vec![
+                    text("Noted."),
                     tool("Bash", json!({"cmd": "sleep 3; echo finished", "run_in_background": true})),
                     text("Started it."),
                     text("Noted the end."),
-                    text("Next."),
                 ],
             )
             .extra("context compaction assistant", "SUMMARY: filler was sent."),
     )
     .await;
+    let root = w.work();
     let sid = w.api.create_session(json!({"title": "Chat"})).await;
-    let mark = w.mark();
-    let long = format!("Run it in the background.\n{}", crate::shared_table::filler());
-    w.api.chat(&sid, &w.work(), &long).await;
-    if let RunEnd::Asked(ask) = w.wait_run(&sid, Agent::Ling, mark).await {
-        w.api.answer(&ask, "grant:all").await;
-        w.finish_run(&sid, Agent::Ling, mark).await;
-    }
+    // A long first message, then a short one that starts the shell: a person's
+    // line follows what there is to summarize, as a compaction needs.
+    w.turn(&sid, &root, &format!("Ignore this.\n{}", crate::shared_table::filler()), Agent::Ling).await;
+    first_turn(&w, &sid).await;
+    assert!(!w.rows(&sid).iter().any(|r| r.from_id == "compaction"), "compacted by the old threshold");
     let mut config = w.api.get("/api/config").await;
     config["agent"]["compact_threshold"] = json!(0.1);
+    let changed = w.mark();
     w.api.post("/api/config", config).await;
-    until_calls(&w, Agent::Ling, 3).await;
+    until_calls(&w, Agent::Ling, 4).await;
     tokio::time::sleep(Duration::from_secs(2)).await;
-    let compacted = w.rows(&sid).iter().any(|r| r.from_id == "compaction");
-    assert!(!compacted, "the task's end compacted by the new threshold");
-    // The next typed turn reads the setting at its door and compacts.
-    w.turn(&sid, &w.work(), "Next.", Agent::Ling).await;
-    assert!(w.rows(&sid).iter().any(|r| r.from_id == "compaction"), "a typed turn did not compact");
+    // Before the loop the turn core compacts a thread past the threshold (the
+    // loop does it too, in its own words, once it has read the setting).
+    let log = w.engine.log_since(changed);
+    assert!(log.contains("tokens over 3200 — compacting"), "the task's end did not compact by the new threshold:\n{log}");
+    w.assert_all_scripted();
 }
 
-/// (stage 2) A restart's continue turn for her, in a chat session: told to
-/// her through the task-end door.
+/// A restart's continue turn for her, in a chat session: told to her
+/// through the task-end door, on the same road — her Pet model.
 #[tokio::test]
-async fn a_restarts_continue_turn_for_her_runs_on_the_routing_default() {
+async fn a_restarts_continue_turn_for_her_runs_on_her_model() {
     let mut w = World::start(
         Setup::default()
             .setting_off()
@@ -383,5 +382,5 @@ async fn a_restarts_continue_turn_for_her_runs_on_the_routing_default() {
     crate::restart::leave_plan(&w, json!([{"session_id": sid, "agent_id": "yinyue", "caller": true, "tasks": ["make (sh-1)"]}]));
     w.engine.restart(&w.home).await;
     until_calls(&w, Agent::Yinyue, 1).await;
-    assert_eq!(call(&w, Agent::Yinyue, 0).model(), "fake-ling-1");
+    assert_eq!(call(&w, Agent::Yinyue, 0).model(), "fake-yinyue-1");
 }

@@ -396,6 +396,7 @@ async fn tell_in_place(
     let language = crate::server::resident::language_of_turn(&state, &session, origin, None).await;
     let mut engine = engine.lock().await;
     engine.set_parent_agent(None);
+    let (policy, cap, live_state) = prepared_for(&state, &mut engine, &agent, (&session, &root, &told_at), language.clone()).await;
     let ctx = super::chat::ChatRunCtx {
         via: None,
         state: state.clone(),
@@ -406,7 +407,7 @@ async fn tell_in_place(
         session_id: Some(session.clone()),
         clean_msg: notice,
         images: Vec::new(),
-        policy: super::chat::policy::turn_policy(super::chat::policy::TurnBy::Engine),
+        policy,
         sender: Some(sender),
         // Told to her, the notice is an event: what she chooses to say is
         // published by the finalizer, nothing of her reply is kept as prose.
@@ -414,13 +415,34 @@ async fn tell_in_place(
         place: told_at.clone(),
         turn: crate::engine::turn_place::TurnSettings { language, ..Default::default() },
     };
-    super::chat::run_session_turn(&ctx, &mut engine, &state.manager, None).await;
+    super::chat::run_session_turn(&ctx, &mut engine, &state.manager, (cap, live_state)).await;
     let ended = running.as_ref().is_some_and(crate::server::resident::RunningOrigin::was_ended);
     if origin.held() && !ended {
         let reply = engine.last_assistant_text.clone().map(|t| crate::server::resident::Turned::of(t, origin));
         drop(engine);
         crate::server::resident::say_event(&state, reply.as_ref(), (&session, &told_at)).await;
     }
+}
+
+/// How a turn told to `agent` is set up beyond what every session turn gets:
+/// the policy it runs under, how many live messages its thread keeps, and
+/// where the live state is read. A turn told to her is hers: prepared as her
+/// own door prepares one the engine started — her recall and her model (which
+/// reads the live state itself, at the door). Told to any other agent it is
+/// prepared as a chat turn is, the live state read at the entrance.
+async fn prepared_for(
+    state: &std::sync::Arc<super::ServerState>,
+    engine: &mut crate::engine::AgentEngine,
+    agent: &str,
+    (session, root, place): (&str, &std::path::Path, &crate::engine::turn_place::TurnPlace),
+    language: Option<String>,
+) -> (crate::engine::session_policy::SessionPolicy, Option<usize>, crate::engine::turn_place::entrance::LiveState) {
+    use crate::engine::turn_place::entrance::LiveState;
+    if super::chat::members::is_companion(agent) {
+        let (policy, cap) = crate::server::resident::prepare_told_turn(state, engine, (session, root, place), language).await;
+        return (policy, cap, LiveState::ReadAtTheDoor);
+    }
+    (super::chat::policy::turn_policy(super::chat::policy::TurnBy::Engine), None, LiveState::Read)
 }
 
 /// `place` in the session's turn line, with the admission gate to hold

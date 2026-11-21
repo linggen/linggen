@@ -115,25 +115,7 @@ pub(crate) async fn reply_now(
 /// member's model, its seat, and its place.
 async fn ready(ctx: &ChatRunCtx, engine: &mut crate::engine::AgentEngine) {
     engine.read_live_state(&ctx.manager).await;
-    let sid = ctx.session_id.as_deref().unwrap_or("default");
-    let members = super::members::of_session(&ctx.manager, sid).await;
-    let pet = ctx.manager.get_config_snapshot().await.pet;
-    let asked = super::handler::turn_model(
-        None,
-        &ctx.agent_id,
-        &members,
-        crate::server::resident::resolve_pet_model(&pet.model),
-    );
-    // A guest's session keeps to the models the room shares here too.
-    let by = engine.asked_by();
-    super::handler::resolve_effective_model(
-        engine,
-        by.asker(),
-        &asked,
-        (Some(sid), &ctx.agent_id),
-        &ctx.manager,
-    )
-    .await;
+    super::handler::choose_members_model(engine, ctx).await;
     super::handler::seat_member(engine, ctx).await;
     super::turn_place::bind_turn_place(engine, ctx).await;
 }

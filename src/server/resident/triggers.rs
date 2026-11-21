@@ -656,7 +656,13 @@ pub(super) async fn deliver_to_chat_agent(
             place: delivered_place(&state, &session_id, app.as_deref()),
             turn: Default::default(),
         };
-        crate::server::chat::run_session_turn(&ctx, &mut engine, &state.manager, None).await;
+        crate::server::chat::run_session_turn(
+            &ctx,
+            &mut engine,
+            &state.manager,
+            (None, crate::engine::turn_place::entrance::LiveState::Read),
+        )
+        .await;
         state.manager.clear_agent_chat_session(&session_id);
     }
 

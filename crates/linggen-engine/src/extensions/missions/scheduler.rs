@@ -789,10 +789,8 @@ async fn dispatch_mission_prompt(
     // rule (`model_choice::resolve`): a retired id runs on its successor;
     // one this machine lacks falls back to the agent's default — or, in a
     // session that may not switch models, is kept so the run fails on it,
-    // named. Kept as found, 2026-11: see R4 stage 2: the run does not bind
-    // its session on the tools, seat itself or apply the session's withheld
-    // tools (a mission's session is made for it, withholding nothing:
-    // `a_mission_session_withholds_no_tool`).
+    // named. Its session is made for it, withholding nothing
+    // (`a_mission_session_withholds_no_tool`), and is not bound on the tools.
     engine
         .open_session_turn(crate::engine::turn_place::entrance::SessionTurn {
             manager: &manager,
@@ -806,16 +804,15 @@ async fn dispatch_mission_prompt(
                 },
                 ..Default::default()
             },
-            session_on_tools: crate::engine::turn_place::entrance::SessionOnTools::UnboundAsFound,
+            session_on_tools: crate::engine::turn_place::entrance::SessionOnTools::NotBound,
             live_state: crate::engine::turn_place::entrance::LiveState::Read,
             model: crate::engine::turn_place::entrance::ModelStep::Chosen {
                 asked: mission.model.as_deref(),
-                standing: crate::engine::turn_place::entrance::StandingModel::Default,
+                asked_by: None,
                 may_switch: crate::engine::turn_place::entrance::MaySwitch::SessionAllows,
                 place: format!("mission '{}'", mission.id),
             },
-            seat: crate::engine::turn_place::entrance::Seat::LeftAsFound,
-            withheld: crate::engine::turn_place::entrance::SessionsWithheld::SkippedAsFound,
+            seat: crate::engine::turn_place::entrance::Seat::AMissionHasNone,
         })
         .await;
 

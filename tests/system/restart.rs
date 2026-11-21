@@ -160,7 +160,9 @@ async fn queue_only_session_continues_with_the_first_queued_agent() {
     ));
     let calls = w.model.calls_of(Agent::Yinyue);
     assert_eq!(calls.len(), 1);
-    let told = calls[0].thread().last().unwrap().1.clone();
+    // The turn is hers, set up as her own door sets one up: the world block
+    // rides behind what she is told.
+    let told = calls[0].thread().into_iter().rev().map(|(_, t)| t).find(|t| !t.starts_with("# World")).unwrap();
     assert!(
         told.find("first for Yinyue") < told.find("then for Ling"),
         "{told}"

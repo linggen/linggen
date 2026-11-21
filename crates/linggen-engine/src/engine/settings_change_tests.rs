@@ -267,9 +267,9 @@ fn collect(dir: &std::path::Path, root: &std::path::Path, out: &mut Vec<(String,
 mod entrance {
     use super::*;
     use crate::engine::turn_place::entrance::{
-        LiveState, MaySwitch, ModelStep, Seat, SessionOnTools, SessionTurn, SessionsWithheld,
-        StandingModel,
+        LiveState, MaySwitch, ModelStep, Seat, SessionOnTools, SessionTurn,
     };
+    use crate::engine::model_choice::AskedBy;
     use crate::engine::turn_place::TurnSettings;
 
     fn turn<'a>(manager: &'a AgentManager, session: Option<&'a str>) -> SessionTurn<'a> {
@@ -277,11 +277,10 @@ mod entrance {
             manager,
             session,
             settings: TurnSettings::default(),
-            session_on_tools: SessionOnTools::UnboundAsFound,
-            live_state: LiveState::NotReadAsFound,
-            model: ModelStep::AtTheDoorAsFound,
-            seat: Seat::LeftAsFound,
-            withheld: SessionsWithheld::SkippedAsFound,
+            session_on_tools: SessionOnTools::NotBound,
+            live_state: LiveState::ReadAtTheDoor,
+            model: ModelStep::ChosenByTheDoor,
+            seat: Seat::NoSession,
         }
     }
 
@@ -323,34 +322,50 @@ mod entrance {
         assert_eq!(engine.tools.builtins.session_id.as_deref(), Some("sess-x"));
     }
 
-    /// The standing model is the one the door names: `default_model_id`, or
-    /// (kept as found at `agent_run`) the model the engine runs on now.
+    /// An asked model that cannot run gives way to the agent's default
+    /// (`default_model_id`), never to the model the engine was left on.
     #[tokio::test]
-    async fn the_entrance_gives_an_unrunnable_model_way_to_the_standing_one_the_door_names() {
+    async fn the_entrance_gives_an_unrunnable_model_way_to_the_agents_default() {
         let dir = scratch("entrance-standing");
         let manager = manager_of(config(&["a", "b"], &["a"], 10), &dir);
         // An engine on "b" whose agent's default is "a".
-        let on_b = || async {
-            let mut engine = built(&manager, "b").await;
-            engine.default_model_id = "a".into();
-            engine
+        let mut engine = built(&manager, "b").await;
+        engine.default_model_id = "a".into();
+        let mut turn = turn(&manager, None);
+        turn.model = ModelStep::Chosen {
+            asked: Some("ghost"),
+            asked_by: None,
+            may_switch: MaySwitch::SessionAllows,
+            place: "test".into(),
         };
-        let chosen = |standing| {
+        engine.open_session_turn(turn).await;
+        assert_eq!(engine.model_id, "a");
+    }
+
+    /// Who asks is what the door hands the entrance, else what the engine's
+    /// policy says: a guest is given the models the room shares.
+    #[tokio::test]
+    async fn the_entrance_asks_as_the_door_hands_it() {
+        let dir = scratch("entrance-asker");
+        let manager = manager_of(config(&["a", "b"], &["a"], 10), &dir);
+        let asking = |by: Option<AskedBy>| {
             let mut t = turn(&manager, None);
             t.model = ModelStep::Chosen {
-                asked: Some("ghost"),
-                standing,
+                asked: Some("a"),
+                asked_by: by,
                 may_switch: MaySwitch::SessionAllows,
                 place: "test".into(),
             };
             t
         };
-        let mut engine = on_b().await;
-        engine.open_session_turn(chosen(StandingModel::Default)).await;
-        assert_eq!(engine.model_id, "a");
-        let mut engine = on_b().await;
-        engine.open_session_turn(chosen(StandingModel::CurrentAsFound)).await;
-        assert_eq!(engine.model_id, "b");
+        let mut engine = built(&manager, "b").await;
+        engine.default_model_id = "b".into();
+        engine.open_session_turn(asking(None)).await;
+        assert_eq!(engine.model_id, "a", "the engine's policy names the owner");
+        let mut engine = built(&manager, "b").await;
+        engine.default_model_id = "b".into();
+        engine.open_session_turn(asking(Some(AskedBy::of(Some(vec!["b".into()]))))).await;
+        assert_eq!(engine.model_id, "b", "a guest is given only what the room shares");
     }
 
     /// The turn's own settings come first and are put back by `end_turn`,
