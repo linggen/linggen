@@ -126,6 +126,11 @@ pub struct SkillToolDef {
     /// page's door. Only a model-facing shell tool qualifies (`remote_tools`).
     #[serde(default)]
     pub remote: bool,
+    /// `reach: anywhere` — also offered from other sessions, through
+    /// `AppTool`, and to Yinyue; absent: only in the app's own session
+    /// (`skill::reach`). Never together with `page_only`.
+    #[serde(default)]
+    pub reach: crate::engine::skill::reach::Reach,
     /// Name of the skill that declared this tool. Set at skill-load time so
     /// dispatch can resolve the daemon (via `SkillLoader`) without another
     /// lookup. Not serialized — populated from the containing skill's name.
@@ -675,6 +680,7 @@ mod tests {
             others_read: Vec::new(),
             pet: false,
             remote: false,
+            reach: Default::default(),
             skill_name: None,
             skill_dir: None,
             senses: Vec::new(),
@@ -1012,6 +1018,7 @@ mod tests {
             others_read: Vec::new(),
             pet: false,
             remote: false,
+            reach: Default::default(),
             skill_name: None,
             skill_dir: None,
             senses: Vec::new(),

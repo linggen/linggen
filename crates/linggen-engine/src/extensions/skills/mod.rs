@@ -97,6 +97,7 @@ fn page_update_tool_def() -> SkillToolDef {
         others_read: Vec::new(),
         pet: false,
         remote: false,
+        reach: Default::default(),
         skill_name: None,
         skill_dir: None,
         senses: Vec::new(),
@@ -746,6 +747,16 @@ pub fn parse_skill_text(text: &str, source: SkillSource) -> Result<Skill> {
     );
     let session_params =
         crate::engine::skill::params::usable(&frontmatter.name, frontmatter.session_params);
+    if let Some(bad) = tool_defs
+        .iter()
+        .find(|t| t.page_only && t.reach == crate::engine::skill::reach::Reach::Anywhere)
+    {
+        anyhow::bail!(
+            "skill '{}': tool '{}' is page_only and reach: anywhere — a page's own door is never offered elsewhere; drop one of the two",
+            frontmatter.name,
+            bad.name
+        );
+    }
     for tool_def in &mut tool_defs {
         tool_def.senses = senses.clone();
         tool_def.session_params = session_params.clone();
@@ -1229,6 +1240,26 @@ This is the skill content."#;
         assert_eq!(skill.keep, vec!["references/brief.md"]);
         let bare = parse_skill_text("---\nname: x\ndescription: y\n---\n", SkillSource::Global);
         assert!(bare.unwrap().keep.is_empty());
+    }
+
+    /// `reach: anywhere` is kept on the tool; absent, it is `here`; a tool
+    /// that is the page's own door (`page_only`) cannot also be `anywhere`.
+    #[test]
+    fn a_tool_declares_where_it_is_offered() {
+        use crate::engine::skill::reach::Reach;
+        let tools = |extra: &str| {
+            format!(
+                "---\nname: jb\ndescription: d\ntools:\n  - name: Play\n    description: d\n    cmd: \"echo\"\n    tier: edit\n{extra}  - name: Look\n    description: d\n    cmd: \"echo\"\n    tier: read\n---\nBody"
+            )
+        };
+        let skill = parse_skill_text(&tools("    reach: anywhere\n"), SkillSource::Global).unwrap();
+        assert_eq!(skill.tool_defs[0].reach, Reach::Anywhere);
+        assert_eq!(skill.tool_defs[1].reach, Reach::Here, "absent is here");
+        let both = parse_skill_text(&tools("    reach: anywhere\n    page_only: true\n"), SkillSource::Global);
+        let why = both.err().expect("refused").to_string();
+        assert!(why.contains("'Play'") && why.contains("page_only") && why.contains("anywhere"), "{why}");
+        let page = parse_skill_text(&tools("    page_only: true\n"), SkillSource::Global);
+        assert!(page.is_ok(), "page_only alone is as it was");
     }
 
     /// `private-talk: true` is kept on the skill; absent, its talk is not
