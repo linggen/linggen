@@ -558,6 +558,33 @@ mod tests {
         engine.begin_turn(turn_settings(turn, Origin::Person));
     }
 
+    /// Her engine's turn as `run_at` begins it: her door's start, then what
+    /// the turn core does with it (`run_session_turn`).
+    fn begun(start: crate::server::chat::TurnStart) -> crate::engine::turn_place::TurnSettings {
+        let mut engine = her_engine();
+        let turn = turn(true);
+        ready_for_turn(&mut engine, &turn, &Default::default());
+        engine.begin_turn(start.settings(turn_settings(&turn, start.origin())));
+        engine.turn_settings()
+    }
+
+    /// A person's words to her avatar are a person's: the turn may relay
+    /// their answer to a question that waits (`answer_prompt`), which the
+    /// avatar's chat frames it for. What the engine started, and a message
+    /// sent again from a restart's plan, may not.
+    #[test]
+    fn a_persons_words_to_her_avatar_may_relay_their_answer_and_nothing_else_of_hers_may() {
+        use crate::server::chat::TurnStart;
+        assert!(begun(TurnStart::at_her_door(Origin::Person)).person_spoke);
+        assert!(!begun(TurnStart::resent_at_her_door(Origin::Person)).person_spoke);
+        for origin in [
+            Origin::Asked, Origin::Herald, Origin::AgentChat, Origin::Fault, Origin::Moment,
+            Origin::InUse, Origin::Glance, Origin::Note, Origin::TaskEnd,
+        ] {
+            assert!(!begun(TurnStart::at_her_door(origin)).person_spoke, "{origin:?}");
+        }
+    }
+
     #[test]
     fn only_a_persons_turn_is_run_again_from_a_restarts_plan() {
         for origin in [Origin::Person, Origin::Asked] {

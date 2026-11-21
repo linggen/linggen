@@ -66,13 +66,13 @@ impl TurnStart {
     /// The start of a turn at her door, of the origin her door names: a
     /// `Person` origin there is a person's words (her avatar chat).
     pub(crate) fn at_her_door(origin: Origin) -> Self {
-        Self::of_her_kind(origin, Self::Engine)
+        Self::of_her_kind(origin, Self::Person)
     }
 
     /// [`Self::at_her_door`] for a turn kept in a restart's plan and run
     /// again: a person's words sent again are not spoken now.
     pub(crate) fn resent_at_her_door(origin: Origin) -> Self {
-        Self::of_her_kind(origin, Self::Engine)
+        Self::of_her_kind(origin, Self::Resumed)
     }
 
     /// `origin` as a start: her kinds are `Hers`; `Origin::Person` is
