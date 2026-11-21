@@ -322,7 +322,22 @@ pub(crate) async fn compact_chat_api(
     };
     let _turn = state.manager.session_turn(&session_id).lock_owned().await;
     let members = super::members::of_session(&state.manager, &session_id).await;
-    let Some(models) = super::compact_rows::session_models(&state.manager, &root, &members).await
+    // The summary is a call on this Mac's model: a household person's session
+    // is summarized on the models the owner gave them, and only while their
+    // turns may start (`people::turn_refusal`).
+    let given = match crate::server::people::household_person_of_session(&state, &session_id) {
+        Some(person) => {
+            if let Some(why) = crate::server::people::turn_refusal(&state, &person).await {
+                return Json(serde_json::json!({ "status": why.status(), "session_id": session_id })).into_response();
+            }
+            Some(crate::server::people::current().ceiling_of(&person, &[]).models)
+        }
+        None => None,
+    };
+    let asker = given
+        .as_deref()
+        .map_or(crate::engine::model_choice::Asker::Owner, crate::engine::model_choice::Asker::Guest);
+    let Some(models) = super::compact_rows::session_models(&state.manager, &root, &members, asker).await
     else {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,

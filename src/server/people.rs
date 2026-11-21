@@ -161,6 +161,12 @@ impl People {
         }
     }
 
+    /// Whether `person`'s turns may run on this Mac's model `model`: the owner
+    /// any; anyone else those they were given.
+    pub(crate) fn may_run_model(&self, person: &Person, model: &str) -> bool {
+        person.is_owner() || self.ceiling_of(person, &[]).models.iter().any(|m| m == model)
+    }
+
     /// Why `person`'s next turn must not start, given the tokens `used` they
     /// have used today; `None` for the owner and for a turn that may.
     pub(crate) fn refusal_for(&self, person: &Person, used: u64) -> Option<Refusal> {
@@ -479,6 +485,14 @@ pub(crate) fn household_person(user_type: &str, user_id: Option<&str>) -> Option
         return None;
     }
     Some(crate::server::person::asking(user_id)).filter(Person::is_another)
+}
+
+/// The household person a session is kept for, when it is one: whose
+/// `user_id` the session was made under. A session of the owner's or one
+/// no one made is not.
+pub(crate) fn household_person_of_session(state: &crate::server::ServerState, session_id: &str) -> Option<Person> {
+    let meta = state.manager.global_sessions.get_session_meta(session_id).ok().flatten()?;
+    Some(Person::from_wire(meta.user_id.as_deref())).filter(Person::is_another)
 }
 
 /// Why `person`'s turn must not start now: the owner's models are not

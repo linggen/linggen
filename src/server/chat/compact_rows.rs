@@ -110,6 +110,7 @@ pub(crate) async fn session_models(
     manager: &AgentManager,
     root: &Path,
     members: &[SessionMember],
+    asker: crate::engine::model_choice::Asker<'_>,
 ) -> Option<SessionModels> {
     let models = manager.models.read().await.clone();
     let mut windows = Vec::new();
@@ -122,12 +123,26 @@ pub(crate) async fn session_models(
     }
     let summarizer_id = super::members::default_responder(members);
     let member = members.iter().find(|m| m.id == summarizer_id)?;
-    let summarizer = super::members::model_of(manager, root, member).await?;
+    let summarizer = within(&models, asker, super::members::model_of(manager, root, member).await?)?;
     Some(SessionModels {
         windows,
         summarizer,
         summarizer_id,
     })
+}
+
+/// The model `asker` may summarize with: the owner's is `model` as it is; a
+/// guest's or a household person's one of the models they were given — the
+/// summary is a call on this Mac's model, paid like a turn. `None` when they
+/// were given none.
+fn within(models: &crate::provider::models::ModelManager, asker: crate::engine::model_choice::Asker<'_>, model: String) -> Option<String> {
+    use crate::engine::model_choice::{live, resolve, Asker, Rule};
+    if matches!(asker, Asker::Owner) {
+        return Some(model);
+    }
+    let rule = Rule { asker, may_switch: true };
+    let choice = resolve(models, Some(&model), &model, rule);
+    live(models, asker, choice.model()).ok()
 }
 
 /// Compact the session's thread into one summary row. Returns the summary
@@ -226,7 +241,11 @@ pub(super) async fn compact_if_due(engine: &mut AgentEngine, ctx: &ChatRunCtx) -
         return false;
     };
     let members = super::members::of_session(&ctx.manager, sid).await;
-    let Some(models) = session_models(&ctx.manager, &ctx.root, &members).await else {
+    let shared = engine.guest_models();
+    let asker = shared
+        .as_deref()
+        .map_or(crate::engine::model_choice::Asker::Owner, crate::engine::model_choice::Asker::Guest);
+    let Some(models) = session_models(&ctx.manager, &ctx.root, &members, asker).await else {
         return false;
     };
     let threshold = engine

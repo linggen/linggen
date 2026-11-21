@@ -10,8 +10,8 @@
 //!
 //! - Which turn runs under the owner's session policy is decided by
 //!   `chat::policy::turn_policy` alone: no other production code names
-//!   `SessionPolicy::owner` / `default` / `from_user_type`, or leaves a
-//!   turn's `policy` to `Default::default()`.
+//!   `SessionPolicy::owner` / `default` / `person` / `consumer`, or leaves
+//!   a turn's `policy` to `Default::default()`.
 //! - A permission-mode word (`chat`/`read`/`edit`/`write`/`admin`) is read
 //!   into a `PermissionMode` only by the engine's `PermissionMode::parse` /
 //!   `parse_written`: no other match arm on those words makes a mode, and no
@@ -62,7 +62,7 @@ struct Found {
     /// `file::fn` of every production comparison of a sender with a literal.
     sender_literals: Vec<String>,
     /// `file::fn` of every production use of `SessionPolicy::owner` /
-    /// `default` / `from_user_type`, or `policy: Default::default()`.
+    /// `default` / `person` / `consumer`, or `policy: Default::default()`.
     owner_policies: Vec<String>,
     /// `file::fn` of every production match arm that turns a mode word into
     /// a `PermissionMode`, and every list of mode words.
@@ -218,7 +218,7 @@ impl<'ast> Visit<'ast> for Scan<'_> {
 
     fn visit_expr_path(&mut self, path: &'ast syn::ExprPath) {
         let names: Vec<String> = path.path.segments.iter().map(|s| s.ident.to_string()).collect();
-        let owner = ["owner", "default", "from_user_type"]
+        let owner = ["owner", "default", "person", "consumer"]
             .iter()
             .any(|f| names.ends_with(&["SessionPolicy".into(), (*f).into()]));
         if owner {
@@ -426,7 +426,7 @@ fn a_hosts_permission_words_are_written_once() {
 fn the_scan_finds_policies_mode_words_and_host_words_but_not_test_fixtures() {
     let parsed = syn::parse_file(
         r#"fn a() { let p = SessionPolicy::owner(); let q = crate::engine::session_policy::SessionPolicy::default(); }
-           fn b(t: &str) { let c = Ctx { policy: Default::default() }; SessionPolicy::from_user_type(t, f); }
+           fn b(t: &str) { let c = Ctx { policy: Default::default() }; SessionPolicy::person(a, b); }
            fn c(m: &str) -> PermissionMode { match m { "edit" | "write" => PermissionMode::Edit, _ => PermissionMode::Read } }
            fn d(m: &str) -> &str { match m { "edit" => "edited", _ => "" } }
            const VALID: &[&str] = &["read", "edit", "admin"];

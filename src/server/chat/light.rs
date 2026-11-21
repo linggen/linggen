@@ -128,7 +128,7 @@ async fn ready(ctx: &ChatRunCtx, engine: &mut crate::engine::AgentEngine) {
     let shared = engine.guest_models();
     super::handler::resolve_effective_model(
         engine,
-        (shared.is_some(), shared.as_deref().unwrap_or_default()),
+        shared.as_deref().map_or(crate::engine::model_choice::Asker::Owner, crate::engine::model_choice::Asker::Guest),
         &asked,
         (Some(sid), &ctx.agent_id),
         &ctx.manager,
