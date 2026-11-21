@@ -150,3 +150,65 @@ async fn muted_she_is_words_only_even_unseen() {
     w.wait_agent(Agent::Yinyue, mark).await;
     assert!(!spoken(&her_line(&w, "Quietly, then.").await));
 }
+
+/// Her own thread's rows on disk, every field kept.
+fn her_rows(w: &World) -> Vec<Value> {
+    let sessions = w.home.linggen_home().join("sessions");
+    let hers: Vec<String> = std::fs::read_dir(&sessions)
+        .expect("a sessions folder")
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|name| name.starts_with("sess-yinyue-"))
+        .collect();
+    assert_eq!(hers.len(), 1, "her one thread: {hers:?}");
+    w.raw_rows(&hers[0])
+}
+
+/// Asked aloud, answered aloud — the agreed exception: with the page in view,
+/// where a typed line is answered in words only, a line spoken to her is
+/// answered spoken, and its row says it was heard.
+#[tokio::test]
+async fn a_question_asked_aloud_is_answered_aloud_with_the_page_in_view() {
+    let w = World::start(Setup::default().setting_off().script(Agent::Yinyue, vec![text("Right here.")])).await;
+    unmute(&w).await;
+    at_page(&w, None).await;
+    let mark = w.mark();
+    let said = json!({"text": "Are you there?", "asked_aloud": true});
+    assert_eq!(w.api.post("/api/yinyue/chat", said).await, json!("ok"));
+    w.wait_agent(Agent::Yinyue, mark).await;
+    assert!(spoken(&her_line(&w, "Right here.").await));
+
+    let rows = her_rows(&w);
+    let line = rows
+        .iter()
+        .find(|r| r["from_id"] == "user" && r["content"] == "Are you there?")
+        .unwrap_or_else(|| panic!("the person's line is a row of her thread: {rows:?}"));
+    assert_eq!(line["heard"], true, "{line}");
+}
+
+/// A typed line keeps what it was: words only at the page, no `heard` mark.
+#[tokio::test]
+async fn a_typed_line_is_not_marked_heard() {
+    let w = World::start(Setup::default().setting_off().script(Agent::Yinyue, vec![text("Right here.")])).await;
+    unmute(&w).await;
+    at_page(&w, None).await;
+    let mark = w.mark();
+    w.api.post("/api/yinyue/chat", json!({"text": "Are you there?", "asked_aloud": false})).await;
+    w.wait_agent(Agent::Yinyue, mark).await;
+    assert!(!spoken(&her_line(&w, "Right here.").await));
+    let rows = her_rows(&w);
+    let line = rows.iter().find(|r| r["from_id"] == "user" && r["content"] == "Are you there?").unwrap();
+    assert!(line.get("heard").is_none(), "{line}");
+}
+
+/// Muted is absolute: a question asked aloud gets words only.
+#[tokio::test]
+async fn muted_a_question_asked_aloud_is_answered_in_words_only() {
+    let w = World::start(Setup::default().setting_off().script(Agent::Yinyue, vec![text("Quietly, then.")])).await;
+    w.api.post("/api/yinyue/chat", json!({"text": "/mute"})).await;
+    at_page(&w, None).await;
+    let mark = w.mark();
+    w.api.post("/api/yinyue/chat", json!({"text": "Still there?", "asked_aloud": true})).await;
+    w.wait_agent(Agent::Yinyue, mark).await;
+    assert!(!spoken(&her_line(&w, "Quietly, then.").await));
+}

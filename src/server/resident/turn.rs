@@ -19,7 +19,17 @@ pub(crate) async fn run_yinyue_turn(
     task: String,
     origin: Origin,
 ) -> Option<Turned> {
-    run_home(state, task, origin, Reach::Open, None).await
+    run_home(state, task, crate::server::chat::TurnStart::at_her_door(origin), Reach::Open, None).await
+}
+
+/// A person's words to her avatar, typed or spoken (`start`:
+/// `TurnStart::at_her_avatar`), on her own thread.
+pub(crate) async fn run_avatar_turn(
+    state: &Arc<ServerState>,
+    task: String,
+    start: crate::server::chat::TurnStart,
+) -> Option<Turned> {
+    run_home(state, task, start, Reach::Open, None).await
 }
 
 /// Her turn woken by an app moment: her line is all she gives — spoken — or
@@ -36,7 +46,7 @@ pub(crate) async fn run_moment_turn(
 ) -> Option<Turned> {
     match table {
         Some(table) => run_at_table(state, table, task, origin, language).await,
-        None => run_home(state, task, origin, Reach::Sealed, language).await,
+        None => run_home(state, task, crate::server::chat::TurnStart::at_her_door(origin), Reach::Sealed, language).await,
     }
 }
 
@@ -77,10 +87,11 @@ pub(super) fn withheld_for(reach: Reach) -> std::collections::HashSet<String> {
 pub(super) async fn run_home(
     state: &Arc<ServerState>,
     task: String,
-    origin: Origin,
+    start: crate::server::chat::TurnStart,
     reach: Reach,
     language: Option<String>,
 ) -> Option<Turned> {
+    let origin = start.origin();
     let root = her_root();
 
     // Pet settings (Settings → General → Pet). Disabled → she doesn't run at all.
@@ -105,7 +116,7 @@ pub(super) async fn run_home(
         language,
         place,
     };
-    run_at(state, &turn, &pet, task, crate::server::chat::TurnStart::at_her_door(origin)).await
+    run_at(state, &turn, &pet, task, start).await
 }
 
 /// The place her turn at `table` stands in: in a day's session the app the
@@ -244,18 +255,13 @@ async fn run_at(
         // reload and every member's thread holds it. (The turn core only
         // mirrors it into in-memory history.) Inside the turn lock: two
         // wakes racing keep each kickoff next to its own turn.
-        crate::server::chat::helpers::persist_message_only(
+        crate::server::chat::helpers::persist_user_line(
             &state.manager,
-            root,
-            YINYUE_AGENT,
-            "user",
             YINYUE_AGENT,
             &task,
             Some(session_id),
-            false,
-            None,
-        )
-        .await;
+            start.asked_aloud(),
+        );
         drop(gate);
         let mut engine = agent.lock().await;
         // Loop-break: if this turn was woken by an agent_chat, mark the session so
@@ -318,7 +324,7 @@ async fn run_at(
     spoken
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
-        .map(|text| Turned::of(text, origin))
+        .map(|text| Turned::of_started(text, start))
 }
 
 /// Her place in the session's turn line, with the admission gate to hold
@@ -389,6 +395,7 @@ fn resend_hers(
                 let at = crate::server::api::yinyue::SaidAt {
                     session: Some(&turn.session_id),
                     app: turn.place.skill.as_deref(),
+                    ..Default::default()
                 };
                 super::speak_reply(&state, answer, at);
             });

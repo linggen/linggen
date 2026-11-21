@@ -214,8 +214,13 @@ mod one_entry {
                 ("src/server/resident/triggers.rs", 2),
                 ("src/server/resident/turn.rs", 1),
                 ("src/server/resident/herald.rs", 2),
-                ("src/server/api/yinyue.rs", 1),
             ],
+        );
+        // Her avatar door runs its own turn (a person's words, typed or
+        // spoken), never a notice's: defined once, called once.
+        only_in(
+            &p("run_avatar_", "turn("),
+            &[("src/server/resident/turn.rs", 1), ("src/server/api/yinyue.rs", 1)],
         );
         // The notice's event by any name, a glob import too.
         only_in(

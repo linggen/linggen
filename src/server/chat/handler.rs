@@ -910,6 +910,7 @@ fn hear_her_at_table(
             let at = crate::server::api::yinyue::SaidAt {
                 session: Some(session_id),
                 app: ctx.place.skill.as_deref(),
+                ..Default::default()
             };
             crate::server::resident::speak_reply(state, answer, at);
         }
