@@ -2158,13 +2158,18 @@ mod declined_gate_tests {
     /// caller answers.
     fn claude_rules_engine(work: &std::path::Path, permissions: JsonValue, pending: &Pending, interactive: bool) -> AgentEngine {
         let home = tempfile::tempdir_in(dirs::home_dir().unwrap()).unwrap();
+        claude_rules_engine_at(home.path(), work, permissions, pending, interactive)
+    }
+
+    /// The same, with the person's home given (a temporary folder, never the real one).
+    fn claude_rules_engine_at(home: &std::path::Path, work: &std::path::Path, permissions: JsonValue, pending: &Pending, interactive: bool) -> AgentEngine {
         std::fs::create_dir_all(work.join(".claude")).unwrap();
         std::fs::write(work.join(".claude/settings.json"), serde_json::json!({"permissions": permissions}).to_string()).unwrap();
         let mut engine = admin_engine(work, pending, interactive, !interactive);
         let admin = engine.session_permissions.clone();
         crate::engine::session_spec::coding_caller_fixture().apply(&mut engine);
         engine.session_permissions = admin;
-        engine.claude_rules = Arc::new(permission::ClaudeRules::load(Some(home.path()), work));
+        engine.claude_rules = Arc::new(permission::ClaudeRules::load(Some(home), work));
         engine
     }
 
@@ -2209,6 +2214,70 @@ mod declined_gate_tests {
         assert!(request.outward && request.dir.is_none(), "only allow_once or deny answers it: {request:?}");
         assert!(request.reason.as_deref().is_some_and(|r| r.contains("`Bash(cargo build:*)`")), "{request:?}");
         assert!(refused.contains("`Bash(cargo build:*)`"), "{refused}");
+    }
+
+    /// The calls that change `file`, as the model would make them.
+    fn changes_of(file: &std::path::Path) -> Vec<(&'static str, JsonValue)> {
+        vec![
+            ("Write", serde_json::json!({"path": file, "content": "{}"})),
+            ("Edit", serde_json::json!({"path": file, "old_string": "a", "new_string": "b"})),
+            ("Bash", serde_json::json!({"command": format!("rm {}", file.display())})),
+        ]
+    }
+
+    #[tokio::test]
+    async fn a_change_to_a_settings_file_asks_the_person_once_and_only_once_per_change() {
+        let home = tempfile::tempdir_in(dirs::home_dir().unwrap()).unwrap();
+        let work = tempfile::tempdir_in(dirs::home_dir().unwrap()).unwrap();
+        let pending: Pending = Default::default();
+        for file in [work.path().join(".claude/settings.json"), work.path().join(".claude/settings.local.json"), home.path().join(".claude/settings.json")] {
+            for (tool, args) in changes_of(&file) {
+                // A denial closes the project for the rest of a run: one run each.
+                let mut engine = claude_rules_engine_at(home.path(), work.path(), serde_json::json!({}), &pending, true);
+                let seen = answer_first(&pending, crate::engine::permission::ALLOW_ONCE);
+                let id = Some("c1".to_string());
+                let t = ToolTurn { tool, canonical: tool, args: &args, session_id: None, tool_call_id: &id };
+                assert!(engine.gate_permission(&t, &mut Vec::new(), &mut Vec::new()).await.is_none(), "{tool} {}: allowed once", file.display());
+                let (labels, request) = tokio::time::timeout(std::time::Duration::from_secs(5), seen).await.expect("asked").unwrap();
+                assert_eq!(labels, [crate::engine::permission::ALLOW_ONCE, "Deny"], "{tool}");
+                assert!(request.is_none(), "the person, not a caller");
+                // Allowing one change is not a grant: the next asks again.
+                let seen = answer_first(&pending, "Deny");
+                let refused = gate(&mut engine, tool, args.clone()).await;
+                tokio::time::timeout(std::time::Duration::from_secs(5), seen).await.expect("asked again").unwrap();
+                assert!(refused.contains("settings file"), "{tool}: {refused}");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_change_to_a_settings_file_asks_the_caller_with_no_grant_to_give() {
+        let work = tempfile::tempdir_in(dirs::home_dir().unwrap()).unwrap();
+        let pending: Pending = Default::default();
+        for (tool, args) in changes_of(&work.path().join(".claude/settings.local.json")) {
+            let mut engine = claude_rules_engine(work.path(), serde_json::json!({}), &pending, false);
+            let seen = answer_first(&pending, "Deny");
+            let refused = gate(&mut engine, tool, args).await;
+            let (labels, request) = tokio::time::timeout(std::time::Duration::from_secs(5), seen).await.expect("asked").unwrap();
+            assert_eq!(labels, [crate::engine::permission::ALLOW_ONCE, "Deny"], "{tool}");
+            let request = request.expect("the caller is asked");
+            assert!(request.outward && request.dir.is_none(), "{tool}: only allow_once or deny answers it: {request:?}");
+            assert!(refused.contains("settings file"), "{tool}: {refused}");
+        }
+    }
+
+    #[tokio::test]
+    async fn an_unattended_session_that_is_not_coding_cannot_change_a_settings_file() {
+        let home = tempfile::tempdir_in(dirs::home_dir().unwrap()).unwrap();
+        let work = tempfile::tempdir_in(dirs::home_dir().unwrap()).unwrap();
+        let pending: Pending = Default::default();
+        let asked = deny_all(&pending);
+        // At admin everywhere, not a coding session, nobody to ask.
+        let mut engine = admin_engine(work.path(), &pending, false, false);
+        engine.claude_rules = Arc::new(permission::ClaudeRules::load(Some(home.path()), work.path()));
+        let refused = gate(&mut engine, "Write", serde_json::json!({"path": work.path().join(".claude/settings.json"), "content": "{}"})).await;
+        assert!(refused.contains("settings file"), "{refused}");
+        assert_eq!(asked.load(std::sync::atomic::Ordering::SeqCst), 0, "nobody to ask");
     }
 }
 
