@@ -20,8 +20,10 @@
 import { BUDGET_HEADER } from './requestBudget.mts';
 import { encodeWav, MAX_SPEECH_SECONDS, SPEECH_RATE, toBase64, toSpeechSamples } from './speechWav.mts';
 
-/** A press shorter than this is a tap — the avatar's own click, unchanged. */
-export const HOLD_MS = 250;
+/** A press shorter than this is a tap — the avatar's own click, unchanged.
+ *  The one place this is set: 350 ms so a slow click is still a click; tune it
+ *  here after the first try on a real Mac (e2e holds wait on it by name). */
+export const HOLD_MS = 350;
 /** Moving the pointer this far before the hold begins is a drag, not a talk. */
 export const DRAG_PX = 4;
 /** A clip shorter than this holds no sentence; nothing is sent. */
@@ -44,6 +46,7 @@ export const WORDS = {
   nothing: "Didn't catch that.",
   cannotHear: "She can't hear on this Mac right now.",
   micBlocked: 'The microphone is blocked. Allow it for Linggen, then try again.',
+  micAllowed: 'Microphone allowed. Hold again to talk.',
   noMic: "This page can't use the microphone.",
   failed: "Couldn't reach her. Try again.",
 } as const;
@@ -90,17 +93,20 @@ export function isTalkKey(e: { code: string; repeat: boolean; metaKey: boolean; 
 interface TrackLike { stop(): void }
 interface StreamLike { getTracks(): TrackLike[] }
 interface NodeLike { connect(to: unknown): unknown; disconnect(): void }
-interface ProcessorLike extends NodeLike {
-  onaudioprocess: ((e: { inputBuffer: { getChannelData(channel: number): Float32Array } }) => void) | null;
+/** The recorder inside the audio context: it posts the microphone's samples in
+ *  blocks (lib/speechTap.ts), off the page's render thread. */
+interface TapLike extends NodeLike {
+  port: { onmessage: ((e: { data: Float32Array }) => void) | null };
 }
 export interface AudioContextLike {
   sampleRate: number;
-  state: string;
   destination: unknown;
   resume(): Promise<void>;
-  close(): Promise<void>;
+  suspend(): Promise<void>;
+  /** The recorder is loaded into the context (once). */
+  ready(): Promise<void>;
   createMediaStreamSource(stream: StreamLike): NodeLike;
-  createScriptProcessor(bufferSize: number, inputs: number, outputs: number): ProcessorLike;
+  createTap(): TapLike;
 }
 interface Listenable {
   addEventListener(type: string, fn: () => void): void;
@@ -114,7 +120,11 @@ export type LineSent = { sent: true } | { sent: false; reason: string | null };
 export interface TalkDeps {
   /** `navigator.mediaDevices`, or undefined where the page has none. */
   mediaDevices: () => { getUserMedia(c: unknown): Promise<StreamLike> } | undefined;
+  /** Made inside the press, where the page allows a sound context to run. */
   newAudioContext: () => AudioContextLike;
+  /** Whether holding her can ever be granted a microphone here (a stage frame
+   *  in the app cannot); when not, a press stays a tap. */
+  offered: () => boolean;
   /** The page's own `fetch` (data channel); read at call time. */
   fetch: (url: string, init: { method: string; headers: Record<string, string>; body?: string }) => Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>;
   /** Her door: the line as a typed one would go, marked asked aloud. */
@@ -143,6 +153,8 @@ export interface HoldToTalk {
   release(source: Source): 'tap' | 'talk';
   /** Drop a press that has not been heard yet: microphone off, nothing sent. */
   cancel(): void;
+  /** Whether a press here can become a talk at all. */
+  offered(): boolean;
 }
 
 export function createHoldToTalk(deps: TalkDeps): HoldToTalk {
@@ -158,6 +170,13 @@ export function createHoldToTalk(deps: TalkDeps): HoldToTalk {
   let lingering: Source | null = null;
   let generation = 0; // bumped when a hold starts or ends: older answers are dropped
   let take: Take | null = null;
+  // The generation the window's leaving ended while the microphone was being
+  // asked for: the system's permission dialog takes focus from the page.
+  let windowTook: number | null = null;
+  let toldAllowed = false; // "Microphone allowed. Hold again" is said once
+  // The page's one audio context, made inside a press (the page lets sound run
+  // only from a gesture) and idled between talks.
+  let audio: { ctx: AudioContextLike; ready: Promise<void> } | null = null;
   let hearsUntil = 0; // she could hear when last asked, until this time
   const phaseNow = (): TalkPhase => (held !== 'none' ? held : after === 'none' ? 'idle' : after);
   let snapshot: TalkView = { phase: 'idle', heard, note };
@@ -178,8 +197,8 @@ export function createHoldToTalk(deps: TalkDeps): HoldToTalk {
   };
 
   // While a press is live the window leaving ends it — blur, hidden, unloaded.
-  const leave = () => cancel();
-  const leaveIfHidden = () => { if (deps.doc.hidden) cancel(); };
+  const leave = () => cancel('window');
+  const leaveIfHidden = () => { if (deps.doc.hidden) cancel('window'); };
   let watching = false;
   const watch = (on: boolean) => {
     if (on === watching) return;
@@ -211,29 +230,48 @@ export function createHoldToTalk(deps: TalkDeps): HoldToTalk {
     emit();
   };
 
+  /** Wake the audio context — inside the press, the one moment the page lets
+   *  it run. Made once, resumed at every press. */
+  function wakeAudio(): void {
+    try {
+      if (!audio) {
+        const ctx = deps.newAudioContext();
+        const ready = ctx.ready();
+        ready.catch(() => { audio = null; }); // the next press tries again
+        audio = { ctx, ready };
+      }
+      void audio.ctx.resume().catch(() => undefined);
+    } catch {
+      audio = null;
+    }
+  }
+  const idleAudio = () => { void audio?.ctx.suspend().catch(() => undefined); };
+
   async function openTake(): Promise<Take> {
     const devices = deps.mediaDevices();
     if (!devices?.getUserMedia) throw new Error('no microphone api');
+    const wake = audio;
+    if (!wake) throw new Error('no audio context');
+    await wake.ready;
     const stream = await devices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
     const stopTracks = () => { for (const t of stream.getTracks()) t.stop(); };
     try {
-      const ctx = deps.newAudioContext();
-      if (ctx.state === 'suspended') void ctx.resume().catch(() => undefined);
+      const { ctx } = wake;
       const source = ctx.createMediaStreamSource(stream);
-      // A ScriptProcessor: deprecated, but it runs in every webview we ship in
-      // without serving a worklet file, and the clip is one minute at most.
-      const processor = ctx.createScriptProcessor(4096, 1, 1);
+      // An AudioWorklet taps the samples off the page's render thread, which
+      // the avatar's renderer shares: a stall there would chop the speech.
+      const tap = ctx.createTap();
       const chunks: Float32Array[] = [];
-      processor.onaudioprocess = (e) => { chunks.push(new Float32Array(e.inputBuffer.getChannelData(0))); };
-      source.connect(processor);
-      processor.connect(ctx.destination);
+      tap.port.onmessage = (e) => { chunks.push(e.data); };
+      source.connect(tap);
+      tap.connect(ctx.destination);
       return {
         stop() {
-          processor.onaudioprocess = null;
+          tap.port.onmessage = null;
           source.disconnect();
-          processor.disconnect();
+          tap.disconnect();
           stopTracks();
-          void ctx.close().catch(() => undefined);
+          idleAudio();
           const samples = new Float32Array(chunks.reduce((n, c) => n + c.length, 0));
           let at = 0;
           for (const c of chunks) { samples.set(c, at); at += c.length; }
@@ -306,7 +344,17 @@ export function createHoldToTalk(deps: TalkDeps): HoldToTalk {
       emit();
       return;
     }
-    if (mine !== generation) { opened.stop(); return; } // let go (or hidden) while it was opening
+    if (mine !== generation) {
+      opened.stop(); // let go (or hidden) while it was opening
+      // The permission dialog took the page's focus and ended this press: the
+      // first allow is a press the person must make again — told once.
+      if (windowTook === mine && !toldAllowed) {
+        toldAllowed = true;
+        say(WORDS.micAllowed);
+        emit();
+      }
+      return;
+    }
     take = opened;
     held = 'listening';
     startTimer('cap', MAX_SPEECH_SECONDS * 1000, () => {
@@ -370,10 +418,11 @@ export function createHoldToTalk(deps: TalkDeps): HoldToTalk {
   }
 
   function press(by: Source): void {
-    if (source !== null) return; // one press at a time
+    if (source !== null || !deps.offered()) return; // one press at a time
     lingering = null;
     source = by;
     held = 'pressed';
+    wakeAudio();
     watch(true);
     startTimer('hold', HOLD_MS, () => { void beginHold(); });
     emit();
@@ -387,6 +436,7 @@ export function createHoldToTalk(deps: TalkDeps): HoldToTalk {
     if (source !== by) return 'tap';
     if (held === 'pressed') {
       unpress();
+      idleAudio();
       emit();
       return 'tap';
     }
@@ -397,17 +447,20 @@ export function createHoldToTalk(deps: TalkDeps): HoldToTalk {
     // Refused, or the microphone still opening: nothing is heard.
     generation++;
     unpress();
+    idleAudio();
     emit();
     return 'talk';
   }
 
-  function cancel(): void {
+  function cancel(by: 'window' | 'other' = 'other'): void {
     if (source === null) return;
+    if (by === 'window' && held === 'opening') windowTook = generation;
     if (held !== 'pressed') generation++; // a press that never became a hold leaves a hearing alone
     const t = take;
     take = null;
     t?.stop();
     unpress();
+    idleAudio();
     emit();
   }
 
@@ -419,7 +472,8 @@ export function createHoldToTalk(deps: TalkDeps): HoldToTalk {
     },
     press,
     release,
-    cancel,
+    cancel: () => cancel(),
+    offered: deps.offered,
   };
 }
 

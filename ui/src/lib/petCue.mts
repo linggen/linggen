@@ -22,3 +22,11 @@ export function withoutAnswered<S extends { questionId?: string }>(speech: S | n
   void _gone;
   return rest as S;
 }
+
+/** Whether a line of hers is voiced on this surface: her cue says so (it is not
+ *  muted, and the person cannot see the line where it shows) and the person is
+ *  not speaking to her this moment (a hold to talk is on, lib/yinyueTalk.ts) —
+ *  then the words show and no audio is made. The page's one rule for sound. */
+export function voicedHere(cueVoice: unknown, personTalking: boolean): boolean {
+  return cueVoice !== false && !personTalking;
+}

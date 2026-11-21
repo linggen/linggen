@@ -7,15 +7,19 @@
 import { useSyncExternalStore } from 'react';
 import { useUiStore } from '../stores/uiStore';
 import { askYinyue } from './askYinyue';
-import { hush } from './eventHandlers/yinyue';
-import { createHoldToTalk, talkLabel, type AudioContextLike, type TalkView } from './holdToTalk.mts';
+import { hush, setPersonTalking } from './eventHandlers/yinyue';
+import { createHoldToTalk, talkLabel, type TalkView } from './holdToTalk.mts';
+import { newSpeechContext } from './speechTap';
+
+/** A stage frame (`?pet=1&stage=1`, a scene that stands her in a place) is never
+ *  granted the microphone — the app's gate and the frame's own policy deny it —
+ *  so holding her there is not offered: a press stays a tap. */
+const IN_STAGE_FRAME = new URLSearchParams(window.location.search).get('stage') === '1';
 
 export const talk = createHoldToTalk({
   mediaDevices: () => navigator.mediaDevices,
-  newAudioContext: () => {
-    const Ctor = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-    return new Ctor() as unknown as AudioContextLike; // the few members the recorder uses
-  },
+  newAudioContext: newSpeechContext,
+  offered: () => !IN_STAGE_FRAME,
   fetch: (url, init) => window.fetch(url, init),
   sendLine: (text) => askYinyue(text, true),
   cutOff: hush,
@@ -35,7 +39,10 @@ export const talk = createHoldToTalk({
 const HOLDING = new Set(['opening', 'listening', 'refused']);
 talk.subscribe(() => {
   const root = document.documentElement;
-  if (HOLDING.has(talk.view().phase)) root.dataset.talking = '1';
+  const holding = HOLDING.has(talk.view().phase);
+  // While held, a line of hers is shown and not voiced (eventHandlers/yinyue.ts).
+  setPersonTalking(holding);
+  if (holding) root.dataset.talking = '1';
   else delete root.dataset.talking;
 });
 
