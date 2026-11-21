@@ -271,7 +271,7 @@ impl Tools {
                 skill.name, skill.name
             );
         }
-        if self.kept_out_of_day(skill).await {
+        if self.kept_out_of_day(skill) {
             anyhow::bail!(
                 "refused: {} keeps a session of its own; it is not taken up in the day's session.",
                 skill.name

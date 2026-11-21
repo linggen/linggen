@@ -143,7 +143,7 @@ impl crate::engine::tools::Tools {
     /// `AgentEngine::enter_place`), and so does the Skill tool before it
     /// reads the SKILL.md out. With no manager to read the setting from, a
     /// day keeps it out.
-    pub(crate) async fn kept_out_of_day(&self, skill: &crate::engine::skill::Skill) -> bool {
+    pub(crate) fn kept_out_of_day(&self, skill: &crate::engine::skill::Skill) -> bool {
         let day_on = self.get_manager().map(|m| m.daily_session());
         kept_out(skill, self.session_id.as_deref(), day_on)
     }

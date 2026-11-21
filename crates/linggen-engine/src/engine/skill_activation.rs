@@ -68,7 +68,7 @@ impl AgentEngine {
         mode: ActivationMode,
     ) -> ActivationOutcome {
         // A day's session never takes up a private app, whoever asks.
-        if self.tools.builtins.kept_out_of_day(&skill).await {
+        if self.tools.builtins.kept_out_of_day(&skill) {
             tracing::info!(
                 "[day] {} keeps a session of its own: not taken up",
                 skill.name
