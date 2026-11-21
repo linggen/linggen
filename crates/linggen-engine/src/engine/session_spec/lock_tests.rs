@@ -10,6 +10,7 @@ const WRITES: &[&str] = &[
     ".mission_allowed_tools",
     ".consumer_allowed_tools",
     ".consumer_allowed_skills",
+    ".skill_allowed_tools",
     ".interactive",
     ".ask_caller",
     ".session_creator",
@@ -23,13 +24,13 @@ const NARROWS: &[&str] = &["narrow_for_creator(", "scope_to_app("];
 const LISTED: &[(&str, usize, &str)] = &[
     (
         "crates/linggen-engine/src/engine/turn_place/bind.rs",
-        5,
-        "a turn's place narrows the turn and puts it back",
+        6,
+        "a turn's place narrows the turn and puts it back (the skill's tool scope among it)",
     ),
     (
         "crates/linggen-engine/src/engine/skill_activation.rs",
-        1,
-        "a skill taken up scopes the skills it may name",
+        3,
+        "a skill taken up scopes the skills it may name and the tools it may use (`skill_allowed_tools`, two writers)",
     ),
     (
         "crates/linggen-engine/src/engine/tools/delegation.rs",
@@ -48,8 +49,8 @@ const LISTED: &[(&str, usize, &str)] = &[
     ),
     ("crates/linggen-engine/src/engine/tool_exec.rs", 1, "a test"),
     ("crates/linggen-engine/src/engine/permission/ceiling_tests.rs", 1, "a test"),
-    ("crates/linggen-engine/src/engine/mod.rs", 2, "tests"),
-    ("crates/linggen-engine/src/engine/types.rs", 1, "a test"),
+    ("crates/linggen-engine/src/engine/mod.rs", 4, "tests"),
+    ("crates/linggen-engine/src/engine/types.rs", 3, "tests"),
     (
         "crates/linggen-engine/src/engine/prompt/notes.rs",
         4,

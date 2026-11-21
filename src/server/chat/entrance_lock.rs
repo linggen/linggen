@@ -57,3 +57,86 @@ fn the_delivery_door_is_called_only_for_an_address_that_is_not_hers() {
     assert!(her < delivered, "her address is sent to her own door before any delivery");
 }
 
+const ENTRANCE: &str = "crates/linggen-engine/src/engine/turn_place/entrance.rs";
+
+/// Where a turn is set up outside the entrance, and why: each is a thing
+/// that is not a session turn. None of them calls `open_session_turn`.
+const OUTSIDE_THE_ENTRANCE: &[(&str, &str)] = &[
+    (
+        "src/server/chat/light.rs",
+        "a light reply: no tools and no loop; `reply_now` begins a turn for its language alone",
+    ),
+    (
+        "crates/linggen-engine/src/engine/tools/delegation.rs",
+        "a Task child: a fresh engine its parent builds and drops, never a session's",
+    ),
+    (
+        "src/server/chat/admin.rs",
+        "the prompt export: sets an engine up, runs no loop",
+    ),
+];
+
+/// Doors that start the agent loop in a turn they open themselves, through
+/// the entrance. (`handler.rs` opens the turn of the doors that share
+/// `run_session_turn`.)
+const OPEN_THEIR_OWN_TURN: &[&str] = &[
+    "src/server/chat/plan_flow.rs",
+    "crates/linggen-engine/src/extensions/missions/scheduler.rs",
+    "src/server/mcp_agent.rs",
+];
+
+/// Files that start the loop inside a turn `run_session_turn` opened: they
+/// never open one (a second opening would put back what the first set).
+const INSIDE_AN_OPENED_TURN: &[&str] = &[
+    "src/server/chat/cloud_gate.rs",
+    "src/server/chat/runtime.rs",
+    "src/server/chat/skill_dispatch.rs",
+    "src/server/chat/structured.rs",
+];
+
+fn files_with(needles: &[&str]) -> Vec<String> {
+    let mut out: Vec<String> = production_code(&["src", "crates/linggen-engine/src"])
+        .into_iter()
+        .filter(|(rel, _)| !rel.ends_with("tests.rs") && rel != "src/server/chat/entrance_lock.rs")
+        .filter(|(_, code)| needles.iter().any(|n| code.contains(n)))
+        .map(|(rel, _)| rel)
+        .collect();
+    out.sort();
+    out
+}
+
+/// A turn is begun in one place — the entrance — and by the light reply.
+/// A new caller of `begin_turn` fails here until it goes through
+/// `open_session_turn` or is listed with its reason.
+#[test]
+fn a_turn_is_begun_by_the_entrance_and_nowhere_else() {
+    let mut allowed: Vec<&str> = vec![ENTRANCE, "src/server/chat/light.rs"];
+    allowed.sort();
+    assert_eq!(files_with(&[concat!(".begin", "_turn(")]), allowed);
+}
+
+/// Every door that starts the loop opens its turn through the entrance, or
+/// is listed with its reason: a new door that starts the loop fails here.
+#[test]
+fn a_door_that_starts_the_loop_opens_its_turn_through_the_entrance() {
+    let mut loops = // Written in two halves: the loop lock (`turn_place/lock_tests.rs`) counts
+    // the text, and this file is not a caller.
+    files_with(&[concat!(".run_agent", "_loop("), concat!("run_loop_with", "_tracking(")]);
+    let mut listed: Vec<&str> = OPEN_THEIR_OWN_TURN
+        .iter()
+        .chain(INSIDE_AN_OPENED_TURN)
+        .copied()
+        .chain(std::iter::once("crates/linggen-engine/src/engine/tools/delegation.rs"))
+        .collect();
+    loops.sort();
+    listed.sort();
+    assert_eq!(loops, listed, "a file starts the loop that no list names");
+    let opening = files_with(&["open_session_turn("]);
+    let mut want: Vec<&str> = OPEN_THEIR_OWN_TURN.to_vec();
+    want.extend(["src/server/chat/handler.rs", ENTRANCE]);
+    want.sort();
+    assert_eq!(opening, want, "who opens a session turn");
+    for (door, why) in OUTSIDE_THE_ENTRANCE {
+        assert!(!why.is_empty() && !opening.iter().any(|f| f == door), "{door} stays outside: {why}");
+    }
+}
