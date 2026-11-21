@@ -1,0 +1,26 @@
+{
+  "contract": "What is a person's own file inside an installed skill, and what an update must do with it. Every installer of a skill runs these cases: the engine's marketplace update (crates/linggen-engine/src/extensions/marketplace.rs), scripts/install-skill.mjs, and pulse/install.sh. This file is kept byte-identical in both repos (linggen/crates/linggen-engine/src/extensions/user_state_cases.json and skills/tests/user-state-cases.json): each repo's test pins the same sha256, so a change here is made in both places in one go.",
+  "skill_md": "---\nname: demo\ndescription: d\ncloud:\n  save: [saves/game.json]\n  skip: [pics]\n---\n",
+  "kept": [
+    "config.json",
+    "data/x.json",
+    "data/deep/er/y.json",
+    "state/x.json",
+    "sessions/x.json",
+    "saves/game.json",
+    "pics/p.json",
+    "a.local.json",
+    "scripts/b.local.js"
+  ],
+  "marker": ".installed",
+  "shipped": [
+    "scripts/a.js",
+    "scripts/data/table.js",
+    "scripts/config.json",
+    "docs/sessions/log.md",
+    "docs/state.md"
+  ],
+  "dropped": [
+    "scripts/old.js"
+  ]
+}

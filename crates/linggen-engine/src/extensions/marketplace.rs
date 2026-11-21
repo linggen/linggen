@@ -456,26 +456,38 @@ fn install_script(skill_dir: &Path) -> Result<()> {
     super::skills::run_install_script(skill_dir).map(|_| ())
 }
 
-/// What of an installed skill is the person's, kept across an update: its
-/// `data/`, and every path its manifest keeps as state (`cloud.save`) that
-/// stays inside the skill folder. Outermost first; a path inside another is
-/// carried with it.
+/// Root-level names that are a skill's own state, in every skill. The same
+/// list is written in `skills/scripts/install-skill.mjs` and
+/// `skills/pulse/install.sh`; `user_state_cases.json` is run by all three.
+const STATE_ROOTS: &[&str] = &["data", "state", "sessions", "config.json", ".installed"];
+
+/// A file anywhere in a skill named `*.local.*` is the person's.
+fn is_local_file(name: &std::ffi::OsStr) -> bool {
+    name.to_string_lossy().contains(".local.")
+}
+
+/// THE rule for what of an installed skill is the person's, kept across an
+/// update: the root names above, every path its manifest declares as saved
+/// or skipped (`cloud.save`, `cloud.skip`) that stays inside the skill
+/// folder, and every `*.local.*` file. Outermost first; a path inside another
+/// is carried with it.
 fn state_paths(skill_dir: &Path) -> Vec<PathBuf> {
-    let declared =
-        super::skills::load_skill_from_path(skill_dir, super::skills::SkillSource::Global)
-            .ok()
-            .flatten()
-            .and_then(|skill| skill.cloud)
-            .and_then(|cloud| cloud.save)
-            .map(|save| {
-                save.paths()
-                    .into_iter()
-                    .map(PathBuf::from)
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-    let mut paths: Vec<PathBuf> = std::iter::once(PathBuf::from("data"))
+    let cloud = super::skills::load_skill_from_path(skill_dir, super::skills::SkillSource::Global)
+        .ok()
+        .flatten()
+        .and_then(|skill| skill.cloud)
+        .unwrap_or_default();
+    let declared = cloud
+        .save
+        .iter()
+        .flat_map(|save| save.paths())
+        .chain(cloud.skip.iter().map(String::as_str))
+        .map(PathBuf::from);
+    let mut paths: Vec<PathBuf> = STATE_ROOTS
+        .iter()
+        .map(PathBuf::from)
         .chain(declared)
+        .chain(local_files(skill_dir))
         .filter(|p| {
             p.components().count() > 0 && p.components().all(|c| matches!(c, Component::Normal(_)))
         })
@@ -488,6 +500,29 @@ fn state_paths(skill_dir: &Path) -> Vec<PathBuf> {
         }
     }
     outermost
+}
+
+/// Every `*.local.*` file under the skill folder, relative to it. Does not
+/// look inside the root state folders (`data/` can be large, and is carried
+/// whole).
+fn local_files(skill_dir: &Path) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    let mut pending = vec![PathBuf::new()];
+    while let Some(rel) = pending.pop() {
+        let Ok(entries) = fs::read_dir(skill_dir.join(&rel)) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let (name, child) = (entry.file_name(), rel.join(entry.file_name()));
+            let is_dir = entry.file_type().is_ok_and(|t| t.is_dir());
+            if is_dir && !(rel.as_os_str().is_empty() && STATE_ROOTS.iter().any(|r| name == *r)) {
+                pending.push(child);
+            } else if !is_dir && is_local_file(&name) {
+                found.push(child);
+            }
+        }
+    }
+    found
 }
 
 /// Move the installed skill's state into the new copy, over the archive's
@@ -1267,6 +1302,133 @@ mod tests {
         assert_eq!(fs::read_to_string(dir.join("config.json")).unwrap(), "mine");
         assert!(dir.join("data/state.json").is_file());
         assert!(!dir.join("scratch.txt").exists(), "only state is carried");
+    }
+
+    // ---- what is the person's own: the cases every installer runs ----
+
+    /// The cases every installer of a skill runs (the skills repo runs the same
+    /// file against `install-skill.mjs` and `pulse/install.sh`). Held
+    /// byte-identical there by this pin: change the file in both repos, then
+    /// both pins.
+    const USER_STATE_CASES: &str = include_str!("user_state_cases.json");
+    const USER_STATE_CASES_SHA256: &str =
+        "49fd47c8e18f5cc06313b101a719dee704a05801d7647cbe880d7af548d4c1fa";
+
+    #[test]
+    fn the_user_state_cases_are_the_file_the_skills_repo_runs() {
+        use sha2::{Digest, Sha256};
+        let sha: String = Sha256::digest(USER_STATE_CASES.as_bytes())
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        assert_eq!(
+            sha, USER_STATE_CASES_SHA256,
+            "user_state_cases.json changed: copy it to skills/tests/user-state-cases.json and set the sha256 in both tests"
+        );
+    }
+
+    fn case_list(cases: &serde_json::Value, key: &str) -> Vec<String> {
+        cases[key]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect()
+    }
+
+    /// v2 is longer than v1 (same as the skills repo's test).
+    fn shipped_text(rel: &str, version: &str) -> String {
+        let label = if version == "v1" { "v1" } else { "v2, a later release" };
+        if rel.ends_with(".json") {
+            format!("{{\"shipped\": \"{rel} {label}\"}}\n")
+        } else {
+            format!("// {rel} {label}\n")
+        }
+    }
+
+    fn mine_text(rel: &str) -> String {
+        format!("{{\n  \"mine\": \"{rel}\"\n}}\n")
+    }
+
+    /// A release as a repo zip: SKILL.md with the declaration, the shipped
+    /// files, every kept path shipped too (a seed: the person's copy still
+    /// wins), and the dropped files only in v1.
+    fn release_zip(dir: &Path, cases: &serde_json::Value, version: &str) -> PathBuf {
+        let mut files: Vec<(String, String)> = vec![(
+            "SKILL.md".into(),
+            format!("{}body {version}\n", cases["skill_md"].as_str().unwrap()),
+        )];
+        let mut rels = case_list(cases, "shipped");
+        rels.extend(case_list(cases, "kept"));
+        rels.push(cases["marker"].as_str().unwrap().to_string());
+        if version == "v1" {
+            rels.extend(case_list(cases, "dropped"));
+        }
+        files.extend(rels.into_iter().map(|rel| {
+            let text = shipped_text(&rel, version);
+            (rel, text)
+        }));
+        let named: Vec<(String, String)> = files
+            .into_iter()
+            .map(|(rel, text)| (format!("skills-main/demo/{rel}"), text))
+            .collect();
+        let borrowed: Vec<(&str, &str)> =
+            named.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
+        write_zip_with(dir, &borrowed)
+    }
+
+    /// The same installed folder, with the same person's files in it, comes
+    /// through an update with those files unchanged.
+    #[test]
+    fn an_update_keeps_every_file_of_the_persons() {
+        let cases: serde_json::Value = serde_json::from_str(USER_STATE_CASES).unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("skills/demo");
+        let (zips1, zips2) = (tmp.path().join("one"), tmp.path().join("two"));
+        fs::create_dir_all(&zips1).unwrap();
+        fs::create_dir_all(&zips2).unwrap();
+
+        install_named_from_zip(&release_zip(&zips1, &cases, "v1"), "demo", "skills", &dir).unwrap();
+        let (kept, shipped, dropped) = (
+            case_list(&cases, "kept"),
+            case_list(&cases, "shipped"),
+            case_list(&cases, "dropped"),
+        );
+        let marker = cases["marker"].as_str().unwrap();
+        for rel in &shipped {
+            assert_eq!(fs::read_to_string(dir.join(rel)).unwrap(), shipped_text(rel, "v1"), "first install: {rel}");
+        }
+        for rel in &kept {
+            let path = dir.join(rel);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, mine_text(rel)).unwrap();
+        }
+        fs::write(dir.join(marker), "the person's marker").unwrap();
+
+        install_named_from_zip(&release_zip(&zips2, &cases, "v2"), "demo", "skills", &dir).unwrap();
+
+        let mut wrong = Vec::new();
+        for rel in &kept {
+            match fs::read_to_string(dir.join(rel)) {
+                Ok(now) if now == mine_text(rel) => {}
+                Ok(_) => wrong.push(format!("kept {rel}: OVERWRITTEN")),
+                Err(_) => wrong.push(format!("kept {rel}: LOST")),
+            }
+        }
+        if fs::read_to_string(dir.join(marker)).ok().as_deref() != Some("the person's marker") {
+            wrong.push(format!("marker {marker}: changed"));
+        }
+        for rel in &shipped {
+            if fs::read_to_string(dir.join(rel)).ok().as_deref() != Some(shipped_text(rel, "v2").as_str()) {
+                wrong.push(format!("shipped {rel}: not updated"));
+            }
+        }
+        for rel in &dropped {
+            if dir.join(rel).exists() {
+                wrong.push(format!("dropped {rel}: left in place"));
+            }
+        }
+        assert!(wrong.is_empty(), "an update changed what it must not, or missed what it must: {wrong:#?}");
     }
 
     #[test]
