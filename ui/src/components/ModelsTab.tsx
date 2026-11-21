@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Eye, EyeOff, LogIn, LogOut, Plus, Star, Trash2 } from 'lucide-react';
 import type { AppConfig, ModelConfigUI, ModelHealthInfo, ModelMove, OllamaPsResponse } from '../types';
 import { UsageMeter } from './UsageMeter';
@@ -153,6 +153,21 @@ export const ModelsTab: React.FC<{
 
   const defaultModels = config.routing?.default_models ?? [];
 
+  // A sign-in that made another model the default: the page's copy of the
+  // chain follows (a later Save must not post the old one back) and one line
+  // says so.
+  const [signInLine, setSignInLine] = useState<string | null>(null);
+  // A sign-in ends minutes after its click: read the page as it is then.
+  const latest = useRef({ config, onChange });
+  latest.current = { config, onChange };
+  const adoptSignInDefault = async () => {
+    const made = await modelsApi.signedInDefault().catch(() => null);
+    if (!made) return;
+    const { config: now, onChange: change } = latest.current;
+    change({ ...now, routing: { ...now.routing, default_models: made.default_models } });
+    setSignInLine(made.line);
+  };
+
   // Runtime model list — includes built-ins the engine injects (Linggen
   // Cloud, ChatGPT) regardless of what's in the config file. Shown read-only
   // below so they can be starred as default.
@@ -167,7 +182,10 @@ export const ModelsTab: React.FC<{
   const handleLinggenLogin = async () => {
     setLinggenLoginBusy(true);
     try {
-      if (await accountApi.signIn()) refetchRuntimeModels();
+      if (await accountApi.signIn()) {
+        refetchRuntimeModels();
+        await adoptSignInDefault();
+      }
     } finally {
       setLinggenLoginBusy(false);
     }
@@ -232,6 +250,7 @@ export const ModelsTab: React.FC<{
         if (data.authenticated) {
           clearInterval(poll);
           setCodexAuthLoading(false);
+          adoptSignInDefault();
         }
       }, 2000);
       // Timeout after 5 min
@@ -410,6 +429,11 @@ export const ModelsTab: React.FC<{
           <h2 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-3">
             Built-in
           </h2>
+          {signInLine && (
+            <p data-testid="signed-in-default" className="mb-3 text-xs text-green-700 dark:text-green-400">
+              {signInLine}
+            </p>
+          )}
           <div className="space-y-2">
             {builtinModels.map((m) => {
               const modelIsDefault = isDefault(m.id);

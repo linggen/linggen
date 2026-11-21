@@ -89,7 +89,17 @@ export const account = {
 
 // ── Models, credentials, provider logins ────────────────────────────────
 
+/** GET /api/models/signed-in-default: the model a sign-in just made the
+ *  default, the one line that says so, and the chain to adopt; null when
+ *  the sign-in changed nothing. */
+export interface SignedInDefault {
+  model: string;
+  line: string;
+  default_models: string[];
+}
+
 export const modelsApi = {
+  signedInDefault: () => apiGet<SignedInDefault | null>('/api/models/signed-in-default'),
   health: () => apiGet<ModelHealthInfo[]>('/api/models/health'),
   ollamaStatus: () => apiGet<OllamaPsResponse>('/api/utils/ollama-status'),
   credentials: <T>() => apiGet<T>('/api/credentials'),
