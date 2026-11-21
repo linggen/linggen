@@ -111,11 +111,33 @@ pub(crate) async fn post_account_login(State(state): State<Arc<ServerState>>) ->
     Json(serde_json::json!({ "ok": true, "opened": opened, "url": url }))
 }
 
-/// GET /api/account/callback — browser redirect target. Verifies the
-/// single-use CSRF state, then stores the token in ~/.linggen/account.toml.
+/// GET /api/account/callback — browser redirect target: a verified return
+/// is the Linggen sign-in. The default model follows it when it could not
+/// run (`adopt_default_after_sign_in`).
 pub(crate) async fn get_account_callback(
+    State(state): State<Arc<ServerState>>,
     Query(params): Query<HashMap<String, String>>,
 ) -> impl IntoResponse {
+    if let Err(page) = accept_callback(params).await {
+        return page;
+    }
+    super::config::adopt_default_after_sign_in(&state, crate::config::SignIn::LinggenAccount).await;
+    // Signed in ⇒ this machine is reachable. Registering here is what makes
+    // "signed in on the web UI" and "online on the dashboard" the same fact;
+    // the relay supervisor picks up the new credential within 30s.
+    if let Err(e) = account::register_instance().await {
+        tracing::warn!("Signed in, but machine registration failed: {e}");
+    }
+    Html(
+        "<html><body><h2>Signed in!</h2><p>You can close this tab and return to the app.</p>\
+         <script>window.close()</script></body></html>"
+            .to_string(),
+    )
+}
+
+/// Verify the single-use CSRF state, then store the token in
+/// ~/.linggen/account.toml. The page to show when it did not work.
+async fn accept_callback(params: HashMap<String, String>) -> Result<(), Html<String>> {
     // Only the matching state spends the pending sign-in: a call with
     // another one changes nothing.
     let state_ok = {
@@ -130,28 +152,16 @@ pub(crate) async fn get_account_callback(
         matches
     };
     if !state_ok {
-        return fail_page("Security check failed (state mismatch or expired). Please try again.");
+        return Err(fail_page("Security check failed (state mismatch or expired). Please try again."));
     }
     let token = match params.get("token") {
         Some(t) if t.starts_with("usr_") => t.clone(),
-        _ => return fail_page("No valid token received."),
+        _ => return Err(fail_page("No valid token received.")),
     };
     // Best-effort profile fetch; sign-in succeeds even if it fails.
     let me = account::fetch_me(&token).await.unwrap_or_default();
-    if let Err(e) = account::save_account(&account::config_from_me(token, &me)) {
-        return fail_page(&format!("Could not save account: {e}"));
-    }
-    // Signed in ⇒ this machine is reachable. Registering here is what makes
-    // "signed in on the web UI" and "online on the dashboard" the same fact;
-    // the relay supervisor picks up the new credential within 30s.
-    if let Err(e) = account::register_instance().await {
-        tracing::warn!("Signed in, but machine registration failed: {e}");
-    }
-    Html(
-        "<html><body><h2>Signed in!</h2><p>You can close this tab and return to the app.</p>\
-         <script>window.close()</script></body></html>"
-            .to_string(),
-    )
+    account::save_account(&account::config_from_me(token, &me))
+        .map_err(|e| fail_page(&format!("Could not save account: {e}")))
 }
 
 fn fail_page(reason: &str) -> Html<String> {
@@ -209,7 +219,7 @@ mod callback_tests {
             created: Instant::now(),
         });
         let params = HashMap::from([("state".to_string(), "another".to_string())]);
-        let _ = get_account_callback(Query(params)).await;
+        let _ = accept_callback(params).await;
         let kept = PENDING_LOGIN.lock_ok().take().map(|p| p.csrf);
         assert_eq!(kept.as_deref(), Some("the-real-state"));
     }

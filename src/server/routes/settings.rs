@@ -13,7 +13,7 @@ use crate::server::api::agents::{
 };
 use crate::server::api::config::{
     codex_auth_logout, get_claude_auth_status, get_codex_auth_status, get_codex_usage, get_config_api,
-    get_credentials_api, get_models_health, start_codex_auth_login, update_config_api,
+    get_credentials_api, get_models_health, get_signed_in_default, start_codex_auth_login, update_config_api,
     update_credentials_api,
 };
 use crate::server::api::marketplace::{
@@ -53,6 +53,7 @@ pub(super) fn routes() -> Routes {
         .route("/api/memory/{verb}", post(api::memory::passthrough))
         .route("/api/skills", get(list_skills))
         .route("/api/models/health", get(get_models_health))
+        .route("/api/models/signed-in-default", get(get_signed_in_default))
         .route("/api/models/chatgpt/stay", post(api::config::set_chatgpt_stay))
         .route("/api/config", get(get_config_api).post(update_config_api))
         .route(

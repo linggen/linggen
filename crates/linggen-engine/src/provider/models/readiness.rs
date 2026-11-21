@@ -63,6 +63,20 @@ impl Readiness {
         }
     }
 
+    /// Whether what is missing is a sign-in or a key — a lack a person
+    /// mends — and not a limit that lifts by itself.
+    pub fn lacks_credentials(&self) -> bool {
+        matches!(
+            self.reason,
+            Some(
+                NotReady::NotSignedIn
+                    | NotReady::SignInExpired
+                    | NotReady::ProviderSignIn
+                    | NotReady::NoKey
+            )
+        )
+    }
+
     fn not(reason: NotReady, line: String) -> Self {
         Self {
             ready: false,
@@ -90,6 +104,32 @@ pub(crate) fn rfc3339(at: SystemTime) -> String {
 }
 
 impl ModelManager {
+    /// The models that can be used now, in the order one is offered:
+    /// the ones the person configured (by id), then the ChatGPT built-ins in
+    /// the catalog's order, then Linggen Cloud.
+    pub fn ready_in_order(&self) -> Vec<&ModelConfig> {
+        let catalog = super::chatgpt_catalog::builtin_ids();
+        let mut ready: Vec<&ModelConfig> = self
+            .list_models()
+            .into_iter()
+            .filter(|m| self.readiness(&m.id).is_some_and(|r| r.ready))
+            .collect();
+        ready.sort_by_key(|m| {
+            let place = catalog.iter().position(|id| *id == m.id);
+            (m.is_builtin, place.unwrap_or(usize::MAX), m.id.clone())
+        });
+        ready
+    }
+
+    /// What to do when a run cannot start: the first ready model, or the
+    /// line for when none is.
+    pub fn next_step(&self) -> String {
+        match self.ready_in_order().first() {
+            Some(m) => format!("{} is ready now; choose it as the model.", m.id),
+            None => NONE_READY.to_string(),
+        }
+    }
+
     /// Whether model `id` can be used now; `None` for a model this manager
     /// does not have.
     pub fn readiness(&self, id: &str) -> Option<Readiness> {
@@ -435,5 +475,50 @@ mod tests {
         let none = ModelManager::new_with_credentials(vec![hosted], &Default::default());
         assert_eq!(none.readiness_list(None)["note"], NONE_READY);
         crate::provider::models::note_healthy("readiness-limited");
+    }
+
+    /// With a model ready, the next step names it.
+    #[test]
+    fn the_next_step_names_a_ready_model() {
+        let _board = crate::provider::models::board_test_guard();
+        let keyed = model("next-step-ready", "acme", "https://api.acme.example/v1", Some("k"), None);
+        let models = ModelManager::new_with_credentials(vec![keyed], &Default::default());
+        assert_eq!(models.next_step(), "next-step-ready is ready now; choose it as the model.");
+    }
+
+    /// With no model ready the next step says what to do instead.
+    #[test]
+    fn the_next_step_with_no_model_ready_says_what_to_do() {
+        let _board = crate::provider::models::board_test_guard();
+        let models = ModelManager::new_with_credentials(vec![], &Default::default());
+        assert_eq!(models.next_step(), NONE_READY);
+    }
+
+    /// A missing sign-in or key is a lack a person mends; a limit that lifts
+    /// by itself is not.
+    #[test]
+    fn only_a_missing_sign_in_or_key_lacks_credentials() {
+        let now = SystemTime::now();
+        let limit = refusing(ProviderErrorKind::RateLimit, now + Duration::from_secs(60), None);
+        assert!(!limit.lacks_credentials());
+        assert!(!Readiness::ready().lacks_credentials());
+        let no_key = Readiness::not(NotReady::NoKey, String::new());
+        assert!(no_key.lacks_credentials());
+        let signed_out = Readiness::not(NotReady::ProviderSignIn, String::new());
+        assert!(signed_out.lacks_credentials());
+    }
+
+    /// The ready models come in one order: the person's own by id, the
+    /// built-ins after them.
+    #[test]
+    fn ready_models_come_in_one_order() {
+        let _board = crate::provider::models::board_test_guard();
+        let own = |id: &str| model(id, "acme", "https://api.acme.example/v1", Some("k"), None);
+        let models = ModelManager::new_with_credentials(
+            vec![own("order-zeta"), own("order-alpha")],
+            &Default::default(),
+        );
+        let ids: Vec<&str> = models.ready_in_order().iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(ids, ["order-alpha", "order-zeta"]);
     }
 }

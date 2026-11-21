@@ -99,6 +99,9 @@ pub struct AgentManager {
     /// `config.pet.muted`, readable without the config lock — every spoken
     /// line checks it.
     pet_muted: AtomicBool,
+    /// The model the latest sign-in made the default
+    /// (`adopt_default_after_sign_in`), until the default changes again.
+    signed_in_default: std::sync::Mutex<Option<String>>,
     /// `config.agent.daily_session`, readable without the config lock —
     /// her voice's fan-out, which is sync, reads it per line.
     daily_session: AtomicBool,
@@ -366,6 +369,7 @@ impl AgentManager {
                 agent_chat_sessions: std::sync::Mutex::new(HashSet::new()),
                 latest_session_by_agent: std::sync::Mutex::new(HashMap::new()),
                 pet_muted,
+                signed_in_default: std::sync::Mutex::new(None),
                 daily_session,
                 skills_generation: Default::default(),
                 met: met::MetGate::new(crate::paths::met_dir()),
@@ -864,6 +868,41 @@ impl AgentManager {
         self.config.read().await.clone()
     }
 
+    /// A sign-in was made: when the default model cannot run now and the
+    /// sign-in makes another ready, that one becomes the default (saved and
+    /// applied like any config change). Returns the new default, which a
+    /// page tells as one line (`signed_in_default`). A default that can run
+    /// stays. The decision is `model_choice::after_sign_in`; this applies it.
+    pub async fn adopt_default_after_sign_in(
+        &self,
+        signed_in: crate::config::SignIn,
+    ) -> Option<String> {
+        // Each sign-in tells its own outcome: an earlier line does not stand
+        // for this one.
+        *self.signed_in_default.lock_ok() = None;
+        let mut config = self.get_config_snapshot().await;
+        let chosen = {
+            let models = self.models.read().await;
+            let default = config.routing.default_models.first().map(String::as_str);
+            model_choice::after_sign_in(&models, default, signed_in)?
+        };
+        config.make_default(&chosen);
+        if let Err(e) = self.apply_config(config).await {
+            warn!("A sign-in made {chosen} ready, but the default could not be saved: {e}");
+            return None;
+        }
+        *self.signed_in_default.lock_ok() = Some(chosen.clone());
+        Some(chosen)
+    }
+
+    /// The model a sign-in made the default, while it still is the default
+    /// (`adopt_default_after_sign_in`): what a page tells in one line.
+    pub async fn signed_in_default(&self) -> Option<String> {
+        let made = self.signed_in_default.lock_ok().clone()?;
+        let config = self.config.read().await;
+        (config.routing.default_models.first() == Some(&made)).then_some(made)
+    }
+
     pub async fn apply_config(&self, new_config: Config) -> Result<()> {
         new_config.validate()?;
         // Write to disk first — if this fails, in-memory state remains unchanged.
@@ -1098,6 +1137,42 @@ mod tests {
         let native = crate::state_fs::sessions::SessionMeta::default();
         assert!(super::refuse_foreign_runtime(Some(&native)).is_ok());
         assert!(super::refuse_foreign_runtime(None).is_ok());
+    }
+
+    /// Rule: a sign-in whose model can run, with a default that cannot, makes
+    /// that model the default — saved, the chain behind it kept; a second
+    /// sign-in with the default now ready changes nothing.
+    #[tokio::test]
+    async fn a_sign_in_makes_the_first_ready_model_the_default() {
+        let _board = crate::provider::models::board_test_guard();
+        let dir = tempfile::tempdir().unwrap();
+        let keyed: crate::config::ModelConfig = serde_json::from_value(serde_json::json!({
+            "id": "adopt-keyed", "provider": "openai",
+            "url": "https://api.acme.example/v1", "model": "k", "api_key": "k",
+        }))
+        .unwrap();
+        let mut config = crate::config::Config::default();
+        config.models = vec![keyed];
+        // Fresh install: Linggen Cloud, which the test home is signed out of.
+        config.routing.default_models = vec![crate::provider::models::LINGGEN_CLOUD_MODEL_ID.into()];
+        let empty = || std::sync::Arc::new(crate::engine::test_registries::Empty);
+        let (manager, _events) = AgentManager::new(
+            config,
+            Some(dir.path().to_path_buf()),
+            empty(),
+            empty(),
+            empty(),
+            crate::engine::InterfaceMode::Web,
+        );
+        let said = manager.adopt_default_after_sign_in(crate::config::SignIn::Key).await;
+        assert_eq!(said.as_deref(), Some("adopt-keyed"));
+        assert_eq!(manager.signed_in_default().await.as_deref(), Some("adopt-keyed"));
+        let chain = manager.get_config_snapshot().await.routing.default_models;
+        assert_eq!(chain, ["adopt-keyed", crate::provider::models::LINGGEN_CLOUD_MODEL_ID]);
+        let saved = std::fs::read_to_string(crate::config::Config::runtime_config_path(Some(dir.path()))).unwrap();
+        assert!(saved.contains("adopt-keyed"), "{saved}");
+        assert_eq!(manager.adopt_default_after_sign_in(crate::config::SignIn::Key).await, None);
+        assert_eq!(manager.signed_in_default().await, None, "the earlier line does not stand");
     }
 
     #[test]

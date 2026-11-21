@@ -175,6 +175,15 @@ sign-in. The 2.5.1 key for the retired Claude sessions' default,
 no other default it becomes the star, so a person who ran only Claude keeps
 it (`Config::migrate_retired_claude_default`); it is never written again.
 
+**A sign-in makes work possible.** When a person signs in (ChatGPT, or the
+Linggen account) and the default cannot run now, the first model that sign-in
+makes ready becomes the default — one line says so where they signed in. A
+default that can run is never changed. One rule,
+`model_choice::after_sign_in`, applied by `AgentManager::adopt_default_after_sign_in`
+at each sign-in's end in the engine. A run that cannot start for want of a
+sign-in says so and names a ready model (`ModelManager::next_step`, the same
+readiness `agent_status op=models` shows), or that none is ready.
+
 ## Which model a turn runs on
 
 One rule, `engine/model_choice::resolve(asked, standing, rule)`, for a chat turn, the companion's turn, a mission's run and a delegated run:

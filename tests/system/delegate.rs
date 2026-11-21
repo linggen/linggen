@@ -382,3 +382,34 @@ async fn a_message_handed_between_agents_cannot_read_a_secret_file() {
     let shown = w.model.calls_of(Agent::Yinyue).iter().any(|c| c.body.to_string().contains(SECRET_LINE));
     assert!(!shown && !shown_the_secret(&w), "the handed turn was shown the secret file");
 }
+
+/// A hand-off whose default model cannot run (Linggen Cloud, no linggen.dev
+/// sign-in — the fresh install's) says why and the one next step, naming a
+/// model that is ready — the one `agent_status op=models` marks ready.
+#[tokio::test]
+async fn a_hand_off_whose_default_cannot_run_names_a_ready_model() {
+    let w = World::start(Setup { default_model: Some("deepseek-flash"), ..Setup::default() }).await;
+    let ran = w.api.post("/mcp", agent_run(json!({"prompt": "Say done."}))).await;
+    let said = ran["result"]["content"][0]["text"].as_str().unwrap_or_default().to_string();
+    assert_eq!(ran["result"]["isError"], true, "{ran}");
+    assert!(said.contains("Not signed in to linggen.dev for model 'deepseek-flash'"), "{said}");
+    let models = json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+        "params": {"name": "agent_status", "arguments": {"op": "models"}}});
+    let models = w.api.post("/mcp", models).await;
+    let models: Value = serde_json::from_str(models["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    let ready: Vec<String> = models["models"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| m["ready"] == true)
+        .map(|m| m["id"].as_str().unwrap().to_string())
+        .collect();
+    assert!(!ready.is_empty(), "{models}");
+    let named = said
+        .split(" is ready now; choose it as the model.")
+        .next()
+        .and_then(|before| before.rsplit(' ').next())
+        .unwrap_or_default();
+    assert!(said.contains(" is ready now; choose it as the model."), "{said}");
+    assert!(ready.iter().any(|id| id == named), "named {named:?}, ready {ready:?}: {said}");
+}

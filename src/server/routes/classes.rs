@@ -157,6 +157,7 @@ pub(crate) const CLASSES: &[(&str, &str, RouteClass)] = &[
     ("GET", "/api/auth/codex/usage", At(Admin)),
     ("POST", "/api/auth/codex/login", At(Admin)),
     ("POST", "/api/models/chatgpt/stay", At(Admin)),
+    ("GET", "/api/models/signed-in-default", At(Admin)),
     ("POST", "/api/auth/codex/logout", At(Admin)),
     ("GET", "/api/auth/claude/status", At(Admin)),
     ("POST", "/api/skills/reload", At(Admin)),

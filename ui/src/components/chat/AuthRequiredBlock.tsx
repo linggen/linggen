@@ -1,6 +1,6 @@
 import React from 'react';
 import { MarkdownContent } from './MarkdownContent';
-import { providerAuth } from '../../lib/endpoints';
+import { modelsApi, providerAuth } from '../../lib/endpoints';
 
 type LoginState = 'idle' | 'waiting' | 'done';
 
@@ -38,6 +38,8 @@ export const AuthRequiredBlock: React.FC<{
   message: string;
 }> = ({ provider, message }) => {
   const [state, setState] = React.useState<LoginState>('idle');
+  // The one line a sign-in leaves when it made another model the default.
+  const [defaultLine, setDefaultLine] = React.useState<string | null>(null);
   const pollRef = React.useRef<ReturnType<typeof setInterval> | null>(null);
   const flow = LOGIN_FLOWS[provider];
 
@@ -64,6 +66,7 @@ export const AuthRequiredBlock: React.FC<{
         if (flow.isDone(data)) {
           if (pollRef.current) clearInterval(pollRef.current);
           setState('done');
+          modelsApi.signedInDefault().then(made => setDefaultLine(made?.line ?? null)).catch(() => {});
         }
       } catch { /* keep polling */ }
     }, 2000);
@@ -83,7 +86,7 @@ export const AuthRequiredBlock: React.FC<{
           {flow ? (
             state === 'done' ? (
               <div className="text-green-700 dark:text-green-400">
-                Signed in — send your message again.
+                Signed in{defaultLine ? `. ${defaultLine}` : ''} — send your message again.
               </div>
             ) : (
               <button

@@ -627,6 +627,13 @@ impl Config {
             )
     }
 
+    /// Make `id` the default model: first in the chain, the models that were
+    /// there kept after it as fallbacks, `id` never twice.
+    pub fn make_default(&mut self, id: &str) {
+        self.routing.default_models.retain(|m| m != id);
+        self.routing.default_models.insert(0, id.to_string());
+    }
+
     /// Upgrade from 2.5.1, kept for safe operation: the retired Claude
     /// sessions' default becomes the default model when the config named no
     /// other, so a person who ran only Claude keeps working on it — natively —
@@ -1109,6 +1116,19 @@ mod tests {
             toml::to_string(&empty).unwrap(),
             toml::to_string(&RoutingConfig::default()).unwrap()
         );
+    }
+
+    /// A model made the default goes first; the chain keeps the rest, once.
+    #[test]
+    fn make_default_puts_a_model_first_and_keeps_the_rest() {
+        let mut config = Config::default();
+        config.routing.default_models = vec!["a".into(), "b".into()];
+        config.make_default("c");
+        assert_eq!(config.routing.default_models, ["c", "a", "b"]);
+        config.make_default("b");
+        assert_eq!(config.routing.default_models, ["b", "c", "a"]);
+        config.make_default("b");
+        assert_eq!(config.routing.default_models, ["b", "c", "a"]);
     }
 
     // ---- Config::validate tests ----

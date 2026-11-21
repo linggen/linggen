@@ -297,6 +297,44 @@ pub(crate) async fn reload_models(state: &std::sync::Arc<crate::server::ServerSt
     crate::server::rtc::proxy_room::reapply_proxy_models(state).await;
 }
 
+/// A sign-in was made: the default model follows it when it could not run
+/// (the rule is `model_choice::after_sign_in`; every sign-in's end calls
+/// this). The models are rebuilt by the config change, so a room's proxy
+/// models are put back.
+pub(crate) async fn adopt_default_after_sign_in(
+    state: &std::sync::Arc<crate::server::ServerState>,
+    signed_in: crate::config::SignIn,
+) {
+    if state.manager.adopt_default_after_sign_in(signed_in).await.is_some() {
+        crate::server::rtc::proxy_room::reapply_proxy_models(state).await;
+    }
+}
+
+/// How long a page waits, after a ChatGPT sign-in shows, for its end to
+/// finish choosing the default.
+const SIGN_IN_SETTLE: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// GET /api/models/signed-in-default — the model the latest sign-in made
+/// the default, with the one line to tell it and the chain to adopt; null
+/// when it made none (or the default has moved since).
+pub(crate) async fn get_signed_in_default(
+    State(state): State<std::sync::Arc<crate::server::ServerState>>,
+) -> impl IntoResponse {
+    let waiting_since = std::time::Instant::now();
+    while state.codex_login_task.lock().await.is_some() && waiting_since.elapsed() < SIGN_IN_SETTLE {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    let Some(model) = state.manager.signed_in_default().await else {
+        return Json(serde_json::Value::Null);
+    };
+    let chain = state.manager.get_config_snapshot().await.routing.default_models;
+    Json(serde_json::json!({
+        "model": model,
+        "line": crate::engine::model_choice::made_default_line(&model),
+        "default_models": chain,
+    }))
+}
+
 // ---------------------------------------------------------------------------
 // ChatGPT OAuth API — login, status, logout
 // ---------------------------------------------------------------------------
@@ -359,6 +397,7 @@ pub(crate) async fn start_codex_auth_login(
                 // Rebuild ModelManager so it picks up the fresh token
                 reload_models(&state_for_task).await;
                 tracing::info!("Reloaded models after ChatGPT OAuth login");
+                adopt_default_after_sign_in(&state_for_task, crate::config::SignIn::ChatGpt).await;
                 // A fresh sign-in reads the catalog now, in the background.
                 crate::server::background::refresh_chatgpt_catalog(state_for_task.clone(), true);
             }
