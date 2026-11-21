@@ -86,6 +86,9 @@ pub struct Setup {
     /// Bind the engine to every address (`--host 0.0.0.0`), so a test can
     /// reach it from this machine's own LAN address, as a phone does.
     pub lan: bool,
+    /// `routing.default_models` saved as this one model before the engine
+    /// starts (the fixture's is `fake-ling`); `None` leaves the fixture's.
+    pub default_model: Option<&'static str>,
     /// `agent.daily_session` saved in the config before the engine starts;
     /// `None` leaves the engine's default.
     pub daily_session: Option<bool>,
@@ -124,6 +127,15 @@ fn save_daily_session(home: &Home, on: bool) {
     std::fs::write(home.config_path(), config).expect("config");
 }
 
+/// Write `routing.default_models = [model]` over the fixture's.
+fn save_default_model(home: &Home, model: &str) {
+    const FIXTURE: &str = "default_models = [\"fake-ling\"]";
+    let config = std::fs::read_to_string(home.config_path()).expect("config");
+    assert!(config.contains(FIXTURE), "the fixture's config has no default model line");
+    let config = config.replacen(FIXTURE, &format!("default_models = [\"{model}\"]"), 1);
+    std::fs::write(home.config_path(), config).expect("config");
+}
+
 impl World {
     pub async fn start(setup: Setup) -> Self {
         Self::start_with_home(setup, |_| {}).await
@@ -154,6 +166,9 @@ impl World {
             }
             if let Some(on) = setup.daily_session {
                 save_daily_session(&home, on);
+            }
+            if let Some(model) = setup.default_model {
+                save_default_model(&home, model);
             }
             let config = std::fs::read_to_string(home.config_path()).expect("config");
             guard::config_text(&config);
