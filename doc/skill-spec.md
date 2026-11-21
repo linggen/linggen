@@ -149,6 +149,16 @@ Three groups of fields. Standard fields work across tools; the others are extens
 | `requires` | External dependencies to resolve at install |
 | `renamed-from` | Slugs this skill used to be called (see "Renaming a skill") |
 
+## What an update keeps
+
+A skill's directory is replaced on every install, except the person's own
+files, which come through unchanged: `data/`, `state/`, `sessions/`,
+`config.json`, `.installed`, the paths of `cloud.save` and `cloud.skip`, and
+any file named `*.local.*`. The rule is written once per repo (the engine's
+`marketplace.rs` `state_paths`; the skills repo's `install-skill.mjs` and
+`pulse/install.sh`) and held together by `extensions/user_state_cases.json`,
+the same file as `skills/tests/user-state-cases.json`, run by each.
+
 ## Renaming a skill
 
 A skill's directory is replaced on every install, but its `data/` belongs to
