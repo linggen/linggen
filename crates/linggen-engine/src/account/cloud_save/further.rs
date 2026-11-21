@@ -28,6 +28,10 @@
 //! what reads the same at every version (2026-11-12: scenes done before the
 //! save's version — a save only migrated first lost a further one).
 //! `rise` marks the entries whose move up is a milestone ([`Rule::rose`]).
+//!
+//! The rule is read twice, here and by the phone (linggen-mobile `lingjing_further.dart`). One file of cases, owned by
+//! the skill (skills lingjing/tests/further-cases.json), is run by both, so the same two saves name the same winner:
+//! see `further/cases.rs` for how a case is changed.
 
 use serde_json::{Map, Value};
 use std::cmp::Ordering;
@@ -282,6 +286,9 @@ impl Rule {
             .is_some_and(|o| o == Ordering::Greater)
     }
 }
+
+#[cfg(test)]
+mod cases;
 
 #[cfg(test)]
 mod tests {
