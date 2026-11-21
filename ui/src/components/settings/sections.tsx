@@ -10,6 +10,7 @@ import { SessionTab } from '../SessionTab';
 import { SkillsTab } from '../SkillsTab';
 import { ToolsTab } from '../ToolsTab';
 import { MissionPage } from '../MissionPage';
+import { PeopleTab } from '../PeopleTab';
 import { PhoneTab } from '../PhoneTab';
 import { RoomTab } from '../RoomTab';
 import { MemoryTab } from '../memory/MemoryTab';
@@ -50,6 +51,7 @@ const sections = {
   tools: () => <Scroll><ToolsTab /></Scroll>,
   mission: ({ projectRoot }) => <MissionPage projectRoot={projectRoot} />,
   phone: configSection(({ save }, config) => <Scroll><PhoneTab config={config} onChange={save.setConfig} /></Scroll>),
+  people: () => <Scroll><PeopleTab /></Scroll>,
   room: () => <div className="h-full overflow-y-auto p-3 md:p-5"><RoomTab /></div>,
   memory: ({ canOpenRun }) => <Scroll wide><MemoryTab canOpenRun={canOpenRun} /></Scroll>,
   storage: () => <StoragePage />,
