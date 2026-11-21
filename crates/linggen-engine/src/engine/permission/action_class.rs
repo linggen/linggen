@@ -18,6 +18,10 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 pub enum ActionClass {
     Read,
     Edit,
+    /// An action that destroys what it acts on: it needs what `Edit`
+    /// needs, and a model that asks for one is always asked of the person
+    /// (`engine::skill::judge`).
+    Destructive,
     /// What a skill that wrote no class, or one this engine does not know,
     /// gets: the strict default, written here and nowhere else.
     #[default]
@@ -29,6 +33,9 @@ impl ActionClass {
     /// for `edit`, [`PermissionMode::parse_written`]); anything else —
     /// `chat` included, which is no class — is the strict default.
     pub fn declared(word: &str) -> Self {
+        if word == "destructive" {
+            return Self::Destructive;
+        }
         match PermissionMode::parse_written(word) {
             Some(PermissionMode::Read) => Self::Read,
             Some(PermissionMode::Edit) => Self::Edit,
@@ -40,7 +47,7 @@ impl ActionClass {
     pub fn level_needed(self) -> PermissionMode {
         match self {
             Self::Read => PermissionMode::Read,
-            Self::Edit => PermissionMode::Edit,
+            Self::Edit | Self::Destructive => PermissionMode::Edit,
             Self::Admin => PermissionMode::Admin,
         }
     }
@@ -52,9 +59,18 @@ impl ActionClass {
         self != Self::Read
     }
 
+    /// Whether the action destroys what it acts on: a model that asks for
+    /// one is asked of the person every time.
+    pub fn destroys(self) -> bool {
+        self == Self::Destructive
+    }
+
     /// The word the class is published as (`mac/tools`, an offer).
     pub fn word(self) -> &'static str {
-        self.level_needed().as_str()
+        match self {
+            Self::Destructive => "destructive",
+            other => other.level_needed().as_str(),
+        }
     }
 }
 
@@ -89,6 +105,7 @@ mod tests {
             ("edit", ActionClass::Edit),
             ("write", ActionClass::Edit),
             ("admin", ActionClass::Admin),
+            ("destructive", ActionClass::Destructive),
             ("chat", ActionClass::Admin),
             ("Admin", ActionClass::Admin),
             ("", ActionClass::Admin),
@@ -105,7 +122,7 @@ mod tests {
         assert_eq!(read("read"), ActionClass::Read);
         assert_eq!(read("write"), ActionClass::Edit);
         assert_eq!(read("null"), ActionClass::Admin);
-        for class in [ActionClass::Read, ActionClass::Edit, ActionClass::Admin] {
+        for class in [ActionClass::Read, ActionClass::Edit, ActionClass::Destructive, ActionClass::Admin] {
             let json = serde_json::to_value(class).unwrap();
             assert_eq!(json, serde_json::json!(class.word()));
             assert_eq!(serde_json::from_value::<ActionClass>(json).unwrap(), class);

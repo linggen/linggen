@@ -87,6 +87,8 @@ pub enum OnceAsk {
     /// A rule in the person's Claude Code settings asks before this action
     /// (`claude_rules`).
     Rule,
+    /// The action destroys what it acts on (`ActionClass::Destructive`).
+    Destroys,
 }
 
 /// Facts supplied by the branch that made the Bash decision.
@@ -1353,6 +1355,44 @@ fn ask_outward(
         tool_summary,
         reason,
         once: Some(OnceAsk::Outward),
+        scoped_read: false,
+    })
+}
+
+/// What a refusal or a question says of an action that destroys.
+const DESTROYS_REASON: &str = "It destroys what it acts on: this is always asked.";
+
+/// An action that destroys (`ActionClass::Destructive`), asked of a model,
+/// is asked whatever the grants: what the check would allow is asked at
+/// the level it needs, and an ask the check makes anyway (the grants do not
+/// reach) becomes the same one-time ask — no grant is offered. A refusal
+/// stays one, and the deny floor and a turn's ceiling come first.
+pub(crate) fn ask_destroys(result: PermissionCheckResult, tool: &str, session_cwd: &Path) -> PermissionCheckResult {
+    let ask = match result {
+        PermissionCheckResult::Blocked(_) => return result,
+        PermissionCheckResult::Allowed => match needs_prompt(
+            session_cwd,
+            session_cwd,
+            PermissionMode::Edit,
+            format!("{tool} {}", session_cwd.display()),
+            None,
+        ) {
+            PermissionCheckResult::NeedsPrompt(kind) => kind,
+            other => return other,
+        },
+        PermissionCheckResult::NeedsPrompt(kind) => kind,
+    };
+    let PromptKind::ExceedsCeiling { target_mode, path, tool_summary, reason, once, .. } = ask;
+    PermissionCheckResult::NeedsPrompt(PromptKind::ExceedsCeiling {
+        target_mode,
+        path,
+        directories: Vec::new(),
+        tool_summary,
+        reason: Some(match reason {
+            Some(need) => format!("{DESTROYS_REASON} {need}"),
+            None => DESTROYS_REASON.into(),
+        }),
+        once: Some(once.unwrap_or(OnceAsk::Destroys)),
         scoped_read: false,
     })
 }

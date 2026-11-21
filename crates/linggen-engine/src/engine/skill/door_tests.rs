@@ -13,10 +13,11 @@ use std::path::Path;
 
 /// One tool per way of writing a tier: a word, or none at all. What each
 /// needs of a grant and a level is `needs`.
-const WORDS: [(&str, Option<&str>, PermissionMode); 7] = [
+const WORDS: [(&str, Option<&str>, PermissionMode); 8] = [
     ("TRead", Some("read"), PermissionMode::Read),
     ("TEdit", Some("edit"), PermissionMode::Edit),
     ("TWrite", Some("write"), PermissionMode::Edit),
+    ("TDestroy", Some("destructive"), PermissionMode::Edit),
     ("TAdmin", Some("admin"), PermissionMode::Admin),
     ("TAbsent", None, PermissionMode::Admin),
     ("TChat", Some("chat"), PermissionMode::Admin),
@@ -162,4 +163,26 @@ fn the_lists_the_door_and_the_companion_offer() {
         let expect: Vec<&str> = WORDS.iter().filter(|(_, _, needs)| *needs <= granted).map(|(n, _, _)| *n).collect();
         assert_eq!(remote, expect, "grant {grant_word}");
     }
+}
+
+/// The person's own act — the app's page, a tap on an offer — runs a
+/// destructive action as it runs an edit one: their act is their yes, and
+/// the page is what confirms. It needs what an edit action needs.
+#[tokio::test]
+async fn a_persons_own_call_of_a_destructive_action_runs_as_an_edit_one_does() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = skill(dir.path(), "edit");
+    for level in [PermissionMode::Edit, PermissionMode::Admin] {
+        assert!(run_at(&s, "TDestroy", &args(), &SessionParams::new(), level).await.is_ok(), "{level}");
+    }
+    assert!(matches!(
+        run_at(&s, "TDestroy", &args(), &SessionParams::new(), PermissionMode::Read).await,
+        Err(Refusal::BeyondLevel { needs: PermissionMode::Edit, .. })
+    ));
+    let read = skill(dir.path(), "read");
+    assert!(matches!(
+        run_at(&read, "TDestroy", &args(), &SessionParams::new(), PermissionMode::Admin).await,
+        Err(Refusal::BeyondGrant(_))
+    ));
+    assert!(super::tools::run(&s, "TDestroy", &args(), &SessionParams::new()).await.is_ok(), "this machine's own call");
 }

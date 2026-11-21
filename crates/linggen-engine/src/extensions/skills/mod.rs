@@ -1169,6 +1169,7 @@ This is the skill content."#;
             ("TRead", Some("read")),
             ("TEdit", Some("edit")),
             ("TWrite", Some("write")),
+            ("TDestroy", Some("destructive")),
             ("TAdmin", Some("admin")),
             ("TAbsent", None),
             ("TChat", Some("chat")),
@@ -1191,7 +1192,7 @@ This is the skill content."#;
             assert!(facts.contains(said), "{name}: {facts}");
             let Offer::Tool { tier, .. } = &declared.offer else { panic!("{name}") };
             if let Some(expect) = match word {
-                Some("read" | "edit" | "admin") => word,
+                Some("read" | "edit" | "destructive" | "admin") => word,
                 None => Some("admin"),
                 _ => None,
             } {

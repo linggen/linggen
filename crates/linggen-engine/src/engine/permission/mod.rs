@@ -58,7 +58,7 @@ pub use declined::DeclinedScopes;
 pub use read_scope::{ReadOrigin, ReadStart};
 #[cfg(test)]
 use model::check_permission_at_turn;
-pub(crate) use model::{allows_instruction_import, check_permission_under_rules};
+pub(crate) use model::{allows_instruction_import, ask_destroys, check_permission_under_rules};
 #[cfg(test)]
 pub(crate) use model::check_permission_with_read_approvals;
 pub use manifest::{apply_grants, Grants, PathGrant};
@@ -67,7 +67,8 @@ pub use model::{
     PermissionAction, PermissionCheckResult, PermissionMode, PromptKind,
 };
 pub use prompt::{
-    build_caller_question, build_exceeds_ceiling_question, build_outward_question, build_rule_question,
+    build_caller_question, build_destroy_question, build_exceeds_ceiling_question, build_outward_question,
+    build_rule_question,
     grant_at_label,
     label_in_chinese, parse_exceeds_ceiling_answer, permission_target_summary, ALLOW_ONCE, DENY,
 };

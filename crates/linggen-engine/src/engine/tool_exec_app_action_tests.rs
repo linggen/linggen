@@ -128,3 +128,112 @@ async fn a_turn_under_a_ceiling_does_no_more_than_the_ceiling() {
         }
     }
 }
+
+// ── A destructive action: a model that asks for one always asks the person ──
+
+fn destroy_engine(root: &std::path::Path, grant: PermissionMode, interactive: bool, ask_caller: bool, pending: &Pending) -> AgentEngine {
+    let mut engine = session(root, grant, interactive, ask_caller, pending);
+    engine.tools.skill_tools.insert("TDestroy".into(), declared("TDestroy", Some("destructive")));
+    engine
+}
+
+const ONCE_OR_DENY: [&str; 2] = [crate::engine::permission::ALLOW_ONCE, "Deny"];
+
+/// Whatever was granted — admin on the folder and on everything — the person
+/// is asked, and only "Allow once" or "Deny" answers.
+#[tokio::test]
+async fn a_model_that_asks_for_a_destructive_action_asks_the_person_even_with_admin_granted() {
+    let work = in_home();
+    let wait = std::time::Duration::from_secs(5);
+    for answer in ["Deny", crate::engine::permission::ALLOW_ONCE] {
+        let pending: Pending = Default::default();
+        let seen = answer_first(&pending, answer);
+        let mut engine = destroy_engine(work.path(), PermissionMode::Admin, true, false, &pending);
+        engine.session_permissions.set_path_mode("*", PermissionMode::Admin);
+        let got = judged(&mut engine, "TDestroy").await;
+        let (labels, request) = tokio::time::timeout(wait, seen).await.expect("asked").unwrap();
+        assert_eq!(labels, ONCE_OR_DENY, "no grant is offered");
+        assert!(request.is_none(), "the person, not a caller");
+        match answer {
+            "Deny" => assert!(got.is_some(), "Deny refuses"),
+            _ => assert!(got.is_none(), "Allow once runs it"),
+        }
+    }
+}
+
+/// An earlier yes stands for nothing: the same call asks again.
+#[tokio::test]
+async fn a_yes_to_one_destructive_call_is_not_a_yes_to_the_next() {
+    let work = in_home();
+    let pending: Pending = Default::default();
+    let mut engine = destroy_engine(work.path(), PermissionMode::Admin, true, false, &pending);
+    for round in 1..=2 {
+        let seen = answer_first(&pending, crate::engine::permission::ALLOW_ONCE);
+        assert!(judged(&mut engine, "TDestroy").await.is_none(), "round {round}");
+        tokio::time::timeout(std::time::Duration::from_secs(5), seen).await.unwrap_or_else(|_| panic!("round {round}: not asked")).unwrap();
+    }
+}
+
+/// A grant below what it needs does not turn the ask into a grant offer.
+#[tokio::test]
+async fn a_destructive_action_beyond_the_grant_is_the_same_one_ask() {
+    let work = in_home();
+    let pending: Pending = Default::default();
+    let seen = answer_first(&pending, "Deny");
+    let mut engine = destroy_engine(work.path(), PermissionMode::Read, true, false, &pending);
+    assert!(judged(&mut engine, "TDestroy").await.is_some());
+    let (labels, _) = tokio::time::timeout(std::time::Duration::from_secs(5), seen).await.expect("asked").unwrap();
+    assert_eq!(labels, ONCE_OR_DENY);
+}
+
+/// A run whose caller answers asks the caller, once only.
+#[tokio::test]
+async fn a_delegated_run_asks_its_caller_once_only_for_a_destructive_action() {
+    let work = in_home();
+    let pending: Pending = Default::default();
+    let seen = answer_first(&pending, crate::engine::permission::ALLOW_ONCE);
+    let mut engine = destroy_engine(work.path(), PermissionMode::Admin, false, true, &pending);
+    assert!(judged(&mut engine, "TDestroy").await.is_none());
+    let (labels, request) = tokio::time::timeout(std::time::Duration::from_secs(5), seen).await.expect("asked").unwrap();
+    assert_eq!(labels, ONCE_OR_DENY);
+    let request = request.expect("the caller is asked");
+    assert!(request.outward && request.dir.is_none(), "only allow_once or deny answers it: {request:?}");
+}
+
+/// Nobody to ask — an unattended run, a mission, a turn under a ceiling:
+/// refused, with the reason, and nobody is asked.
+#[tokio::test]
+async fn where_nobody_can_be_asked_a_destructive_action_is_refused_with_its_reason() {
+    let work = in_home();
+    for ceiling in [None, Some(PermissionMode::Edit)] {
+        let pending: Pending = Default::default();
+        let mut engine = destroy_engine(work.path(), PermissionMode::Admin, false, false, &pending);
+        engine.session_spec.ceiling = ceiling;
+        let told = judged(&mut engine, "TDestroy").await.expect("refused");
+        assert!(told.contains("TDestroy") && told.contains("destroys"), "{ceiling:?}: {told}");
+        assert!(pending.lock().await.is_empty(), "nobody is asked");
+    }
+    // Above the turn's ceiling it is the ceiling that refuses, as for any action.
+    let pending: Pending = Default::default();
+    let mut engine = destroy_engine(work.path(), PermissionMode::Admin, false, false, &pending);
+    engine.session_spec.ceiling = Some(PermissionMode::Read);
+    let told = judged(&mut engine, "TDestroy").await.expect("refused");
+    assert!(told.starts_with("Tool TDestroy: Beyond this turn's level"), "{told}");
+}
+
+/// A "no" to a destructive action is a no like any other: the folder is
+/// closed to what would be asked next in the run, nothing the grants
+/// already allow.
+#[tokio::test]
+async fn a_no_to_a_destructive_action_closes_the_folder_to_other_asks_for_the_run() {
+    let work = in_home();
+    let pending: Pending = Default::default();
+    let seen = answer_first(&pending, "Deny");
+    let mut engine = destroy_engine(work.path(), PermissionMode::Read, true, false, &pending);
+    assert!(judged(&mut engine, "TDestroy").await.is_some());
+    tokio::time::timeout(std::time::Duration::from_secs(5), seen).await.expect("asked").unwrap();
+    let again = judged(&mut engine, "TEdit").await.expect("refused");
+    assert!(again.contains("declined access to"), "{again}");
+    assert!(pending.lock().await.is_empty(), "and not asked again");
+    assert!(judged(&mut engine, "TRead").await.is_none(), "what the grant allows still runs");
+}

@@ -207,6 +207,7 @@ body
             ("TRead", Some("read"), "read"),
             ("TEdit", Some("edit"), "edit"),
             ("TWrite", Some("write"), "edit"),
+            ("TDestroy", Some("destructive"), "destructive"),
             ("TAdmin", Some("admin"), "admin"),
             ("TAbsent", None, "admin"),
             ("TChat", Some("chat"), "admin"),

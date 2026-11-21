@@ -785,6 +785,9 @@ impl AgentEngine {
                     permission::OnceAsk::Rule => {
                         permission::build_rule_question(&tool_summary, &target_mode, &path)
                     }
+                    permission::OnceAsk::Destroys => {
+                        permission::build_destroy_question(&tool_summary, &target_mode, &path)
+                    }
                 };
                 let request = asks_caller.then(|| {
                     let mut request = self.caller_request(t, target_mode, &path, &[], reason);

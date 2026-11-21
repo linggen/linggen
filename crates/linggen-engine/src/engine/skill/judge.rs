@@ -16,7 +16,7 @@
 //! is asked after them, never instead.
 
 use super::tools::Refusal;
-use crate::engine::permission::{ActionClass, PermissionCheckResult, PermissionMode, PromptKind};
+use crate::engine::permission::{ask_destroys, ActionClass, PermissionCheckResult, PermissionMode, PromptKind};
 use std::path::Path;
 
 /// An app's action as it is asked about.
@@ -90,11 +90,18 @@ impl From<Verdict> for PermissionCheckResult {
 pub fn judge(asker: Asker<'_>, action: &Action<'_>) -> Verdict {
     let needs = action.class.level_needed();
     match asker {
-        Asker::Model { session } => match session(needs) {
-            PermissionCheckResult::Allowed => Verdict::Allow,
-            PermissionCheckResult::NeedsPrompt(kind) => Verdict::Ask(kind),
-            PermissionCheckResult::Blocked(reason) => Verdict::Refuse(Refusal::ByGate(reason)),
-        },
+        Asker::Model { session } => {
+            let mut answer = session(needs);
+            if action.class.destroys() {
+                // Whatever was granted, a model is asked of the person.
+                answer = ask_destroys(answer, action.tool, action.cwd);
+            }
+            match answer {
+                PermissionCheckResult::Allowed => Verdict::Allow,
+                PermissionCheckResult::NeedsPrompt(kind) => Verdict::Ask(kind),
+                PermissionCheckResult::Blocked(reason) => Verdict::Refuse(Refusal::ByGate(reason)),
+            }
+        }
         Asker::Person { level, granted } => within(action, needs, level, granted),
         Asker::Companion { offered } => {
             if !offered {
