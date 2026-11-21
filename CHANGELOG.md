@@ -126,6 +126,10 @@
   `config.json`, `state/`, `sessions/`, any `*.local.*` file and the paths it
   declares under `cloud.save` and `cloud.skip`. It used to keep only `data/`
   and the `cloud.save` paths.
+- **A skill can name more files as yours**: `keep: [references/brief.md]` in
+  its `SKILL.md`. Every way a skill is installed or updated — the marketplace,
+  the app's bundled skills, the skills repo's installer — keeps them, and all
+  of them run the same cases.
 
 ### Claude sessions are Linggen sessions
 
