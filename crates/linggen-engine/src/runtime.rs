@@ -487,27 +487,111 @@ pub fn ensure_pictures_in_background() {
 }
 
 /// Fetch the hearing model now, off the caller's path: the first time
-/// someone speaks to her. Reports on the same `tasks` topic as the boot
-/// prewarm, so the page shows it as it shows her voice. The person asked, so
-/// it does not wait for quiet. One at a time: a second ask while it runs
-/// starts nothing.
-pub fn ensure_hearing_in_background() {
-    if HEARING_FETCH.swap(true, std::sync::atomic::Ordering::SeqCst) {
+/// someone speaks to her. One attempt, never the boot loop's 10/20/40-minute
+/// retries: it ends, ok or not, and the next press tries again
+/// ([`Attempt`]). Reports on the same `tasks` topic as the boot prewarm, so
+/// the page shows it as it shows her voice. The person asked, so it does not
+/// wait for quiet. One at a time: a second ask while it runs starts nothing.
+/// `then` runs when the model is on disk — the caller's next step (loading it).
+pub fn ensure_hearing_in_background(then: impl FnOnce() + Send + 'static) {
+    let Some(run) = hearing_attempt().begin() else {
         return;
-    }
-    tokio::spawn(async {
-        let wanted = Wanted { voice: false, pictures: false, hearing: true };
-        prewarm_lanes(wanted, progress_sink(), always_quiet()).await;
-        HEARING_FETCH.store(false, std::sync::atomic::Ordering::SeqCst);
-    });
+    };
+    tokio::spawn(run_attempt(run, fetch_hearing(), then));
 }
 
-/// Set while the hearing model's fetch runs ([`ensure_hearing_in_background`]).
-static HEARING_FETCH: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// What a hearing fetch does: the voice lane's venv and voice model if they
+/// are missing too, then the hearing model.
+async fn fetch_hearing() -> Result<()> {
+    const WANTED: Wanted = Wanted { voice: false, pictures: false, hearing: true };
+    if !cfg!(target_os = "macos") {
+        bail!("hearing needs macOS");
+    }
+    export_python_env();
+    prewarm_stages(WANTED, &progress_sink(), &always_quiet()).await?;
+    anyhow::ensure!(hearing_ready(), "the hearing model is still not ready after the fetch");
+    Ok(())
+}
 
-/// Is the hearing model being fetched now? Asking starts nothing.
-pub fn hearing_fetching() -> bool {
-    HEARING_FETCH.load(std::sync::atomic::Ordering::SeqCst)
+/// The hearing fetch's one state, engine-wide.
+fn hearing_attempt() -> &'static Attempt {
+    static FETCH: std::sync::OnceLock<Attempt> = std::sync::OnceLock::new();
+    FETCH.get_or_init(Attempt::default)
+}
+
+/// What the hearing model's fetch is doing now. Asking starts nothing.
+pub fn hearing_fetch() -> AttemptState {
+    hearing_attempt().state()
+}
+
+/// Where one thing that is tried one at a time and can fail stands: not
+/// tried, running (`retry`: the last try failed), or failed last time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AttemptState {
+    Idle,
+    Running { retry: bool },
+    Failed,
+}
+
+/// One try at a time, and a try that cannot leave "running" behind: its
+/// [`Run`] guard sets the state when it is dropped, however the try ended —
+/// an error, a panic, or the task being dropped.
+#[derive(Clone)]
+pub struct Attempt(std::sync::Arc<std::sync::Mutex<AttemptState>>);
+
+impl Default for Attempt {
+    fn default() -> Self {
+        Self(std::sync::Arc::new(std::sync::Mutex::new(AttemptState::Idle)))
+    }
+}
+
+impl Attempt {
+    pub fn state(&self) -> AttemptState {
+        *self.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Begin a try: `None` while one runs.
+    pub fn begin(&self) -> Option<Run> {
+        let mut state = self.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let retry = match *state {
+            AttemptState::Running { .. } => return None,
+            AttemptState::Failed => true,
+            AttemptState::Idle => false,
+        };
+        *state = AttemptState::Running { retry };
+        Some(Run { attempt: self.clone(), worked: false })
+    }
+}
+
+/// A try under way. Dropped without [`Run::worked`] it leaves the state `Failed`.
+pub struct Run {
+    attempt: Attempt,
+    worked: bool,
+}
+
+impl Run {
+    fn worked(mut self) {
+        self.worked = true;
+    }
+}
+
+impl Drop for Run {
+    fn drop(&mut self) {
+        let mut state = self.attempt.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        *state = if self.worked { AttemptState::Idle } else { AttemptState::Failed };
+    }
+}
+
+/// `work` once, then `then` if it worked. The failure is logged; the state is
+/// the run's guard's (see [`Run`]).
+pub async fn run_attempt(run: Run, work: impl std::future::Future<Output = Result<()>>, then: impl FnOnce()) {
+    match work.await {
+        Ok(()) => {
+            run.worked();
+            then();
+        }
+        Err(e) => tracing::warn!("[runtime] attempt failed: {e:#}"),
+    }
 }
 
 /// Which lanes a stage set may run: each goes through the gate and a
@@ -1120,6 +1204,49 @@ mod tests {
         assert_ne!(STT_MODEL, TTS_MODEL);
         // Hearing is a stage of the voice lane: no lane of its own.
         assert!(LANES.iter().all(|l| l.name != "hearing"));
+    }
+
+    /// Rule 1: a fetch that fails does not stay "running" — the next press
+    /// starts another and is told it is a retry; one that works clears it; and
+    /// one that runs blocks a second. Instances are the test's own (the
+    /// engine's one is a static the parallel tests share).
+    #[tokio::test]
+    async fn a_failed_fetch_is_failed_not_running_and_the_next_press_retries() {
+        let attempt = Attempt::default();
+        let ran = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let then = |ran: &std::sync::Arc<std::sync::atomic::AtomicUsize>| {
+            let ran = ran.clone();
+            move || { ran.fetch_add(1, std::sync::atomic::Ordering::SeqCst); }
+        };
+        assert_eq!(attempt.state(), AttemptState::Idle);
+
+        let run = attempt.begin().unwrap();
+        assert_eq!(attempt.state(), AttemptState::Running { retry: false });
+        assert!(attempt.begin().is_none(), "one at a time");
+        run_attempt(run, async { anyhow::bail!("offline") }, then(&ran)).await;
+        assert_eq!(attempt.state(), AttemptState::Failed, "a failure is not left as running");
+        assert_eq!(ran.load(std::sync::atomic::Ordering::SeqCst), 0, "the next step waits on a fetch that worked");
+
+        let run = attempt.begin().unwrap();
+        assert_eq!(attempt.state(), AttemptState::Running { retry: true }, "the retry says it is one");
+        run_attempt(run, async { Ok(()) }, then(&ran)).await;
+        assert_eq!(attempt.state(), AttemptState::Idle);
+        assert_eq!(ran.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    /// A task that panics, or is dropped, leaves "failed", never "running".
+    #[tokio::test]
+    async fn a_fetch_that_panics_or_is_dropped_leaves_failed() {
+        let attempt = Attempt::default();
+        let run = attempt.begin().unwrap();
+        let task = tokio::spawn(run_attempt(run, async { panic!("boom") }, || ()));
+        assert!(task.await.unwrap_err().is_panic());
+        assert_eq!(attempt.state(), AttemptState::Failed);
+
+        let run = attempt.begin().unwrap();
+        let pending = run_attempt(run, std::future::pending(), || ());
+        drop(pending);
+        assert_eq!(attempt.state(), AttemptState::Failed);
     }
 
     #[tokio::test]

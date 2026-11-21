@@ -36,8 +36,10 @@ export const HEARD_MS = 20_000;
  *  A "no" is never kept: the model may have arrived since. A 503 from a clip
  *  forgets the yes at once (the state can change between the two requests). */
 export const HEARS_MS = 60_000;
-/** One hearing may take this long (the model's turn comes later, on her door). */
-const HEAR_BUDGET_MS = 60_000;
+/** One hearing may take this long (the model's turn comes later, on her door):
+ *  the engine's wait for the slot and for the model, at most a minute's clip
+ *  included, fits inside it (`stt_mlx`'s lock reads this number). */
+export const HEAR_BUDGET_MS = 90_000;
 
 /** What the person reads. Each is the whole line, at most 20 words. */
 export const WORDS = {

@@ -65,8 +65,9 @@ pub struct Heard {
 }
 
 /// This machine cannot hear now. The reason is words for the person, not for
-/// a log: what stops it, or what is being done about it. `fetching`: the
-/// hearing model is on its way, so trying again soon will do.
+/// a log: what stops it, or what is being done about it. `fetching`: what
+/// hearing waits on (the model's fetch, or its load) is under way, so trying
+/// again soon will do; false after a failure, where the next press tries again.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Unavailable {
     pub reason: String,
