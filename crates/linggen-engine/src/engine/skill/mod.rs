@@ -14,10 +14,14 @@
 //! that module's `SkillLoader` is the production impl of
 //! `SkillRegistry`.
 
+pub mod judge;
 pub mod params;
 pub mod record;
 pub mod registry;
 pub mod tools;
+
+#[cfg(test)]
+mod door_tests;
 
 pub use record::{
     AppConfig, CloudConfig, NoticeDecl, NoticeTier, QuestsConfig, QueueMode, Skill, SkillSource,

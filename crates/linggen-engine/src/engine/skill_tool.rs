@@ -83,12 +83,14 @@ pub struct SkillToolDef {
     /// must declare a `daemon:` block (see `doc/skill-spec.md`).
     #[serde(default)]
     pub endpoint: Option<String>,
-    /// Permission mode required to invoke this tool: `"read"` | `"edit"` |
-    /// `"admin"`. Applies to HTTP and shell tools. Data tools ignore it
-    /// (no side effect to gate). Absent → defaults to `"admin"` so
-    /// unclassified writes get the strict default.
-    #[serde(default)]
-    pub tier: Option<String>,
+    /// What the tool does to the person's things, written as `tier:` in
+    /// `SKILL.md` (`read` | `edit` | `admin`) and held as a class from the
+    /// moment it is read (`permission::ActionClass`: the one place the
+    /// word is read, and the one place that says what a tool with none
+    /// is). Applies to HTTP and shell tools. Data tools ignore it (no side
+    /// effect to gate).
+    #[serde(default, rename = "tier")]
+    pub class: crate::engine::permission::ActionClass,
     #[serde(default)]
     pub args: HashMap<String, SkillParamDef>,
     #[serde(default)]
@@ -664,7 +666,7 @@ mod tests {
             description: "Spills a lot".to_string(),
             cmd: cmd.to_string(),
             endpoint: None,
-            tier: None,
+            class: Default::default(),
             args: HashMap::new(),
             returns: None,
             timeout_ms: 30000,
@@ -992,7 +994,7 @@ mod tests {
             description: "A test tool".to_string(),
             cmd: "echo {{query}}".to_string(),
             endpoint: None,
-            tier: None,
+            class: Default::default(),
             args: HashMap::from([(
                 "query".to_string(),
                 SkillParamDef {

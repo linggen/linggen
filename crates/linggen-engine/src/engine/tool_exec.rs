@@ -1,5 +1,6 @@
 use super::types::*;
 use crate::engine::permission;
+use crate::engine::skill::judge;
 use crate::engine::render::{
     normalize_tool_path_arg, render_tool_result, render_tool_result_public,
     sanitize_tool_args_for_display, tool_call_signature,
@@ -668,17 +669,13 @@ impl AgentEngine {
             Some(self.tools.builtins.cwd().to_string_lossy().to_string())
         };
 
-        // Skill-declared tier wins over the built-in table. For HTTP and
-        // shell skill tools that declare `tier: read|edit|admin` in their
-        // manifest, parse it into a PermissionMode and pass to
-        // check_permission as an override. Unknown / missing tier falls
-        // back to the built-in classification.
-        let skill_tier_override = self
+        // An app's declared action is judged by `skill::judge` — its class
+        // wins over the built-in table — never by the gate alone.
+        let skill_action = self
             .tools
             .skill_tools
             .get(t.canonical)
-            .and_then(|def| def.tier.as_deref())
-            .and_then(permission::parse_skill_tier);
+            .map(|def| (def.skill_name.clone().unwrap_or_default(), def.class));
 
         let mut last_grant: Option<(String, permission::PermissionMode)> = None;
         loop {
@@ -690,12 +687,19 @@ impl AgentEngine {
             let cwd = self.tools.builtins.cwd();
             let url = t.args.get("url").and_then(JsonValue::as_str).filter(|_| t.canonical == "WebFetch");
             let check = |path: Option<&str>| {
-                permission::check_permission_under_rules(
-                    t.canonical, bash_command.as_deref(), path, &cwd,
-                    &self.session_permissions, skill_tier_override, coding,
-                    self.session_spec.ceiling, origin, Some(&self.declined_scopes), approved_reads,
-                    self.claude_rules.for_call(url),
-                )
+                let gate = |needs: Option<permission::PermissionMode>| {
+                    permission::check_permission_under_rules(
+                        t.canonical, bash_command.as_deref(), path, &cwd,
+                        &self.session_permissions, needs, coding,
+                        self.session_spec.ceiling, origin, Some(&self.declined_scopes), approved_reads,
+                        self.claude_rules.for_call(url),
+                    )
+                };
+                let Some((app, class)) = &skill_action else {
+                    return gate(None);
+                };
+                let action = judge::Action { app, tool: t.canonical, class: *class, cwd: &cwd };
+                judge::judge(judge::Asker::Model { session: &|needs| gate(Some(needs)) }, &action).into()
             };
             let check_result = if t.canonical == "Glob" {
                 let mut ask = None;
@@ -752,10 +756,9 @@ impl AgentEngine {
                 path,
                 directories,
                 tool_summary,
-                outward,
+                once,
                 reason,
                 scoped_read,
-                by_rule,
             } = prompt_kind;
             let reason = reason.as_deref();
             let tool_summary = with_gate_reason(tool_summary, reason);
@@ -772,13 +775,19 @@ impl AgentEngine {
                 self.record_denial(t, &target_mode.to_string(), "Declined earlier in this run");
                 return self.refuse_declined(t, messages, &scope, None, reason, true).await;
             }
-            let (question, caller_request, wait) = if outward || by_rule {
-                // Its effect leaves the machine, or the person's Claude Code
-                // settings ask every time: this one action, once or not.
-                let question = if outward {
-                    permission::build_outward_question(&tool_summary, &target_mode, &path)
-                } else {
-                    permission::build_rule_question(&tool_summary, &target_mode, &path)
+            let (question, caller_request, wait) = if let Some(once) = once {
+                // Asked every time whatever was granted: this one action,
+                // once or not.
+                let question = match once {
+                    permission::OnceAsk::Outward => {
+                        permission::build_outward_question(&tool_summary, &target_mode, &path)
+                    }
+                    permission::OnceAsk::Rule => {
+                        permission::build_rule_question(&tool_summary, &target_mode, &path)
+                    }
+                    permission::OnceAsk::Destroys => {
+                        permission::build_destroy_question(&tool_summary, &target_mode, &path)
+                    }
                 };
                 let request = asks_caller.then(|| {
                     let mut request = self.caller_request(t, target_mode, &path, &[], reason);
@@ -1781,13 +1790,17 @@ mod tests {
 }
 
 #[cfg(test)]
+#[path = "tool_exec_app_action_tests.rs"]
+mod app_action_gate_tests;
+
+#[cfg(test)]
 mod declined_gate_tests {
     use super::*;
     use crate::engine::permission::{PermissionMode, SessionPermissions};
 
-    type Pending = Arc<tokio::sync::Mutex<HashMap<String, tools::PendingAskUser>>>;
+    pub(super) type Pending = Arc<tokio::sync::Mutex<HashMap<String, tools::PendingAskUser>>>;
 
-    fn engine(root: &std::path::Path, pending: &Pending, ask_caller: bool) -> AgentEngine {
+    pub(super) fn engine(root: &std::path::Path, pending: &Pending, ask_caller: bool) -> AgentEngine {
         let cfg = crate::engine::EngineConfig::from_app_config(
             &crate::config::Config::default(),
             root.into(),
@@ -1899,7 +1912,7 @@ mod declined_gate_tests {
 
     /// Answer the first prompt with `answer`; what it offered and whether
     /// it went to the caller.
-    fn answer_first(
+    pub(super) fn answer_first(
         pending: &Pending,
         answer: &'static str,
     ) -> tokio::sync::oneshot::Receiver<(Vec<String>, Option<tools::CallerPermissionRequest>)> {

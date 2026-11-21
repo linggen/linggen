@@ -12,7 +12,7 @@ use serde_json::{json, Map, Value};
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::engine::skill::tools::{remote_tools, tier_of};
+use crate::engine::skill::tools::remote_tools;
 use crate::engine::skill::Skill;
 use crate::engine::skill_tool::{SkillParamDef, SkillToolDef};
 use crate::server::{api, ServerState};
@@ -68,7 +68,7 @@ fn entry(app: &str, tool: &SkillToolDef) -> Value {
         "wire_name": wire_name(app, &tool.name),
         "description": tool.description,
         "params": params(tool),
-        "tier": tier_of(tool).to_string(),
+        "tier": tool.class.word(),
     })
 }
 
@@ -197,6 +197,39 @@ body
             .expect("parses");
         s.skill_dir = Some(dir.to_path_buf());
         s
+    }
+
+    /// The word the phone reads for each way a tier was written.
+    #[test]
+    fn the_catalog_publishes_each_tools_class_as_its_word() {
+        let dir = tempfile::tempdir().unwrap();
+        let words = [
+            ("TRead", Some("read"), "read"),
+            ("TEdit", Some("edit"), "edit"),
+            ("TWrite", Some("write"), "edit"),
+            ("TDestroy", Some("destructive"), "destructive"),
+            ("TAdmin", Some("admin"), "admin"),
+            ("TAbsent", None, "admin"),
+            ("TChat", Some("chat"), "admin"),
+            ("TNonsense", Some("nonsense"), "admin"),
+        ];
+        let mut tools = String::new();
+        for (name, word, _) in words {
+            let tier = word.map(|w| format!("    tier: {w}\n")).unwrap_or_default();
+            tools.push_str(&format!("  - name: {name}\n    description: d\n    cmd: \"echo ok\"\n{tier}    remote: true\n"));
+        }
+        let text = format!(
+            "---\nname: zz-words\ndescription: t\npermission:\n  paths:\n    - {{ path: \"{}\", mode: admin }}\ntools:\n{tools}---\nbody\n",
+            dir.path().to_string_lossy()
+        );
+        let mut s = crate::extensions::skills::parse_skill_text(&text, SkillSource::Project).unwrap();
+        s.skill_dir = Some(dir.path().to_path_buf());
+        let published: Vec<(String, String)> = catalog(&[s])
+            .iter()
+            .map(|t| (t["name"].as_str().unwrap().to_string(), t["tier"].as_str().unwrap().to_string()))
+            .collect();
+        let expect: Vec<(String, String)> = words.iter().map(|(n, _, w)| (n.to_string(), w.to_string())).collect();
+        assert_eq!(published, expect);
     }
 
     #[test]

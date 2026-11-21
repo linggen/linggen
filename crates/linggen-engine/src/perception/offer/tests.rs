@@ -1,7 +1,7 @@
 use super::*;
 
-fn tools() -> Vec<(String, String)> {
-    vec![("ScanDisk".into(), "read".into()), ("Clear".into(), "edit".into())]
+fn tools() -> Vec<(String, ActionClass)> {
+    vec![("ScanDisk".into(), ActionClass::Read), ("Clear".into(), ActionClass::Edit)]
 }
 
 #[test]
@@ -39,7 +39,7 @@ fn a_skill_declares_offers_by_problem_and_a_bad_one_is_left_out() {
                 skill: "shifu".into(),
                 tool: "ScanDisk".into(),
                 args: serde_json::Value::Null,
-                tier: "read".into()
+                tier: ActionClass::Read
             },
         ],
         "at most three are read, and of those only the good ones stay"

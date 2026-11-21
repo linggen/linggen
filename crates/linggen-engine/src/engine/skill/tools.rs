@@ -21,9 +21,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use crate::engine::permission::{
-    effective_mode_for_path, parse_skill_tier, PathMode, PermissionMode,
-};
+use crate::engine::permission::{effective_mode_for_path, ActionClass, PathMode, PermissionMode};
+use crate::engine::skill::judge::{judge, Action, Asker};
 use crate::engine::skill::params::SessionParams;
 use crate::engine::skill::Skill;
 use crate::engine::skill_tool::{SkillToolDef, SkillToolKind};
@@ -47,6 +46,11 @@ pub enum Refusal {
         needs: PermissionMode,
     },
     NotForPet(String),
+    /// A model's call the session's own gate refused (`judge`'s model
+    /// asker), in the gate's words.
+    ByGate(String),
+    /// The action must be asked of the person, and the way in cannot ask.
+    NeedsPerson(String),
     BadCall(String),
     Crashed(String),
 }
@@ -66,6 +70,8 @@ impl std::fmt::Display for Refusal {
             | Refusal::NotRunnable(m)
             | Refusal::BeyondGrant(m)
             | Refusal::NotForPet(m)
+            | Refusal::ByGate(m)
+            | Refusal::NeedsPerson(m)
             | Refusal::BadCall(m)
             | Refusal::Crashed(m) => f.write_str(m),
         }
@@ -118,8 +124,12 @@ pub async fn run_at(
         return Err(Refusal::SignedOut);
     }
     let cwd = working_folder(skill);
-    within_grant(skill, &tool, &cwd)?;
-    within_level(&tool, caller)?;
+    let action = action_of(skill, &tool, &cwd);
+    let person = Asker::Person {
+        level: caller,
+        granted: granted_on(skill, &cwd),
+    };
+    judge(person, &action).allowed_or_refusal(&action)?;
 
     let lock = skill_lock(&skill.name);
     let _one = lock.lock().await;
@@ -175,7 +185,7 @@ pub async fn notice_facts(skill: &Skill, cmd: &str) -> Result<String, Refusal> {
         description: "What a declared line would say.".into(),
         cmd: cmd.to_string(),
         endpoint: None,
-        tier: Some("read".into()),
+        class: ActionClass::Read,
         args: Default::default(),
         returns: None,
         timeout_ms: STAMP_TIMEOUT_MS,
@@ -258,7 +268,7 @@ fn on_list_tool(skill: &Skill, cmd: String) -> SkillToolDef {
         description: "Bring the synced folder up to date.".into(),
         cmd,
         endpoint: None,
-        tier: Some("edit".into()),
+        class: ActionClass::Edit,
         args: Default::default(),
         returns: None,
         timeout_ms: ON_LIST_TIMEOUT_MS,
@@ -306,7 +316,7 @@ fn stamp_tool(skill: &Skill, id: &str, at: &str) -> Result<SkillToolDef, Refusal
         description: "Stamp a quest done.".into(),
         cmd: q.stamp.replace("{id}", "{{id}}").replace("{at}", "{{at}}"),
         endpoint: None,
-        tier: Some("edit".into()),
+        class: ActionClass::Edit,
         args: [arg("id"), arg("at")].into_iter().collect(),
         returns: None,
         timeout_ms: STAMP_TIMEOUT_MS,
@@ -350,27 +360,18 @@ pub async fn run_for_pet(
 
 fn pet_gate(skill: &Skill, tool_name: &str) -> Result<(), Refusal> {
     let tool = declared(skill, tool_name)?;
-    if !tool.pet {
-        return Err(Refusal::NotForPet(format!(
-            "'{}' does not offer '{tool_name}' to you",
-            skill.name
-        )));
-    }
-    if tier_of(tool) > PermissionMode::Read {
-        return Err(Refusal::NotForPet(format!(
-            "'{tool_name}' may change '{}'; you may only read",
-            skill.name
-        )));
-    }
-    Ok(())
+    let cwd = working_folder(skill);
+    let action = action_of(skill, tool, &cwd);
+    judge(Asker::Companion { offered: tool.pet }, &action).allowed_or_refusal(&action)
 }
 
 /// The tools a skill offers the companion that she may actually call.
 pub fn pet_tools(skill: &Skill) -> impl Iterator<Item = &SkillToolDef> {
-    skill
-        .tool_defs
-        .iter()
-        .filter(|t| t.pet && t.kind() == SkillToolKind::Shell && tier_of(t) <= PermissionMode::Read)
+    let cwd = working_folder(skill);
+    skill.tool_defs.iter().filter(move |t| {
+        t.kind() == SkillToolKind::Shell
+            && judge(Asker::Companion { offered: t.pet }, &action_of(skill, t, &cwd)).is_allow()
+    })
 }
 
 /// The tools a skill offers another device's agent (`remote: true`) that
@@ -423,20 +424,34 @@ fn working_folder(skill: &Skill) -> PathBuf {
     }
 }
 
-pub fn tier_of(tool: &SkillToolDef) -> PermissionMode {
-    tool.tier
-        .as_deref()
-        .and_then(parse_skill_tier)
-        .unwrap_or(PermissionMode::Admin)
-}
-
 fn may_write(tool: &SkillToolDef) -> bool {
-    tier_of(tool) > PermissionMode::Read
+    tool.class.changes_things()
 }
 
-/// The tool's tier must be covered by what the skill's own permission block
-/// grants the folder it runs in — the scope its sessions get.
+/// This machine's own run of `tool` (a quest stamp, the sync command, the
+/// list of what a device may call): the tool's class must be covered by
+/// what the skill's own permission block grants the folder it runs in —
+/// the scope its sessions get.
 fn within_grant(skill: &Skill, tool: &SkillToolDef, cwd: &Path) -> Result<(), Refusal> {
+    let action = action_of(skill, tool, cwd);
+    let own = Asker::Person {
+        level: PermissionMode::Admin,
+        granted: granted_on(skill, cwd),
+    };
+    judge(own, &action).allowed_or_refusal(&action)
+}
+
+fn action_of<'a>(skill: &'a Skill, tool: &'a SkillToolDef, cwd: &'a Path) -> Action<'a> {
+    Action {
+        app: &skill.name,
+        tool: &tool.name,
+        class: tool.class,
+        cwd,
+    }
+}
+
+/// What the skill's own permission block grants the folder its tools run in.
+fn granted_on(skill: &Skill, cwd: &Path) -> PermissionMode {
     let grants: Vec<PathMode> = skill
         .permission
         .iter()
@@ -448,28 +463,7 @@ fn within_grant(skill: &Skill, tool: &SkillToolDef, cwd: &Path) -> Result<(), Re
             mode,
         })
         .collect();
-    let granted = effective_mode_for_path(&grants, cwd).unwrap_or(PermissionMode::Chat);
-    let needed = tier_of(tool);
-    if needed > granted {
-        return Err(Refusal::BeyondGrant(format!(
-            "'{}' needs {needed} on {}; the skill grants {granted}",
-            tool.name,
-            cwd.display()
-        )));
-    }
-    Ok(())
-}
-
-/// The tool's tier must be within the level its caller stands at.
-fn within_level(tool: &SkillToolDef, caller: PermissionMode) -> Result<(), Refusal> {
-    let needs = tier_of(tool);
-    if needs > caller {
-        return Err(Refusal::BeyondLevel {
-            level: caller,
-            needs,
-        });
-    }
-    Ok(())
+    effective_mode_for_path(&grants, cwd).unwrap_or(PermissionMode::Chat)
 }
 
 /// A call changed the save: push it now, never pull (a pull happens at a

@@ -380,7 +380,7 @@ impl From<crate::perception::offer::Shown> for OfferButton {
                 skill,
                 tool: Some(tool),
                 args: (!args.is_null()).then_some(args),
-                tier: Some(tier),
+                tier: Some(tier.word().to_string()),
                 view: None,
             },
             Offer::Open { skill, view } => Self {

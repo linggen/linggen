@@ -66,6 +66,7 @@ The phone has no SKILL.md; its equivalent is a **compiled Dart ToolRegistry**. A
 Three tiers: `read`, `edit`, `destructive`.
 
 - `read` runs silently; `edit` rides the normal permission model.
+- On the Mac, a skill declares the class as `tier: read | edit | destructive | admin` (`skill-spec.md`); the engine reads it once and judges every way in in one function (`permission-spec.md` § App actions). A model that calls a `destructive` Mac tool is always asked first; the page's own call runs as an `edit` one, the page confirming. `mac/tools` publishes the word.
 - `destructive` requires a **human confirm on the device that executes**, regardless of which agent called: in Yinyue's chat an AskUser card; for a Mac-queued action, a confirm on the phone. An OS-owned confirm (PhotoKit delete sheet) counts as the confirm — never double-prompt.
 - A tool's tier must match its effect. A remote-mutating tool is not `read` (fix: SyncPhone).
 

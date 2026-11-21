@@ -37,9 +37,11 @@ fn status_of(refusal: &Refusal) -> StatusCode {
         Refusal::NoSkill(_) | Refusal::NoTool(_) => StatusCode::NOT_FOUND,
         Refusal::NotRunnable(_) | Refusal::BadCall(_) => StatusCode::BAD_REQUEST,
         Refusal::SignedOut => StatusCode::UNAUTHORIZED,
-        Refusal::BeyondGrant(_) | Refusal::NotForPet(_) | Refusal::BeyondLevel { .. } => {
-            StatusCode::FORBIDDEN
-        }
+        Refusal::BeyondGrant(_)
+        | Refusal::NotForPet(_)
+        | Refusal::ByGate(_)
+        | Refusal::NeedsPerson(_)
+        | Refusal::BeyondLevel { .. } => StatusCode::FORBIDDEN,
         Refusal::Crashed(_) => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }

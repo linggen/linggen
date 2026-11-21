@@ -98,7 +98,7 @@ fn check_tool(
         description: "A mission's run-if check.".into(),
         cmd,
         endpoint: None,
-        tier: Some("read".into()),
+        class: crate::engine::permission::ActionClass::Read,
         args: Default::default(),
         returns: None,
         timeout_ms,

@@ -239,6 +239,19 @@ pub fn build_rule_question(
     question
 }
 
+/// An action that destroys what it acts on, asked of the person or the
+/// caller: allow once or deny, like [`build_outward_question`] — no grant
+/// stands for the next one.
+pub fn build_destroy_question(
+    tool_summary: &str,
+    target_mode: &PermissionMode,
+    path: &str,
+) -> AskUserQuestion {
+    let mut question = build_outward_question(tool_summary, target_mode, path);
+    question.options[0].description = Some("Run this one action; it cannot be undone".into());
+    question
+}
+
 /// A native permission answer must be exactly one offered option for question zero.
 /// A directory answer grants that offered path at the needed level. Anything
 /// that was not offered denies, so a client cannot name its own path.

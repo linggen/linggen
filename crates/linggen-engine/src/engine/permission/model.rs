@@ -71,15 +71,24 @@ pub enum PromptKind {
         tool_summary: String,
         /// The gate's explanation for a coding-session Bash request.
         reason: Option<String>,
-        /// The command's effect leaves this machine (`outward`): one answer
-        /// covers this one command — allow once or deny, no grant offered.
-        outward: bool,
+        /// An ask that offers no grant: one answer covers this one action,
+        /// allow once or deny ([`OnceAsk`] says why it is asked so).
+        once: Option<OnceAsk>,
         scoped_read: bool,
-        /// A rule in the person's Claude Code settings asks before this
-        /// action (`claude_rules`): one answer covers this one action —
-        /// allow once or deny, no grant offered.
-        by_rule: bool,
     },
+}
+
+/// Why an action is asked once, whatever the grants: its question and the
+/// answers it takes are the same, its words differ.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OnceAsk {
+    /// The command's effect leaves this machine (`outward`).
+    Outward,
+    /// A rule in the person's Claude Code settings asks before this action
+    /// (`claude_rules`).
+    Rule,
+    /// The action destroys what it acts on (`ActionClass::Destructive`).
+    Destroys,
 }
 
 /// Facts supplied by the branch that made the Bash decision.
@@ -683,13 +692,6 @@ pub fn tool_action_tier(tool: &str) -> PermissionMode {
     }
 }
 
-/// Parse the `tier:` string from a skill tool's manifest into a
-/// `PermissionMode` ([`PermissionMode::parse_written`]). `chat` is no tier:
-/// a tool that says it is falls back as an unknown one does.
-pub fn parse_skill_tier(tier: &str) -> Option<PermissionMode> {
-    PermissionMode::parse_written(tier).filter(|mode| *mode != PermissionMode::Chat)
-}
-
 // ---------------------------------------------------------------------------
 // Permission check
 // ---------------------------------------------------------------------------
@@ -957,7 +959,7 @@ fn ask_by_rule(
         }
         PermissionCheckResult::NeedsPrompt(kind) => kind,
     };
-    let PromptKind::ExceedsCeiling { target_mode, path, tool_summary, reason, outward, scoped_read, .. } = ask;
+    let PromptKind::ExceedsCeiling { target_mode, path, tool_summary, reason, once, scoped_read, .. } = ask;
     PermissionCheckResult::NeedsPrompt(PromptKind::ExceedsCeiling {
         target_mode,
         path,
@@ -967,10 +969,10 @@ fn ask_by_rule(
             Some(need) => format!("{why} {need}"),
             None => why,
         }),
-        outward,
+        // An outward ask stays one: its question is the stronger.
+        once: Some(once.unwrap_or(OnceAsk::Rule)),
         // A read allowed once is carried to the read itself (`approved`).
         scoped_read: scoped_read || matches!(facts.tool, "Read" | "Glob" | "Grep"),
-        by_rule: true,
     })
 }
 
@@ -1303,9 +1305,8 @@ fn needs_prompt(
         directories,
         tool_summary: summary,
         reason,
-        outward: false,
+        once: None,
         scoped_read: false,
-        by_rule: false,
     })
 }
 
@@ -1353,9 +1354,46 @@ fn ask_outward(
         directories: Vec::new(),
         tool_summary,
         reason,
-        outward: true,
+        once: Some(OnceAsk::Outward),
         scoped_read: false,
-        by_rule: false,
+    })
+}
+
+/// What a refusal or a question says of an action that destroys.
+const DESTROYS_REASON: &str = "It destroys what it acts on: this is always asked.";
+
+/// An action that destroys (`ActionClass::Destructive`), asked of a model,
+/// is asked whatever the grants: what the check would allow is asked at
+/// the level it needs, and an ask the check makes anyway (the grants do not
+/// reach) becomes the same one-time ask — no grant is offered. A refusal
+/// stays one, and the deny floor and a turn's ceiling come first.
+pub(crate) fn ask_destroys(result: PermissionCheckResult, tool: &str, session_cwd: &Path) -> PermissionCheckResult {
+    let ask = match result {
+        PermissionCheckResult::Blocked(_) => return result,
+        PermissionCheckResult::Allowed => match needs_prompt(
+            session_cwd,
+            session_cwd,
+            PermissionMode::Edit,
+            format!("{tool} {}", session_cwd.display()),
+            None,
+        ) {
+            PermissionCheckResult::NeedsPrompt(kind) => kind,
+            other => return other,
+        },
+        PermissionCheckResult::NeedsPrompt(kind) => kind,
+    };
+    let PromptKind::ExceedsCeiling { target_mode, path, tool_summary, reason, once, .. } = ask;
+    PermissionCheckResult::NeedsPrompt(PromptKind::ExceedsCeiling {
+        target_mode,
+        path,
+        directories: Vec::new(),
+        tool_summary,
+        reason: Some(match reason {
+            Some(need) => format!("{DESTROYS_REASON} {need}"),
+            None => DESTROYS_REASON.into(),
+        }),
+        once: Some(once.unwrap_or(OnceAsk::Destroys)),
+        scoped_read: false,
     })
 }
 

@@ -18,6 +18,7 @@
 
 #[cfg(test)]
 mod ceiling_tests;
+mod action_class;
 mod claude_rules;
 #[cfg(test)]
 mod claude_rules_tests;
@@ -51,21 +52,23 @@ mod outward_tests;
 #[cfg(test)]
 mod shown_labels_tests;
 
+pub use action_class::ActionClass;
 pub use claude_rules::{is_refusal as is_claude_refusal, ClaudeRules};
 pub use declined::DeclinedScopes;
 pub use read_scope::{ReadOrigin, ReadStart};
 #[cfg(test)]
 use model::check_permission_at_turn;
-pub(crate) use model::{allows_instruction_import, check_permission_under_rules};
+pub(crate) use model::{allows_instruction_import, ask_destroys, check_permission_under_rules};
 #[cfg(test)]
 pub(crate) use model::check_permission_with_read_approvals;
 pub use manifest::{apply_grants, Grants, PathGrant};
 pub use model::{
-    check_permission, check_permission_for, display_path, effective_mode_for_path, parse_skill_tier, PathMode,
+    check_permission, check_permission_for, display_path, effective_mode_for_path, OnceAsk, PathMode,
     PermissionAction, PermissionCheckResult, PermissionMode, PromptKind,
 };
 pub use prompt::{
-    build_caller_question, build_exceeds_ceiling_question, build_outward_question, build_rule_question,
+    build_caller_question, build_destroy_question, build_exceeds_ceiling_question, build_outward_question,
+    build_rule_question,
     grant_at_label,
     label_in_chinese, parse_exceeds_ceiling_answer, permission_target_summary, ALLOW_ONCE, DENY,
 };
@@ -1635,26 +1638,25 @@ mod tests {
     }
 
     /// What each reader of a written mode makes of every word, the hosts'
-    /// words with them: a skill tool's `tier:` and a skill's or mission's
-    /// path grant (`Grants`).
+    /// words with them: a skill's or mission's path grant (`Grants`); a
+    /// skill tool's `tier:` is `ActionClass`'s.
     #[test]
     fn each_reader_of_a_written_mode_word() {
         use PermissionMode::*;
-        for (word, tier, grant) in [
-            ("chat", None, Chat),
-            ("read", Some(Read), Read),
-            ("edit", Some(Edit), Edit),
-            ("write", Some(Edit), Edit),
-            ("admin", Some(Admin), Admin),
-            ("Admin", None, Read),
-            ("", None, Read),
-            ("plan", None, Read),
-            ("default", None, Read),
-            ("acceptEdits", None, Read),
-            ("auto", None, Read),
-            ("bypassPermissions", None, Read),
+        for (word, grant) in [
+            ("chat", Chat),
+            ("read", Read),
+            ("edit", Edit),
+            ("write", Edit),
+            ("admin", Admin),
+            ("Admin", Read),
+            ("", Read),
+            ("plan", Read),
+            ("default", Read),
+            ("acceptEdits", Read),
+            ("auto", Read),
+            ("bypassPermissions", Read),
         ] {
-            assert_eq!(parse_skill_tier(word), tier, "tier {word}");
             assert_eq!(super::manifest::parse_mode_str(word), grant, "grant {word}");
         }
     }
@@ -1678,14 +1680,6 @@ mod tests {
             assert_eq!(PermissionMode::parse(other), None, "{other}");
             assert_eq!(PermissionMode::parse_written(other), None, "{other}");
         }
-    }
-
-    #[test]
-    fn test_parse_skill_tier() {
-        assert_eq!(parse_skill_tier("read"), Some(PermissionMode::Read));
-        assert_eq!(parse_skill_tier("edit"), Some(PermissionMode::Edit));
-        assert_eq!(parse_skill_tier("admin"), Some(PermissionMode::Admin));
-        assert_eq!(parse_skill_tier("nonsense"), None);
     }
 
     #[test]

@@ -33,7 +33,7 @@ fn asks_at(result: &PermissionCheckResult) -> Option<PermissionMode> {
     match result {
         PermissionCheckResult::NeedsPrompt(PromptKind::ExceedsCeiling {
             target_mode,
-            outward: false,
+            once: None,
             ..
         }) => Some(*target_mode),
         _ => None,
@@ -98,7 +98,7 @@ fn inline_code_preserves_the_other_gate_checks() {
     ] {
         let result = check(cmd, &edit, true);
         assert!(matches!(&result, PermissionCheckResult::NeedsPrompt(PromptKind::ExceedsCeiling {
-            target_mode: Edit, path: actual, outward: false, ..
+            target_mode: Edit, path: actual, once: None, ..
         }) if actual == path), "{cmd}: {result:?}");
         assert_eq!(asks_at(&check(cmd, &edit, false)), Some(Admin), "{cmd}");
     }
@@ -130,7 +130,7 @@ fn inline_code_preserves_the_other_gate_checks() {
         "env FOO=1 bash -lc 'cargo publish'",
     ] {
         assert!(matches!(check(cmd, &admin, true), PermissionCheckResult::NeedsPrompt(
-            PromptKind::ExceedsCeiling { outward: true, .. }
+            PromptKind::ExceedsCeiling { once: Some(OnceAsk::Outward), .. }
         )), "{cmd}");
         assert_eq!(asks_at(&check(cmd, &edit, false)), Some(Admin), "{cmd}");
     }
@@ -295,7 +295,7 @@ fn the_deny_floor_and_outward_commands_come_first() {
             matches!(
                 check(cmd, &perms, true),
                 PermissionCheckResult::NeedsPrompt(PromptKind::ExceedsCeiling {
-                    outward: true,
+                    once: Some(OnceAsk::Outward),
                     ..
                 })
             ),

@@ -161,6 +161,7 @@ const GRANT_WRITERS: &[(&str, usize, &str)] = &[
         "a new person's session starts at the configured level; tests (one a coding turn that may edit)",
     ),
     ("src/server/mcp_agent.rs", 1, "a test"),
+    ("crates/linggen-engine/src/engine/tool_exec_app_action_tests.rs", 2, "tests"),
     ("crates/linggen-engine/src/engine/permission/read_policy_tests.rs", 1, "a test"),
     ("crates/linggen-engine/src/engine/permission/ceiling_tests.rs", 1, "a test"),
     (

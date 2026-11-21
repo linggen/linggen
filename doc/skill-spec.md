@@ -215,7 +215,7 @@ tools:
   - name: ScanDisk                          # Required. Tool name the agent calls.
     description: "Run a fresh disk scan."   # Required. Tells the agent when to use it.
     cmd: "$SKILL_DIR/scripts/scan-disk.sh"  # Shell tool
-    tier: read                              # read | edit | admin (default: admin)
+    tier: read                              # read | edit | destructive | admin (default: admin)
     timeout_ms: 30000                       # default: 30000
     max_output_bytes: 65536                 # default: 65536 (64 KB) per stream
     args:
@@ -265,7 +265,7 @@ backstop, not a licence.
 
 ### Permission tier
 
-Shell and HTTP tools obey the skill's `permission.mode`. A `tier: read` tool runs ungated when the skill is in read mode; `tier: edit` or `tier: admin` prompts the user. Data tools have no side effect to gate, so `tier` is ignored. Omitting `tier` defaults to `admin` (the strict default).
+Shell and HTTP tools obey the skill's `permission.mode`. A `tier: read` tool runs ungated when the skill is in read mode; `tier: edit` or `tier: admin` prompts the user. Data tools have no side effect to gate, so `tier` is ignored. Omitting `tier` defaults to `admin` (the strict default). `tier: destructive` marks a tool that destroys what it acts on (delete, overwrite): it needs what `edit` needs, and a model that calls it is always asked first, whatever was granted (`permission-spec.md` § App actions); the app's own page runs it as it runs an `edit` tool.
 
 ### Reuse across kinds
 

@@ -5,6 +5,15 @@
 Built and tested with fakes; not yet seen live with a second person's phone.
 The phone's part ships with the phone app.
 
+### Tools
+
+- **A skill can declare a destructive tool, and a model that asks for one
+  always asks you first.** `tier: destructive` — whatever you granted, one
+  question, allow once or deny; where nobody can be asked it is refused with
+  the reason. Your own click on the app's page runs as before.
+- **One place decides whether a caller may run an app's action** — a
+  model, a page, a tap and Yinyue all ask it; what each may run is as it was.
+
 ### People
 
 - **Settings → People: say what each person of your household may use.** A
