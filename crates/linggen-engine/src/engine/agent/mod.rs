@@ -305,7 +305,7 @@ impl AgentManager {
         )?;
 
         engine.default_models = config.routing.default_models.clone();
-        engine.auto_fallback = config.routing.auto_fallback;
+        engine.allow_model_fallback = config.routing.model_fallback;
         engine.set_spec(
             normalized_id.to_string(),
             agent_spec.spec,

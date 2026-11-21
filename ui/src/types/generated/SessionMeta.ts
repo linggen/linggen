@@ -82,7 +82,7 @@ title_locked: boolean,
 withheld_tools?: Array<string>, 
 /**
  * Whether a failed model call may be answered by another model. None:
- * the usual — it may (see `routing.auto_fallback`). `false`: the run
+ * the usual — it may (see `routing.model_fallback`). `false`: the run
  * fails on the model the session asked for, naming it and the
  * provider's reason. Sessions made through the delegation front door
  * (`agent_run`) start with `false`; the model picker's switch sets it.

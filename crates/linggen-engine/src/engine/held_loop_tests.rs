@@ -51,7 +51,7 @@ async fn engine_without_native_tools() -> (AgentEngine, tempfile::TempDir) {
         &crate::credentials::Credentials::default(),
     ));
     let mut engine = AgentEngine::new(cfg, models, id, AgentRole::Lead).unwrap();
-    engine.auto_fallback = false;
+    engine.allow_model_fallback = false;
     engine.set_task("tell her the build is done".to_string());
     engine.reply_held = true;
     (engine, root)

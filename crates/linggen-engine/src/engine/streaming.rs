@@ -475,7 +475,7 @@ impl AgentEngine {
     /// routing chain on rate-limit / context-limit / transient errors
     /// (`is_fallback_worthy_error`). Candidates: `routing.default_models`
     /// in order, then the always-injected Linggen Cloud model as last
-    /// resort. Gated by `routing.auto_fallback`. A quota error on one
+    /// resort. Gated by `routing.model_fallback`. A quota error on one
     /// backend cascades — a same-backend sibling that 429s too just moves
     /// the chain along. A successful fallback sticks for the rest of the
     /// run via `self.model_id`; `default_model_id` restores the preferred
@@ -543,7 +543,7 @@ impl AgentEngine {
         // routing config's, and the session's own (`SessionMeta::model_fallback`,
         // off for a session a host made through `agent_run`). Read once per call.
         let session_switch = self.session_allows_fallback();
-        let may_switch = self.auto_fallback && session_switch;
+        let may_switch = self.allow_model_fallback && session_switch;
 
         // A room's guest runs only what the room shares — before any call,
         // whatever the session's switch says.

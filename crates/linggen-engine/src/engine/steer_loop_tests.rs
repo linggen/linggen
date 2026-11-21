@@ -87,7 +87,7 @@ async fn steer_during_a_reply_keeps_what_it_said_and_takes_the_message() {
         &crate::credentials::Credentials::default(),
     ));
     let mut engine = AgentEngine::new(cfg, models, id.clone(), AgentRole::Lead).unwrap();
-    engine.auto_fallback = false;
+    engine.allow_model_fallback = false;
     engine.set_task("tell me a long story".to_string());
 
     let steer = Arc::new(SteerSignal::default());

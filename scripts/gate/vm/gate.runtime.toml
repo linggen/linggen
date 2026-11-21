@@ -11,7 +11,7 @@ suggest_followups = false
 
 [routing]
 default_models = ["gate-fake"]
-auto_fallback = false
+model_fallback = false
 
 [pet]
 model = "gate-fake"

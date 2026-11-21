@@ -16,7 +16,7 @@ level = "info"
 [routing]
 default_models = ["fake-ling"]
 # A refused fake call is a failed test, never a hop to a real provider.
-auto_fallback = false
+model_fallback = false
 
 [pet]
 # No quiet hours: what she says unprompted must not depend on the hour a
