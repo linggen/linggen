@@ -718,7 +718,7 @@ fn handoff_eligible(state: &Arc<ServerState>, session_id: &str) -> bool {
 }
 
 fn eligible_meta(meta: &crate::state_fs::sessions::SessionMeta) -> bool {
-    meta.creator != "external" && meta.runtime.is_linggen()
+    meta.creator != "external" && !meta.is_old_claude()
 }
 
 async fn new_handoff_session(

@@ -1071,11 +1071,11 @@ impl AgentManager {
     }
 }
 
-/// An old Claude session (`SessionRuntime::ClaudeAgentSdk`) has no engine:
+/// An old Claude session (`SessionMeta::is_old_claude`) has no engine:
 /// this is the one check every turn passes. The doors before it refuse
 /// early with `server::old_claude::READ_ONLY`.
 fn refuse_foreign_runtime(meta: Option<&crate::state_fs::sessions::SessionMeta>) -> Result<()> {
-    if let Some(meta) = meta.filter(|m| !m.runtime.is_linggen()) {
+    if let Some(meta) = meta.filter(|m| m.is_old_claude()) {
         anyhow::bail!(
             "Session {} is an old Claude session: read-only.",
             meta.id

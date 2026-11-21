@@ -24,7 +24,7 @@ pub enum Preset {
     /// An app's one-off job: bound to its own values or with tools withheld.
     OneOff,
     /// A Claude session from 2.5.1, which the Claude Agent SDK hosted: a
-    /// read-only record now (`SessionRuntime::ClaudeAgentSdk`).
+    /// read-only record now (`SessionMeta::is_old_claude`).
     OldClaude,
 }
 
@@ -61,7 +61,7 @@ pub fn preset_of(meta: &SessionMeta) -> Preset {
 }
 
 fn old_claude(meta: &SessionMeta) -> bool {
-    !meta.runtime.is_linggen()
+    meta.is_old_claude()
 }
 
 fn mission_run(meta: &SessionMeta) -> bool {

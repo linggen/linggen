@@ -1,5 +1,5 @@
 //! A Claude session from 2.5.1 and before: one the Claude Agent SDK hosted
-//! (`SessionRuntime::ClaudeAgentSdk`). That runtime is gone, so the session
+//! (`SessionMeta::is_old_claude`). That runtime is gone, so the session
 //! is a read-only record — it opens, renames, clears and deletes as any
 //! session does, takes no turn, and offers one way on: a new Linggen session
 //! in the same folder that starts with its conversation
@@ -23,13 +23,12 @@ pub(crate) const READ_ONLY: &str =
 /// How much of the old conversation the new session starts with: its newest
 /// lines, whole, up to this many characters (about ten thousand tokens).
 const CARRY_CHARS: usize = 40_000;
-/// A single line longer than this is cut, so one pasted log cannot fill the carry.
+/// A single line longer than this is cut to its opening and its closing, so
+/// one pasted log cannot fill the carry; a reply's last paragraph is what it
+/// concluded, so the cut keeps more of the end.
 const LINE_CHARS: usize = 4_000;
-
-/// True for a session this engine keeps only as a read-only record.
-pub(crate) fn is_read_only(meta: &SessionMeta) -> bool {
-    !meta.runtime.is_linggen()
-}
+const LINE_HEAD_CHARS: usize = 1_000;
+const MIDDLE_LEFT_OUT: &str = "\n[…]\n";
 
 #[derive(Deserialize)]
 pub(crate) struct ContinueRequest {
@@ -37,9 +36,9 @@ pub(crate) struct ContinueRequest {
 }
 
 /// POST /api/sessions/continue — a new Linggen session in the old Claude
-/// session's folder, with the lead's model the old session used (a Claude
-/// model, run natively), whose first row carries the old conversation
-/// ([`carried`]). The old session is left as it was. Returns `{id, cwd}`.
+/// session's folder, on a Claude model when one can run ([`model_for`]),
+/// whose first row carries the old conversation ([`carried`]) and names the
+/// model. The old session is left as it was. Returns `{id, cwd, model}`.
 pub(crate) async fn continue_api(
     State(state): State<Arc<ServerState>>,
     Json(req): Json<ContinueRequest>,
@@ -48,7 +47,7 @@ pub(crate) async fn continue_api(
     let Ok(Some(old)) = store.get_session_meta(&req.session_id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    if !is_read_only(&old) {
+    if !old.is_old_claude() {
         return (
             StatusCode::BAD_REQUEST,
             "Only an old Claude session is continued this way.",
@@ -56,23 +55,51 @@ pub(crate) async fn continue_api(
             .into_response();
     }
     let rows = store.get_chat_history(&old.id).unwrap_or_default();
-    // The model the old session pinned (a Claude model) carries over when
-    // this engine runs it; else the new session takes the default chain.
-    let pinned = old.agents.first().and_then(|m| m.model.clone());
-    let known = match pinned {
-        Some(id)
-            if crate::engine::model_choice::is_here(&*state.manager.models.read().await, &id) =>
-        {
-            Some(id)
+    let models = state.manager.models.read().await.clone();
+    let config = state.manager.get_config_snapshot().await;
+    let chain: Vec<String> = config
+        .routing
+        .default_models
+        .iter()
+        .cloned()
+        .chain(config.models.iter().map(|m| m.id.clone()))
+        .collect();
+    let pinned = old.agents.first().and_then(|m| m.model.as_deref());
+    let model = model_for(&models, pinned, &chain);
+    let meta = continued_meta(&old, model.clone());
+    // The model it will run on, named: the one chosen, else what the default
+    // chain gives its lead now.
+    let named = match model {
+        Some(id) => id,
+        None => {
+            let lead = meta.agents.first().map(|m| m.id.as_str()).unwrap_or("ling");
+            state
+                .manager
+                .agent_model_id(std::path::Path::new(&meta.cwd), lead)
+                .await
+                .unwrap_or_else(|| "the default model".to_string())
         }
-        _ => None,
     };
-    let meta = continued_meta(&old, known);
-    let seed = seed_row(&meta, carried(&old.title, &rows));
+    let seed = seed_row(&meta, carried(&old.title, &rows, &named));
     if store.add_session(&meta).is_err() || store.add_chat_message(&meta.id, &seed).is_err() {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
-    Json(serde_json::json!({ "id": meta.id, "cwd": meta.cwd })).into_response()
+    Json(serde_json::json!({ "id": meta.id, "cwd": meta.cwd, "model": named })).into_response()
+}
+
+/// The model a continued session asks for: the one the old session pinned
+/// when this engine has it; else the first Anthropic model of `chain` that
+/// can run now (a Claude conversation goes on on a Claude model); else none,
+/// and the default chain decides.
+fn model_for(
+    models: &crate::provider::models::ModelManager,
+    pinned: Option<&str>,
+    chain: &[String],
+) -> Option<String> {
+    pinned
+        .filter(|id| crate::engine::model_choice::is_here(models, id))
+        .map(str::to_string)
+        .or_else(|| crate::engine::model_choice::first_claude(models, chain))
 }
 
 /// The new session: the old one's folder and person, an ordinary chat's
@@ -129,10 +156,10 @@ fn seed_row(meta: &SessionMeta, content: String) -> ChatMsg {
 }
 
 /// What the new session starts with: the person's messages and Claude's
-/// replies, newest kept, within [`CARRY_CHARS`]. Tool calls, their results
-/// and the engine's own rows are left out: the files they touched are still
-/// in the folder.
-pub(crate) fn carried(title: &str, rows: &[ChatMsg]) -> String {
+/// replies, newest kept, within [`CARRY_CHARS`] characters (not bytes: a
+/// Chinese line costs what an English one does). The header names the model
+/// the session runs on and says what is left behind.
+pub(crate) fn carried(title: &str, rows: &[ChatMsg], model: &str) -> String {
     let lines: Vec<String> = rows
         .iter()
         .filter(|row| !row.is_observation && !row.content.trim().is_empty())
@@ -148,16 +175,19 @@ pub(crate) fn carried(title: &str, rows: &[ChatMsg]) -> String {
     let mut kept = Vec::new();
     let mut used = 0;
     for line in lines.iter().rev() {
-        if used + line.len() > CARRY_CHARS && !kept.is_empty() {
+        let chars = line.chars().count();
+        if used + chars > CARRY_CHARS && !kept.is_empty() {
             break;
         }
-        used += line.len();
+        used += chars;
         kept.push(line.as_str());
     }
     kept.reverse();
     let mut text = format!(
-        "[Continued from the Claude session \"{title}\" — {} of its {} messages carried]\n\n\
+        "[Continued from the Claude session \"{title}\", now on {model} — {} of its {} messages carried]\n\n\
          This session goes on from a Claude session that is now read-only. \
+         Left behind: tool calls and their results, pictures, and subagents' output; \
+         the files they touched are still in the folder. \
          Its conversation, as it was:\n\n",
         kept.len(),
         lines.len()
@@ -166,12 +196,16 @@ pub(crate) fn carried(title: &str, rows: &[ChatMsg]) -> String {
     text
 }
 
+/// A line within [`LINE_CHARS`]: whole, or its opening and its closing with
+/// the middle left out.
 fn cut(text: &str) -> String {
-    if text.chars().count() <= LINE_CHARS {
+    let count = text.chars().count();
+    if count <= LINE_CHARS {
         return text.to_string();
     }
-    let head: String = text.chars().take(LINE_CHARS).collect();
-    format!("{head}…")
+    let head: String = text.chars().take(LINE_HEAD_CHARS).collect();
+    let tail: String = text.chars().skip(count - (LINE_CHARS - LINE_HEAD_CHARS)).collect();
+    format!("{head}{MIDDLE_LEFT_OUT}{tail}")
 }
 
 #[cfg(test)]
@@ -205,11 +239,22 @@ mod tests {
             row("system", "Tool Edit: done", true),
             row("claude", "Renamed it to boats.rs.", false),
         ];
-        let text = carried("Ferry", &rows);
+        let text = carried("Ferry", &rows, "claude-test");
         assert!(text.contains("Person: Rename the ferry module"), "{text}");
         assert!(text.contains("Claude: Renamed it to boats.rs."), "{text}");
         assert!(!text.contains("Tool Edit"), "{text}");
         assert!(text.contains("2 of its 2 messages carried"), "{text}");
+    }
+
+    /// What is left behind is said, and so is the model the session runs on.
+    #[test]
+    fn the_carried_row_names_its_model_and_what_was_left_behind() {
+        let text = carried("Ferry", &[row("user", "Hi", false)], "claude-test-model");
+        let header = text.lines().next().unwrap();
+        assert!(header.contains("claude-test-model"), "{header}");
+        for left in ["tool calls", "pictures", "subagents"] {
+            assert!(text.contains(left), "{left}: {text}");
+        }
     }
 
     /// A long conversation keeps its newest lines within the budget.
@@ -218,9 +263,97 @@ mod tests {
         let rows: Vec<ChatMsg> = (0..40)
             .map(|i| row("user", &format!("line {i} {}", "x".repeat(3000)), false))
             .collect();
-        let text = carried("Long", &rows);
+        let text = carried("Long", &rows, "claude-test");
         assert!(text.contains("line 39"));
         assert!(!text.contains("line 0 "));
-        assert!(text.len() < CARRY_CHARS + 1000);
+        assert!(text.chars().count() < CARRY_CHARS + 1000);
+    }
+
+    /// The budget is characters: Chinese text carries as many lines as English.
+    #[test]
+    fn chinese_and_english_carry_the_same_number_of_characters() {
+        let carried_of = |filler: &str| {
+            let rows: Vec<ChatMsg> = (0..40)
+                .map(|i| row("user", &format!("{i}-{}", filler.repeat(3000)), false))
+                .collect();
+            carried("Long", &rows, "claude-test")
+        };
+        let english = carried_of("x");
+        let chinese = carried_of("好");
+        let count = |text: &str| text.lines().next().unwrap().split(" of its").next().unwrap().to_string();
+        let kept = |text: &str| count(text).rsplit(' ').next().unwrap().parse::<usize>().unwrap();
+        assert_eq!(kept(&english), kept(&chinese), "{english:.200} / {chinese:.200}");
+        assert!(kept(&chinese) < 40, "the budget was not reached");
+    }
+
+    /// A long reply keeps its opening and its closing, not only its opening.
+    #[test]
+    fn a_long_reply_keeps_both_its_ends() {
+        let reply = format!("The plan: rename.{}Done: boats.rs is in place.", " middle".repeat(2000));
+        let text = carried("Ferry", &[row("claude", &reply, false)], "claude-test");
+        assert!(text.contains("The plan: rename."), "{text:.300}");
+        assert!(text.contains("Done: boats.rs is in place."), "the closing was cut");
+        let line = text.lines().last().unwrap();
+        assert!(line.chars().count() <= LINE_CHARS + 20, "{}", line.chars().count());
+    }
+
+    fn anthropic(id: &str, key: Option<&str>) -> crate::config::ModelConfig {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "provider": "anthropic", "url": "https://api.anthropic.com",
+            "model": id, "api_key": key,
+        }))
+        .unwrap()
+    }
+
+    fn manager(configs: Vec<crate::config::ModelConfig>) -> crate::provider::models::ModelManager {
+        crate::provider::models::ModelManager::new_with_credentials(
+            configs,
+            &crate::credentials::Credentials::default(),
+        )
+    }
+
+    fn chain(ids: &[&str]) -> Vec<String> {
+        ids.iter().map(|id| id.to_string()).collect()
+    }
+
+    /// Unpinned: the first Anthropic model that can run, from the defaults then
+    /// the configured models. (A model with no key is passed over — that is
+    /// `model_choice`'s own test: a key in the environment would skew it here.)
+    #[test]
+    fn an_unpinned_old_session_continues_on_the_first_claude_model_that_can_run() {
+        let models = manager(vec![
+            anthropic("claude-b", Some("sk-test-b")),
+            anthropic("claude-a", Some("sk-test-a")),
+        ]);
+        let picked = model_for(&models, None, &chain(&["gpt-6.2-sol", "claude-b", "claude-a"]));
+        assert_eq!(picked.as_deref(), Some("claude-b"));
+        // A model the defaults do not list is found among the configured ones.
+        let picked = model_for(&models, None, &chain(&["gpt-6.2-sol", "claude-a"]));
+        assert_eq!(picked.as_deref(), Some("claude-a"));
+    }
+
+    /// Unpinned and no Claude model can run: none is asked for, the default
+    /// chain decides (and the new session says which).
+    #[test]
+    fn an_unpinned_old_session_with_no_claude_model_takes_the_default() {
+        let models = manager(vec![]);
+        assert_eq!(model_for(&models, None, &chain(&["gpt-6.2-sol", "gpt-6.1-terra"])), None);
+    }
+
+    /// Pinned and here: the pin carries over, a Claude model or not.
+    #[test]
+    fn a_pinned_old_session_keeps_its_model_when_it_is_here() {
+        let models = manager(vec![anthropic("claude-a", Some("sk-test-a")), anthropic("claude-b", Some("sk-test-b"))]);
+        let picked = model_for(&models, Some("claude-a"), &chain(&["claude-b"]));
+        assert_eq!(picked.as_deref(), Some("claude-a"));
+        // Pinned but gone: it falls to the first Claude model that can run.
+        let picked = model_for(&models, Some("claude-gone"), &chain(&["claude-b"]));
+        assert_eq!(picked.as_deref(), Some("claude-b"));
+    }
+
+    /// The line every door gives is one short line.
+    #[test]
+    fn the_refusal_line_is_twenty_words_or_fewer() {
+        assert!(READ_ONLY.split_whitespace().count() <= 20, "{READ_ONLY}");
     }
 }

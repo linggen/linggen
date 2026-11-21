@@ -14,6 +14,7 @@
 //! The lock (`lock_tests.rs`) fails when a model id is written, or a model's
 //! availability is checked, anywhere else.
 
+use crate::config::{ModelConfig, ProviderKind, SignIn};
 use crate::engine::AgentEngine;
 use crate::provider::models::ModelManager;
 
@@ -140,6 +141,32 @@ pub fn live(models: &ModelManager, asker: Asker<'_>, id: &str) -> Result<String,
 /// Whether this machine has a model by `id` (or a successor of it).
 pub fn is_here(models: &ModelManager, id: &str) -> bool {
     models.has_model(id)
+}
+
+/// The first model of `chain` that is Anthropic's and can run now, for a
+/// conversation that must go on on a Claude model (an old Claude session
+/// continued). "Can run" is a key, or Claude's sign-in when it holds the
+/// right scope and is not expired. Nothing when there is none: the caller
+/// takes its default.
+pub fn first_claude(models: &ModelManager, chain: &[String]) -> Option<String> {
+    chain.iter().find_map(|id| {
+        let live = models.resolve_id(id)?;
+        let config = models.list_models().into_iter().find(|m| m.id == live)?;
+        can_run_claude(config, || models.model_auth_ok(&live)).then_some(live)
+    })
+}
+
+/// Whether `config` is an Anthropic model with what it needs to answer:
+/// a non-empty key, or a Claude sign-in that `signed_in` vouches for.
+fn can_run_claude(config: &ModelConfig, signed_in: impl FnOnce() -> bool) -> bool {
+    if config.provider_kind() != ProviderKind::Anthropic {
+        return false;
+    }
+    match config.sign_in() {
+        SignIn::Key => config.api_key.as_deref().is_some_and(|key| !key.is_empty()),
+        SignIn::Claude => signed_in(),
+        SignIn::ChatGpt | SignIn::LinggenAccount | SignIn::Unknown => false,
+    }
 }
 
 /// The model a turn runs on: `asked` when it can run for this asker, else

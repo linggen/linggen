@@ -60,6 +60,17 @@ fn default_creator() -> String {
     "user".to_string()
 }
 
+/// The files the 2.5.1 Claude host kept in a session's folder besides its
+/// conversation: the one list ([`SessionStore::forget_old_claude_files`]).
+const OLD_CLAUDE_FILES: &[&str] = &[
+    "claude.json",
+    "claude-subagents.json",
+    "claude-usage.json",
+    "claude-capabilities.json",
+    "claude-auto-ok",
+    "claude-trust-declined.json",
+];
+
 /// Who runs a session's turns. Every session Linggen makes is `Linggen`.
 /// `ClaudeAgentSdk` is a session the Claude Agent SDK hosted up to 2.5.1:
 /// that runtime is gone, so such a session is a read-only record — it opens,
@@ -77,7 +88,9 @@ pub enum SessionRuntime {
 }
 
 impl SessionRuntime {
-    pub fn is_linggen(&self) -> bool {
+    /// Private: whether a session is an old Claude one is asked of
+    /// [`SessionMeta::is_old_claude`], the one place that decides it.
+    fn is_linggen(&self) -> bool {
         *self == Self::Linggen
     }
 }
@@ -218,6 +231,14 @@ pub struct LegacyMember {
 }
 
 impl SessionMeta {
+    /// Whether this is a Claude session from 2.5.1 or before: a read-only
+    /// record this engine takes no turn in. The one place that decides it —
+    /// every door, the preset, restart and the heralds ask here
+    /// (`old_claude_lock_tests`); the page asks `ui/src/lib/oldClaude.mts`.
+    pub fn is_old_claude(&self) -> bool {
+        !self.runtime.is_linggen()
+    }
+
     /// Give a session with no folder its own: its project, else where a
     /// session like it starts — a skill's in the skill's folder, any other
     /// in the default workspace. True when it had none.
@@ -695,6 +716,20 @@ impl SessionStore {
         }
         self.edit(session_id, |meta| meta.model_fallback = Some(allowed))?;
         Ok(true)
+    }
+
+    /// Remove what the 2.5.1 Claude host kept in an old Claude session's
+    /// folder beside its conversation: the resume pointer, the subagents'
+    /// records and the usage figure. Clear on such a session calls this, so
+    /// nothing is left that could bring the cleared conversation back.
+    pub fn forget_old_claude_files(&self, session_id: &str) {
+        if Self::validate_id(session_id).is_err() {
+            return;
+        }
+        let dir = self.session_dir(session_id);
+        for name in OLD_CLAUDE_FILES {
+            let _ = fs::remove_file(dir.join(name));
+        }
     }
 
     pub fn remove_session(&self, session_id: &str) -> Result<()> {

@@ -180,7 +180,7 @@ pub async fn run(
     let mode = permission_mapping(permission_mode, write_dir.is_some())?;
     if let Some(session) = session {
         let meta = session_meta(state, session)?;
-        if crate::server::old_claude::is_read_only(&meta) {
+        if meta.is_old_claude() {
             return Err(crate::server::old_claude::READ_ONLY.into());
         }
         let agent_id = agent

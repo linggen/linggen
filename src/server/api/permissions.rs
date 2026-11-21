@@ -73,17 +73,24 @@ fn grant_mode(word: &str) -> Option<crate::engine::permission::PermissionMode> {
 pub(crate) async fn update_session_permission(
     State(state): State<Arc<ServerState>>,
     Json(req): Json<UpdatePermissionRequest>,
-) -> impl IntoResponse {
+) -> axum::response::Response {
     if state
         .manager
         .global_sessions
         .get_session_meta(&req.session_id)
         .ok()
         .flatten()
-        .is_some_and(|m| crate::server::old_claude::is_read_only(&m))
+        .is_some_and(|m| m.is_old_claude())
     {
-        return StatusCode::BAD_REQUEST;
+        return (StatusCode::GONE, crate::server::old_claude::READ_ONLY).into_response();
     }
+    grant_session_permission(state, req).await.into_response()
+}
+
+async fn grant_session_permission(
+    state: Arc<ServerState>,
+    req: UpdatePermissionRequest,
+) -> StatusCode {
     use crate::engine::permission::SessionPermissions;
 
     let Some(mode) = grant_mode(&req.mode) else {

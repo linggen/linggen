@@ -237,8 +237,8 @@ async fn perform_restart(
             continue;
         };
         // A mission's turn is its own; a 2.5.1 Claude session is a
-        // read-only record (`SessionRuntime::ClaudeAgentSdk`) with no turn.
-        if meta.creator == "mission" || crate::server::old_claude::is_read_only(&meta) {
+        // read-only record with no turn.
+        if meta.creator == "mission" || meta.is_old_claude() {
             continue;
         }
         let agent = super::chat::members::default_responder(
@@ -414,7 +414,7 @@ async fn go_on(
         return;
     };
     let message = not_restarted_message(&plan, outcome.as_ref());
-    if meta.runtime.is_linggen() {
+    if !meta.is_old_claude() {
         let agent = plan["sessions"]
             .as_array()
             .into_iter()
@@ -588,8 +588,9 @@ fn not_delivered(session: &Value, why: &str) -> Value {
     session
 }
 
-/// The sessions that can continue, and those that cannot (unreadable, or
-/// deleted since).
+/// The sessions that can continue, and those that cannot (unreadable,
+/// deleted since, or an old Claude session: a read-only record that takes no
+/// turn — a message queued in it is kept in the record and told, never lost).
 fn sort_sessions(state: &ServerState, sessions: Vec<Value>) -> (Vec<Value>, Vec<Value>) {
     let mut ready = Vec::new();
     let mut left = Vec::new();
@@ -599,11 +600,14 @@ fn sort_sessions(state: &ServerState, sessions: Vec<Value>) -> (Vec<Value>, Vec<
             continue;
         }
         let sid = session["session_id"].as_str().unwrap_or_default();
-        if !matches!(
-            state.manager.global_sessions.get_session_meta(sid),
-            Ok(Some(_))
-        ) {
+        let Ok(Some(meta)) = state.manager.global_sessions.get_session_meta(sid) else {
             left.push(not_delivered(&session, "the session was deleted"));
+            continue;
+        };
+        if meta.is_old_claude() {
+            if session["queued"].as_array().is_some_and(|q| !q.is_empty()) {
+                left.push(not_delivered(&session, "an old Claude session is read-only; its queued message was not sent"));
+            }
             continue;
         }
         ready.push(session);
@@ -612,7 +616,7 @@ fn sort_sessions(state: &ServerState, sessions: Vec<Value>) -> (Vec<Value>, Vec<
 }
 
 /// Keep each queued picture as a file, its path in place of what was sent:
-/// both runtimes can inspect the same paths with their ordinary Read tool.
+/// the agent can inspect the same paths with its ordinary Read tool.
 /// A session whose picture cannot be kept is not continued.
 fn keep_pictures(state: &ServerState, sessions: Vec<Value>) -> (Vec<Value>, Vec<Value>) {
     let mut readable = Vec::new();
@@ -786,12 +790,6 @@ fn deliveries_for(
     else {
         return Vec::new();
     };
-    // A 2.5.1 Claude session named in a plan written before the upgrade is a
-    // read-only record now: it is not continued.
-    if crate::server::old_claude::is_read_only(&meta) {
-        tracing::info!("[restart] {sid} is a read-only Claude session; not continued");
-        return Vec::new();
-    }
     let agent = session["agent_id"]
         .as_str()
         .or_else(|| {

@@ -329,13 +329,9 @@ pub(crate) async fn get_skill_session_state(
         .get_session_meta(&session_id)
         .ok()
         .flatten()
-        .is_some_and(|meta| crate::server::old_claude::is_read_only(&meta))
+        .is_some_and(|meta| meta.is_old_claude())
     {
-        return (
-            StatusCode::BAD_REQUEST,
-            "Linggen apps require a Linggen session.",
-        )
-            .into_response();
+        return (StatusCode::GONE, crate::server::old_claude::READ_ONLY).into_response();
     }
 
     // A day is shown to its own person, with each row's place.
@@ -486,8 +482,8 @@ pub(crate) async fn rename_session_api(
         .get_session_meta(&req.session_id)
     {
         // An old Claude session is read-only: its title changes, its model
-        // does not (`SessionRuntime::ClaudeAgentSdk`).
-        if crate::server::old_claude::is_read_only(&meta) && req.model_id.is_some() {
+        // does not.
+        if meta.is_old_claude() && req.model_id.is_some() {
             return (StatusCode::GONE, crate::server::old_claude::READ_ONLY).into_response();
         }
     }

@@ -519,12 +519,9 @@ fn each_kind_keeps_its_seat_thread_and_runtime() {
         }
     );
 
-    let claude = SessionMeta { id: "sess-1-claude".into(), runtime: SessionRuntime::ClaudeAgentSdk, ..Default::default() };
+    let claude = SessionMeta { id: "sess-1-claude".into(), runtime: crate::state_fs::sessions::SessionRuntime::ClaudeAgentSdk, ..Default::default() };
     let spec = SessionSpec::of(&claude);
-    assert_eq!(
-        (spec.preset, spec.runtime),
-        (Preset::OldClaude, SessionRuntime::ClaudeAgentSdk)
-    );
+    assert_eq!(spec.preset, Preset::OldClaude);
 
     let mut chat = meta("sess-1-c", "user", None);
     chat.compact_threshold = Some(0.8);
