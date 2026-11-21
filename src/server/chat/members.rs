@@ -10,43 +10,11 @@ use crate::engine::model_choice::Choice;
 use crate::engine::skill::Skill;
 use crate::state_fs::sessions::{SessionMember, SessionMeta};
 
-/// The members a new session starts with: the skill's declared members, or
-/// the lead agent alone.
-pub(crate) fn default_members(skill: Option<&Skill>) -> Vec<SessionMember> {
-    let declared: Vec<SessionMember> = skill
-        .map(|s| s.members.iter().map(|id| SessionMember::new(id)).collect())
-        .unwrap_or_default();
-    if declared.is_empty() {
-        return vec![SessionMember::new(LEAD_AGENT_ID)];
-    }
-    declared
-}
-
-/// The session's members as they stand: its skill's declared members first
-/// (in the skill's order, each with the model the session keeps for it),
-/// then anyone else the session seated; a session with none seats the
-/// defaults.
-pub(crate) fn effective(meta: &SessionMeta, skill: Option<&Skill>) -> Vec<SessionMember> {
-    let mut out: Vec<SessionMember> = skill
-        .map(|s| s.members.as_slice())
-        .unwrap_or_default()
-        .iter()
-        .map(|id| {
-            meta.member(id)
-                .cloned()
-                .unwrap_or_else(|| SessionMember::new(id))
-        })
-        .collect();
-    for m in &meta.agents {
-        if !out.iter().any(|o| o.id == m.id) {
-            out.push(m.clone());
-        }
-    }
-    if out.is_empty() {
-        return default_members(skill);
-    }
-    out
-}
+// The members of a session, and the one writer of a member's kept model,
+// live in the engine (`engine::session_members`): the engine's mid-call
+// fallback writes through the same one. Re-exported so every caller reads
+// as it did.
+pub(crate) use crate::engine::session_members::{default_members, effective, set_model};
 
 /// Who answers a message that names nobody, on the Mac: the lead agent when
 /// it is a member, else the session's first member.
@@ -155,38 +123,6 @@ pub(crate) async fn seat(manager: &AgentManager, session_id: &str, id: &str) -> 
         tracing::info!("[members] {id} joins {session_id}");
     }
     ok
-}
-
-/// Keep `model` as `id`'s model in the session (`None` clears it). True
-/// when the meta changed.
-pub(crate) async fn set_model(
-    manager: &AgentManager,
-    session_id: &str,
-    id: &str,
-    model: Option<String>,
-) -> bool {
-    let store = &manager.global_sessions;
-    let skill = match store
-        .get_session_meta(session_id)
-        .ok()
-        .flatten()
-        .and_then(|m| m.skill)
-    {
-        Some(name) => manager.skills.get_skill(&name).await,
-        None => None,
-    };
-    store
-        .edit(session_id, |meta| {
-            // The members as the skill makes them, kept only if the model changed.
-            let members = effective(meta, skill.as_ref());
-            let stored = std::mem::replace(&mut meta.agents, members);
-            if meta.set_member_model(id, model) {
-                return true;
-            }
-            meta.agents = stored;
-            false
-        })
-        .unwrap_or(false)
 }
 
 /// The model `member`'s turn runs on in its session, for a call made outside
