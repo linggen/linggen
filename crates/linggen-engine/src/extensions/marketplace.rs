@@ -457,8 +457,9 @@ fn install_script(skill_dir: &Path) -> Result<()> {
 }
 
 /// Root-level names that are a skill's own state, in every skill. The same
-/// list is written in `skills/scripts/install-skill.mjs` and
-/// `skills/pulse/install.sh`; `user_state_cases.json` is run by all three.
+/// list is written in `skills/scripts/install-skill.mjs`,
+/// `skills/pulse/install.sh` and the Mac app's `skill_sync.rs`;
+/// `user_state_cases.json` is run by all four.
 const STATE_ROOTS: &[&str] = &["data", "state", "sessions", "config.json", ".installed"];
 
 /// A file anywhere in a skill named `*.local.*` is the person's.
@@ -466,28 +467,41 @@ fn is_local_file(name: &std::ffi::OsStr) -> bool {
     name.to_string_lossy().contains(".local.")
 }
 
-/// THE rule for what of an installed skill is the person's, kept across an
-/// update: the root names above, every path its manifest declares as saved
-/// or skipped (`cloud.save`, `cloud.skip`) that stays inside the skill
-/// folder, and every `*.local.*` file. Outermost first; a path inside another
-/// is carried with it.
-fn state_paths(skill_dir: &Path) -> Vec<PathBuf> {
-    let cloud = super::skills::load_skill_from_path(skill_dir, super::skills::SkillSource::Global)
-        .ok()
-        .flatten()
-        .and_then(|skill| skill.cloud)
-        .unwrap_or_default();
-    let declared = cloud
+/// What a skill's manifest declares as the person's own: `cloud.save`,
+/// `cloud.skip` and `keep`, written `./x` or `x/` as well as `x`.
+fn declared_paths(skill_dir: &Path) -> Vec<PathBuf> {
+    let Some(skill) =
+        super::skills::load_skill_from_path(skill_dir, super::skills::SkillSource::Global)
+            .ok()
+            .flatten()
+    else {
+        return Vec::new();
+    };
+    let cloud = skill.cloud.unwrap_or_default();
+    cloud
         .save
         .iter()
         .flat_map(|save| save.paths())
         .chain(cloud.skip.iter().map(String::as_str))
-        .map(PathBuf::from);
+        .chain(skill.keep.iter().map(String::as_str))
+        .map(|p| PathBuf::from(p.trim_start_matches("./").trim_end_matches('/')))
+        .collect()
+}
+
+/// THE rule for what of an installed skill is the person's, kept across an
+/// update: the root names above, every path its manifest declares
+/// ([`declared_paths`]) that stays inside the skill folder, and every
+/// `*.local.*` file. The manifest read is the installed copy's and the new
+/// copy's both, so a path the new release starts declaring is kept at the
+/// update that brings the declaration. Outermost first; a path inside
+/// another is carried with it.
+fn state_paths(old: &Path, new: &Path) -> Vec<PathBuf> {
     let mut paths: Vec<PathBuf> = STATE_ROOTS
         .iter()
         .map(PathBuf::from)
-        .chain(declared)
-        .chain(local_files(skill_dir))
+        .chain(declared_paths(old))
+        .chain(declared_paths(new))
+        .chain(local_files(old))
         .filter(|p| {
             p.components().count() > 0 && p.components().all(|c| matches!(c, Component::Normal(_)))
         })
@@ -528,7 +542,7 @@ fn local_files(skill_dir: &Path) -> Vec<PathBuf> {
 /// Move the installed skill's state into the new copy, over the archive's
 /// own; `carried` lists what has moved, so it can be put back.
 fn carry_state(old: &Path, new: &Path, carried: &mut Vec<PathBuf>) -> std::io::Result<()> {
-    for rel in state_paths(old) {
+    for rel in state_paths(old, new) {
         let (from, to) = (old.join(&rel), new.join(&rel));
         if !from.exists() {
             continue;
@@ -1304,15 +1318,41 @@ mod tests {
         assert!(!dir.join("scratch.txt").exists(), "only state is carried");
     }
 
+    /// A release that starts declaring `keep` keeps the person's file at the
+    /// update that brings the declaration (the installed manifest has none
+    /// yet), and a `keep` path outside the skill folder is ignored.
+    #[test]
+    fn an_update_keeps_a_path_the_new_release_starts_declaring() {
+        let tmp = tempfile::tempdir().unwrap();
+        let zip = write_zip_with(tmp.path(), &[
+            ("skills-main/foo/SKILL.md", "---\nname: foo\ndescription: d\nkeep: [references/brief.md, ./notes/, ../outside.txt, /abs.txt]\n---\nBody"),
+            ("skills-main/foo/references/brief.md", "shipped seed"),
+            ("skills-main/foo/notes/a.md", "shipped seed"),
+            ("skills-main/foo/scratch.txt", "shipped"),
+        ]);
+        let skills = tmp.path().join("skills");
+        let dir = installed_foo(&skills);
+        fs::create_dir_all(dir.join("references")).unwrap();
+        fs::create_dir_all(dir.join("notes")).unwrap();
+        fs::write(dir.join("references/brief.md"), "mine").unwrap();
+        fs::write(dir.join("notes/a.md"), "mine").unwrap();
+        fs::write(tmp.path().join("skills/outside.txt"), "not the skill's").unwrap();
+        install_named_from_zip(&zip, "foo", "skills", &dir).unwrap();
+        assert_eq!(fs::read_to_string(dir.join("references/brief.md")).unwrap(), "mine");
+        assert_eq!(fs::read_to_string(dir.join("notes/a.md")).unwrap(), "mine");
+        assert_eq!(fs::read_to_string(dir.join("scratch.txt")).unwrap(), "shipped");
+        assert_eq!(fs::read_to_string(tmp.path().join("skills/outside.txt")).unwrap(), "not the skill's");
+    }
+
     // ---- what is the person's own: the cases every installer runs ----
 
     /// The cases every installer of a skill runs (the skills repo runs the same
-    /// file against `install-skill.mjs` and `pulse/install.sh`). Held
-    /// byte-identical there by this pin: change the file in both repos, then
-    /// both pins.
+    /// file against `install-skill.mjs` and `pulse/install.sh`, the Mac app
+    /// against its bundled-skill sync). Held byte-identical there by this pin:
+    /// change the file in all three repos, then all three pins.
     const USER_STATE_CASES: &str = include_str!("user_state_cases.json");
     const USER_STATE_CASES_SHA256: &str =
-        "49fd47c8e18f5cc06313b101a719dee704a05801d7647cbe880d7af548d4c1fa";
+        "a2f1b710490015124510fa5679b8e0a8b6f384e42e6e57b71f6f17f5a5b8049a";
 
     #[test]
     fn the_user_state_cases_are_the_file_the_skills_repo_runs() {
@@ -1323,7 +1363,7 @@ mod tests {
             .collect();
         assert_eq!(
             sha, USER_STATE_CASES_SHA256,
-            "user_state_cases.json changed: copy it to skills/tests/user-state-cases.json and set the sha256 in both tests"
+            "user_state_cases.json changed: copy it to skills/tests/user-state-cases.json and linggen-app/shell/src/skill_sync/user_state_cases.json, and set the sha256 in all three tests"
         );
     }
 

@@ -368,6 +368,10 @@ struct SkillFrontmatter {
     /// `doc/skill-spec.md` § Cloud.
     #[serde(default)]
     cloud: Option<CloudConfig>,
+    /// Files of the skill that are the person's, kept on update — see
+    /// `Skill::keep`.
+    #[serde(default)]
+    keep: Vec<String>,
     /// The Linggen Cloud product this skill bills to — see `Skill::product`.
     #[serde(default)]
     product: Option<String>,
@@ -778,6 +782,7 @@ pub fn parse_skill_text(text: &str, source: SkillSource) -> Result<Skill> {
         install: frontmatter.install,
         sync: frontmatter.sync,
         cloud,
+        keep: frontmatter.keep,
         product: frontmatter.product,
         suggestions: frontmatter.suggestions,
         closing_ask: frontmatter.closing_ask,
@@ -1172,6 +1177,16 @@ This is the skill content."#;
         );
         let bare = parse_skill_text("---\nname: x\ndescription: y\n---\n", SkillSource::Global);
         assert!(!bare.unwrap().closing_ask);
+    }
+
+    /// `keep:` lists the skill's own files the person edits; absent, none.
+    #[test]
+    fn a_skill_declares_files_of_the_persons_to_keep() {
+        let text = "---\nname: pulse\ndescription: d\nkeep: [references/brief.md]\n---\nBody";
+        let skill = parse_skill_text(text, SkillSource::Global).unwrap();
+        assert_eq!(skill.keep, vec!["references/brief.md"]);
+        let bare = parse_skill_text("---\nname: x\ndescription: y\n---\n", SkillSource::Global);
+        assert!(bare.unwrap().keep.is_empty());
     }
 
     /// `private-talk: true` is kept on the skill; absent, its talk is not
