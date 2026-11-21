@@ -176,14 +176,28 @@ pub(crate) async fn follow_chatgpt_catalog(
 /// the pet: when it is enabled, the provider is warmed once the weights
 /// are on disk (the TTS sidecar too, if the runtime has delivered it).
 fn prewarm_voice(state: &Arc<ServerState>, pet_enabled: bool) {
-    let tts = state.tts.clone();
+    let (tts, stt) = (state.tts.clone(), state.stt.clone());
     let quiet = download_quiet(state);
     tokio::spawn(async move {
         fetch_voice_weights(tts.as_ref(), &quiet, QUIET_POLL).await;
-        if pet_enabled && tts.prewarm_on_boot() {
-            tts.prewarm().await;
-        }
+        warm_at_start(tts.as_ref(), stt.as_ref(), pet_enabled).await;
     });
+}
+
+/// What loads at start, in this order: her voice, then hearing. Hearing's
+/// load holds the voice sidecar's slot for as long as it takes, and a line of
+/// hers that finds the slot taken is spoken by the spare voice, so her voice
+/// is ready first and hearing waits for it. Both only with the pet on; and
+/// hearing only when its model is already on this Mac (a Mac that never
+/// fetched it does nothing here — the first press fetches).
+async fn warm_at_start(tts: &dyn api::tts::TtsProvider, stt: &dyn api::stt::SttProvider, pet_enabled: bool) {
+    if !pet_enabled {
+        return;
+    }
+    if tts.prewarm_on_boot() {
+        tts.prewarm().await;
+    }
+    stt.warm_if_fetched();
 }
 
 const QUIET_POLL: std::time::Duration = std::time::Duration::from_secs(30);
@@ -533,6 +547,52 @@ mod tests {
             self.missing.store(false, Ordering::SeqCst);
             Ok(())
         }
+    }
+
+    /// Both fakes write into one list, so the order they were called in is read.
+    struct Ordered(Arc<std::sync::Mutex<Vec<&'static str>>>);
+
+    #[async_trait::async_trait]
+    impl api::tts::TtsProvider for Ordered {
+        async fn synthesize(&self, _: &str, _: Option<&str>) -> anyhow::Result<Vec<u8>> {
+            Ok(vec![])
+        }
+        async fn prewarm(&self) {
+            self.0.lock().unwrap().push("voice starts");
+            tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+            self.0.lock().unwrap().push("voice ready");
+        }
+        fn prewarm_on_boot(&self) -> bool {
+            true
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl api::stt::SttProvider for Ordered {
+        fn can_hear(&self) -> Result<(), api::stt::Unavailable> {
+            Ok(())
+        }
+        fn begin_fetch(&self) {}
+        fn warm_if_fetched(&self) {
+            self.0.lock().unwrap().push("hearing loads");
+        }
+        async fn hear(&self, _: &[i16], _: &str) -> Result<api::stt::Heard, api::stt::Unavailable> {
+            unreachable!("nothing is heard at a start")
+        }
+    }
+
+    /// Rule 3: at a start hearing loads after her voice is ready, never
+    /// before it or beside it; and with the pet off neither loads.
+    #[tokio::test]
+    async fn at_a_start_her_voice_is_ready_before_hearing_loads() {
+        let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let both = Ordered(log.clone());
+        warm_at_start(&both, &both, true).await;
+        assert_eq!(*log.lock().unwrap(), ["voice starts", "voice ready", "hearing loads"]);
+
+        log.lock().unwrap().clear();
+        warm_at_start(&both, &both, false).await;
+        assert!(log.lock().unwrap().is_empty(), "the pet is off: nothing is warmed");
     }
 
     const POLL: std::time::Duration = std::time::Duration::from_millis(1);

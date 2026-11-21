@@ -120,7 +120,7 @@ pub fn build_exceeds_ceiling_question(
                 });
             }
             options.push(AskUserOption {
-                label: "Deny".into(),
+                label: DENY.into(),
                 description: Some("Block this action".into()),
                 preview: None,
             });
@@ -132,6 +132,24 @@ pub fn build_exceeds_ceiling_question(
 
 /// The option a caller's "run this one action" answer selects.
 pub const ALLOW_ONCE: &str = "Allow once";
+
+/// The option that blocks the action.
+pub const DENY: &str = "Deny";
+
+/// The Chinese for the two permission answers the engine writes — the words
+/// the page shows for them (`ui/src/lib/strings-zh.ts`, the page's one table;
+/// its two entries must read the same — `the_page_shows_what_the_table_says`).
+/// A spoken answer may be said in either form
+/// (`tools::builtin::answer_prompt::relay_heard`), whatever language the page
+/// is in: a person who speaks Chinese says 拒绝 to an English page too, and
+/// the words mean one thing. Nothing else is here: a label that is not one of
+/// these two is only ever said as it is written.
+const SAID_IN_CHINESE: [(&str, &str); 2] = [(ALLOW_ONCE, "允许一次"), (DENY, "拒绝")];
+
+/// The Chinese form of `label`; `None` when it has none.
+pub fn label_in_chinese(label: &str) -> Option<&'static str> {
+    SAID_IN_CHINESE.iter().find(|(english, _)| *english == label).map(|(_, chinese)| *chinese)
+}
 
 /// The option label that grants `path` at `mode` for the session.
 pub fn grant_at_label(mode: &PermissionMode, path: &str) -> String {
@@ -164,7 +182,7 @@ pub fn build_caller_question(
         preview: None,
     });
     options.push(AskUserOption {
-        label: "Deny".into(),
+        label: DENY.into(),
         description: Some("Block this action".into()),
         preview: None,
     });
@@ -202,7 +220,7 @@ pub fn build_outward_question(
         }),
         options: vec![
             option(ALLOW_ONCE, "Run this one command; it leaves this machine"),
-            option("Deny", "Block this action"),
+            option(DENY, "Block this action"),
         ],
         multi_select: false,
     }

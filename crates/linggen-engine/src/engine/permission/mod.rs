@@ -48,6 +48,8 @@ mod store;
 mod gate_copy_tests;
 #[cfg(test)]
 mod outward_tests;
+#[cfg(test)]
+mod shown_labels_tests;
 
 pub use claude_rules::{is_refusal as is_claude_refusal, ClaudeRules};
 pub use declined::DeclinedScopes;
@@ -65,7 +67,7 @@ pub use model::{
 pub use prompt::{
     build_caller_question, build_exceeds_ceiling_question, build_outward_question, build_rule_question,
     grant_at_label,
-    parse_exceeds_ceiling_answer, permission_target_summary, ALLOW_ONCE,
+    label_in_chinese, parse_exceeds_ceiling_answer, permission_target_summary, ALLOW_ONCE, DENY,
 };
 pub use store::SessionPermissions;
 
