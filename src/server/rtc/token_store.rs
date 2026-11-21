@@ -85,6 +85,20 @@ impl TokenUsageStore {
         self.dirty = true;
     }
 
+    /// Count tokens a household person used on this Mac's models today
+    /// (`server::people`): theirs alone — a room's total is its guests'.
+    pub fn record_person(&mut self, user_id: &str, tokens: i64) {
+        self.maybe_reset();
+        *self.data.consumers.entry(user_id.to_string()).or_insert(0) += tokens;
+        self.dirty = true;
+    }
+
+    /// The tokens `user_id` has used today, whoever they used them as.
+    pub fn used_by(&mut self, user_id: &str) -> i64 {
+        self.maybe_reset();
+        self.data.consumers.get(user_id).copied().unwrap_or(0)
+    }
+
     /// Get usage stats: (consumer_used, room_total).
     pub fn get_usage(&self, user_id: &str) -> (i64, i64) {
         let consumer = self.data.consumers.get(user_id).copied().unwrap_or(0);

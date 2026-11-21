@@ -94,6 +94,20 @@ impl Api {
         (status, serde_json::from_str(&text).unwrap_or(Value::Null))
     }
 
+    /// A PUT of `payload`: the status and the JSON body (`null` if none).
+    pub async fn put_json(&self, path: &str, payload: Value) -> (u16, Value) {
+        let resp = self
+            .client
+            .put(format!("{}{path}", self.base))
+            .json(&payload)
+            .send()
+            .await
+            .unwrap_or_else(|e| panic!("{path}: {e}"));
+        let status = resp.status().as_u16();
+        let text = resp.text().await.unwrap_or_default();
+        (status, serde_json::from_str(&text).unwrap_or(Value::Null))
+    }
+
     pub async fn patch(&self, path: &str, payload: Value) -> Value {
         let resp = self
             .client

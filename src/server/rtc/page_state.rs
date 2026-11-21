@@ -356,6 +356,7 @@ pub async fn build_page_state(
             })
             .collect();
         drop(models_guard);
+        let people = crate::server::people::current();
         let models = if let Some(ref cfg) = room_cfg {
             let shared: std::collections::HashSet<&str> =
                 cfg.shared_models.iter().map(|s| s.as_str()).collect();
@@ -364,7 +365,11 @@ pub async fn build_page_state(
                 .filter(|(m, _)| shared.contains(m.id.as_str()))
                 .collect::<Vec<_>>()
         } else {
+            // Another person is shown the models they were given.
             all_models
+                .into_iter()
+                .filter(|(m, _)| people.may_run_model(person, &m.id))
+                .collect::<Vec<_>>()
         };
         ps.models = Some(
             models
@@ -390,7 +395,11 @@ pub async fn build_page_state(
                 .filter(|s| allowed.contains(s.name.as_str()))
                 .collect::<Vec<_>>()
         } else {
+            // Another person is shown the apps they may use, and no others.
             skills
+                .into_iter()
+                .filter(|s| people.may_use_app(person, &s.name))
+                .collect::<Vec<_>>()
         };
         ps.skills = Some(
             skills

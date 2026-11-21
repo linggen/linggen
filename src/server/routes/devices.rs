@@ -64,6 +64,10 @@ pub(super) fn routes() -> Routes {
             "/api/pair/devices/{id}/permission",
             put(api::pair::set_device_level),
         )
+        // The household: each person's settings, set at this Mac only
+        .route("/api/people", get(api::people::list))
+        .route("/api/people/owner", put(api::people::set_owner_side))
+        .route("/api/people/{person}", put(api::people::set_person))
         .route("/pair", get(api::pair::get_pair_page))
         // A LAN machine asking ling-mem to share memory: Allow / Deny here
         .route(

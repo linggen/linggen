@@ -4,12 +4,14 @@
 //! Every enforcement point reads from the same policy instead of
 //! re-deriving the answer from scattered config fields.
 //!
-//! Two user types:
-//! - **Owner** (`user_type = "owner"`): no restrictions, full prompt, full control.
-//! - **Consumer** (`user_type = "consumer"`): room_config ceiling, locked session, restricted prompt.
+//! Three kinds of asker (the server's `chat::policy::turn_policy` picks):
+//! - **Owner**: no restrictions, full prompt, full control.
+//! - **Person** of the household (another paired phone): the owner's session
+//!   and prompt, held to the apps and models the owner gave them.
+//! - **Consumer** (a room's guest): room_config ceiling, locked session, restricted prompt.
 //!
 //! Session mode (admin/edit/read/chat) is a separate axis — it controls what
-//! the agent can do, but for consumers it operates within the room_config ceiling.
+//! the agent can do, but for a person or a consumer it operates within the ceiling.
 
 use std::collections::HashSet;
 
@@ -25,7 +27,7 @@ pub struct ConsumerCeiling {
 
 /// Encapsulates all permission decisions for a session run.
 ///
-/// Built from user type via `from_user_type()`, carried to the engine by
+/// Built by the server's `turn_policy`, carried to the engine by
 /// its session spec (`session_spec::SessionSpec::apply`). Skill checks use `is_skill_allowed()`. Tool checks
 /// go through `EngineConfig::is_tool_allowed()` (the engine enforcement layer).
 #[derive(Debug, Clone, PartialEq)]
@@ -66,13 +68,16 @@ impl SessionPolicy {
         }
     }
 
-    /// Build policy from the user type string injected by peer.rs.
-    /// - `"owner"` → no restrictions.
-    /// - `"consumer"` → the ceiling `load_ceiling` returns (read only then), locked.
-    pub fn from_user_type(user_type: &str, load_ceiling: impl FnOnce() -> ConsumerCeiling) -> Self {
-        match user_type {
-            "consumer" => Self::consumer(load_ceiling()),
-            _ => Self::owner(),
+    /// A household person's policy — the owner's session and prompt, held to
+    /// the apps and the models the owner gave them. Their tools are decided by
+    /// the level their turn stands at (`SessionSpec::typed`), not here.
+    pub fn person(skills: Vec<String>, models: Vec<String>) -> Self {
+        Self {
+            allowed_tools: None,
+            allowed_skills: Some(skills.into_iter().collect()),
+            allowed_models: Some(models),
+            locked: false,
+            prompt_profile: super::prompt::profile::PromptProfile::owner(),
         }
     }
 

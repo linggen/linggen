@@ -110,6 +110,7 @@ pub(crate) async fn session_models(
     manager: &AgentManager,
     root: &Path,
     members: &[SessionMember],
+    asker: crate::engine::model_choice::Asker<'_>,
 ) -> Option<SessionModels> {
     let models = manager.models.read().await.clone();
     let mut windows = Vec::new();
@@ -122,12 +123,26 @@ pub(crate) async fn session_models(
     }
     let summarizer_id = super::members::default_responder(members);
     let member = members.iter().find(|m| m.id == summarizer_id)?;
-    let summarizer = super::members::model_of(manager, root, member).await?;
+    let summarizer = within(&models, asker, super::members::model_of(manager, root, member).await?)?;
     Some(SessionModels {
         windows,
         summarizer,
         summarizer_id,
     })
+}
+
+/// The model `asker` may summarize with: the owner's is `model` as it is; a
+/// guest's or a household person's one of the models they were given — the
+/// summary is a call on this Mac's model, paid like a turn. `None` when they
+/// were given none.
+fn within(models: &crate::provider::models::ModelManager, asker: crate::engine::model_choice::Asker<'_>, model: String) -> Option<String> {
+    use crate::engine::model_choice::{live, resolve, Asker, Rule};
+    if matches!(asker, Asker::Owner) {
+        return Some(model);
+    }
+    let rule = Rule { asker, may_switch: true };
+    let choice = resolve(models, Some(&model), &model, rule);
+    live(models, asker, choice.model()).ok()
 }
 
 /// Compact the session's thread into one summary row. Returns the summary
@@ -226,7 +241,11 @@ pub(super) async fn compact_if_due(engine: &mut AgentEngine, ctx: &ChatRunCtx) -
         return false;
     };
     let members = super::members::of_session(&ctx.manager, sid).await;
-    let Some(models) = session_models(&ctx.manager, &ctx.root, &members).await else {
+    let shared = engine.guest_models();
+    let asker = shared
+        .as_deref()
+        .map_or(crate::engine::model_choice::Asker::Owner, crate::engine::model_choice::Asker::Guest);
+    let Some(models) = session_models(&ctx.manager, &ctx.root, &members, asker).await else {
         return false;
     };
     let threshold = engine
@@ -334,5 +353,25 @@ mod tests {
         let world = row(crate::engine::prompt::world::WORLD_SENDER, "# World\n- disk");
         let t = transcript(&[row("user", "hi"), world, row("ling", "hello")]);
         assert_eq!(t, "[user] hi\n[ling] hello");
+    }
+
+    /// A summary is a call on this Mac's model, paid like a turn: the owner's
+    /// is the model asked for as it is; a guest's or a household person's one
+    /// of the models they were given, the first when theirs is not one of them;
+    /// and none at all when they were given none.
+    #[test]
+    fn a_summary_runs_only_on_a_model_its_asker_was_given() {
+        use crate::engine::model_choice::Asker;
+        let models = crate::provider::models::ModelManager::new_with_credentials(
+            vec![],
+            &crate::credentials::Credentials::default(),
+        );
+        let given = vec!["gpt-6.1-terra".to_string()];
+        let said = |asker, model: &str| within(&models, asker, model.to_string());
+        assert_eq!(said(Asker::Owner, "gpt-6.2-sol"), Some("gpt-6.2-sol".to_string()));
+        assert_eq!(said(Asker::Owner, "not-here"), Some("not-here".to_string()), "the owner's, as ever");
+        assert_eq!(said(Asker::Guest(&given), "gpt-6.1-terra"), Some("gpt-6.1-terra".to_string()));
+        assert_eq!(said(Asker::Guest(&given), "gpt-6.2-sol"), Some("gpt-6.1-terra".to_string()), "the member's own is not theirs");
+        assert_eq!(said(Asker::Guest(&[]), "gpt-6.2-sol"), None, "given none");
     }
 }

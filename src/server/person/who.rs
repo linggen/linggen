@@ -135,6 +135,12 @@ impl Person {
         matches!(self.0, Kind::Device(_))
     }
 
+    /// Another person of this Mac's household: another account, or a device
+    /// that named none — the people `server::people` keeps settings for.
+    pub(crate) fn is_another(&self) -> bool {
+        matches!(self.0, Kind::Account(_) | Kind::Device(_))
+    }
+
     /// The person a day is kept under (`None`: the owner's day); `None` for
     /// no one, who is given no day.
     pub(crate) fn day_key(&self) -> Option<Option<String>> {
@@ -263,11 +269,12 @@ mod tests {
     /// Who takes this Mac's account from [`mac_account`], and for what:
     /// each compares it the way `person` resolves people, or hands it there.
     const OWNERS_ACCOUNT: &[(&str, usize, &str)] = &[
-        ("src/server/person.rs", 3, "a device's standing, its unverified claim, a room consumer"),
+        ("src/server/person.rs", 4, "a device's standing, its unverified claim, a device row's person, a room consumer"),
         ("src/server/rtc/peer/control.rs", 1, "the relay's vouching, at identify"),
         ("src/server/api/memory.rs", 2, "memory's stamp, and where a device's rows go"),
         ("src/server/api/skill_save.rs", 1, "the same-account rule of a skill's save"),
         ("src/server/api/pair/manage.rs", 2, "whose each device is in Settings; /api/pair/me"),
+        ("src/server/people.rs", 1, "the first people file: which rows were the owner's"),
     ];
 
     /// Who a person is is written and read in this file alone, and this

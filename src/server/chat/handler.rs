@@ -643,8 +643,10 @@ pub(super) fn turn_model(
 }
 
 /// Set the engine's model for this turn by the one rule
-/// (`model_choice::resolve`), against the agent's own default. A consumer
-/// (proxy room) runs only the room's `shared_models`. The picker's model is
+/// (`model_choice::resolve`), against the agent's own default. `asker` is
+/// the turn's policy's (`SessionPolicy::asker`): a room's guest runs only
+/// the room's `shared_models`, a household person only the models they were
+/// given. The picker's model is
 /// kept as the member's once it runs — in the day's session it is for the
 /// turn alone ([`turn_only`]); a kept or picked model that is replaced is
 /// cleared, so the member stops asking for it.
@@ -654,17 +656,12 @@ pub(super) fn turn_model(
 /// the same skill run in the core app uses the configured global default.
 pub(super) async fn resolve_effective_model(
     engine: &mut crate::engine::AgentEngine,
-    (is_consumer, shared_models): (bool, &[String]),
+    asker: crate::engine::model_choice::Asker<'_>,
     asked: &TurnModel,
     (session_id, member): (Option<&str>, &str),
     manager: &Arc<AgentManager>,
 ) {
-    use crate::engine::model_choice::{self, Asker, Rule};
-    let asker = if is_consumer {
-        Asker::Guest(shared_models)
-    } else {
-        Asker::Owner
-    };
+    use crate::engine::model_choice::{self, Rule};
     let may_switch =
         session_id.is_none_or(|sid| manager.global_sessions.model_fallback_allowed(sid));
     let choice = model_choice::resolve(
@@ -891,6 +888,21 @@ pub(crate) async fn run_session_turn(
     dispatch_turn(ctx, engine, manager, &ctx.clean_msg).await;
     super::thread::mark(engine, ctx);
     engine.end_turn();
+}
+
+/// What a household person's turn used on this Mac's models, counted
+/// against their day (`people::record_turn`); the owner's and a room
+/// guest's are not counted here.
+async fn count_person_turn(
+    state: &Arc<ServerState>,
+    (user_type, user_id): (&str, Option<&str>),
+    engine: &mut crate::engine::AgentEngine,
+) {
+    let Some(person) = crate::server::people::household_person(user_type, user_id) else {
+        return;
+    };
+    let (usage, _) = engine.take_spend();
+    crate::server::people::record_turn(state, &person, (usage.prompt + usage.output) as u64).await;
 }
 
 /// Her words at a table that isn't her own thread go to her stage too —
@@ -1236,6 +1248,13 @@ pub(crate) async fn start_turn(
     // turn and nothing kept — no session made or retitled. The page says its
     // own line. The place is the request's (`turn_place`) for a first message
     // too: one check, whether or not the session is kept yet.
+    // A person of the household whose turn is not for them to start: nothing
+    // of the Mac's models shared with them, or their day's tokens used.
+    if let Some(person) = crate::server::people::household_person(&req.user_type, req.user_id.as_deref()) {
+        if let Some(why) = crate::server::people::turn_refusal(&state, &person).await {
+            return refused_reply(why.status(), req.session_id.as_deref(), &target_id);
+        }
+    }
     if let Some(status) = refusal(&state, &target_id, (&sid, Some(&turn_place)), &req.user_type).await {
         return refused_reply(status, req.session_id.as_deref(), &target_id);
     }
@@ -1419,6 +1438,7 @@ pub(crate) async fn start_turn(
     });
     let session_id_for_queue = effective_session_id.clone();
     let req_user_type = req.user_type;
+    let req_user_id = req.user_id.clone();
     let req_level = req.level;
     let req_model_id = req.model_id.clone();
     let req_images = req.images.clone();
@@ -1509,11 +1529,14 @@ pub(crate) async fn start_turn(
         }
 
         let is_consumer = req_user_type == "consumer";
-        let shared_models = if is_consumer {
-            crate::server::rtc::room_config::load_room_config().shared_models
-        } else {
-            Vec::new()
-        };
+        // The turn's one ceiling, before anything of it runs: the model is
+        // chosen within it (`policy.asker()`), then its spec is typed by it.
+        let installed: Vec<String> = state_clone.skills.list_skills().await.into_iter().map(|s| s.name).collect();
+        let policy = super::policy::turn_policy(super::policy::TurnBy::Person {
+            user_type: &req_user_type,
+            user_id: req_user_id.as_deref(),
+            installed: &installed,
+        });
         let pet = state.manager.get_config_snapshot().await.pet;
         let members = super::members::of_session(&state.manager, &session_id_for_queue).await;
         let asked = turn_model(
@@ -1524,7 +1547,7 @@ pub(crate) async fn start_turn(
         );
         resolve_effective_model(
             &mut engine,
-            (is_consumer, &shared_models),
+            policy.asker(),
             &asked,
             (session_id.as_deref(), &target_id_clone),
             &state.manager,
@@ -1537,7 +1560,6 @@ pub(crate) async fn start_turn(
 
         promote_mission_session_to_user(&mut engine, &state_clone, session_id.as_deref()).await;
 
-        let policy = super::policy::turn_policy(super::policy::TurnBy::Person(&req_user_type));
         // A person's turn: the session's spec typed by this policy — the
         // lead's tools, verbatim, its memory the turn's (an app's or a
         // mission's keeps less of the biography).
@@ -1585,6 +1607,7 @@ pub(crate) async fn start_turn(
         };
 
         run_session_turn(&ctx, &mut engine, &manager, None).await;
+        count_person_turn(&state_clone, (&req_user_type, req_user_id.as_deref()), &mut engine).await;
         hear_her_at_table(&state_clone, &engine, &ctx, &session_id_for_queue);
 
         // TurnComplete gives the Web UI a single finalizer.

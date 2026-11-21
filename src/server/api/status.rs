@@ -10,7 +10,13 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-pub(crate) async fn list_models_api(State(state): State<Arc<ServerState>>) -> impl IntoResponse {
+pub(crate) async fn list_models_api(
+    State(state): State<Arc<ServerState>>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    // A person is shown the models of this Mac they were given, and no others.
+    let person = crate::server::person::of_headers(&headers);
+    let people = crate::server::people::current();
     let models_guard = state.manager.models.read().await;
     let catalog = crate::provider::models::chatgpt_catalog::current();
     // `auth_ok` rides beside the config rather than on ModelConfig itself:
@@ -19,6 +25,7 @@ pub(crate) async fn list_models_api(State(state): State<Arc<ServerState>>) -> im
     let models: Vec<serde_json::Value> = models_guard
         .list_models()
         .into_iter()
+        .filter(|m| people.may_run_model(&person, &m.id))
         .map(|m| {
             let auth_ok = models_guard.model_auth_ok(&m.id);
             let mut v = shown(m);
