@@ -97,22 +97,29 @@ pub(crate) fn rooms_switch_from_disk() -> bool {
 
 impl RoomConfig {
     /// A share written against a retired model id also shares its current
-    /// id, so a generation bump never quietly un-shares a model. The old id
-    /// stays too — a user model reusing it is still theirs to share.
+    /// id (`with_successors`).
     fn with_successors(mut self) -> Self {
-        let next: Vec<String> = self
-            .shared_models
-            .iter()
-            .map(|id| crate::provider::models::follow_model_id(id))
-            .filter(|id| !self.shared_models.contains(id))
-            .collect();
-        for id in next {
-            if !self.shared_models.contains(&id) {
-                self.shared_models.push(id);
-            }
-        }
+        self.shared_models = with_successors(std::mem::take(&mut self.shared_models));
         self
     }
+}
+
+/// A share written against a retired model id also shares its current
+/// id, so a generation bump never quietly un-shares a model. The old id
+/// stays too — a user model reusing it is still theirs to share. A room's
+/// shared models and a person's (`server::people`) are read this way.
+pub(crate) fn with_successors(mut models: Vec<String>) -> Vec<String> {
+    let next: Vec<String> = models
+        .iter()
+        .map(|id| crate::provider::models::follow_model_id(id))
+        .filter(|id| !models.contains(id))
+        .collect();
+    for id in next {
+        if !models.contains(&id) {
+            models.push(id);
+        }
+    }
+    models
 }
 
 /// Derive the room ceiling from its allowed tools.

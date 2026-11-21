@@ -79,12 +79,20 @@ pub(super) fn handle_control_message(
                 .then(|| crate::server::person::mac_account())
                 .flatten();
             let contract = crate::server::rtc::contract::told(&msg);
+            let before = crate::server::person::of_token(token);
             let identified = crate::server::api::pair::set_device_account(
                 token,
                 account.clone(),
                 vouched_for.as_deref(),
                 contract,
             );
+            // Who it is now decides what is carried — a phone that signs in
+            // keeps what the owner chose for it, or the account's own
+            // (`people::person_changed`); one that claims this Mac's account
+            // unverified is still its device.
+            if let (Some(before), Some(after)) = (before, crate::server::person::of_token(token)) {
+                crate::server::people::person_changed(&before, &after);
+            }
             // A phone that wrote memory while signed out did so under its
             // device id; now that it is somebody — or now that it is verified
             // as the owner's — those rows become theirs. Here, because this

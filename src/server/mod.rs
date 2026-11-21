@@ -20,6 +20,7 @@ mod model_locks;
 mod met_watch;
 pub(crate) mod old_claude;
 pub(crate) mod milestones;
+pub(crate) mod people;
 pub(crate) mod person;
 mod push;
 mod quests_watch;

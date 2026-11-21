@@ -70,11 +70,12 @@ pub struct PairedDevice {
     /// it ([`refresh_account`]); a reconnect with no relay keeps it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verified_account: Option<String>,
-    /// The most this device may do when it is not the owner's, as set at
-    /// this Mac (`server::person::standing_of`); unset, read. The owner's own
-    /// device stands at admin whatever this says.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub permission: Option<crate::engine::permission::PermissionMode>,
+    /// The level this row held before levels belonged to a person
+    /// (`server::people`): read once, when the people file is first made
+    /// from the rows, and cleared then. Nothing sets it, and nothing else
+    /// reads it.
+    #[serde(default, rename = "permission", skip_serializing_if = "Option::is_none")]
+    pub legacy_permission: Option<crate::engine::permission::PermissionMode>,
     /// The contract number this phone said it speaks on its last
     /// `identify`; unset, it has said none (contract 0).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -323,8 +324,6 @@ pub fn commit_device(
             .as_deref()
             .and_then(|did| devices.iter().find(|d| d.device_id.as_deref() == Some(did)));
         let carried = prior.map(|d| d.settings.clone());
-        // The level set for it on this Mac stays the phone's across a re-pair.
-        let level = prior.and_then(|d| d.permission);
         let superseded_grant = prior.and_then(|d| d.relay_grant.clone());
         let device = PairedDevice {
             id: uuid::Uuid::new_v4().to_string(),
@@ -332,8 +331,7 @@ pub fn commit_device(
             account: account.map(stamp_account),
             // Vouched for on a later `identify`, never at pairing.
             verified_account: None,
-            // Set at this Mac; unset reads as read.
-            permission: level,
+            legacy_permission: None,
             // Said on the next `identify`.
             contract: None,
             secret: random_hex(24),

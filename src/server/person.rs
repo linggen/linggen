@@ -292,7 +292,28 @@ pub(crate) fn no_one() -> Person {
 pub(crate) fn standing_of(device: &str) -> Standing {
     let mac = mac_account();
     let devices = crate::state_fs::devices::load_devices();
-    standing_in(devices.iter().find(|d| d.id == device), mac.as_deref())
+    standing_in(devices.iter().find(|d| d.id == device), mac.as_deref(), &crate::server::people::current())
+}
+
+/// Who paired device row `device` is now (`of_device` with this Mac's account
+/// as it is).
+pub(crate) fn of_row(device: &crate::state_fs::devices::PairedDevice) -> Person {
+    of_device(device, mac_account().as_deref())
+}
+
+/// Who the device holding `token` is now; `None` for a token no row holds.
+pub(crate) fn of_token(token: &str) -> Option<Person> {
+    crate::state_fs::devices::device_by_token(token).map(|d| of_row(&d))
+}
+
+/// Who a request's `user_id` names: that person, and no one when it names
+/// none — a request from off this machine always carries one
+/// ([`send_judged`]), so a missing id is not the owner's.
+pub(crate) fn asking(user_id: Option<&str>) -> Person {
+    match user_id.map(str::trim).filter(|id| !id.is_empty()) {
+        Some(id) => Person::from_wire(Some(id)),
+        None => no_one(),
+    }
 }
 
 /// Whether paired device `device` is a phone whose account claim is this
@@ -336,7 +357,8 @@ fn claims_unverified(device: &crate::state_fs::devices::PairedDevice, mac: Optio
 /// Whether paired device row `device` stands as the owner's with this Mac's
 /// account `mac` (what [`standing_of`] answers for it).
 pub(crate) fn is_owners_device(device: &crate::state_fs::devices::PairedDevice, mac: Option<&str>) -> bool {
-    standing_in(Some(device), mac).is_owner()
+    // The owner's standing never asks the people file: no settings are read.
+    standing_in(Some(device), mac, &crate::server::people::People::default()).is_owner()
 }
 
 /// Who paired device `device` is, with this Mac's account `mac`: the owner
@@ -363,15 +385,20 @@ pub(crate) fn names_an_account(id: &str, mac: Option<&str>) -> bool {
 }
 
 /// [`standing_of`] for a row found (or not), with this Mac's account
-/// (`mac`).
-fn standing_in(device: Option<&crate::state_fs::devices::PairedDevice>, mac: Option<&str>) -> Standing {
+/// (`mac`) and the household's settings (`people`): the level is the
+/// person's, so two phones of one account stand at one.
+fn standing_in(
+    device: Option<&crate::state_fs::devices::PairedDevice>,
+    mac: Option<&str>,
+    people: &crate::server::people::People,
+) -> Standing {
     let Some(device) = device else {
         return unnamed(false);
     };
     let person = of_device(device, mac);
     let level = match person.is_owner() {
         true => PermissionMode::Admin,
-        false => device.permission.unwrap_or(DEVICE_DEFAULT).min(MOST_FOR_ANOTHER),
+        false => people.level_of(&person),
     };
     Standing {
         person,
@@ -696,6 +723,14 @@ mod tests {
         out
     }
 
+    /// [`super::standing_in`] when nobody set anything (`people`).
+    fn standing_in(
+        device: Option<&crate::state_fs::devices::PairedDevice>,
+        mac: Option<&str>,
+    ) -> super::Standing {
+        super::standing_in(device, mac, &crate::server::people::People::default())
+    }
+
     /// A page reads the day for the person on its channel: a `user_id` it
     /// names is replaced, and other paths are left alone.
     fn phone(account: Option<&str>) -> crate::state_fs::devices::PairedDevice {
@@ -722,20 +757,20 @@ mod tests {
             contract: None,
             ..phone(Some("u-friend"))
         };
-        assert_eq!(super::standing_in(Some(&old), Some("u-owner")).level(), Chat);
+        assert_eq!(standing_in(Some(&old), Some("u-owner")).level(), Chat);
         let owners_old = crate::state_fs::devices::PairedDevice {
             contract: Some(0),
             verified_account: Some("u-owner".into()),
             ..phone(Some("u-owner"))
         };
-        let s = super::standing_in(Some(&owners_old), Some("u-owner"));
+        let s = standing_in(Some(&owners_old), Some("u-owner"));
         assert_eq!((s.person(), s.level()), (&super::Person::owner(), Chat));
         let machine = crate::state_fs::devices::PairedDevice {
             kind: Some(crate::state_fs::devices::DeviceKind::Machine),
             contract: None,
             ..phone(None)
         };
-        assert_eq!(super::standing_in(Some(&machine), None).level(), Admin);
+        assert_eq!(standing_in(Some(&machine), None).level(), Admin);
     }
 
     /// The owner's device is the owner at admin: an approved machine, and a
@@ -747,13 +782,13 @@ mod tests {
             verified_account: Some("u-owner".into()),
             ..phone(Some("u-owner"))
         };
-        let s = super::standing_in(Some(&verified), Some("u-owner"));
+        let s = standing_in(Some(&verified), Some("u-owner"));
         assert_eq!((s.person(), s.level()), (&super::Person::owner(), Admin));
         let machine = crate::state_fs::devices::PairedDevice {
             kind: Some(crate::state_fs::devices::DeviceKind::Machine),
             ..phone(None)
         };
-        assert_eq!(super::standing_in(Some(&machine), None).level(), Admin);
+        assert_eq!(standing_in(Some(&machine), None).level(), Admin);
     }
 
     /// Any other device stands at the level set for it, read when none is,
@@ -762,27 +797,28 @@ mod tests {
     #[test]
     fn another_device_stands_at_its_level() {
         use crate::engine::permission::PermissionMode::*;
-        let claimed = super::standing_in(Some(&phone(Some("u-owner"))), Some("u-owner"));
+        let claimed = standing_in(Some(&phone(Some("u-owner"))), Some("u-owner"));
         assert_eq!((claimed.person().wire(), claimed.level()), ("device:dev-1".to_string(), Read));
         assert!(!crate::server::day_session::is_builder(claimed.person()), "not the builder's day");
-        let friend = super::standing_in(Some(&phone(Some("u-friend"))), Some("u-owner"));
+        let friend = standing_in(Some(&phone(Some("u-friend"))), Some("u-owner"));
         assert_eq!((friend.person().wire(), friend.level()), ("u-friend".to_string(), Read));
-        let raised = crate::state_fs::devices::PairedDevice {
-            permission: Some(Edit),
-            ..phone(Some("u-friend"))
+        // The level is the person's: set for them, it holds for every phone
+        // of theirs, whatever a row once said; admin is not one to give.
+        let set = |person: &str, level: &str| {
+            let mut people = crate::server::people::People::default();
+            let patch = serde_json::json!({ "level": level });
+            people.set(&super::Person::for_test(Some(person)), patch.as_object().unwrap()).map(|_| people)
         };
-        assert_eq!(super::standing_in(Some(&raised), Some("u-owner")).level(), Edit);
-        let over = crate::state_fs::devices::PairedDevice {
-            permission: Some(Admin),
-            ..phone(Some("u-friend"))
+        let at = |people: &crate::server::people::People, d: &crate::state_fs::devices::PairedDevice| {
+            super::standing_in(Some(d), Some("u-owner"), people).level()
         };
-        assert_eq!(super::standing_in(Some(&over), Some("u-owner")).level(), Edit);
-        let lowered = crate::state_fs::devices::PairedDevice {
-            permission: Some(Chat),
-            ..phone(None)
-        };
-        assert_eq!(super::standing_in(Some(&lowered), Some("u-owner")).level(), Chat);
-        let nobody = super::standing_in(None, Some("u-owner"));
+        let raised = set("u-friend", "edit").unwrap();
+        assert_eq!(at(&raised, &phone(Some("u-friend"))), Edit);
+        assert!(set("u-friend", "admin").is_err(), "admin is the owner's alone");
+        let lowered = set(&crate::server::person::stamp_of("dev-1"), "chat").unwrap();
+        assert_eq!(at(&lowered, &phone(None)), Chat);
+        assert_eq!(at(&raised, &phone(None)), Read, "another person's setting is not theirs");
+        let nobody = standing_in(None, Some("u-owner"));
         assert_eq!((nobody.person(), nobody.level()), (&super::Person::no_one(), Chat));
     }
 
@@ -799,13 +835,13 @@ mod tests {
         for mac in [Some("u-owner"), None] {
             for claim in claims {
                 let d = phone(Some(claim));
-                let s = super::standing_in(Some(&d), mac);
+                let s = standing_in(Some(&d), mac);
                 assert_eq!(s.person(), &super::Person::device("dev-1"), "{claim:?} with {mac:?}");
                 assert_eq!(super::whose_device(&d, mac), "signed_out", "{claim:?}");
             }
         }
         let friend = phone(Some("u-friend"));
-        assert_eq!(super::standing_in(Some(&friend), None).person(), &super::Person::account("u-friend"));
+        assert_eq!(standing_in(Some(&friend), None).person(), &super::Person::account("u-friend"));
     }
 
     /// A phone claiming this Mac's account unverified is told so; verified,
@@ -988,5 +1024,26 @@ mod tests {
             "/api/skill-sessions?skill=dice&user_id=u1"
         );
         assert_eq!(super::with_person("/api/sessions?x=1", "u1"), "/api/sessions?x=1");
+    }
+
+    /// Two phones of one account are one person: one level, whatever each
+    /// row once held, and a level set for the account holds for both.
+    #[test]
+    fn two_phones_of_one_account_stand_at_one_level() {
+        use crate::engine::permission::PermissionMode::{Chat, Edit};
+        let row = |id: &str, level| crate::state_fs::devices::PairedDevice {
+            id: id.into(),
+            legacy_permission: Some(level),
+            ..phone(Some("u-friend"))
+        };
+        let mut people = crate::server::people::People::default();
+        let at = |people: &crate::server::people::People, d: &crate::state_fs::devices::PairedDevice| {
+            super::standing_in(Some(d), Some("u-owner"), people).level()
+        };
+        let (a, b) = (row("a", Edit), row("b", Chat));
+        assert_eq!(at(&people, &a), at(&people, &b), "what a row once held decides nothing");
+        let patch = serde_json::json!({ "level": "chat" });
+        people.set(&super::Person::for_test(Some("u-friend")), patch.as_object().unwrap()).unwrap();
+        assert_eq!((at(&people, &a), at(&people, &b)), (Chat, Chat));
     }
 }

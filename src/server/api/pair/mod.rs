@@ -13,7 +13,7 @@ pub use crate::state_fs::devices::{
     actor_for_token, device_name, load_devices, person_label, set_device_account, AccountRef,
     Actor, PairedDevice,
 };
-use crate::state_fs::devices::{commit_device, device_by_token, modify_devices, random_hex};
+use crate::state_fs::devices::{device_by_token, modify_devices, random_hex};
 use crate::util::LockExt;
 use axum::{
     extract::{Json, Path, State},
@@ -37,6 +37,26 @@ pub(crate) use handshake::*;
 pub use identity::*;
 pub(crate) use manage::*;
 pub use relay_window::*;
+
+/// Pair a phone: its row (`commit_device`), and — when it is the same phone
+/// paired again as a new row — what the owner chose for its person goes with
+/// it (`people::person_changed`). The one way a row is made; both ways of
+/// confirming a pairing call it.
+fn commit_paired(
+    name: String,
+    device_id: Option<String>,
+    account: Option<AccountRef>,
+) -> std::io::Result<PairedDevice> {
+    let before = device_id
+        .as_deref()
+        .and_then(|did| load_devices().into_iter().find(|d| d.device_id.as_deref() == Some(did)))
+        .map(|d| crate::server::person::of_row(&d));
+    let device = crate::state_fs::devices::commit_device(name, device_id, account)?;
+    if let Some(before) = before {
+        crate::server::people::person_changed(&before, &crate::server::person::of_row(&device));
+    }
+    Ok(device)
+}
 
 fn err(code: StatusCode, msg: impl Into<String>) -> axum::response::Response {
     (code, Json(serde_json::json!({ "error": msg.into() }))).into_response()

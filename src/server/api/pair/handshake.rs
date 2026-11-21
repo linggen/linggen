@@ -143,7 +143,7 @@ pub(crate) async fn post_pair_confirm(
         claimed
     };
     let (name, device_id, account) = claimed;
-    let device = match commit_device(name, device_id, account) {
+    let device = match commit_paired(name, device_id, account) {
         Ok(d) => d,
         Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, format!("persist: {e}")),
     };
@@ -354,7 +354,7 @@ pub(crate) async fn post_pair_qr_confirm(
         );
     }
     let name: String = req.device_name.chars().take(64).collect();
-    let device = match commit_device(name, req.device_id, req.account) {
+    let device = match commit_paired(name, req.device_id, req.account) {
         Ok(d) => d,
         Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, format!("persist: {e}")),
     };
