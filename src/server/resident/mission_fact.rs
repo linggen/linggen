@@ -21,7 +21,7 @@ use crate::engine::mission::record::MissionRunEntry;
 use crate::extensions::missions::streak::{self, Streak};
 
 use super::guard::{self, Held as Waits, Source};
-use super::ServerState;
+use super::{Origin, Reach, ServerState};
 
 /// The most failed calls named in one fact; the rest are counted.
 const NAMED: usize = 3;
@@ -89,7 +89,8 @@ fn take_ready(held: &mut Vec<Held>, ready: bool) -> Vec<Held> {
 /// Quiet hours, if they hold a fault now.
 async fn quiet_now(state: &Arc<ServerState>) -> Option<Waits> {
     let pet = state.manager.get_config_snapshot().await.pet;
-    guard::held_now(&pet, Source::Fault)
+    super::triggers::unprompted_source(Reach::Open, Origin::Fault)
+        .and_then(|source| guard::held_now(&pet, source))
 }
 
 /// The activity record of a fault waiting through quiet hours: once per run,

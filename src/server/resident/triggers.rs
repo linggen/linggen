@@ -280,6 +280,12 @@ pub(crate) fn moment_origin(asked: bool, in_use: bool) -> Origin {
     }
 }
 
+/// The guardrail an unasked moment's turn answers to, read before the turn
+/// from the same mapping the last word uses ([`unprompted_source`]).
+pub(crate) fn moment_source(in_use: bool) -> Option<Source> {
+    unprompted_source(Reach::Sealed, moment_origin(false, in_use))
+}
+
 /// The app chat a moment's turn runs at: its session, and the app the
 /// moment came from — the turn's place in a day's session, where every app
 /// is at the one table (`server::day_session`).

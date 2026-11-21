@@ -136,7 +136,8 @@ async fn room_now(state: &Arc<ServerState>, now: u64) -> Room {
         ready: pet.enabled && here(state).await,
         typing: crate::server::yinyue_moments::user_typing(state, now),
         her_turn: her_turn_running(state),
-        held: guard::held_now(&pet, Source::Note),
+        held: super::triggers::unprompted_source(Reach::SpeakOnly, Origin::Note)
+            .and_then(|source| guard::held_now(&pet, source)),
     }
 }
 

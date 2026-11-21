@@ -311,14 +311,14 @@ fn split_by_use(
 /// them, or none — held moments are dropped and recorded.
 fn pass_guards(
     moments: Vec<Moment>,
-    source: super::resident::guard::Source,
+    source: Option<super::resident::guard::Source>,
     pet: &crate::config::PetConfig,
     now: u64,
 ) -> Vec<Moment> {
     if moments.is_empty() {
         return moments;
     }
-    let held = super::resident::guard::held_now(pet, source);
+    let held = source.and_then(|source| super::resident::guard::held_now(pet, source));
     match held_for(&moments, held) {
         Some(held) => {
             drop_held(&moments, &held, now);
@@ -557,11 +557,10 @@ pub async fn yinyue_moment_loop(state: Arc<ServerState>) {
             tell_unanswered(&state, &taken, "pet-off");
             continue; // pet off, or not met: the moments are dropped, nobody to say them
         }
-        use super::resident::guard::Source;
         let front = state.manager.presence_front(now);
         let (using, others) = split_by_use(taken, front.as_ref(), now);
-        let using = pass_guards(using, Source::InUse, &pet, now);
-        let others = pass_guards(others, Source::Moment, &pet, now);
+        let using = pass_guards(using, super::resident::moment_source(true), &pet, now);
+        let others = pass_guards(others, super::resident::moment_source(false), &pet, now);
         let in_use = others.is_empty();
         let mut taken = using;
         taken.extend(others);

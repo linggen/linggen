@@ -277,6 +277,23 @@ mod structure_lock {
         }
     }
 
+    /// Which guardrail an unprompted wake answers to is read from
+    /// `unprompted_source` — before the turn and after it alike — never named
+    /// beside a check. (A `Source` named to write its log word is no check.)
+    #[test]
+    fn a_guardrail_is_chosen_by_one_mapping_only() {
+        for (rel, code) in production_code(&["src"]) {
+            let own = ["src/server/resident/guard.rs", "src/server/resident/triggers.rs"];
+            if rel.ends_with("tests.rs") || own.contains(&rel.as_str()) {
+                continue;
+            }
+            for line in code.lines().filter(|l| l.contains("Source::")) {
+                let checks = ["held_now(", "pass_guards(", ".check("].iter().any(|c| line.contains(c));
+                assert!(!checks, "{rel}: `{}` picks a guardrail by hand", line.trim());
+            }
+        }
+    }
+
     /// `Origin::Person` has been the default for "not hers". Each use is
     /// looked at, then listed: a new one fails here.
     #[test]
