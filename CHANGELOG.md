@@ -1,6 +1,6 @@
 # Changelog
 
-## [2.5.2] - unreleased — the Mac app shows the web UI; rule files can import
+## [2.6.0] - 2026-11-21 — the Mac app shows the web UI; rule files can import
 
 ### One UI
 

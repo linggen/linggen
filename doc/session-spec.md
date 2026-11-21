@@ -22,7 +22,7 @@ A session is the fundamental unit of interaction. Each session holds one context
 ## Old Claude sessions
 
 Up to 2.5.1 a **New Claude session** button made a conversation the Claude
-Agent SDK ran. That runtime is gone (2.5.2): every session is a Linggen
+Agent SDK ran. That runtime is gone (2.6.0): every session is a Linggen
 session, and a Claude model runs in one natively (`models.md`).
 
 A Claude session kept from before (`runtime: claude_agent_sdk` in its

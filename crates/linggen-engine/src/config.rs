@@ -457,7 +457,7 @@ pub struct RoutingConfig {
     /// Ordered list of model IDs selected as defaults by the user.
     /// The first model in the list is the primary default; others are fallbacks.
     pub default_models: Vec<String>,
-    /// Retired with the Claude Agent SDK session (2.5.2): the 2.5.1 default
+    /// Retired with the Claude Agent SDK session (2.6.0): the 2.5.1 default
     /// for Claude sessions. Read on load only, by
     /// [`Config::migrate_retired_claude_default`], never written.
     #[serde(skip_serializing)]
