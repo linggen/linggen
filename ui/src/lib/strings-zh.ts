@@ -438,7 +438,7 @@ export const ZH: Record<string, string> = {
   'Revoking cuts the device off immediately — it re-pairs with eyes on this Mac. Models sync to the phone one-way when it taps Sync.': '撤销会立即断开这台设备 — 需要在这台 Mac 前重新配对。手机点“同步”时，模型单向同步到手机。',
   'Confirm revoke': '确认撤销',
   'Owner': '所有者',
-  'Your account, not verified': '你的账户，未验证',
+  'Account not verified': '账户未验证',
   'Another account': '其他账户',
   'Signed out': '未登录',
   'Chat': '聊天',
