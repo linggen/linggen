@@ -19,17 +19,20 @@ pub(crate) async fn run_yinyue_turn(
     task: String,
     origin: Origin,
 ) -> Option<Turned> {
-    run_home(state, task, crate::server::chat::TurnStart::at_her_door(origin), Reach::Open, None).await
+    run_home(state, task, crate::server::chat::TurnStart::at_her_door(origin), Reach::Open, None, None).await
 }
 
 /// A person's words to her avatar, typed or spoken (`start`:
-/// `TurnStart::at_her_avatar`), on her own thread.
+/// `TurnStart::at_her_avatar`), on her own thread. `heard`: the words as
+/// heard, when they were spoken — what a relayed answer to a waiting question
+/// is weighed against (`start` keeps them only for a spoken turn).
 pub(crate) async fn run_avatar_turn(
     state: &Arc<ServerState>,
     task: String,
     start: crate::server::chat::TurnStart,
+    heard: Option<String>,
 ) -> Option<Turned> {
-    run_home(state, task, start, Reach::Open, None).await
+    run_home(state, task, start, Reach::Open, None, heard).await
 }
 
 /// Her turn woken by an app moment: her line is all she gives — spoken — or
@@ -46,7 +49,7 @@ pub(crate) async fn run_moment_turn(
 ) -> Option<Turned> {
     match table {
         Some(table) => run_at_table(state, table, task, origin, language).await,
-        None => run_home(state, task, crate::server::chat::TurnStart::at_her_door(origin), Reach::Sealed, language).await,
+        None => run_home(state, task, crate::server::chat::TurnStart::at_her_door(origin), Reach::Sealed, language, None).await,
     }
 }
 
@@ -90,6 +93,7 @@ pub(super) async fn run_home(
     start: crate::server::chat::TurnStart,
     reach: Reach,
     language: Option<String>,
+    heard: Option<String>,
 ) -> Option<Turned> {
     let origin = start.origin();
     let root = her_root();
@@ -114,6 +118,7 @@ pub(super) async fn run_home(
         reach,
         home: true,
         language,
+        heard,
         place,
     };
     run_at(state, &turn, &pet, task, start).await
@@ -179,6 +184,7 @@ async fn run_at_table(
         reach: Reach::Sealed,
         home: false,
         language,
+        heard: None,
         place,
     };
     run_at(state, &turn, &pet, task, crate::server::chat::TurnStart::at_her_door(origin)).await
@@ -201,6 +207,9 @@ struct Turn {
     /// The language this turn answers in, when its caller names one (an app
     /// moment's `lang`); `None` is the Linggen language.
     language: Option<String>,
+    /// The words the person spoke, as heard, when they started this turn by
+    /// voice (`TurnSettings::heard`).
+    heard: Option<String>,
     /// The place her turn stands in (`TurnPlace::of_session`).
     place: crate::engine::turn_place::TurnPlace,
 }
@@ -491,6 +500,7 @@ fn her_choice(
 /// its kickoff tells a fault — so the next one hears its doorbell whole.
 fn turn_settings(turn: &Turn, origin: Origin) -> crate::engine::turn_place::TurnSettings {
     crate::engine::turn_place::TurnSettings {
+        heard: turn.heard.clone(),
         withheld: withheld_for(turn.reach),
         allowlist: (turn.reach == Reach::SpeakOnly)
             .then(|| QUIET_TOOLS.iter().map(|t| t.to_string()).collect()),
@@ -720,6 +730,7 @@ mod tests {
             reach: Reach::Sealed,
             home,
             language: None,
+            heard: None,
             place: crate::engine::turn_place::TurnPlace::home(),
         }
     }

@@ -26,6 +26,10 @@ use tokio::sync::mpsc::UnboundedSender;
 pub struct TurnSettings {
     /// This turn answers a person's message in this session, not a relay.
     pub person_spoke: bool,
+    /// The words the person spoke aloud, as heard, when they started this turn
+    /// by voice: the only thing a relayed answer may be weighed against
+    /// (`answer_prompt`). `None` on every typed or engine-started turn.
+    pub heard: Option<String>,
     /// Tools this turn's caller withholds, on top of the session's own.
     pub withheld: HashSet<String>,
     /// The only tools this turn may use, when its caller restricts it.
@@ -107,6 +111,7 @@ impl AgentEngine {
         self.run_faults = Default::default();
         let TurnSettings {
             person_spoke,
+            heard,
             withheld,
             allowlist,
             language,
@@ -115,6 +120,7 @@ impl AgentEngine {
             kickoff,
         } = turn;
         self.tools.builtins.person_spoke = person_spoke;
+        self.tools.builtins.heard_aloud = heard;
         self.withheld_tools = withheld;
         self.turn_tool_allowlist = allowlist;
         self.turn_language = language;
@@ -137,6 +143,7 @@ impl AgentEngine {
     pub fn turn_settings(&self) -> TurnSettings {
         TurnSettings {
             person_spoke: self.tools.builtins.person_spoke,
+            heard: self.tools.builtins.heard_aloud.clone(),
             withheld: self.withheld_tools.clone(),
             allowlist: self.turn_tool_allowlist.clone(),
             language: self.turn_language.clone(),
@@ -153,6 +160,7 @@ impl AgentEngine {
 
     fn put_back_turn_settings(&mut self) {
         self.tools.builtins.person_spoke = false;
+        self.tools.builtins.heard_aloud = None;
         self.withheld_tools.clear();
         self.turn_tool_allowlist = None;
         self.turn_language = None;

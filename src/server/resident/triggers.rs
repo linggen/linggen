@@ -386,7 +386,7 @@ pub(super) async fn wake_and_offer(
         Reach::Open => run_yinyue_turn(&state, kickoff, origin).await,
         Reach::Sealed => run_moment_turn(&state, (kickoff, table), origin, language).await,
         Reach::SpeakOnly => {
-            super::turn::run_home(&state, kickoff, crate::server::chat::TurnStart::at_her_door(origin), reach, language).await
+            super::turn::run_home(&state, kickoff, crate::server::chat::TurnStart::at_her_door(origin), reach, language, None).await
         }
     };
     // Unsaid or unpublished for any reason — silence, a page that left, the
