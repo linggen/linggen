@@ -13,8 +13,9 @@
 //!
 //! Hearing has two steps before the first clip, each its own attempt and
 //! neither inside a hear's short wait: the fetch (`runtime`), then the load
-//! (`MlxSttProvider::loader`), started when the fetch ends and at a press that
-//! finds the model on disk but not loaded.
+//! (`MlxSttProvider::loader`), started when the fetch ends, at a press that
+//! finds the model on disk but not loaded, and — on a Mac that already holds
+//! the model — at start, after her voice (`warm_if_fetched`).
 
 use std::sync::Arc;
 use std::time::Duration;

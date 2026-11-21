@@ -154,14 +154,13 @@ pub(crate) async fn stt_handler(
         .get(header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-    let language = language_to_hear(&state).await;
-    answer(state.stt.as_ref(), (level, content_type), &language, &body).await
+    answer(state.stt.as_ref(), (level, content_type), language_to_hear(&state), &body).await
 }
 
 /// The language a clip is in, as far as the engine knows it — the one place
 /// that decides it. Three sources, the first that has one: the person's own
 /// setting (Settings → Language); under Auto, the language of the line they
-/// last typed to her (`resident::language_person_writes_to_her`); else the
+/// last typed to her (`resident::language_person_typed_to_her`); else the
 /// language the page is in (`language::effective`: the Mac's, then English),
 /// which is what she writes to them in. The Mac's language is the last
 /// resort: it is a guess, and a line the person wrote is better evidence.
@@ -169,7 +168,7 @@ async fn language_to_hear(state: &Arc<ServerState>) -> String {
     let setting = crate::language::setting();
     let written = match setting {
         Some(_) => None,
-        None => crate::server::resident::language_person_writes_to_her(state).await,
+        None => crate::server::resident::language_person_typed_to_her(state).await,
     };
     heard_in(setting.as_deref(), written.as_deref(), &crate::language::effective())
 }
@@ -184,7 +183,14 @@ fn heard_in(setting: Option<&str>, written: Option<&str>, page: &str) -> String 
 /// refused before anything starts), then whether this machine can hear at
 /// all (a press that finds it cannot starts the fetch it waits on), then
 /// what the body holds, whether that is speech, and only then the model.
-async fn answer(stt: &dyn SttProvider, (level, content_type): (PermissionMode, &str), language: &str, body: &[u8]) -> Response {
+/// `language` is the clip's language, awaited at that last step alone: a
+/// request refused or answered before it reads nothing of her thread.
+async fn answer(
+    stt: &dyn SttProvider,
+    (level, content_type): (PermissionMode, &str),
+    language: impl std::future::Future<Output = String>,
+    body: &[u8],
+) -> Response {
     if let Some(refused) = crate::server::person::owners_only(level) {
         return refused;
     }
@@ -205,7 +211,7 @@ async fn answer(stt: &dyn SttProvider, (level, content_type): (PermissionMode, &
         return Json(json!({ "text": "" })).into_response();
     }
     let started = Instant::now();
-    match stt.hear(&samples, language).await {
+    match stt.hear(&samples, &language.await).await {
         Ok(heard) if heard.text.trim().is_empty() => Json(json!({ "text": "" })).into_response(),
         Ok(heard) => {
             let ms = started.elapsed().as_millis() as u64;
@@ -393,7 +399,7 @@ mod tests {
     const OWNER: PermissionMode = PermissionMode::Admin;
 
     async fn ask(stt: &Fake, level: PermissionMode, content_type: &str, body: &[u8]) -> (StatusCode, serde_json::Value) {
-        let response = answer(stt, (level, content_type), "en", body).await;
+        let response = answer(stt, (level, content_type), async { "en".to_string() }, body).await;
         let status = response.status();
         let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
         (status, serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null))
@@ -616,9 +622,11 @@ mod tests {
 
     /// Rule 2: the clip is heard in the language the engine knows the person
     /// to speak: the setting; under Auto the language of what they last typed
-    /// to her; the page's only last. A typed line that says nothing (English,
-    /// or none) on a Chinese Mac is the page's language, not a forced one
-    /// from nowhere, and a typed Chinese line beats an English Mac.
+    /// to her; the page's only last. A typed Chinese line beats an English
+    /// Mac. A line that says nothing (English, none — the first press of a
+    /// day finds none) leaves the page's language: so a person who speaks
+    /// another language than their Mac's, and has typed only that, is heard
+    /// in the Mac's until they set the language.
     #[test]
     fn a_clip_is_heard_in_the_language_the_engine_knows() {
         // setting, typed line's language, page language -> the tag passed on
@@ -628,7 +636,7 @@ mod tests {
             (Some("ja"), None, "en", "ja"),
             (None, Some("zh-Hans"), "en", "zh-Hans"),
             (None, None, "zh-Hans", "zh-Hans"),
-            (None, None, "en", "en"),
+            (None, None, "en", "en"), // first press of a day, an English line, or no line
         ];
         for (setting, written, page, want) in cases {
             assert_eq!(heard_in(setting, written, page), want, "{setting:?} {written:?} {page}");
@@ -641,10 +649,34 @@ mod tests {
         let fake = Fake::saying("今天有什么安排", "zh");
         let body = wav(speech(1.0));
         for tag in ["zh-Hans", "en", "ja"] {
-            let response = answer(&fake, (OWNER, "audio/wav"), tag, &body).await;
+            let response = answer(&fake, (OWNER, "audio/wav"), async { tag.to_string() }, &body).await;
             assert_eq!(response.status(), StatusCode::OK);
             assert_eq!(fake.heard_in.lock().unwrap().as_deref(), Some(tag));
         }
+    }
+
+    /// What is refused or answered before the model is asked never reads her
+    /// thread for the language: the future is awaited only at the hear.
+    #[tokio::test]
+    async fn the_language_is_read_only_for_a_clip_that_is_heard() {
+        let polled = AtomicUsize::new(0);
+        async fn asked(stt: &Fake, polled: &AtomicUsize, level: PermissionMode, content_type: &str, body: &[u8]) -> StatusCode {
+            let language = async {
+                polled.fetch_add(1, Ordering::SeqCst);
+                "en".to_string()
+            };
+            answer(stt, (level, content_type), language, body).await.status()
+        }
+        let hears = Fake::saying("ok", "en");
+        let clip = wav(speech(1.0));
+        assert_eq!(asked(&hears, &polled, PermissionMode::Chat, "audio/wav", &clip).await, StatusCode::FORBIDDEN);
+        assert_eq!(asked(&hears, &polled, OWNER, "text/plain", &clip).await, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+        assert_eq!(asked(&hears, &polled, OWNER, "audio/wav", b"hello").await, StatusCode::BAD_REQUEST);
+        assert_eq!(asked(&hears, &polled, OWNER, "audio/wav", &wav(vec![0i16; RATE as usize * 2])).await, StatusCode::OK, "silence");
+        assert_eq!(asked(&Fake::deaf("no"), &polled, OWNER, "audio/wav", &clip).await, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(polled.load(Ordering::SeqCst), 0, "her thread was read for a clip that was never heard");
+        assert_eq!(asked(&hears, &polled, OWNER, "audio/wav", &clip).await, StatusCode::OK);
+        assert_eq!(polled.load(Ordering::SeqCst), 1);
     }
 
     /// Lock: the clip's language is decided in `language_to_hear` and nowhere
@@ -653,7 +685,7 @@ mod tests {
     fn the_clips_language_is_decided_in_one_place() {
         let mlx = include_str!("stt_mlx.rs");
         let production = &mlx[..mlx.find("#[cfg(test)]").unwrap()];
-        for read in ["language::setting", "language::effective", "language_person_writes"] {
+        for read in ["language::setting", "language::effective", "language_person_typed_to_her"] {
             assert!(!production.contains(read), "stt_mlx.rs reads `{read}`: take the tag `hear` is handed");
         }
         let code = include_str!("stt.rs");

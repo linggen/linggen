@@ -137,8 +137,10 @@ typed line at the page stays text.
   for the sidecar's one slot than her voice does. The clip's language is told to
   the model, decided in one place (`stt::language_to_hear`): the language
   setting; under Auto, the language of the line the person last typed to her
-  (`resident::language_person_writes`, the reading her own engine-started turns
-  follow); else the page's language (the Mac's, then English). Chinese carries
+  in her thread (`resident::language_person_typed_to_her`: Chinese or nothing;
+  a spoken line is not evidence, and the first press of a day finds none);
+  else the page's language (the Mac's, then English). It is read only for a
+  clip that is heard, never for a refused or silent one. Chinese carries
   a Simplified prompt (`stt_mlx::hint_of`); segments the model
   reports as no speech, low confidence or a repetition loop are not words
   (`stt_mlx::words_of`).

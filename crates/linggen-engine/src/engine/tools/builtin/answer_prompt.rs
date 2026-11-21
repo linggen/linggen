@@ -129,6 +129,25 @@ mod tests {
         }
     }
 
+    /// The table is keyed on the two labels, not on the question's kind: the
+    /// page shows the same words for them wherever they are offered.
+    #[test]
+    fn the_shown_words_name_the_two_labels_on_any_question() {
+        let mut open = permission_question();
+        open.permission = None;
+        assert_eq!(relay_selection(Some(&open), "x", Some("允许一次"), "zh-Hans").unwrap(), ["Allow once"]);
+    }
+
+    /// Lock: the tool hands the relay the page's language, read in one place.
+    #[test]
+    fn the_tool_weighs_a_spoken_answer_in_the_pages_language() {
+        let code = include_str!("answer_prompt.rs");
+        // The tests come first in this file; the code is what follows them.
+        let production = &code[code.rfind("/// The one place that decides which option").unwrap()..];
+        assert_eq!(production.matches("crate::language::effective()").count(), 1);
+        assert_eq!(production.matches("relay_selection(").count(), 2, "its definition and the one call");
+    }
+
     /// The answer a person is never to give by voice is the same in any language.
     #[test]
     fn nothing_but_the_two_answers_is_said_in_chinese() {
