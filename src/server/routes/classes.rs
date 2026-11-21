@@ -284,6 +284,9 @@ const ROOM: &[(&str, RoomPath, RoomReach)] = &[
     ("GET", Exact("/index.html"), AsItsClass),
     ("GET", Exact("/api/user/language"), AsItsClass),
     ("POST", Exact("/api/sessions"), AsItsClass),
+    // Admin for a device; a guest deletes their own sessions, and only theirs:
+    // the request names its session and `person::send_as_guest` refuses one
+    // that is not the guest's (`a_room_entry_names_only_the_guests_own_sessions`).
     ("DELETE", Exact("/api/sessions/all"), AtChatBelowItsClass),
     ("GET", Prefix("/assets/"), AsItsClass),
     ("GET", Prefix("/apps/"), AtChatBelowItsClass),
@@ -588,6 +591,35 @@ mod tests {
             ],
             "a room entry below its class is named in this test"
         );
+    }
+
+    /// A guest's request to any room entry that names a session — in its
+    /// query or at the top of its body — gets through only for a session of
+    /// theirs: the entrance every guest request passes
+    /// (`person::send_as_guest`) asks, whatever the entry, so a new entry
+    /// cannot skip it. The builder's and another guest's sessions are refused.
+    #[test]
+    fn a_room_entry_names_only_the_guests_own_sessions() {
+        use crate::server::person::{keep_session_for_test, send_as_guest, Refused};
+        keep_session_for_test("sess-lock-builder", None);
+        keep_session_for_test("sess-lock-other", Some("u-other-guest"));
+        keep_session_for_test("sess-lock-own", Some("u-guest-lock"));
+        let guest = crate::server::person::consumer("u-guest-lock");
+        for (method, path, _) in ROOM {
+            let (Exact(base) | Prefix(base)) = *path;
+            let joiner = if base.contains('?') { '&' } else { '?' };
+            for sid in ["sess-lock-builder", "sess-lock-other"] {
+                let in_query = format!("{base}{joiner}session_id={sid}");
+                let got = send_as_guest(method, &in_query, &mut serde_json::json!({}), &guest, "consumer");
+                assert!(matches!(got, Err(Refused::NotTheirs(_))), "{method} {in_query}");
+                let mut body = serde_json::json!({ "session_id": sid });
+                let got = send_as_guest(method, base, &mut body, &guest, "consumer");
+                assert!(matches!(got, Err(Refused::NotTheirs(_))), "{method} {base} body {sid}");
+            }
+            let own = format!("{base}{joiner}session_id=sess-lock-own");
+            let got = send_as_guest(method, &own, &mut serde_json::json!({ "session_id": "sess-lock-own" }), &guest, "consumer");
+            assert!(got.is_ok(), "{method} {own}");
+        }
     }
 
     /// Every room entry names a declared route or a page file.
