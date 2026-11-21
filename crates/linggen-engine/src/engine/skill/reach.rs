@@ -7,6 +7,7 @@
 //! (`permission::ActionClass`): the written word is read here and nowhere
 //! else. Who may then run what is offered is `skill::judge`'s alone.
 
+use crate::engine::skill_tool::SkillToolDef;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -52,6 +53,30 @@ impl<'de> Deserialize<'de> for Reach {
 impl Serialize for Reach {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         s.serialize_str(self.word())
+    }
+}
+
+/// What an app's action is offered as to the companion, who reaches it
+/// through `AppTool` from a session that is not the app's own. What she
+/// may then run of it is `skill::judge`'s alone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Offer {
+    /// Not offered outside the app's own session.
+    Nobody,
+    /// Hers alone, to read (`pet: true`).
+    HerRead,
+    /// Offered anywhere (`reach: anywhere`): its class and who started the
+    /// turn decide.
+    Anywhere,
+}
+
+impl Offer {
+    pub fn of(tool: &SkillToolDef) -> Self {
+        match (tool.reach, tool.pet) {
+            (Reach::Anywhere, _) => Self::Anywhere,
+            (Reach::Here, true) => Self::HerRead,
+            (Reach::Here, false) => Self::Nobody,
+        }
     }
 }
 

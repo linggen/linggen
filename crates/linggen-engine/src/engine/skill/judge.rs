@@ -15,6 +15,7 @@
 //! turn's allowlists and withheld tools, the sign-in check. The judgment
 //! is asked after them, never instead.
 
+use super::reach::Offer;
 use super::tools::Refusal;
 use crate::engine::permission::{ask_destroys, ActionClass, PermissionCheckResult, PermissionMode, PromptKind};
 use std::path::Path;
@@ -44,9 +45,11 @@ pub enum Asker<'a> {
         level: PermissionMode,
         granted: PermissionMode,
     },
-    /// The companion through `AppTool`: only what the app offers her
-    /// (`offered`), and only a read.
-    Companion { offered: bool },
+    /// The companion through `AppTool`: what the app offers her (`offer`).
+    /// A read; a change only in a turn the person started by asking her
+    /// (`person_asked`) and only of what is offered anywhere; a destructive
+    /// action never — the person does that themselves, in the app.
+    Companion { offer: Offer, person_asked: bool },
 }
 
 /// The answer.
@@ -103,21 +106,36 @@ pub fn judge(asker: Asker<'_>, action: &Action<'_>) -> Verdict {
             }
         }
         Asker::Person { level, granted } => within(action, needs, level, granted),
-        Asker::Companion { offered } => {
-            if !offered {
-                return Verdict::Refuse(Refusal::NotForPet(format!(
-                    "'{}' does not offer '{}' to you",
-                    action.app, action.tool
-                )));
-            }
-            if action.class.changes_things() {
-                return Verdict::Refuse(Refusal::NotForPet(format!(
-                    "'{}' may change '{}'; you may only read",
-                    action.tool, action.app
-                )));
-            }
-            Verdict::Allow
-        }
+        Asker::Companion { offer, person_asked } => companion(offer, person_asked, action),
+    }
+}
+
+/// What the companion may run: the offer first, then the class.
+fn companion(offer: Offer, person_asked: bool, action: &Action<'_>) -> Verdict {
+    let refuse = |why: String| Verdict::Refuse(Refusal::NotForPet(why));
+    let (app, tool) = (action.app, action.tool);
+    if offer == Offer::Nobody {
+        return refuse(format!("'{app}' does not offer '{tool}' to you"));
+    }
+    if !action.class.changes_things() {
+        return Verdict::Allow;
+    }
+    if offer == Offer::HerRead {
+        return refuse(format!("'{tool}' may change '{app}'; you may only read"));
+    }
+    if action.class.destroys() {
+        return refuse(format!(
+            "'{tool}' of '{app}' destroys what it acts on: the person does this themselves, in the app"
+        ));
+    }
+    if action.class.level_needed() > PermissionMode::Edit {
+        return refuse(format!("'{tool}' may change '{app}' beyond what you may; you may only read"));
+    }
+    match person_asked {
+        true => Verdict::Allow,
+        false => refuse(format!(
+            "'{tool}' changes '{app}', and this turn is yours, not something the person asked for; do it only when they ask"
+        )),
     }
 }
 

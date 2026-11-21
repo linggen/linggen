@@ -86,7 +86,7 @@ impl Tool for AppTool {
             anyhow::bail!(Refusal::no_skill(app).to_string());
         }
         let Some(tool) = named_tool(args.tool.as_deref()) else {
-            return Ok(ToolResult::Success(listing(&skills)));
+            return Ok(ToolResult::Success(listing(&skills, tools.person_spoke)));
         };
         let [skill] = skills.as_slice() else {
             anyhow::bail!("AppTool: name the `app` whose tool '{tool}' to call");
@@ -97,7 +97,7 @@ impl Tool for AppTool {
         }
         // Called from a session of this app: its bound values come along.
         let params = tools.session_params_for(Some(&skill.name));
-        run_for_pet(skill, tool, &tool_args, &params)
+        run_for_pet(skill, tool, &tool_args, &params, tools.person_spoke)
             .await
             .map_err(|r| anyhow::anyhow!(r.to_string()))
     }
@@ -128,10 +128,10 @@ fn reachable(
 }
 
 /// Every tool the given apps offer the companion, as JSON lines.
-fn listing(skills: &[Skill]) -> String {
+fn listing(skills: &[Skill], person_asked: bool) -> String {
     let rows: Vec<String> = skills
         .iter()
-        .flat_map(|s| pet_tools(s).map(move |t| (s, t)))
+        .flat_map(|s| pet_tools(s, person_asked).map(move |t| (s, t)))
         .map(|(s, t)| {
             let entry = t.to_schema_json();
             json!({
