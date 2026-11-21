@@ -281,21 +281,7 @@ async fn run_at(
         if origin == Origin::AgentChat {
             state.manager.mark_agent_chat_session(session_id);
         }
-        let policy = ready_for_turn(&mut engine, turn, pet);
-        apply_her_model(state, &mut engine, session_id, pet).await;
-        // At an app's table the session's recall policy is the app's: no
-        // biography, no core block (`chat::turn_place::turn_creator`).
-        if !turn.home && table_is_not_a_persons(state, turn) {
-            engine.respec(|spec| spec.memory = crate::engine::session_spec::Memory::CoreAndApp);
-        }
-
-        // First turn of a freshly rolled session: bridge the day/size roll with
-        // a one-line "Previously" note so a thread mid-flight doesn't snap.
-        // Deeper continuity rides shared memory (auto-recall + core), injected
-        // by the turn core.
-        if turn.home {
-            seed_previously_if_fresh(state, &mut engine, session_id);
-        }
+        let (policy, cap) = prepare_her_engine(state, &mut engine, turn, pet).await;
 
         let ctx = crate::server::chat::ChatRunCtx {
             via: None,
@@ -315,8 +301,14 @@ async fn run_at(
             place: turn.place.clone(),
             turn: turn_settings(turn, origin),
         };
-        let cap = turn.home.then_some(YINYUE_MAX_LIVE_MSGS);
-        crate::server::chat::run_session_turn(&ctx, &mut engine, &state.manager, cap).await;
+        crate::server::chat::run_session_turn(
+            &ctx,
+            &mut engine,
+            &state.manager,
+            cap,
+            (crate::engine::turn_place::entrance::LiveState::ReadAtTheDoor, crate::server::chat::ModelBy::TheDoorBeforeTheTurn),
+        )
+        .await;
 
         if origin == Origin::AgentChat {
             state.manager.clear_agent_chat_session(session_id);
@@ -334,6 +326,60 @@ async fn run_at(
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .map(|text| Turned::of_started(text, start))
+}
+
+/// Her engine set up for one turn the engine started: her recall and her
+/// model (the one road), her memory scope at a table that is not a person's,
+/// the "Previously" note on a fresh rolling thread. Returns the policy the
+/// turn runs under and how many live messages her thread keeps (`None`: no
+/// cap). Her own door (`run_at`) and a turn told to her through another door
+/// (`prepare_told_turn`) both come through here.
+async fn prepare_her_engine(
+    state: &Arc<ServerState>,
+    engine: &mut crate::engine::AgentEngine,
+    turn: &Turn,
+    pet: &crate::config::PetConfig,
+) -> (crate::engine::session_policy::SessionPolicy, Option<usize>) {
+    let policy = ready_for_turn(engine, turn, pet);
+    apply_her_model(state, engine, &turn.session_id, pet).await;
+    // At an app's table the session's recall policy is the app's: no
+    // biography, no core block (`chat::turn_place::turn_creator`).
+    if !turn.home && table_is_not_a_persons(state, turn) {
+        engine.respec(|spec| spec.memory = crate::engine::session_spec::Memory::CoreAndApp);
+    }
+    // First turn of a freshly rolled session: bridge the day/size roll with
+    // a one-line "Previously" note so a thread mid-flight doesn't snap.
+    // Deeper continuity rides shared memory (auto-recall + core), injected
+    // by the turn core.
+    if turn.home {
+        seed_previously_if_fresh(state, engine, &turn.session_id);
+    }
+    (policy, turn.home.then_some(YINYUE_MAX_LIVE_MSGS))
+}
+
+/// A turn told to her by the engine or a host — a task's end, an
+/// `agent_run` continued in her session, a restart's continue turn — in
+/// whatever session it is told: prepared as her own door prepares an
+/// engine-started turn (`prepare_her_engine`), her recall and her model
+/// among it. `place`: where the turn stands. The policy it runs under, and
+/// her live-message cap.
+pub(crate) async fn prepare_told_turn(
+    state: &Arc<ServerState>,
+    engine: &mut crate::engine::AgentEngine,
+    (session_id, root, place): (&str, &std::path::Path, &crate::engine::turn_place::TurnPlace),
+    language: Option<String>,
+) -> (crate::engine::session_policy::SessionPolicy, Option<usize>) {
+    let pet = state.manager.get_config_snapshot().await.pet;
+    let turn = Turn {
+        session_id: session_id.to_string(),
+        root: root.to_path_buf(),
+        reach: Reach::Open,
+        home: super::is_own_session(session_id),
+        language,
+        heard: None,
+        place: place.clone(),
+    };
+    prepare_her_engine(state, engine, &turn, &pet).await
 }
 
 /// Her place in the session's turn line, with the admission gate to hold

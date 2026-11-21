@@ -33,6 +33,9 @@ use crate::server::ServerState;
 use crate::engine::session_spec::delegate::tool_scope as delegate_tool_scope;
 use crate::engine::session_spec::delegate::TOOLS_PARAM;
 use crate::engine::session_spec::{Covered, PresetGrants, SessionSpec, Tools};
+use crate::engine::turn_place::entrance::{
+    LiveState, MaySwitch, ModelStep, Seat, SessionOnTools, SessionTurn,
+};
 
 /// The folder a caller may hand a run — as `write_dir` or in a preset grant.
 /// The one place that decides it: an existing directory, absolute; never `/`
@@ -577,24 +580,31 @@ async fn drive(
     };
     let mut engine = agent.lock().await;
     // A run is a turn of its own: it starts with nothing an earlier turn
-    // in the session set, and puts back what it set when it ends.
-    engine.begin_turn(Default::default());
-    engine.read_live_state(&state.manager).await;
+    // in the session set, and puts back what it set when it ends. It reads
+    // the machine's live state, chooses the model a caller named (a
+    // delegated run never switches models, `model_choice::DELEGATED_RUN_MAY_SWITCH`)
+    // and applies the session's withheld tools. Its session is not bound on
+    // the tools, and `seat_delegate` seats it, below.
+    // The model a caller named, checked (or chosen by the agent's chain)
+    // already; none named asks for none — the agent's default.
+    let model_step = ModelStep::Chosen {
+        asked: model.as_deref(),
+        asked_by: None,
+        may_switch: MaySwitch::DelegatedRun,
+        place: "agent_run".into(),
+    };
+    engine
+        .open_session_turn(SessionTurn {
+            manager: &state.manager,
+            session: Some(&session_id),
+            settings: Default::default(),
+            session_on_tools: SessionOnTools::NotBound,
+            live_state: LiveState::Read,
+            model: model_step,
+            seat: Seat::SeatedByTheDoor,
+        })
+        .await;
     engine.respec(|spec| spec.read_origin = read_origin);
-    if let Some(model) = model {
-        // Checked (or chosen by the agent's chain) already; a delegated run
-        // never switches models (`model_choice::DELEGATED_RUN_MAY_SWITCH`).
-        let choice = crate::engine::model_choice::resolve(
-            &engine.model_manager,
-            Some(&model),
-            &engine.model_id,
-            crate::engine::model_choice::Rule {
-                asker: crate::engine::model_choice::Asker::Owner,
-                may_switch: crate::engine::model_choice::DELEGATED_RUN_MAY_SWITCH,
-            },
-        );
-        engine.run_on(&choice, "agent_run").await;
-    }
 
     let run_id = state
         .manager
@@ -650,7 +660,6 @@ async fn drive(
                 .send(crate::server::ServerEvent::StateUpdated);
         },
         async {
-            engine.withhold_session_tools(&state.manager.global_sessions, Some(&session_id));
             let search = crate::mcp_client::qualify(crate::mcp_client::BUILTIN_MEMORY, "memory_search");
             if !engine.is_withheld(&search) {
                 crate::server::chat::recall_into_thread(

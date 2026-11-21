@@ -490,3 +490,21 @@ async fn the_two_switches_make_one_answer() {
     let bare = engine_with(true, false).switching(Some("s-off"));
     assert!(bare.may(), "no manager, no session store to read");
 }
+
+/// R4 pin (e): an `agent_run` asks with the delegated run's rule, which
+/// never switches (`DELEGATED_RUN_MAY_SWITCH`), as the owner. Whatever
+/// standing model its door hands `resolve` (`engine.model_id` there, where a
+/// chat's, a mission's and her door pass `default_model_id`) is never the
+/// answer: an asked model that cannot run is kept and fails, named. So at
+/// that door the two ids differing could not change what runs.
+#[test]
+fn a_delegated_runs_rule_never_answers_with_the_standing_model() {
+    let m = models();
+    let rule = owner(DELEGATED_RUN_MAY_SWITCH);
+    for standing in ["gpt-6-luna", "gpt-6.1-terra", "ghost-standing"] {
+        let kept = resolve(&m, Some("ghost"), standing, rule);
+        assert_eq!((kept.model.as_str(), kept.outcome), ("ghost", Outcome::Kept(Why::NotHere)), "{standing}");
+        let asked = resolve(&m, Some("gpt-6.1-terra"), standing, rule);
+        assert_eq!((asked.model.as_str(), asked.outcome), ("gpt-6.1-terra", Outcome::Asked), "{standing}");
+    }
+}

@@ -50,7 +50,7 @@ pub(crate) use spoken::{hold_run, shows_on_page, is_engine_prompt, is_silent_rep
 pub use triggers::yinyue_watch_loop;
 pub(crate) use triggers::{moment_origin, moment_source, user_sees, wake_for_moment, wake_to_tell, Sight, Table};
 pub(crate) use turn::{language_of_turn, language_person_typed_to_her, run_avatar_turn, run_yinyue_turn};
-pub(crate) use turn::{resolve_pet_model, tune_companion};
+pub(crate) use turn::{prepare_told_turn, resolve_pet_model, tune_companion};
 use turn::{run_moment_turn, Reach};
 
 const YINYUE_AGENT: &str = crate::engine::agent::COMPANION_AGENT_ID;

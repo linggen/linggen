@@ -1,5 +1,8 @@
 use crate::engine::agent::AgentManager;
 use crate::engine::skill::QueueMode;
+use crate::engine::turn_place::entrance::{
+    LiveState, ModelStep, Seat, SessionOnTools, SessionTurn,
+};
 use crate::engine::turn_place::running::Meets;
 use crate::server::chat::helpers::{
     emit_queue_updated, persist_and_emit_with_images, queue_key, queue_preview, take_turn_place,
@@ -689,6 +692,26 @@ pub(super) async fn resolve_effective_model(
     }
 }
 
+/// The member's own model for a turn nobody asked a model for — the kept
+/// one (the picker's), else the companion's Pet one, else the agent's
+/// default — by [`resolve_effective_model`], with the asker the engine's
+/// policy names. What a chat turn without a picked model does; a light reply
+/// and an approved plan's run do the same.
+pub(super) async fn choose_members_model(engine: &mut crate::engine::AgentEngine, ctx: &ChatRunCtx) {
+    let sid = ctx.session_id.as_deref().unwrap_or("default");
+    let members = super::members::of_session(&ctx.manager, sid).await;
+    let pet = ctx.manager.get_config_snapshot().await.pet;
+    let asked = turn_model(
+        None,
+        &ctx.agent_id,
+        &members,
+        crate::server::resident::resolve_pet_model(&pet.model),
+    );
+    // A guest's session keeps to the models the room shares here too.
+    let by = engine.asked_by();
+    resolve_effective_model(engine, by.asker(), &asked, (Some(sid), &ctx.agent_id), &ctx.manager).await;
+}
+
 /// In the day's session (setting on) a model sent with a message is for
 /// that turn alone: the member keeps one model for the day, set only by the
 /// picker (`PATCH /api/sessions`), so a page opened earlier, or one that
@@ -846,15 +869,27 @@ async fn apply_session_bound_mission(engine: &mut crate::engine::AgentEngine, ct
     .await;
 }
 
+/// Who chooses a session turn's model (`run_session_turn`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ModelBy {
+    /// The door chose it before the turn, by its own rule: a person's chat
+    /// (the picker's model, its kept-model rules) and her turn (her
+    /// preparation, `prepare_her_engine`).
+    TheDoorBeforeTheTurn,
+    /// The turn core chooses the member's own model right after the
+    /// entrance, as a chat turn with no picked model does
+    /// (`choose_members_model`): a task's end and a delivered message.
+    TheMembersKeptModel,
+}
+
 pub(crate) async fn run_session_turn(
     ctx: &ChatRunCtx,
     engine: &mut crate::engine::AgentEngine,
     manager: &Arc<AgentManager>,
     max_live_msgs: Option<usize>,
+    (live_state, model_by): (LiveState, ModelBy),
 ) {
     ctx.start.stand_for_reads(engine);
-    // Delegated tasks must inherit the session, regardless of the turn's driver.
-    bind_turn_session(engine, ctx.session_id.clone());
     // Its place is the running one while it runs, unless whoever took the
     // turn lock for it kept it already.
     let _mark = match ctx.session_id.as_deref() {
@@ -867,11 +902,26 @@ pub(crate) async fn run_session_turn(
         .session_id
         .as_deref()
         .and_then(|sid| crate::server::resident::RunningOrigin::in_turn(sid, ctx.start.origin()));
-    // The turn's own settings; what closes it names this turn's run, never
-    // the last one's.
-    engine.begin_turn(ctx.start.settings(ctx.turn.clone()));
-    seat_member(engine, ctx).await;
-    engine.withhold_session_tools(&manager.global_sessions, ctx.session_id.as_deref());
+    // The turn's own settings, its session on the tools, its seat and the
+    // session's withheld tools, by the one entrance; what closes the turn
+    // names this turn's run, never the last one's.
+    engine
+        .open_session_turn(SessionTurn {
+            manager,
+            session: ctx.session_id.as_deref(),
+            settings: ctx.start.settings(ctx.turn.clone()),
+            session_on_tools: SessionOnTools::Bound,
+            // A person's chat and her turn read the live state at their own
+            // doors, where they choose the model (`ReadAtTheDoor`); a task's
+            // end and a delivered message read it here, and choose none.
+            live_state,
+            model: ModelStep::ChosenByTheDoor,
+            seat: turn_seat(ctx).await,
+        })
+        .await;
+    if model_by == ModelBy::TheMembersKeptModel {
+        choose_members_model(engine, ctx).await;
+    }
     super::thread::sync(engine, ctx).await;
     // After the sync (and before this turn's user message + fresh recall
     // are pushed), the buffer holds only completed prior turns — safe to
@@ -928,10 +978,6 @@ fn hear_her_at_table(
     }
 }
 
-fn bind_turn_session(engine: &mut crate::engine::AgentEngine, session_id: Option<String>) {
-    engine.tools.builtins.set_session_id(session_id);
-}
-
 /// Keep a capped session's live thread near its cap (`trim_live_history`),
 /// never opening on a tool result whose call was cut away. Kept world
 /// blocks are not messages and do not count toward the cap.
@@ -944,12 +990,19 @@ fn trim_capped(engine: &mut crate::engine::AgentEngine, cap: Option<usize>) {
 /// Where this member sits this turn (`members::seat_of`): at the session's
 /// lead's table when that is someone else, or as the lead itself.
 pub(super) async fn seat_member(engine: &mut crate::engine::AgentEngine, ctx: &ChatRunCtx) {
+    if let Seat::At(lead) = turn_seat(ctx).await {
+        engine.seat_at(lead);
+    }
+}
+
+/// [`seat_member`]'s seat, for the turn entrance: a turn with no session
+/// sets none.
+pub(super) async fn turn_seat(ctx: &ChatRunCtx) -> Seat {
     let Some(sid) = ctx.session_id.as_deref() else {
-        return;
+        return Seat::NoSession;
     };
     let members = super::members::of_session(&ctx.manager, sid).await;
-    let seat = super::members::seat_of(&ctx.manager, &ctx.root, &members, &ctx.agent_id, sid, &ctx.place).await;
-    engine.seat_at(seat);
+    Seat::At(super::members::seat_of(&ctx.manager, &ctx.root, &members, &ctx.agent_id, sid, &ctx.place).await)
 }
 
 /// Keep a capped session's live history near `cap` messages — in chunks.
@@ -1609,7 +1662,7 @@ pub(crate) async fn start_turn(
             turn,
         };
 
-        run_session_turn(&ctx, &mut engine, &manager, None).await;
+        run_session_turn(&ctx, &mut engine, &manager, None, (LiveState::ReadAtTheDoor, ModelBy::TheDoorBeforeTheTurn)).await;
         count_person_turn(&state_clone, (&req_user_type, req_user_id.as_deref()), &mut engine).await;
         hear_her_at_table(&state_clone, &engine, &ctx, &session_id_for_queue);
 
@@ -1790,26 +1843,6 @@ mod tests {
         let runs = persist_then_dequeue(&queue, "s|ling", "1-1", || async { false }).await;
         assert!(!runs, "a message that was not kept ran");
         assert_eq!(queue.lock().await["s|ling"].len(), 1, "a message that was not kept left the queue");
-    }
-
-    #[test]
-    fn a_server_driven_turn_binds_its_session() {
-        use crate::engine::{AgentEngine, AgentRole, EngineConfig, InterfaceMode};
-
-        let root = tempfile::tempdir().unwrap();
-        let cfg = EngineConfig::from_app_config(
-            &crate::config::Config::default(),
-            root.path().to_path_buf(),
-            InterfaceMode::Web,
-        );
-        let models =
-            std::sync::Arc::new(crate::provider::models::ModelManager::new_with_credentials(
-                Vec::new(),
-                &crate::credentials::Credentials::default(),
-            ));
-        let mut engine = AgentEngine::new(cfg, models, "m".to_string(), AgentRole::Lead).unwrap();
-        super::bind_turn_session(&mut engine, Some("sess-x".into()));
-        assert_eq!(engine.tools.builtins.session_id.as_deref(), Some("sess-x"));
     }
 
     #[test]

@@ -261,3 +261,125 @@ fn collect(dir: &std::path::Path, root: &std::path::Path, out: &mut Vec<(String,
         }
     }
 }
+
+// The entrance of a session turn (`turn_place::entrance`): each step a door
+// may not take is named for the reason it does not.
+mod entrance {
+    use super::*;
+    use crate::engine::turn_place::entrance::{
+        LiveState, MaySwitch, ModelStep, Seat, SessionOnTools, SessionTurn,
+    };
+    use crate::engine::model_choice::AskedBy;
+    use crate::engine::turn_place::TurnSettings;
+
+    fn turn<'a>(manager: &'a AgentManager, session: Option<&'a str>) -> SessionTurn<'a> {
+        SessionTurn {
+            manager,
+            session,
+            settings: TurnSettings::default(),
+            session_on_tools: SessionOnTools::NotBound,
+            live_state: LiveState::ReadAtTheDoor,
+            model: ModelStep::ChosenByTheDoor,
+            seat: Seat::NoSession,
+        }
+    }
+
+    /// A door that does not read the live state keeps what the engine last
+    /// read — what a task's end, a delivery and a plan's run do before their
+    /// loop (which reads a change itself when it starts); one that reads gets
+    /// the new settings, and the model list.
+    #[tokio::test]
+    async fn the_entrance_reads_live_state_only_for_a_door_that_asks() {
+        let dir = scratch("entrance-live");
+        let manager = manager_of(config(&["old", "keep"], &["old"], 10), &dir);
+        let mut engine = built(&manager, "old").await;
+        engine.agent_id = Some("ling".into());
+        manager.apply_config(config(&["keep"], &["keep"], 20)).await.unwrap();
+
+        engine.open_session_turn(turn(&manager, None)).await;
+        assert_eq!(engine.cfg.max_iters, 10);
+        assert!(listed(&engine, "old"));
+        engine.end_turn();
+
+        let mut reading = turn(&manager, None);
+        reading.live_state = LiveState::Read;
+        engine.open_session_turn(reading).await;
+        assert_eq!(engine.cfg.max_iters, 20);
+        assert!(!listed(&engine, "old"));
+    }
+
+    /// The session goes on the engine's tools only when the door binds it.
+    #[tokio::test]
+    async fn the_entrance_binds_the_session_on_the_tools_only_for_a_door_that_asks() {
+        let dir = scratch("entrance-session");
+        let manager = manager_of(config(&["m"], &["m"], 10), &dir);
+        let mut engine = built(&manager, "m").await;
+        engine.open_session_turn(turn(&manager, Some("sess-x"))).await;
+        assert_eq!(engine.tools.builtins.session_id, None);
+        let mut binding = turn(&manager, Some("sess-x"));
+        binding.session_on_tools = SessionOnTools::Bound;
+        engine.open_session_turn(binding).await;
+        assert_eq!(engine.tools.builtins.session_id.as_deref(), Some("sess-x"));
+    }
+
+    /// An asked model that cannot run gives way to the agent's default
+    /// (`default_model_id`), never to the model the engine was left on.
+    #[tokio::test]
+    async fn the_entrance_gives_an_unrunnable_model_way_to_the_agents_default() {
+        let dir = scratch("entrance-standing");
+        let manager = manager_of(config(&["a", "b"], &["a"], 10), &dir);
+        // An engine on "b" whose agent's default is "a".
+        let mut engine = built(&manager, "b").await;
+        engine.default_model_id = "a".into();
+        let mut turn = turn(&manager, None);
+        turn.model = ModelStep::Chosen {
+            asked: Some("ghost"),
+            asked_by: None,
+            may_switch: MaySwitch::SessionAllows,
+            place: "test".into(),
+        };
+        engine.open_session_turn(turn).await;
+        assert_eq!(engine.model_id, "a");
+    }
+
+    /// Who asks is what the door hands the entrance, else what the engine's
+    /// policy says: a guest is given the models the room shares.
+    #[tokio::test]
+    async fn the_entrance_asks_as_the_door_hands_it() {
+        let dir = scratch("entrance-asker");
+        let manager = manager_of(config(&["a", "b"], &["a"], 10), &dir);
+        let asking = |by: Option<AskedBy>| {
+            let mut t = turn(&manager, None);
+            t.model = ModelStep::Chosen {
+                asked: Some("a"),
+                asked_by: by,
+                may_switch: MaySwitch::SessionAllows,
+                place: "test".into(),
+            };
+            t
+        };
+        let mut engine = built(&manager, "b").await;
+        engine.default_model_id = "b".into();
+        engine.open_session_turn(asking(None)).await;
+        assert_eq!(engine.model_id, "a", "the engine's policy names the owner");
+        let mut engine = built(&manager, "b").await;
+        engine.default_model_id = "b".into();
+        engine.open_session_turn(asking(Some(AskedBy::of(Some(vec!["b".into()]))))).await;
+        assert_eq!(engine.model_id, "b", "a guest is given only what the room shares");
+    }
+
+    /// The turn's own settings come first and are put back by `end_turn`,
+    /// whatever a door does with the rest.
+    #[tokio::test]
+    async fn the_entrance_begins_the_turn_with_the_doors_settings() {
+        let dir = scratch("entrance-begin");
+        let manager = manager_of(config(&["m"], &["m"], 10), &dir);
+        let mut engine = built(&manager, "m").await;
+        let mut person = turn(&manager, None);
+        person.settings = TurnSettings { person_spoke: true, language: Some("zh".into()), ..Default::default() };
+        engine.open_session_turn(person).await;
+        assert!(engine.turn_settings().person_spoke);
+        engine.end_turn();
+        assert_eq!(engine.turn_settings(), TurnSettings::default());
+    }
+}

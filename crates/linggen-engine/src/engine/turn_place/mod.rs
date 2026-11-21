@@ -150,6 +150,7 @@ impl crate::engine::tools::Tools {
 }
 
 pub(crate) mod bind;
+pub mod entrance;
 pub(crate) mod held;
 pub use held::Held;
 pub mod running;

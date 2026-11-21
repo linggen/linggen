@@ -1,4 +1,7 @@
 use crate::engine::agent::AgentManager;
+use crate::engine::turn_place::entrance::{
+    LiveState, ModelStep, SessionOnTools, SessionTurn,
+};
 use crate::engine::{AgentEngine, Plan, PlanStatus};
 use crate::server::chat::helpers::{
     emit_outcome_event, persist_message_only,
@@ -430,20 +433,10 @@ async fn run_approved_plan_task(
     let events_tx = state.events_tx.clone();
     let sid_default = session_id.as_deref().unwrap_or("default").to_string();
 
-    // Its run is a turn of its own: nothing the turn that made the plan
-    // left (its last words) is shown as this run's.
-    engine.begin_turn(Default::default());
-    let task = format!("Execute the approved plan: {}", plan.summary);
-    engine.hold_plan(plan);
-
     // Where it runs, kept before anything of the run is written: in a day's
     // session its rows are the place it was made in (`turn_place::keep_in_day`).
     let place = plan_place(&manager, &sid_default, &stamp);
     let _place = super::turn_place::keep_in_day(&manager, &sid_default, &place);
-    // The approved state was kept when it was approved; the page hears it now.
-    let approved_snapshot = engine.plan().cloned().unwrap();
-    engine.persist_and_emit_plan(approved_snapshot).await;
-
     // Plan execution only calls run_agent_loop (no skill dispatch); ctx.policy
     // is consulted only for the place's skill. Engine-level restrictions
     // (consumer_allowed_tools, locked) are already set from the original
@@ -464,6 +457,30 @@ async fn run_approved_plan_task(
         place,
         turn: Default::default(),
     };
+    // Its run is a turn of its own: nothing the turn that made the plan
+    // left (its last words) is shown as this run's. It continues the person's
+    // session, so it is set up as that session's chat turns are: the session
+    // on the tools, the live state, the member's seat and model, the
+    // session's withheld tools — on a rebuilt engine too
+    // (`tests/system/turn_entrance.rs`).
+    engine
+        .open_session_turn(SessionTurn {
+            manager: &manager,
+            session: session_id.as_deref(),
+            settings: Default::default(),
+            session_on_tools: SessionOnTools::Bound,
+            live_state: LiveState::Read,
+            model: ModelStep::ChosenByTheDoor,
+            seat: super::handler::turn_seat(&ctx).await,
+        })
+        .await;
+    super::handler::choose_members_model(&mut engine, &ctx).await;
+    let task = format!("Execute the approved plan: {}", plan.summary);
+    engine.hold_plan(plan);
+    // The approved state was kept when it was approved; the page hears it now.
+    let approved_snapshot = engine.plan().cloned().unwrap();
+    engine.persist_and_emit_plan(approved_snapshot).await;
+
     // The run reads as the engine's, not as the turn that made the plan did.
     ctx.start.stand_for_reads(&mut engine);
     let ended = run_plan_in_place(&ctx, &mut engine, task).await;

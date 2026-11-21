@@ -781,36 +781,39 @@ async fn dispatch_mission_prompt(
 
     // The run is a turn of its own: its kickoff is set for it and taken
     // back when it ends, so none of it reaches a later turn in the session.
-    engine.begin_turn(crate::engine::turn_place::TurnSettings {
-        kickoff: crate::engine::turn_place::Kickoff {
-            queue: queued,
-            stop: mission.kickoff_stop.clone(),
-            fresh: mission.kickoff_fresh,
-            then: mission.kickoff_then.clone(),
-        },
-        ..Default::default()
-    });
+    // Its run is the engine's before the model is chosen: a replaced
+    // model's notice is stamped with it.
     engine.set_parent_agent(None);
     engine.set_run_id(Some(run_id.clone()));
-
     // The mission's configured model (frontmatter `model:`), by the one
     // rule (`model_choice::resolve`): a retired id runs on its successor;
     // one this machine lacks falls back to the agent's default — or, in a
     // session that may not switch models, is kept so the run fails on it,
-    // named.
-    engine.read_live_state(&manager).await;
-    let may_switch = engine.switching(session_id.as_deref()).session_allows();
-    let choice = crate::engine::model_choice::resolve(
-        &engine.model_manager,
-        mission.model.as_deref(),
-        &engine.default_model_id,
-        crate::engine::model_choice::Rule {
-            asker: crate::engine::model_choice::Asker::Owner,
-            may_switch,
-        },
-    );
+    // named. Its session is made for it, withholding nothing
+    // (`a_mission_session_withholds_no_tool`), and is not bound on the tools.
     engine
-        .run_on(&choice, &format!("mission '{}'", mission.id))
+        .open_session_turn(crate::engine::turn_place::entrance::SessionTurn {
+            manager: &manager,
+            session: session_id.as_deref(),
+            settings: crate::engine::turn_place::TurnSettings {
+                kickoff: crate::engine::turn_place::Kickoff {
+                    queue: queued,
+                    stop: mission.kickoff_stop.clone(),
+                    fresh: mission.kickoff_fresh,
+                    then: mission.kickoff_then.clone(),
+                },
+                ..Default::default()
+            },
+            session_on_tools: crate::engine::turn_place::entrance::SessionOnTools::NotBound,
+            live_state: crate::engine::turn_place::entrance::LiveState::Read,
+            model: crate::engine::turn_place::entrance::ModelStep::Chosen {
+                asked: mission.model.as_deref(),
+                asked_by: None,
+                may_switch: crate::engine::turn_place::entrance::MaySwitch::SessionAllows,
+                place: format!("mission '{}'", mission.id),
+            },
+            seat: crate::engine::turn_place::entrance::Seat::AMissionHasNone,
+        })
         .await;
 
     // The mission body becomes the system prompt's runbook (not a user
@@ -1286,6 +1289,18 @@ mod tests {
             "a mission with no cwd: has no folder"
         );
         assert!(!without.cwd.is_empty());
+    }
+
+    /// R4 pin (c): a mission never runs in a session whose record withholds a
+    /// tool — its session is made here (`create_mission_session`, the one
+    /// maker, used by the scheduler and the trigger API), with none withheld,
+    /// and nothing writes `withheld_tools` of a kept session afterwards. So a
+    /// mission's skipping `withhold_session_tools` withholds nothing it
+    /// would have.
+    #[test]
+    fn a_mission_session_withholds_no_tool() {
+        let meta = mission_session_meta(&parsed(""), "sess-1-m");
+        assert!(meta.withheld_tools.is_empty());
     }
 
     fn nightly() -> cron::Schedule {
