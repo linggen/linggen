@@ -299,8 +299,8 @@ fn a_session_never_sets_its_own_work_tag() {
 const UPWARD_EDGES: &[(&str, usize, &str)] = &[
     (
         "state_fs/devices/mod.rs",
-        3,
-        "paired-device records and HTTP callers use the engine's permission mode",
+        1,
+        "paired-device records and HTTP callers use the engine's permission mode (one import)",
     ),
     (
         "state_fs/row_place_tests.rs",

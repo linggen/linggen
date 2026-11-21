@@ -8,6 +8,7 @@
 //! `machine` (the owner's other computer, approved with Allow). Rows written
 //! before the kind existed are classified once on load (`classify`).
 
+use crate::engine::permission::PermissionMode;
 use rand::RngExt;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -77,7 +78,7 @@ pub struct PairedDevice {
     /// from the rows, and cleared then. Nothing sets it, and nothing else
     /// reads it.
     #[serde(default, rename = "permission", skip_serializing_if = "Option::is_none")]
-    pub legacy_permission: Option<crate::engine::permission::PermissionMode>,
+    pub legacy_permission: Option<PermissionMode>,
     /// The contract number this phone said it speaks on its last
     /// `identify`; unset, it has said none (contract 0).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -158,8 +159,7 @@ pub const LEVEL_HEADER: &str = "x-linggen-level";
 
 /// The level a request stands at, from [`LEVEL_HEADER`]: absent is this
 /// machine, at admin; a value that is not a level is chat.
-pub fn caller_level(headers: &axum::http::HeaderMap) -> crate::engine::permission::PermissionMode {
-    use crate::engine::permission::PermissionMode;
+pub fn caller_level(headers: &axum::http::HeaderMap) -> PermissionMode {
     let Some(value) = headers.get(LEVEL_HEADER) else {
         return PermissionMode::Admin;
     };
@@ -694,7 +694,6 @@ mod tests {
     /// is not written again.
     #[test]
     fn a_rows_old_level_is_read_under_its_old_key_and_not_written_again() {
-        use crate::engine::permission::PermissionMode;
         let mut old: PairedDevice = serde_json::from_str(
             r#"{"id":"a","name":"n","secret":"s","created_at":0,"permission":"edit"}"#,
         )
