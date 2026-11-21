@@ -41,10 +41,10 @@ impl Offer {
     fn fact(&self) -> String {
         match self {
             Offer::Tool { skill, tool, tier, .. } => {
-                let tier = if tier.only_reads() {
-                    "only reads"
-                } else {
+                let tier = if tier.changes_things() {
                     "changes things, asks the person first"
+                } else {
+                    "only reads"
                 };
                 format!("run {skill}'s {tool} ({tier})")
             }

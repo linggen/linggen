@@ -19,6 +19,9 @@
 //! - The class a skill writes for a tool (`tier:`) is read only by
 //!   `ActionClass::declared`, called from the one place a skill's tools are
 //!   read: no other production code turns a written tier word into a class.
+//! - What level an app's action needs is read from its class only in
+//!   `skill::judge::judge`, which every way in asks: no other production
+//!   code calls `ActionClass::level_needed`.
 //! - The words a calling host names its permission mode with (`agent_run`'s
 //!   `permission_mode`) are written once, in `mcp_agent::HostMode`: the
 //!   schema, its descriptions and the grant are made from it.
@@ -40,6 +43,8 @@ const POLICY_DECIDER: &str = "src/server/chat/policy.rs";
 const MODE_WORDS_DECIDER: &str = "crates/linggen-engine/src/permission_mode.rs";
 /// The one place a skill tool's written class word becomes an `ActionClass`.
 const CLASS_WORDS_DECIDER: &str = "crates/linggen-engine/src/engine/permission/action_class.rs";
+/// The one place an app action's level is judged.
+const CLASS_JUDGE: &str = "crates/linggen-engine/src/engine/skill/judge.rs";
 /// The one place a host's permission-mode words are written.
 const HOST_WORDS_DECIDER: &str = "src/server/mcp_agent.rs::word";
 
@@ -77,6 +82,8 @@ struct Found {
     host_words: Vec<String>,
     /// `file::fn` of every production use of `ActionClass::declared`.
     class_reads: Vec<String>,
+    /// `file::fn` of every production call of `ActionClass::level_needed`.
+    class_levels: Vec<String>,
 }
 
 /// The permission-mode words, the `write` alias with them.
@@ -198,6 +205,14 @@ impl<'ast> Visit<'ast> for Scan<'_> {
             }
         }
         visit::visit_expr_call(self, call);
+    }
+
+    fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+        if call.method == "level_needed" {
+            let here = self.here();
+            self.found.class_levels.push(here);
+        }
+        visit::visit_expr_method_call(self, call);
     }
 
     fn visit_expr_binary(&mut self, bin: &'ast syn::ExprBinary) {
@@ -438,6 +453,19 @@ fn a_skill_tools_written_class_is_read_in_one_place() {
 }
 
 #[test]
+fn an_app_actions_level_is_judged_in_one_place() {
+    let found: Vec<String> = production()
+        .class_levels
+        .into_iter()
+        .filter(|at| !at.starts_with(CLASS_JUDGE) && !at.starts_with(CLASS_WORDS_DECIDER))
+        .collect();
+    assert!(
+        found.is_empty(),
+        "ask `skill::judge::judge` whether a caller may run an app's action; never compare its class's level here: {found:#?}"
+    );
+}
+
+#[test]
 fn a_hosts_permission_words_are_written_once() {
     assert_eq!(
         production().host_words,
@@ -454,6 +482,7 @@ fn the_scan_finds_policies_mode_words_and_host_words_but_not_test_fixtures() {
            fn c(m: &str) -> PermissionMode { match m { "edit" | "write" => PermissionMode::Edit, _ => PermissionMode::Read } }
            fn d(m: &str) -> &str { match m { "edit" => "edited", _ => "" } }
            fn g(w: &str) -> ActionClass { ActionClass::declared(w) }
+           fn h(t: &T) -> bool { t.class.level_needed() > x }
            const VALID: &[&str] = &["read", "edit", "admin"];
            fn e() { json!({"enum": ["plan", "acceptEdits"]}); let s = "default/bypassPermissions"; }
            #[cfg(test)] mod tests { fn f() { SessionPolicy::owner(); let s = "acceptEdits"; } }
@@ -473,6 +502,7 @@ fn the_scan_finds_policies_mode_words_and_host_words_but_not_test_fixtures() {
     assert_eq!(found.mode_parses, ["lib.rs::c", "lib.rs::"]);
     assert_eq!(found.host_words, ["lib.rs::e", "lib.rs::e"]);
     assert_eq!(found.class_reads, ["lib.rs::g"]);
+    assert_eq!(found.class_levels, ["lib.rs::h"]);
 }
 
 #[test]

@@ -45,10 +45,11 @@ impl ActionClass {
         }
     }
 
-    /// Whether an action of this class changes nothing: the only class a
-    /// tap on an offer runs without asking first.
-    pub fn only_reads(self) -> bool {
-        self == Self::Read
+    /// Whether an action of this class may change the person's things: a
+    /// fact about the class (a skill's save is pushed after one; a tap on
+    /// an offer is described by it), not a judgment of who may run it.
+    pub fn changes_things(self) -> bool {
+        self != Self::Read
     }
 
     /// The word the class is published as (`mac/tools`, an offer).

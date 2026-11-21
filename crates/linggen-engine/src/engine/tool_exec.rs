@@ -1,5 +1,6 @@
 use super::types::*;
 use crate::engine::permission;
+use crate::engine::skill::judge;
 use crate::engine::render::{
     normalize_tool_path_arg, render_tool_result, render_tool_result_public,
     sanitize_tool_args_for_display, tool_call_signature,
@@ -668,13 +669,13 @@ impl AgentEngine {
             Some(self.tools.builtins.cwd().to_string_lossy().to_string())
         };
 
-        // A skill tool's class wins over the built-in table: the level it
-        // needs is passed to check_permission as an override.
-        let skill_tier_override = self
+        // An app's declared action is judged by `skill::judge` — its class
+        // wins over the built-in table — never by the gate alone.
+        let skill_action = self
             .tools
             .skill_tools
             .get(t.canonical)
-            .map(|def| def.class.level_needed());
+            .map(|def| (def.skill_name.clone().unwrap_or_default(), def.class));
 
         let mut last_grant: Option<(String, permission::PermissionMode)> = None;
         loop {
@@ -686,12 +687,19 @@ impl AgentEngine {
             let cwd = self.tools.builtins.cwd();
             let url = t.args.get("url").and_then(JsonValue::as_str).filter(|_| t.canonical == "WebFetch");
             let check = |path: Option<&str>| {
-                permission::check_permission_under_rules(
-                    t.canonical, bash_command.as_deref(), path, &cwd,
-                    &self.session_permissions, skill_tier_override, coding,
-                    self.session_spec.ceiling, origin, Some(&self.declined_scopes), approved_reads,
-                    self.claude_rules.for_call(url),
-                )
+                let gate = |needs: Option<permission::PermissionMode>| {
+                    permission::check_permission_under_rules(
+                        t.canonical, bash_command.as_deref(), path, &cwd,
+                        &self.session_permissions, needs, coding,
+                        self.session_spec.ceiling, origin, Some(&self.declined_scopes), approved_reads,
+                        self.claude_rules.for_call(url),
+                    )
+                };
+                let Some((app, class)) = &skill_action else {
+                    return gate(None);
+                };
+                let action = judge::Action { app, tool: t.canonical, class: *class, cwd: &cwd };
+                judge::judge(judge::Asker::Model { session: &|needs| gate(Some(needs)) }, &action).into()
             };
             let check_result = if t.canonical == "Glob" {
                 let mut ask = None;

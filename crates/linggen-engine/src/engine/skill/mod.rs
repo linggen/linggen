@@ -14,6 +14,7 @@
 //! that module's `SkillLoader` is the production impl of
 //! `SkillRegistry`.
 
+pub mod judge;
 pub mod params;
 pub mod record;
 pub mod registry;
