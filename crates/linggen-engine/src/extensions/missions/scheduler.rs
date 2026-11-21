@@ -1288,6 +1288,18 @@ mod tests {
         assert!(!without.cwd.is_empty());
     }
 
+    /// R4 pin (c): a mission never runs in a session whose record withholds a
+    /// tool — its session is made here (`create_mission_session`, the one
+    /// maker, used by the scheduler and the trigger API), with none withheld,
+    /// and nothing writes `withheld_tools` of a kept session afterwards. So a
+    /// mission's skipping `withhold_session_tools` withholds nothing it
+    /// would have.
+    #[test]
+    fn a_mission_session_withholds_no_tool() {
+        let meta = mission_session_meta(&parsed(""), "sess-1-m");
+        assert!(meta.withheld_tools.is_empty());
+    }
+
     fn nightly() -> cron::Schedule {
         super::super::parse_cron("0 1 * * *").unwrap()
     }

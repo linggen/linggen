@@ -26,6 +26,8 @@ pub(crate) use clear_place::clear_chat_api;
 mod cloud_gate;
 pub(crate) mod fold;
 mod compact_rows;
+#[cfg(test)]
+mod entrance_lock;
 mod handler;
 pub(super) mod helpers;
 mod light;
