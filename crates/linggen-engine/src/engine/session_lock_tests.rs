@@ -260,12 +260,7 @@ const SETTER_CALLERS: &[(&str, usize, &str)] = &[
     ("src/server/chat/runtime.rs", 4, "a turn's last call; what a turn adds"),
     ("src/server/chat/clear_place.rs", 1, "a cleared place reloads"),
     ("src/server/resident/session_roll.rs", 1, "a fresh thread's last words"),
-    ("src/server/mcp_agent.rs", 2, "a delegate's task kept first; live state"),
-    (
-        "crates/linggen-engine/src/extensions/missions/scheduler.rs",
-        1,
-        "live state",
-    ),
+    ("src/server/mcp_agent.rs", 1, "a delegate's task kept first"),
 ];
 
 #[test]

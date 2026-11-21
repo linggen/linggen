@@ -56,3 +56,4 @@ fn the_delivery_door_is_called_only_for_an_address_that_is_not_hers() {
     let delivered = route.find("deliver_to_chat_agent(").expect("the delivery");
     assert!(her < delivered, "her address is sent to her own door before any delivery");
 }
+

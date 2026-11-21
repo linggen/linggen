@@ -1,4 +1,7 @@
 use crate::engine::agent::AgentManager;
+use crate::engine::turn_place::entrance::{
+    LiveState, ModelStep, Seat, SessionOnTools, SessionTurn, SessionsWithheld,
+};
 use crate::engine::{AgentEngine, Plan, PlanStatus};
 use crate::server::chat::helpers::{
     emit_outcome_event, persist_message_only,
@@ -432,7 +435,23 @@ async fn run_approved_plan_task(
 
     // Its run is a turn of its own: nothing the turn that made the plan
     // left (its last words) is shown as this run's.
-    engine.begin_turn(Default::default());
+    // Kept as found, 2026-11: see R4 stage 2. Of the entrance's steps this
+    // run takes none but the turn's own settings: no live state, no model
+    // choice (the engine runs on the model it was left on), no seat, no
+    // session on the tools, no withheld tools of the session's record
+    // (`tests/system/turn_entrance.rs`).
+    engine
+        .open_session_turn(SessionTurn {
+            manager: &manager,
+            session: session_id.as_deref(),
+            settings: Default::default(),
+            session_on_tools: SessionOnTools::UnboundAsFound,
+            live_state: LiveState::NotReadAsFound,
+            model: ModelStep::AtTheDoorAsFound,
+            seat: Seat::LeftAsFound,
+            withheld: SessionsWithheld::SkippedAsFound,
+        })
+        .await;
     let task = format!("Execute the approved plan: {}", plan.summary);
     engine.hold_plan(plan);
 
