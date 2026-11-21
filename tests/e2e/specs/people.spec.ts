@@ -11,9 +11,10 @@ const PHONE = { id: 'phone-friend', token: 'tok-friend-phone', account: 'u-frien
 const KEEP = 'dice';
 
 function pairFriendsPhone(home: string) {
+  // The relay vouched for the account: an unvouched claim is its device, not a person.
   const row = {
     id: PHONE.id, name: "Friend's phone", secret: PHONE.token, created_at: 0, kind: 'phone',
-    account: { id: PHONE.account, name: 'Friend' },
+    account: { id: PHONE.account, name: 'Friend' }, verified_account: PHONE.account,
   };
   writeFileSync(`${home}/paired-devices.json`, JSON.stringify([row]));
 }
@@ -102,7 +103,7 @@ test('an app the owner keeps is shown as kept in a person\'s list, not as a choi
 test("the page opened from the owner's other computer says people are set at this Mac, and offers no control", async ({ page, world, request, httpRequests }) => {
   const machine = { id: 'machine-studio', token: 'tok-studio', account: null };
   writeFileSync(`${world.linggenHome}/paired-devices.json`, JSON.stringify([
-    { id: PHONE.id, name: "Friend's phone", secret: PHONE.token, created_at: 0, kind: 'phone', account: { id: PHONE.account, name: 'Friend' } },
+    { id: PHONE.id, name: "Friend's phone", secret: PHONE.token, created_at: 0, kind: 'phone', account: { id: PHONE.account, name: 'Friend' }, verified_account: PHONE.account },
     { id: machine.id, name: 'Studio', secret: machine.token, created_at: 0, kind: 'machine' },
   ]));
   await expect

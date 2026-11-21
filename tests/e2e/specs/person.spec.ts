@@ -13,9 +13,10 @@ test.use({ scenario: { scripts: { ling: [{ text: 'Rolled for the friend.' }, { t
 
 /** The friend's phone, paired to this Mac and signed in to their account. */
 function pairFriendsPhone(home: string) {
+  // The relay vouched for the account: an unvouched claim is its device, not a person.
   const row = {
     id: PHONE.id, name: "Friend's phone", secret: PHONE.token, created_at: 0, kind: 'phone',
-    account: { id: PHONE.account, name: 'Friend' },
+    account: { id: PHONE.account, name: 'Friend' }, verified_account: PHONE.account,
   };
   writeFileSync(`${home}/paired-devices.json`, JSON.stringify([row]));
 }
@@ -73,6 +74,9 @@ test("another person's paired phone, over the channel, gets its own day and neve
   }, world.work);
   expect(own).toBe(theirs);
   await expect.poll(() => rows(world.linggenHome, theirs)).toContain('FRIEND-OWN');
+  // Its answer first: the scripted replies are handed out in the order the
+  // model is called, so the builder's turn must not start before this one ends.
+  await expect.poll(() => rows(world.linggenHome, theirs)).toContain('Rolled for the friend.');
   expect(rows(world.linggenHome, mine), "the phone wrote into the builder's day").not.toContain('FRIEND-');
 
   // The builder talks in their own day, on this Mac: the phone, pinned to
