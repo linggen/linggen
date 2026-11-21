@@ -1,11 +1,11 @@
 import React from 'react';
 import { User } from 'lucide-react';
 import { ApiError, apiErrorMessage } from '../lib/api';
-import { peopleApi, skillsApi } from '../lib/endpoints';
+import { peopleApi } from '../lib/endpoints';
 import {
-  LEVELS, WORDS, appRows, appsAfterToggle, arrivalLine, deviceLabel, limitFromText, limitText,
+  LEVELS, WORDS, appChoices, appRows, personTitle, splitApps, appsAfterToggle, arrivalLine, deviceLabel, limitFromText, limitText,
   modelRows, modelsAfterToggle, offeredApps, usedLine,
-  type AppChoice, type PeopleReply, type Person, type PersonPatch,
+  type AppChoice, type AppRow, type PeopleReply, type Person, type PersonPatch,
 } from '../lib/people.mts';
 import { useServerStore } from '../stores/serverStore';
 import { Section, inputCls, sectionCls } from './settings/kit';
@@ -22,16 +22,9 @@ const chipCls = (on: boolean, locked = false) =>
 const labelCls = 'text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400';
 const hintCls = 'text-[11px] text-slate-400 mt-1';
 
-/** The installed apps — skills that have an app — as the lists offer them. */
-async function installedApps(): Promise<AppChoice[]> {
-  const skills = await skillsApi.list();
-  return skills.filter((s) => s.app).map((s) => ({ name: s.name, label: s.app?.title || s.name }));
-}
-
 /** The household as the engine answers it, kept current; `save` sends one change and shows what the engine then says. */
 function usePeople() {
   const [reply, setReply] = React.useState<PeopleReply | null>(null);
-  const [apps, setApps] = React.useState<AppChoice[]>([]);
   const [busy, setBusy] = React.useState<ReadonlySet<string>>(new Set());
   const [refused, setRefused] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -53,7 +46,6 @@ function usePeople() {
 
   React.useEffect(() => {
     refresh();
-    installedApps().then(setApps).catch(() => {});
     const t = setInterval(refresh, POLL_MS);
     return () => clearInterval(t);
   }, [refresh]);
@@ -76,11 +68,11 @@ function usePeople() {
     }
   }, [refresh]);
 
-  return { reply, apps, busy, refused, error, save };
+  return { reply, busy, refused, error, save };
 }
 
 export const PeopleTab: React.FC = () => {
-  const { reply, apps, busy, refused, error, save } = usePeople();
+  const { reply, busy, refused, error, save } = usePeople();
   const models = useServerStore((s) => s.models);
   const macModels = React.useMemo(() => models.map((m) => m.id).filter(Boolean), [models]);
 
@@ -92,6 +84,7 @@ export const PeopleTab: React.FC = () => {
   }
 
   const mineOnly = reply.owner.mine_only;
+  const apps = appChoices(reply.apps);
   const setPerson = (person: Person, patch: PersonPatch) => save(person.id, () => peopleApi.set(person.id, patch));
   return (
     <div className="space-y-6">
@@ -103,6 +96,7 @@ export const PeopleTab: React.FC = () => {
         <PersonCard
           key={person.id}
           person={person}
+          title={personTitle(person, reply.people)}
           apps={apps}
           mineOnly={mineOnly}
           macModels={macModels}
@@ -118,12 +112,13 @@ export const PeopleTab: React.FC = () => {
 
 const PersonCard: React.FC<{
   person: Person;
+  title: string;
   apps: AppChoice[];
   mineOnly: string[];
   macModels: string[];
   busy: boolean;
   onChange: (patch: PersonPatch) => void;
-}> = ({ person, apps, mineOnly, macModels, busy, onChange }) => {
+}> = ({ person, title, apps, mineOnly, macModels, busy, onChange }) => {
   const { settings } = person;
   const offered = offeredApps(apps, mineOnly);
   const arrival = arrivalLine(settings.arrival);
@@ -131,7 +126,7 @@ const PersonCard: React.FC<{
     <section className={sectionCls} data-testid="person" data-person={person.id}>
       <div className="flex items-center gap-2">
         <User size={16} className="text-slate-400 shrink-0" />
-        <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-200">{person.name}</h3>
+        <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-200">{title}</h3>
       </div>
       <ul className="mt-1 ml-6 text-[11px] text-slate-400">
         {person.devices.map((d) => <li key={d.id}>{deviceLabel(d)}</li>)}
@@ -163,15 +158,18 @@ const PersonCard: React.FC<{
 
         <div>
           <span className={labelCls}>{WORDS.apps}</span>
-          <div className="mt-1 flex flex-wrap gap-1.5">
-            <button
-              aria-pressed={settings.apps == null}
-              onClick={() => onChange({ apps: null })}
-              className={chipCls(settings.apps == null)}
-            >
-              {WORDS.allApps}
-            </button>
-            {appRows(apps, mineOnly, settings.apps).map((row) => (
+          <GroupedApps
+            rows={appRows(apps, mineOnly, settings.apps)}
+            lead={(
+              <button
+                aria-pressed={settings.apps == null}
+                onClick={() => onChange({ apps: null })}
+                className={chipCls(settings.apps == null)}
+              >
+                {WORDS.allApps}
+              </button>
+            )}
+            chip={(row) => (
               <button
                 key={row.name}
                 data-app={row.name}
@@ -184,8 +182,8 @@ const PersonCard: React.FC<{
                 {row.kept && <span className="ml-1 text-slate-400">{WORDS.keptForYou}</span>}
                 {row.gone && <span className="ml-1 text-slate-400">{WORDS.gone}</span>}
               </button>
-            ))}
-          </div>
+            )}
+          />
           {apps.length === 0 && <p className={hintCls}>{WORDS.noApps}</p>}
         </div>
 
@@ -274,22 +272,45 @@ const OwnerSide: React.FC<{
   const rows = appRows(apps, [], mineOnly);
   return (
     <Section title={WORDS.mineOnly} desc={WORDS.mineOnlyHint}>
-      <div className="flex flex-wrap gap-1.5" data-testid="mine-only">
-        {rows.map((row) => (
-          <button
-            key={row.name}
-            data-app={row.name}
-            aria-pressed={row.on}
-            disabled={busy}
-            onClick={() => onChange(row.on ? mineOnly.filter((n) => n !== row.name) : [...mineOnly, row.name])}
-            className={chipCls(row.on)}
-          >
-            {row.on ? '✓ ' : ''}{row.label}
-            {row.gone && <span className="ml-1 text-slate-400">{WORDS.gone}</span>}
-          </button>
-        ))}
+      <div data-testid="mine-only">
+        <GroupedApps
+          rows={rows}
+          chip={(row) => (
+            <button
+              key={row.name}
+              data-app={row.name}
+              aria-pressed={row.on}
+              disabled={busy}
+              onClick={() => onChange(row.on ? mineOnly.filter((n) => n !== row.name) : [...mineOnly, row.name])}
+              className={chipCls(row.on)}
+            >
+              {row.on ? '✓ ' : ''}{row.label}
+              {row.gone && <span className="ml-1 text-slate-400">{WORDS.gone}</span>}
+            </button>
+          )}
+        />
       </div>
       {apps.length === 0 && mineOnly.length === 0 && <p className={hintCls}>{WORDS.noApps}</p>}
     </Section>
+  );
+};
+
+/** A checklist of skills: the ones with an app page first, the others under their own label. */
+const GroupedApps: React.FC<{
+  rows: AppRow[];
+  lead?: React.ReactNode;
+  chip: (row: AppRow) => React.ReactNode;
+}> = ({ rows, lead, chip }) => {
+  const { apps, others } = splitApps(rows);
+  return (
+    <>
+      <div className="mt-1 flex flex-wrap gap-1.5">{lead}{apps.map(chip)}</div>
+      {others.length > 0 && (
+        <>
+          <span className={`${labelCls} block mt-3`}>{WORDS.otherSkills}</span>
+          <div className="mt-1 flex flex-wrap gap-1.5">{others.map(chip)}</div>
+        </>
+      )}
+    </>
   );
 };

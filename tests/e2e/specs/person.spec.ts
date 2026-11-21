@@ -20,6 +20,13 @@ function pairFriendsPhone(home: string) {
   writeFileSync(`${home}/paired-devices.json`, JSON.stringify([row]));
 }
 
+/** The owner shares the Mac's fake model with the friend, at this Mac: a person
+ *  nobody shared a model with takes no turn here (doc/permission-spec.md § People). */
+async function shareTheModel(world: { url: string }, request: import('@playwright/test').APIRequestContext) {
+  const set = await request.put(`${world.url}/api/people/${PHONE.account}`, { data: { models: ['fake-ling'] } });
+  expect(set.status()).toBe(200);
+}
+
 const rows = (home: string, sid: string) => {
   try {
     return readFileSync(`${home}/sessions/${sid}/messages.jsonl`, 'utf8');
@@ -34,6 +41,7 @@ test("another person's paired phone, over the channel, gets its own day and neve
   await expect
     .poll(async () => (await request.get(`${world.url}/api/pair/me`, { headers: { 'x-linggen-device': PHONE.token } })).status())
     .toBe(200);
+  await shareTheModel(world, request);
   const config = await (await request.get(`${world.url}/api/config`)).json();
   config.agent.daily_session = true;
   await request.post(`${world.url}/api/config`, { data: config });

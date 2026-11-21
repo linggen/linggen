@@ -1531,7 +1531,11 @@ pub(crate) async fn start_turn(
         let is_consumer = req_user_type == "consumer";
         // The turn's one ceiling, before anything of it runs: the model is
         // chosen within it (`policy.asker()`), then its spec is typed by it.
-        let installed: Vec<String> = state_clone.skills.list_skills().await.into_iter().map(|s| s.name).collect();
+        let installed: Vec<String> = crate::server::people::installed(&state_clone.skills)
+            .await
+            .into_iter()
+            .map(|s| s.name)
+            .collect();
         let policy = super::policy::turn_policy(super::policy::TurnBy::Person {
             user_type: &req_user_type,
             user_id: req_user_id.as_deref(),

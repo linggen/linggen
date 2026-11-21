@@ -51,6 +51,9 @@ test('the owner sets a person once, and it holds after a reload and in their own
   const apps = card.locator('[data-app]');
   const names = await apps.evaluateAll((els) => els.map((el) => el.getAttribute('data-app') as string));
   expect(names).toContain(KEEP);
+  // A skill with no app page is in the list too, under its own label: the engine's list is what is offered.
+  expect(names).toContain('quiet');
+  await expect(card.getByText('Other skills', { exact: true })).toBeVisible();
   for (const name of names.filter((n) => n !== KEEP)) {
     await card.locator(`[data-app="${name}"]`).click();
     await expect(card.locator(`[data-app="${name}"]`)).toHaveAttribute('aria-pressed', 'false');

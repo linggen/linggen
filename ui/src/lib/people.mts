@@ -49,14 +49,35 @@ export interface Person {
 export interface PeopleReply {
   owner: { mine_only: string[] };
   people: Person[];
+  /** Every installed skill a person's apps list may hold — the engine's own list. */
+  apps: InstalledSkill[];
   /** The one who asks is at this Mac itself — only there are people set. */
   at_this_mac: boolean;
 }
 
-/** An installed app, as the lists offer it. */
-export interface AppChoice {
+/** A skill the engine says a person's list may hold, and whether it has an app page. */
+export interface InstalledSkill {
   name: string;
+  app: boolean;
+}
+
+/** A skill as the lists offer it. */
+export interface AppChoice extends InstalledSkill {
   label: string;
+}
+
+/** The engine's list as the page offers it, apps first and then the other skills. */
+export function appChoices(installed: readonly InstalledSkill[]): AppChoice[] {
+  const choices = installed.map((s) => ({ ...s, label: s.name }));
+  return [...choices.filter((s) => s.app), ...choices.filter((s) => !s.app)];
+}
+
+/** What a card is titled: the person's name; a signed-out phone's person, when
+ *  there are several, with the device's own name so they can be told apart. */
+export function personTitle(person: Person, all: readonly Person[]): string {
+  const signedOut = (p: Person) => p.id.startsWith('device:');
+  if (!signedOut(person) || all.filter(signedOut).length < 2) return person.name;
+  return `${person.name} · ${person.devices[0]?.name ?? ''}`.trimEnd();
 }
 
 /** What a PUT to a person may carry (`People::set`). */
@@ -82,6 +103,11 @@ export interface AppRow extends AppChoice {
   gone: boolean;
 }
 
+/** Rows with an app page first, the other skills apart. */
+export function splitApps(rows: readonly AppRow[]): { apps: AppRow[]; others: AppRow[] } {
+  return { apps: rows.filter((r) => r.app), others: rows.filter((r) => !r.app) };
+}
+
 /** The apps shown for one person: every installed one, then any the list holds that is not installed. */
 export function appRows(installed: readonly AppChoice[], mineOnly: readonly string[], apps: readonly string[] | null | undefined): AppRow[] {
   const rows = installed.map((app) => {
@@ -90,7 +116,7 @@ export function appRows(installed: readonly AppChoice[], mineOnly: readonly stri
   });
   const known = new Set(installed.map((app) => app.name));
   const gone = (apps ?? []).filter((name) => !known.has(name));
-  return [...rows, ...gone.map((name) => ({ name, label: name, on: true, kept: false, gone: true }))];
+  return [...rows, ...gone.map((name) => ({ name, label: name, app: false, on: true, kept: false, gone: true }))];
 }
 
 /** The list a person's apps become when `name` is switched: from "all" it is every offered app but that one. */
@@ -160,6 +186,7 @@ export const WORDS = {
   allApps: 'All apps',
   keptForYou: 'kept for you',
   gone: 'not installed',
+  otherSkills: 'Other skills',
   models: 'Models of this Mac',
   modelsHint: 'Their turns here run only on these. Their phone still has its own.',
   noModel: 'No model of this Mac — they use their own',

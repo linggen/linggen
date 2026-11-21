@@ -63,7 +63,8 @@ pub(crate) async fn list(
     // Said so the page offers controls only where a change is accepted
     // (`set_person` asks the same question and decides).
     let at_this_mac = crate::server::api::ling_mem_connect::is_at_this_mac(peer, &headers);
-    Json(json!({ "owner": people.owner, "people": out, "at_this_mac": at_this_mac })).into_response()
+    let installed = crate::server::people::installed(&state.skills).await;
+    Json(json!({ "owner": people.owner, "people": out, "apps": installed, "at_this_mac": at_this_mac })).into_response()
 }
 
 /// PUT /api/people/{person} — set what the body names (`level`, `apps`,
