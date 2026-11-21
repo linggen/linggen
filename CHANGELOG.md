@@ -67,6 +67,9 @@
   kind of session: allow once or deny. Reading them is not asked.
 - **A request from another device or a room's guest names only sessions that
   are its person's**, and its JSON body is an object.
+- **An approved plan runs as the engine's turn**, never as you at the
+  keyboard: a secret file is refused, not asked, wherever the approval came
+  from.
 - **A permission level is read from its word in one place.** A path grant
   written `chat` in a skill or a mission is chat (it was read as read).
 
@@ -83,6 +86,8 @@
   same buttons as on the page. Answered anywhere, it leaves her bubble.
 - **One telling for a turn that waits**, however many questions it asks; a
   question that was folded in is told if the first telling came to nothing.
+- **Words you say to her avatar are yours again**: she can relay your answer
+  to a waiting question, which 2.5.0 and 2.5.1 refused.
 - **A run another tool started is never told** (an `agent_run` from Claude
   Code or Codex): its caller has it.
 - **A turn the engine started for her that ends without words shows nothing**
@@ -90,7 +95,15 @@
 
 ### Models and cost
 
-- Automatic fallback to your next default model is on again for installs made by 2.3.0–2.5.1, where it was saved off by mistake; set `model_fallback = false` under `[routing]` to turn it off.
+- **Automatic fallback to your next default model is on again** for installs
+  made by 2.3.0–2.5.1, where it had been saved off by mistake; set
+  `model_fallback = false` under `[routing]` to turn it off.
+- **Signing in makes work possible.** When your default model cannot run for
+  want of a sign-in or a key, the first model your sign-in makes ready becomes
+  the default, and the page says so in one line. A default that can run is
+  never changed.
+- **A run that cannot start for a missing sign-in names a model that is
+  ready**, in a chat and in `agent_run`.
 - **Signing in is read in one place.** A ChatGPT model reaches the phone as a
   sign-in model, not as a key model with no key; `ling status` names a model
   on your Linggen account as that.
@@ -103,7 +116,16 @@
 ### Sessions
 
 - **Installing, updating or removing a skill no longer ends other sessions'
-  work in memory.** Each session reads the new skills at its next turn.
+  work in memory**, nor does saving a setting, signing in or changing models.
+  Each session reads what changed at its next turn; a turn that is running
+  finishes on what it started with.
+
+### Skills
+
+- **Updating a skill from the marketplace keeps your files**: its
+  `config.json`, `state/`, `sessions/`, any `*.local.*` file and the paths it
+  declares under `cloud.save` and `cloud.skip`. It used to keep only `data/`
+  and the `cloud.save` paths.
 
 ### Claude sessions are Linggen sessions
 
