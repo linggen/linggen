@@ -63,7 +63,7 @@ pub(crate) use model::{allows_instruction_import, check_permission_under_rules};
 pub(crate) use model::check_permission_with_read_approvals;
 pub use manifest::{apply_grants, Grants, PathGrant};
 pub use model::{
-    check_permission, check_permission_for, display_path, effective_mode_for_path, PathMode,
+    check_permission, check_permission_for, display_path, effective_mode_for_path, OnceAsk, PathMode,
     PermissionAction, PermissionCheckResult, PermissionMode, PromptKind,
 };
 pub use prompt::{

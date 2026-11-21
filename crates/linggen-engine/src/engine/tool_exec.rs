@@ -748,10 +748,9 @@ impl AgentEngine {
                 path,
                 directories,
                 tool_summary,
-                outward,
+                once,
                 reason,
                 scoped_read,
-                by_rule,
             } = prompt_kind;
             let reason = reason.as_deref();
             let tool_summary = with_gate_reason(tool_summary, reason);
@@ -768,13 +767,16 @@ impl AgentEngine {
                 self.record_denial(t, &target_mode.to_string(), "Declined earlier in this run");
                 return self.refuse_declined(t, messages, &scope, None, reason, true).await;
             }
-            let (question, caller_request, wait) = if outward || by_rule {
-                // Its effect leaves the machine, or the person's Claude Code
-                // settings ask every time: this one action, once or not.
-                let question = if outward {
-                    permission::build_outward_question(&tool_summary, &target_mode, &path)
-                } else {
-                    permission::build_rule_question(&tool_summary, &target_mode, &path)
+            let (question, caller_request, wait) = if let Some(once) = once {
+                // Asked every time whatever was granted: this one action,
+                // once or not.
+                let question = match once {
+                    permission::OnceAsk::Outward => {
+                        permission::build_outward_question(&tool_summary, &target_mode, &path)
+                    }
+                    permission::OnceAsk::Rule => {
+                        permission::build_rule_question(&tool_summary, &target_mode, &path)
+                    }
                 };
                 let request = asks_caller.then(|| {
                     let mut request = self.caller_request(t, target_mode, &path, &[], reason);

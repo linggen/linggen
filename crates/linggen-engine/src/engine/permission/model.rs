@@ -71,15 +71,22 @@ pub enum PromptKind {
         tool_summary: String,
         /// The gate's explanation for a coding-session Bash request.
         reason: Option<String>,
-        /// The command's effect leaves this machine (`outward`): one answer
-        /// covers this one command — allow once or deny, no grant offered.
-        outward: bool,
+        /// An ask that offers no grant: one answer covers this one action,
+        /// allow once or deny ([`OnceAsk`] says why it is asked so).
+        once: Option<OnceAsk>,
         scoped_read: bool,
-        /// A rule in the person's Claude Code settings asks before this
-        /// action (`claude_rules`): one answer covers this one action —
-        /// allow once or deny, no grant offered.
-        by_rule: bool,
     },
+}
+
+/// Why an action is asked once, whatever the grants: its question and the
+/// answers it takes are the same, its words differ.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OnceAsk {
+    /// The command's effect leaves this machine (`outward`).
+    Outward,
+    /// A rule in the person's Claude Code settings asks before this action
+    /// (`claude_rules`).
+    Rule,
 }
 
 /// Facts supplied by the branch that made the Bash decision.
@@ -950,7 +957,7 @@ fn ask_by_rule(
         }
         PermissionCheckResult::NeedsPrompt(kind) => kind,
     };
-    let PromptKind::ExceedsCeiling { target_mode, path, tool_summary, reason, outward, scoped_read, .. } = ask;
+    let PromptKind::ExceedsCeiling { target_mode, path, tool_summary, reason, once, scoped_read, .. } = ask;
     PermissionCheckResult::NeedsPrompt(PromptKind::ExceedsCeiling {
         target_mode,
         path,
@@ -960,10 +967,10 @@ fn ask_by_rule(
             Some(need) => format!("{why} {need}"),
             None => why,
         }),
-        outward,
+        // An outward ask stays one: its question is the stronger.
+        once: Some(once.unwrap_or(OnceAsk::Rule)),
         // A read allowed once is carried to the read itself (`approved`).
         scoped_read: scoped_read || matches!(facts.tool, "Read" | "Glob" | "Grep"),
-        by_rule: true,
     })
 }
 
@@ -1296,9 +1303,8 @@ fn needs_prompt(
         directories,
         tool_summary: summary,
         reason,
-        outward: false,
+        once: None,
         scoped_read: false,
-        by_rule: false,
     })
 }
 
@@ -1346,9 +1352,8 @@ fn ask_outward(
         directories: Vec::new(),
         tool_summary,
         reason,
-        outward: true,
+        once: Some(OnceAsk::Outward),
         scoped_read: false,
-        by_rule: false,
     })
 }
 

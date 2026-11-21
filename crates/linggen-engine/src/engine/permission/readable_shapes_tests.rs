@@ -384,7 +384,7 @@ fn each_pass_is_judged_as_the_command_written_out() {
         let r = check(cmd, true);
         let outward = matches!(
             r,
-            PermissionCheckResult::NeedsPrompt(PromptKind::ExceedsCeiling { outward: true, .. })
+            PermissionCheckResult::NeedsPrompt(PromptKind::ExceedsCeiling { once: Some(OnceAsk::Outward), .. })
         );
         assert!(outward, "{cmd}: {r:?}");
     }

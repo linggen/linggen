@@ -4,7 +4,7 @@
 use super::claude_rules::ClaudeRules;
 use super::model::check_permission_under_rules;
 use super::{
-    PathMode, PermissionCheckResult, PermissionMode, PromptKind, ReadOrigin, SessionPermissions,
+    OnceAsk, PathMode, PermissionCheckResult, PermissionMode, PromptKind, ReadOrigin, SessionPermissions,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -139,7 +139,7 @@ fn refusal(result: &PermissionCheckResult) -> Option<&str> {
 fn rule_ask(result: &PermissionCheckResult) -> Option<(&str, bool)> {
     match result {
         PermissionCheckResult::NeedsPrompt(PromptKind::ExceedsCeiling {
-            by_rule: true,
+            once: Some(OnceAsk::Rule),
             reason,
             directories,
             ..

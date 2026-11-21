@@ -24,7 +24,7 @@ fn check(cmd: &str, perms: &SessionPermissions) -> PermissionCheckResult {
 fn asks_once(result: &PermissionCheckResult) -> bool {
     matches!(
         result,
-        PermissionCheckResult::NeedsPrompt(PromptKind::ExceedsCeiling { outward: true, .. })
+        PermissionCheckResult::NeedsPrompt(PromptKind::ExceedsCeiling { once: Some(OnceAsk::Outward), .. })
     )
 }
 
