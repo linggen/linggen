@@ -136,26 +136,19 @@ pub const ALLOW_ONCE: &str = "Allow once";
 /// The option that blocks the action.
 pub const DENY: &str = "Deny";
 
-/// What the page shows for the two permission answers the engine writes, in
-/// Chinese (`ui/src/lib/strings-zh.ts`, the page's one table; its two
-/// entries must read the same — `the_page_shows_what_the_table_says`). A
-/// spoken answer may be said as the person sees it
-/// (`tools::builtin::answer_prompt::relay_heard`). Nothing else is here: a
-/// label that is not one of these two is only ever said in English.
-const SHOWN_IN_CHINESE: [(&str, &str); 2] = [(ALLOW_ONCE, "允许一次"), (DENY, "拒绝")];
+/// The Chinese for the two permission answers the engine writes — the words
+/// the page shows for them (`ui/src/lib/strings-zh.ts`, the page's one table;
+/// its two entries must read the same — `the_page_shows_what_the_table_says`).
+/// A spoken answer may be said in either form
+/// (`tools::builtin::answer_prompt::relay_heard`), whatever language the page
+/// is in: a person who speaks Chinese says 拒绝 to an English page too, and
+/// the words mean one thing. Nothing else is here: a label that is not one of
+/// these two is only ever said as it is written.
+const SAID_IN_CHINESE: [(&str, &str); 2] = [(ALLOW_ONCE, "允许一次"), (DENY, "拒绝")];
 
-/// The words the page shows for `label` when the person's language is
-/// `language` (a BCP-47 tag, `language::effective()`); `None` when the page
-/// shows the label as it is. The page has two languages and every Chinese tag
-/// is its Simplified one (`ui/src/lib/i18n.ts` `normalizeLanguage`), so a
-/// Traditional-Chinese person is shown, and so is told, these words too.
-pub fn label_shown_in(label: &str, language: &str) -> Option<&'static str> {
-    let tag = language.trim().to_ascii_lowercase().replace('_', "-");
-    let chinese = tag == "zh" || tag.starts_with("zh-");
-    SHOWN_IN_CHINESE
-        .iter()
-        .find(|(english, _)| chinese && *english == label)
-        .map(|(_, shown)| *shown)
+/// The Chinese form of `label`; `None` when it has none.
+pub fn label_in_chinese(label: &str) -> Option<&'static str> {
+    SAID_IN_CHINESE.iter().find(|(english, _)| *english == label).map(|(_, chinese)| *chinese)
 }
 
 /// The option label that grants `path` at `mode` for the session.

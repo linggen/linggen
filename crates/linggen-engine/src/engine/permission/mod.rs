@@ -67,7 +67,7 @@ pub use model::{
 pub use prompt::{
     build_caller_question, build_exceeds_ceiling_question, build_outward_question, build_rule_question,
     grant_at_label,
-    label_shown_in, parse_exceeds_ceiling_answer, permission_target_summary, ALLOW_ONCE, DENY,
+    label_in_chinese, parse_exceeds_ceiling_answer, permission_target_summary, ALLOW_ONCE, DENY,
 };
 pub use store::SessionPermissions;
 

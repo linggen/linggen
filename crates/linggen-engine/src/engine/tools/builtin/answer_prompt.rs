@@ -36,7 +36,7 @@ mod tests {
         answer: &str,
         heard: Option<&str>,
     ) -> std::result::Result<Vec<String>, &'static str> {
-        relay_selection(question, answer, heard, "en")
+        relay_selection(question, answer, heard)
     }
 
     #[test]
@@ -85,31 +85,22 @@ mod tests {
         }
     }
 
-    /// Rule 1: said as the person sees it. For the two permission answers the
-    /// engine writes, the words the page shows in the person's language are the
-    /// label too — whole, by the heard words alone, and only in that language.
+    /// Rule 1: said in the person's own language. For the two permission
+    /// answers the engine writes, the Chinese the page shows is the label too —
+    /// whole, by the heard words alone, whatever language the page is in.
     #[test]
     fn a_spoken_answer_may_be_said_as_the_page_shows_it() {
         let question = permission_question();
-        let zh = |heard: &str| relay_selection(Some(&question), "x", Some(heard), "zh-Hans");
+        let zh = |heard: &str| relay_selection(Some(&question), "x", Some(heard));
         for heard in ["允许一次", "允许一次。", " 允许一次！", "“允许一次”", "允许一次，"] {
             assert_eq!(zh(heard).unwrap(), ["Allow once"], "{heard:?}");
         }
         for heard in ["拒绝", "拒绝。", "拒绝！"] {
             assert_eq!(zh(heard).unwrap(), ["Deny"], "{heard:?}");
         }
-        // The English labels still count on a Chinese page: the clip may be written either way.
+        // Either form counts: the clip may be written either way.
         assert_eq!(zh("Allow once.").unwrap(), ["Allow once"]);
         assert_eq!(zh("deny").unwrap(), ["Deny"]);
-        // Every Chinese tag is the page's Chinese; the words are those it shows.
-        for tag in ["zh", "zh-CN", "zh-Hant", "zh_TW"] {
-            assert_eq!(relay_selection(Some(&question), "x", Some("允许一次"), tag).unwrap(), ["Allow once"], "{tag}");
-        }
-        // On an English page they are not the label: the person is not shown them.
-        for tag in ["en", "en-US", "ja", ""] {
-            assert!(relay_selection(Some(&question), "x", Some("允许一次"), tag).is_err(), "{tag}");
-            assert!(relay_selection(Some(&question), "x", Some("拒绝"), tag).is_err(), "{tag}");
-        }
     }
 
     /// The near misses stay refused in the person's language as in English:
@@ -125,7 +116,7 @@ mod tests {
             "不允许一次", "不拒绝", "拒绝一次", "不要", "别", "拒绝它", "允许 一次", "允許一次", "拒絕", "允许一次允许一次",
             "谢谢观看", "字幕由某某提供", "", "   ", "。",
         ] {
-            assert!(relay_selection(Some(&question), "Allow once", Some(heard), "zh-Hans").is_err(), "{heard:?} must not relay");
+            assert!(relay_selection(Some(&question), "Allow once", Some(heard)).is_err(), "{heard:?} must not relay");
         }
     }
 
@@ -135,16 +126,17 @@ mod tests {
     fn the_shown_words_name_the_two_labels_on_any_question() {
         let mut open = permission_question();
         open.permission = None;
-        assert_eq!(relay_selection(Some(&open), "x", Some("允许一次"), "zh-Hans").unwrap(), ["Allow once"]);
+        assert_eq!(relay_selection(Some(&open), "x", Some("允许一次")).unwrap(), ["Allow once"]);
     }
 
-    /// Lock: the tool hands the relay the page's language, read in one place.
+    /// Lock: a spoken answer is weighed by the heard words and the question
+    /// alone — no setting, no locale, nothing of the page feeds the decision.
     #[test]
-    fn the_tool_weighs_a_spoken_answer_in_the_pages_language() {
+    fn a_spoken_answer_is_weighed_by_the_words_and_the_question_alone() {
         let code = include_str!("answer_prompt.rs");
         // The tests come first in this file; the code is what follows them.
         let production = &code[code.rfind("/// The one place that decides which option").unwrap()..];
-        assert_eq!(production.matches("crate::language::effective()").count(), 1);
+        assert_eq!(production.matches("language::").count(), 0);
         assert_eq!(production.matches("relay_selection(").count(), 2, "its definition and the one call");
     }
 
@@ -155,12 +147,12 @@ mod tests {
             "Read", &PermissionMode::Read, "/project/file", &["/project".into()],
         );
         for heard in ["本文件夹只读", "全部路径只读", "Read everywhere", "只读"] {
-            assert!(relay_selection(Some(&grants), "", Some(heard), "zh-Hans").is_err(), "{heard:?}");
+            assert!(relay_selection(Some(&grants), "", Some(heard)).is_err(), "{heard:?}");
         }
-        assert_eq!(relay_selection(Some(&grants), "", Some("拒绝"), "zh-Hans").unwrap(), ["Deny"]);
+        assert_eq!(relay_selection(Some(&grants), "", Some("拒绝")).unwrap(), ["Deny"]);
         let all = grants.options.iter().find(|o| o.label.starts_with("grant:all:")).unwrap();
-        assert!(relay_selection(Some(&grants), "", Some(&all.label), "zh-Hans").is_err());
-        assert!(relay_selection(None, "x", Some("拒绝"), "zh-Hans").is_err(), "no question to name an option of");
+        assert!(relay_selection(Some(&grants), "", Some(&all.label)).is_err());
+        assert!(relay_selection(None, "x", Some("拒绝")).is_err(), "no question to name an option of");
     }
 
     /// The model's rendering of what it heard is not the words: a hedge that
@@ -277,8 +269,8 @@ mod tests {
 /// `heard`: the words the person SPOKE to start this turn, when they did.
 /// A spoken answer is weighed by those words and by nothing the model made of
 /// them: they must be exactly one option's label (see [`folded`]) — or, for
-/// the two permission answers, the words the page shows for it in
-/// `shown_in`, the person's language — never part of a longer sentence,
+/// the two permission answers, its Chinese form
+/// (`permission::label_in_chinese`) — never part of a longer sentence,
 /// never free text, never a grant for every folder; or nothing is relayed and
 /// she says what she heard. A typed answer is as it always was: a permission
 /// question wants one exact label, any other question takes a label by
@@ -287,10 +279,9 @@ fn relay_selection(
     question: Option<&super::super::AskUserQuestion>,
     answer: &str,
     heard: Option<&str>,
-    shown_in: &str,
 ) -> std::result::Result<Vec<String>, &'static str> {
     if let Some(words) = heard {
-        return relay_heard(question, words, shown_in);
+        return relay_heard(question, words);
     }
     let Some(question) = question else { return Ok(Vec::new()) };
     let permission = question.permission.is_some();
@@ -315,13 +306,12 @@ fn relay_selection(
 }
 
 /// A spoken answer: the heard `words` name exactly one option, or nothing is
-/// relayed. An option is named by its label, or by the words the page shows
-/// for it in `shown_in` (`permission::label_shown_in`: "允许一次" for "Allow
-/// once" on a Chinese page) — the whole of either, nothing near it.
+/// relayed. An option is named by its label, or by its Chinese form
+/// (`permission::label_in_chinese`: "允许一次" for "Allow once", whatever
+/// language the page is in) — the whole of either, nothing near it.
 fn relay_heard(
     question: Option<&super::super::AskUserQuestion>,
     words: &str,
-    shown_in: &str,
 ) -> std::result::Result<Vec<String>, &'static str> {
     const NOT_EXACT: &str = "refused: what was heard is not exactly one of the options. Tell the person what you heard \
                              and that this answer must be typed or tapped on screen; relay nothing.";
@@ -331,8 +321,8 @@ fn relay_heard(
         .flat_map(|q| &q.options)
         .map(|option| option.label.as_str())
         .filter(|label| {
-            let shown = crate::engine::permission::label_shown_in(label, shown_in);
-            !heard.is_empty() && (folded(label) == heard || shown.is_some_and(|shown| folded(shown) == heard))
+            let chinese = crate::engine::permission::label_in_chinese(label);
+            !heard.is_empty() && (folded(label) == heard || chinese.is_some_and(|chinese| folded(chinese) == heard))
         })
         .collect();
     match named.as_slice() {
@@ -455,7 +445,6 @@ impl Tool for AnswerPromptTool {
                 pending.questions.first(),
                 &args.answer,
                 tools.heard_aloud.as_deref(),
-                &crate::language::effective(),
             ) {
                 Ok(selected) => selected,
                 Err(reason) => return Ok(ToolResult::Success(reason.into())),

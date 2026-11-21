@@ -158,24 +158,24 @@ pub(crate) async fn stt_handler(
 }
 
 /// The language a clip is in, as far as the engine knows it — the one place
-/// that decides it. Three sources, the first that has one: the person's own
+/// that decides it. Two sources, the first that has one: the person's own
 /// setting (Settings → Language); under Auto, the language of the line they
-/// last typed to her (`resident::language_person_typed_to_her`); else the
-/// language the page is in (`language::effective`: the Mac's, then English),
-/// which is what she writes to them in. The Mac's language is the last
-/// resort: it is a guess, and a line the person wrote is better evidence.
+/// last typed to her (`resident::language_person_typed_to_her`). With
+/// neither the tag is empty and the model finds the language itself: the
+/// Mac's language is not evidence of what a person speaks, and a clip forced
+/// into the wrong language comes back as nonsense.
 async fn language_to_hear(state: &Arc<ServerState>) -> String {
     let setting = crate::language::setting();
     let written = match setting {
         Some(_) => None,
         None => crate::server::resident::language_person_typed_to_her(state).await,
     };
-    heard_in(setting.as_deref(), written.as_deref(), &crate::language::effective())
+    heard_in(setting.as_deref(), written.as_deref())
 }
 
 /// [`language_to_hear`]'s rule, on what it reads.
-fn heard_in(setting: Option<&str>, written: Option<&str>, page: &str) -> String {
-    setting.or(written).unwrap_or(page).to_string()
+fn heard_in(setting: Option<&str>, written: Option<&str>) -> String {
+    setting.or(written).unwrap_or("").to_string()
 }
 
 /// The route's whole decision, on what it is handed (so a test needs no
@@ -622,24 +622,19 @@ mod tests {
 
     /// Rule 2: the clip is heard in the language the engine knows the person
     /// to speak: the setting; under Auto the language of what they last typed
-    /// to her; the page's only last. A typed Chinese line beats an English
-    /// Mac. A line that says nothing (English, none — the first press of a
-    /// day finds none) leaves the page's language: so a person who speaks
-    /// another language than their Mac's, and has typed only that, is heard
-    /// in the Mac's until they set the language.
+    /// to her. With neither (the first press of a day, an English line) no
+    /// language is told and the model finds it — never the Mac's.
     #[test]
     fn a_clip_is_heard_in_the_language_the_engine_knows() {
-        // setting, typed line's language, page language -> the tag passed on
+        // setting, typed line's language -> the tag passed on
         let cases = [
-            (Some("en"), None, "zh-Hans", "en"),
-            (Some("zh-Hant"), Some("zh-Hans"), "en", "zh-Hant"),
-            (Some("ja"), None, "en", "ja"),
-            (None, Some("zh-Hans"), "en", "zh-Hans"),
-            (None, None, "zh-Hans", "zh-Hans"),
-            (None, None, "en", "en"), // first press of a day, an English line, or no line
+            (Some("en"), None, "en"),
+            (Some("zh-Hant"), Some("zh-Hans"), "zh-Hant"),
+            (None, Some("zh-Hans"), "zh-Hans"),
+            (None, None, ""),
         ];
-        for (setting, written, page, want) in cases {
-            assert_eq!(heard_in(setting, written, page), want, "{setting:?} {written:?} {page}");
+        for (setting, written, want) in cases {
+            assert_eq!(heard_in(setting, written), want, "{setting:?} {written:?}");
         }
     }
 

@@ -138,8 +138,9 @@ typed line at the page stays text.
   the model, decided in one place (`stt::language_to_hear`): the language
   setting; under Auto, the language of the line the person last typed to her
   in her thread (`resident::language_person_typed_to_her`: Chinese or nothing;
-  a spoken line is not evidence, and the first press of a day finds none);
-  else the page's language (the Mac's, then English). It is read only for a
+  a spoken line is not evidence, and the first press of a day finds none).
+  With neither, no language is told and the model finds it: the Mac's
+  language is not evidence of what a person speaks. It is read only for a
   clip that is heard, never for a refused or silent one. Chinese carries
   a Simplified prompt (`stt_mlx::hint_of`); segments the model
   reports as no speech, low confidence or a repetition loop are not words
@@ -172,12 +173,12 @@ typed line at the page stays text.
   full-/half-width folded, never a substring, never free text, never a grant
   for every folder. Anything else relays nothing; she says what she heard and
   that it must be typed or tapped. The labels are the options' own (English
-  "Allow once", "Deny"), and for those two answers the words the page shows in
-  the person's language are the label too ("允许一次", "拒绝" on a Chinese
-  page): one table beside the labels (`permission::label_shown_in`), held to
-  the page's string table by a test. Nothing else is accepted — not 好, 可以,
-  yes, ok. A Traditional-Chinese clip ("允許一次") is not the words the page
-  shows and relays nothing. A typed answer is as it was.
+  "Allow once", "Deny"), and for those two answers their Chinese is the label
+  too ("允许一次", "拒绝", whatever language the page is in): one table beside
+  the labels (`permission::label_in_chinese`), held to the page's string table
+  by a test. No setting and no locale feeds the decision. Nothing else is
+  accepted — not 好, 可以, yes, ok. A Traditional-Chinese clip ("允許一次") is
+  not in the table and relays nothing. A typed answer is as it was.
 
 ## Herald — what she tells of Ling's work, decided in one place
 
