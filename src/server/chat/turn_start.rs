@@ -160,7 +160,18 @@ impl TurnStart {
     /// `turn` as this start begins it: whether a person spoke is the
     /// start's, whatever the caller built.
     pub(crate) fn settings(self, turn: TurnSettings) -> TurnSettings {
-        TurnSettings { person_spoke: self.person_spoke(), ..turn }
+        TurnSettings { person_spoke: self.person_spoke(), heard: self.heard(turn.heard), ..turn }
+    }
+
+    /// The words heard, kept on a spoken turn alone — and a spoken turn that
+    /// was handed none holds an empty line, which names no option: what a
+    /// relayed answer (`answer_prompt`) is weighed against is never absent
+    /// on a turn the person spoke, and never present on one they did not.
+    fn heard(self, words: Option<String>) -> Option<String> {
+        match self {
+            Self::Aloud => Some(words.unwrap_or_default()),
+            Self::OwnerHere | Self::Person | Self::Relayed | Self::Resumed | Self::Engine | Self::Hers(_) => None,
+        }
     }
 }
 
@@ -216,6 +227,21 @@ mod tests {
         assert_eq!(TurnStart::told("yinyue", Origin::TaskEnd), TurnStart::Hers(Origin::TaskEnd));
         // A delegated run in her session is not her person's words.
         assert_eq!(TurnStart::told("yinyue", Origin::Person), TurnStart::Engine);
+    }
+
+    /// What a turn holds of the words heard follows its start: a spoken turn
+    /// keeps them (an empty line when none came), every other start none.
+    #[test]
+    fn the_words_heard_are_a_spoken_turns_and_no_other_starts() {
+        let words = || TurnSettings { heard: Some("Allow once".into()), ..Default::default() };
+        assert_eq!(TurnStart::Aloud.settings(words()).heard.as_deref(), Some("Allow once"));
+        assert_eq!(TurnStart::Aloud.settings(TurnSettings::default()).heard.as_deref(), Some(""), "fail closed");
+        for start in [
+            TurnStart::OwnerHere, TurnStart::Person, TurnStart::Relayed, TurnStart::Resumed, TurnStart::Engine,
+            TurnStart::Hers(Origin::Glance), TurnStart::resent_at_her_door(Origin::Person),
+        ] {
+            assert_eq!(start.settings(words()).heard, None, "{start:?}");
+        }
     }
 
     /// Her avatar's door: spoken words are `Aloud`, typed ones `Person`, and
@@ -299,6 +325,27 @@ mod structure_lock {
             calls,
             [("src/server/chat/handler.rs".to_string(), 1), ("src/server/chat/plan_flow.rs".to_string(), 1)],
         );
+    }
+
+    /// The words a person spoke reach the one place that weighs a spoken
+    /// answer (`answer_prompt`'s `relay_selection`) by one road: the start
+    /// keeps them (`heard`), the engine's turn settings carry them onto the
+    /// tools, and nothing else names them.
+    #[test]
+    fn the_words_heard_reach_answer_prompt_by_one_road() {
+        let mut files: Vec<String> = found("heard_aloud").into_iter().map(|(rel, _)| rel).collect();
+        files.sort();
+        assert_eq!(
+            files,
+            [
+                "crates/linggen-engine/src/engine/tools/builtin/answer_prompt.rs",
+                "crates/linggen-engine/src/engine/tools/mod.rs",
+                "crates/linggen-engine/src/engine/turn_place/turn.rs",
+            ]
+        );
+        // The decision is made in `relay_selection` alone, and called once.
+        let tool = found("relay_selection(");
+        assert_eq!(tool, [("crates/linggen-engine/src/engine/tools/builtin/answer_prompt.rs".to_string(), 2)], "the function, and its one call");
     }
 
     /// What a turn may read without asking is decided by one exhaustive

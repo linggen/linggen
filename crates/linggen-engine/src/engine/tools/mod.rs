@@ -387,6 +387,10 @@ pub struct Tools {
     pub(crate) delegated_session: bool,
     /// The current turn answers a person directly.
     pub(crate) person_spoke: bool,
+    /// The words the person said aloud to start this turn, as heard — set only
+    /// on a spoken turn (`TurnSettings::heard`). What `answer_prompt` weighs
+    /// is these, never the model's rendering of them.
+    pub(crate) heard_aloud: Option<String>,
     /// The turn's ceiling, carried to `Task` children (set by
     /// `SessionSpec::apply`).
     pub(crate) parent_ceiling: Option<super::permission::PermissionMode>,
@@ -450,6 +454,7 @@ impl Tools {
             parent_work: None,
             delegated_session: false,
             person_spoke: false,
+            heard_aloud: None,
             parent_ceiling: None,
             parent_read_origin: Default::default(),
             parent_allowed_tools: None,

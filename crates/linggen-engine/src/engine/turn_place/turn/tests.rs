@@ -22,6 +22,7 @@ fn engine() -> AgentEngine {
 fn moment() -> TurnSettings {
     TurnSettings {
         person_spoke: true,
+        heard: None,
         withheld: ["agent_chat".to_string()].into(),
         allowlist: Some(["sense".to_string()].into()),
         language: Some("zh-Hans".into()),
@@ -52,6 +53,21 @@ fn an_ended_turn_leaves_nothing_of_its_settings() {
     engine.end_turn();
     assert_eq!(engine.turn_settings(), TurnSettings::default());
     assert!(!engine.is_withheld("agent_chat"));
+}
+
+/// The words a person spoke are the turn's, and only the turn's: put back at
+/// its end, never carried to the next turn (a typed one weighs nothing aloud).
+#[test]
+fn the_words_heard_belong_to_their_turn_alone() {
+    let mut engine = engine();
+    engine.begin_turn(TurnSettings { person_spoke: true, heard: Some("Allow once".into()), ..Default::default() });
+    assert_eq!(engine.tools.builtins.heard_aloud.as_deref(), Some("Allow once"));
+    assert_eq!(engine.turn_settings().heard.as_deref(), Some("Allow once"));
+    engine.end_turn();
+    assert_eq!(engine.tools.builtins.heard_aloud, None);
+    engine.begin_turn(TurnSettings { heard: Some("Deny".into()), ..Default::default() });
+    engine.begin_turn(TurnSettings { person_spoke: true, ..Default::default() });
+    assert_eq!(engine.tools.builtins.heard_aloud, None, "a turn begun after a spoken one has no words heard");
 }
 
 #[test]

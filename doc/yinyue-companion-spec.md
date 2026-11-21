@@ -107,7 +107,7 @@ typed line at the page stays text.
 - **Hearing, `POST /api/stt`** (`server/api/stt.rs`, owner only, routed as
   `/api/tts` is). Body: one clip, WAV 16 kHz mono 16-bit PCM, at most 60 s —
   raw `audio/wav`, or `{"wav_b64": "…"}` as JSON (what a data-channel request
-  can carry). Answer `{text, language, ms}`; nothing intelligible, or a clip
+  can carry); any other media type is 415 before anything starts. Answer `{text, language, ms}`; nothing intelligible, or a clip
   that never rises above a quiet room's noise (the model is not asked: Whisper
   invents words from silence), is `{"text": ""}`; not that WAV 400; over 60 s
   413; a machine that cannot hear 503 `{error: "unavailable", reason,
@@ -117,18 +117,30 @@ typed line at the page stays text.
   or `{"hears": false, "reason", "fetching"}`, asked by the page at the press,
   before the microphone opens. It is the POST's own judgement (one function,
   `stt::hears_now`; a test holds that the two never disagree) and starts
-  nothing: only a clip sent begins the model fetch, so a refused press that
-  finds the model absent and not on its way sends an empty request to start it.
+  nothing: only a clip sent begins the next step hearing waits on, so a refused
+  press that finds the model absent (or not loaded) and not on its way sends an
+  empty request to start it.
 - **The engine is Whisper large-v3 turbo on MLX** (`runtime::STT_MODEL`, named
   once beside the voice model), in the voice sidecar that already speaks her
   (`mlx_sidecar.rs`, one process, one slot; `mlx_voice.py`). Same machine
   needs as her voice (Apple Silicon, 16 GB — no lane of its own). Fetched at
   first use, not at boot: the first ask answers 503 "Fetching the hearing
-  model", and the progress rides the `tasks` topic as her voice's does.
+  model", and the progress rides the `tasks` topic as her voice's does. The
+  fetch is one attempt (`runtime::Attempt`): a failure is "failed", never
+  "fetching", and the next press tries again and says it is a retry. Loading
+  the model is its own step with its own long wait (`op: "load"`, started when
+  the fetch ends and at a press that finds it on disk but not loaded; "Getting
+  ready to listen…" until then) — a hear is never the load, and waits longer
+  for the sidecar's one slot than her voice does. The language setting is the
+  clip's language, with a Simplified prompt for Chinese; segments the model
+  reports as no speech, low confidence or a repetition loop are not words
+  (`stt_mlx::words_of`).
 - **The sound is never kept or sent.** The provider is handed samples (no path,
   no URL); the sidecar gets them on stdin and gives them to the model as an
   array — no file, no log line, nothing in the session; the model is read from
-  the local cache by path, never by a hub lookup. Locks:
+  the local cache by path, never by a hub lookup. What the library writes on
+  stderr during a hear is counted, never logged (`mlx_sidecar::StderrLog`;
+  the words may be the person's). Locks:
   `stt::a_hearing_has_no_way_to_keep_or_send_the_sound`,
   `stt_mlx::no_sound_is_left_behind_on_disk`,
   `stt_mlx::the_sidecar_script_keeps_what_it_hears_to_itself`.
@@ -144,6 +156,14 @@ typed line at the page stays text.
   nothing kept or run (`yinyue::door_for`, the one place that decides where a
   line goes); the page shows the reason. A typed line is carried as before,
   and follows that chat's rule. A turn replayed after a restart is not spoken.
+- **A spoken answer to a waiting question** is weighed by the words as heard,
+  never by what she made of them (`TurnSettings::heard`, kept only by a spoken
+  start): `answer_prompt`'s `relay_selection` relays it only when those words
+  are exactly one option's label — edge spaces and marks trimmed, case and
+  full-/half-width folded, never a substring, never free text, never a grant
+  for every folder. Anything else relays nothing; she says what she heard and
+  that it must be typed or tapped. The labels are the options' own (English
+  "Allow once", "Deny"); a typed answer is as it was.
 
 ## Herald — what she tells of Ling's work, decided in one place
 

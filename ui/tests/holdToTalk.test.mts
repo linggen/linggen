@@ -6,6 +6,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { voicedHere } from '../src/lib/petCue.mts';
 import {
   createHoldToTalk, HEARD_MS, HOLD_MS, HEARS_MS, isTalkKey, NOTE_MS, talkLabel, WORDS,
   type TalkDeps, type TalkView,
@@ -48,6 +49,12 @@ interface Rig {
   cuts: number;
   streams: { tracks: { stopped: number }[] }[];
   asked: number; // getUserMedia calls
+  contexts: number; // audio contexts made
+  gestureWhenMade: boolean[]; // was each made inside a press
+  inPress: boolean;
+  audio: string[]; // resume / suspend, in order
+  workletFails: boolean;
+  offered: boolean;
   open(): number; // microphone tracks not yet stopped
   heardAs: { value: { status: number; body: unknown } | 'throw' };
   /** What `GET /api/stt` answers: can she hear. */
@@ -70,12 +77,13 @@ function rig(): Rig {
   const r = {
     fetched: [] as Rig['fetched'], sent: [] as string[], cuts: 0, streams: [] as Rig['streams'], asked: 0,
     heardAs: { value: { status: 200, body: { text: 'what is on today' } } } as Rig['heardAs'],
+    contexts: 0, gestureWhenMade: [] as boolean[], inPress: false, audio: [] as string[], workletFails: false, offered: true,
     sendOk: { value: true }, sendReason: { value: null as string | null }, views: [] as TalkView[],
     hearsAs: { value: { status: 200, body: { hears: true } } } as Rig['hearsAs'],
   };
   let heldGet: ((a: { status: number; body: unknown }) => void) | null = null;
   let gated: { resolve(): void; reject(e: Error): void; promise: Promise<void> } | null = null;
-  let processor: { onaudioprocess: ((e: { inputBuffer: { getChannelData(c: number): Float32Array } }) => void) | null } | null = null;
+  let processor: { port: { onmessage: ((e: { data: Float32Array }) => void) | null } } | null = null;
   let rate = 48_000;
   const deps: TalkDeps = {
     mediaDevices: () => ({
@@ -87,19 +95,24 @@ function rig(): Rig {
         return { getTracks: () => stream.tracks.map((t) => ({ stop: () => { t.stopped++; } })) };
       },
     }),
-    newAudioContext: () => ({
-      sampleRate: rate,
-      state: 'running',
-      destination: {},
-      resume: async () => undefined,
-      close: async () => undefined,
-      createMediaStreamSource: () => ({ connect() { return undefined; }, disconnect() { /* off */ } }),
-      createScriptProcessor: () => {
-        const p = { onaudioprocess: null, connect() { return undefined; }, disconnect() { /* off */ } };
-        processor = p;
-        return p;
-      },
-    }),
+    newAudioContext: () => {
+      r.contexts++;
+      r.gestureWhenMade.push(r.inPress);
+      return {
+        get sampleRate() { return rate; },
+        destination: {},
+        resume: async () => { r.audio.push('resume'); },
+        suspend: async () => { r.audio.push('suspend'); },
+        ready: async () => { if (r.workletFails) throw new Error('no worklet'); },
+        createMediaStreamSource: () => ({ connect() { return undefined; }, disconnect() { /* off */ } }),
+        createTap: () => {
+          const p = { port: { onmessage: null }, connect() { return undefined; }, disconnect() { /* off */ } };
+          processor = p;
+          return p;
+        },
+      };
+    },
+    offered: () => r.offered,
     fetch: async (url, init) => {
       r.fetched.push({ url, init });
       const asking = init.method === 'GET';
@@ -136,15 +149,22 @@ function rig(): Rig {
       rate = sampleRate;
       const frames = Math.round((ms / 1000) * sampleRate);
       const chunk = Float32Array.from({ length: frames }, (_, i) => 0.3 * Math.sin(i / 20));
-      processor?.onaudioprocess?.({ inputBuffer: { getChannelData: () => chunk } });
+      processor?.port.onmessage?.({ data: chunk });
     },
   }) as Rig;
 }
 
 /** Press, wait out the hold, and be listening. */
 async function hold(r: Rig, by: 'pointer' | 'key' = 'pointer') {
-  r.talk.press(by);
+  press(r, by);
   await r.clk.advance(HOLD_MS);
+}
+
+/** A press, the way the page gives it: the audio context is made only inside it. */
+function press(r: Rig, by: 'pointer' | 'key' = 'pointer') {
+  r.inPress = true;
+  r.talk.press(by);
+  r.inPress = false;
 }
 
 const phase = (r: Rig) => r.talk.view().phase;
@@ -156,7 +176,7 @@ const asks = (r: Rig) => r.fetched.filter((f) => f.init.method === 'GET');
 
 test('a press shorter than the hold is a tap: no microphone, no cut-off, no request', async () => {
   const r = rig();
-  r.talk.press('pointer');
+  press(r);
   await r.clk.advance(HOLD_MS - 50);
   assert.equal(r.talk.release('pointer'), 'tap');
   await r.clk.advance(HOLD_MS * 4);
@@ -202,7 +222,7 @@ test('Listening while held, Thinking from release, then her turn; the heard line
 
 test('pressing to talk cuts her off, once, when the hold begins', async () => {
   const r = rig();
-  r.talk.press('pointer');
+  press(r);
   assert.equal(r.cuts, 0, 'a tap would not cut her off');
   await r.clk.advance(HOLD_MS);
   assert.equal(r.cuts, 1);
@@ -398,7 +418,7 @@ const FETCHING = { status: 200, body: { hears: false, reason: 'Fetching the hear
 
 test('the question is asked at the hold, once, before any microphone', async () => {
   const r = rig();
-  r.talk.press('pointer');
+  press(r);
   assert.equal(asks(r).length, 0, 'not at the pointer-down');
   await r.clk.advance(HOLD_MS);
   assert.equal(asks(r).length, 1);
@@ -552,7 +572,7 @@ test('a tap while hearing leaves the hearing alone', async () => {
   await hold(r);
   r.speak(900);
   r.talk.release('pointer');
-  r.talk.press('pointer');
+  press(r);
   r.talk.release('pointer');
   await r.clk.advance(0);
   assert.deepEqual(r.sent, ['what is on today']);
@@ -565,7 +585,7 @@ test('a hold while hearing drops the old answer: only the new line goes', async 
   r.talk.release('pointer');
   r.heardAs.value = { status: 200, body: { text: 'second' } };
   // The first request is already in flight; a new hold begins before its answer is read.
-  r.talk.press('pointer');
+  press(r);
   await r.clk.advance(HOLD_MS);
   r.speak(900);
   r.talk.release('pointer');
@@ -624,4 +644,122 @@ test('lock: her mute and her cut-off by a press are the same stop', () => {
   const handlers = readFileSync(join(src, 'lib/eventHandlers/yinyue.ts'), 'utf8');
   assert.equal((handlers.match(/function hush\(/g) ?? []).length, 1, 'one stop function');
   assert.match(handlers, /export function hush\(/);
+});
+
+// ── V1c review fixes ───────────────────────────────────────────────────
+
+test('rule 9: a press must last 350 ms to be a talk, so a slow click is still a click', async () => {
+  assert.equal(HOLD_MS, 350);
+  const r = rig();
+  press(r);
+  await r.clk.advance(300);
+  assert.equal(r.talk.release('pointer'), 'tap');
+  assert.equal(r.asked, 0);
+});
+
+test('rule 4: the audio context is made inside the press, once, and idled between talks', async () => {
+  const r = rig();
+  await hold(r);
+  r.speak(600);
+  r.talk.release('pointer');
+  await r.clk.advance(0);
+  await hold(r);
+  r.talk.cancel();
+  assert.equal(r.contexts, 1, 'one context for the page');
+  assert.deepEqual(r.gestureWhenMade, [true], 'made in a press, never in the hold timer or after an await');
+  assert.deepEqual(r.audio.filter((a) => a === 'resume').length, 2, 'woken at each press');
+  assert.equal(r.audio.at(-1), 'suspend', 'idle once the microphone is off');
+});
+
+test('rule 4: a tap wakes the audio and idles it again, with no microphone', async () => {
+  const r = rig();
+  press(r);
+  r.talk.release('pointer');
+  assert.deepEqual(r.audio, ['resume', 'suspend']);
+  assert.equal(r.asked, 0);
+});
+
+test('rule 4: a recorder that cannot load is one line, no microphone, and the next press tries again', async () => {
+  const r = rig();
+  r.workletFails = true;
+  await hold(r);
+  assert.equal(r.talk.view().note, WORDS.noMic);
+  assert.equal(r.asked, 0);
+  r.talk.release('pointer');
+  r.workletFails = false;
+  await hold(r);
+  assert.equal(phase(r), 'listening');
+  assert.equal(r.contexts, 2, 'a context whose recorder failed is made again');
+  r.talk.cancel();
+});
+
+test('rule 4: the permission dialog took the press: told once to hold again, the microphone off', async () => {
+  const r = rig();
+  const g = r.gate();
+  await hold(r);
+  assert.equal(phase(r), 'opening');
+  r.win.dispatchEvent(new Event('blur')); // the system's dialog takes focus
+  g.release(); // the person clicks Allow
+  await r.clk.advance(0);
+  assert.equal(r.talk.view().note, WORDS.micAllowed);
+  assert.equal(r.open(), 0);
+  assert.equal(phase(r), 'idle');
+  // Once: the next time the window leaves mid-open, nothing more is said.
+  await r.clk.advance(NOTE_MS);
+  const g2 = r.gate();
+  await hold(r);
+  r.win.dispatchEvent(new Event('blur'));
+  g2.release();
+  await r.clk.advance(0);
+  assert.equal(r.talk.view().note, null);
+  assert.equal(r.open(), 0);
+});
+
+test('rule 4: letting go early is not the dialog: nothing is said', async () => {
+  const r = rig();
+  const g = r.gate();
+  await hold(r);
+  r.talk.release('pointer');
+  g.release();
+  await r.clk.advance(0);
+  assert.equal(r.talk.view().note, null);
+  assert.equal(r.open(), 0);
+});
+
+test('rule 8: where the microphone can never be granted, a press stays a tap', async () => {
+  const r = rig();
+  r.offered = false;
+  assert.equal(r.talk.offered(), false);
+  press(r);
+  await r.clk.advance(HOLD_MS * 2);
+  assert.equal(r.talk.release('pointer'), 'tap');
+  assert.equal(r.contexts, 0);
+  assert.equal(r.asked, 0);
+  assert.equal(r.fetched.length, 0);
+  assert.equal(r.cuts, 0);
+  assert.equal(phase(r), 'idle');
+});
+
+test('rule 5: her line is voiced unless it is muted or the person is speaking to her', () => {
+  assert.equal(voicedHere(true, false), true);
+  assert.equal(voicedHere(undefined, false), true);
+  assert.equal(voicedHere(false, false), false, 'muted, or seen where it shows');
+  assert.equal(voicedHere(true, true), false, 'a hold is on: shown, not voiced');
+  assert.equal(voicedHere(undefined, true), false);
+});
+
+test('lock rule 5: the page decides her sound in handlePetSpeak, and a hold sets the flag', () => {
+  const handlers = readFileSync(join(src, 'lib/eventHandlers/yinyue.ts'), 'utf8');
+  assert.equal((handlers.match(/voicedHere\(/g) ?? []).length, 1, 'one call decides sound');
+  assert.match(handlers, /if \(!voicedHere\(item\.data\?\.voice, personTalking\)\)/);
+  const wiring = readFileSync(join(src, 'lib/yinyueTalk.ts'), 'utf8');
+  assert.match(wiring, /setPersonTalking\(holding\)/);
+  assert.deepEqual(withText('setPersonTalking('), ['lib/eventHandlers/yinyue.ts', 'lib/yinyueTalk.ts']);
+});
+
+test('lock rule 4: no deprecated script processor, and the recorder is made from a blob, not fetched', () => {
+  assert.deepEqual(withText('createScriptProcessor'), []);
+  const tap = readFileSync(join(src, 'lib/speechTap.ts'), 'utf8');
+  assert.match(tap, /URL\.createObjectURL\(new Blob\(/);
+  assert.doesNotMatch(tap, /fetch\(|XMLHttpRequest/);
 });
