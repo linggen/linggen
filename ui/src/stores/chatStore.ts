@@ -826,6 +826,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
               ...(Array.isArray(meta.subagents) ? { subagentTree: meta.subagents as SubagentTreeEntry[] } : {}),
               ...(isError ? { isError: true } : {}),
               ...(meta.client_id ? { clientId: String(meta.client_id) } : {}),
+              // Said aloud to Yinyue and heard: the row says so, the words are as typed.
+              ...(isUser && meta.heard === true ? { heard: true } : {}),
               ...(meta.via ? { via: String(meta.via) } : {}),
               ...(meta.via_note ? { viaNote: String(meta.via_note) } : {}),
               // A day's session: the place it was written in, for the page to fold.

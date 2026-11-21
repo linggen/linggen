@@ -81,6 +81,8 @@ export interface ChatMessage {
   from?: string;
   to?: string;
   text: string;
+  /** The person said this aloud to Yinyue and she heard it (the saved row's `heard`). */
+  heard?: boolean;
   timestamp: string;
   timestampMs?: number;
   /** A saved row's place in the session's history, as loaded: same-second

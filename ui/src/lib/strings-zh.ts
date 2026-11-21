@@ -262,6 +262,7 @@ export const ZH: Record<string, string> = {
   'Model switched': '模型已切换',
   'Talk to Yinyue': '和银月说话',
   'Talk to Yinyue…': '和银月说话…',
+  'Spoken': '语音',
   'Click to type, hold to talk': '点一下打字，按住说话',
   'Listening…': '正在听…',
   'Thinking…': '正在想…',
