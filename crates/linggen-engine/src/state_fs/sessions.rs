@@ -343,8 +343,7 @@ pub fn fallback_cwd(skill: Option<&str>) -> String {
 /// folder is in, even from a subdirectory — its root and its name. None
 /// outside any repo.
 pub fn project_of(cwd: &str) -> (Option<String>, Option<String>) {
-    let Some(root) = crate::engine::tools::search_exec_find_git_root(std::path::Path::new(cwd))
-    else {
+    let Some(root) = crate::project_root::find_git_root(std::path::Path::new(cwd)) else {
         return (None, None);
     };
     let name = root.file_name().map(|n| n.to_string_lossy().to_string());

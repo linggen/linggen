@@ -23,6 +23,7 @@ pub mod paths;
 pub mod permission_mode;
 pub mod perception;
 pub mod pictures;
+pub mod project_root;
 pub mod prompts;
 pub mod provider;
 pub mod reach;

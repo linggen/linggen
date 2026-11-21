@@ -25,10 +25,12 @@ mod tool_helpers;
 mod write_tools;
 
 pub(crate) use delegation::{run_delegation, DelegationCancelled, TaskArgs};
-pub use search_exec::find_git_root as search_exec_find_git_root;
 pub(crate) use search_exec::kill_process_group;
-pub use search_exec::project_ancestors;
-pub(crate) use search_exec::project_ancestors_within;
+// The project walk lives in `crate::project_root`; these are the names its
+// callers here already use.
+pub use crate::project_root::find_git_root as search_exec_find_git_root;
+pub use crate::project_root::project_ancestors;
+pub(crate) use crate::project_root::project_ancestors_within;
 pub use tool_helpers::canonical_tool_name;
 pub(crate) use tool_helpers::full_tool_schema_entries;
 pub(crate) use tool_helpers::{normalize_tool_args, summarize_tool_args};

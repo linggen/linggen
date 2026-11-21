@@ -3,7 +3,8 @@
 //! turn's Steer. Steer and the foreground limit both hand a running command
 //! to the session's background tasks (`background::watch_shell`). Its output
 //! goes to the task's file and the call returns.
-use super::search_exec::{find_git_root, kill_process_group, RunCommandArgs};
+use super::search_exec::{kill_process_group, RunCommandArgs};
+use crate::project_root::find_git_root;
 use super::{ToolProgressSender, ToolResult, Tools};
 use crate::util::{LockExt, CWD_SENTINEL};
 use anyhow::Result;

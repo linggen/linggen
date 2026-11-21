@@ -326,7 +326,7 @@ pub fn memory_root(cwd: &std::path::Path) -> Option<std::path::PathBuf> {
     if let Some(skill) = skill_dir_of(cwd) {
         return Some(skill);
     }
-    Some(super::search_exec::find_git_root(cwd).unwrap_or_else(|| cwd.to_path_buf()))
+    Some(crate::project_root::find_git_root(cwd).unwrap_or_else(|| cwd.to_path_buf()))
 }
 
 /// `~/.linggen/skills/<name>` when `p` is that dir or inside it.

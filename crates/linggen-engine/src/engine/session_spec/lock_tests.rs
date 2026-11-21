@@ -309,8 +309,8 @@ const UPWARD_EDGES: &[(&str, usize, &str)] = &[
     ),
     (
         "state_fs/sessions.rs",
-        2,
-        "repo lookup, and fallback row place",
+        1,
+        "the fallback row place",
     ),
 ];
 

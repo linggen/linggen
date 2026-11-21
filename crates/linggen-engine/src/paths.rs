@@ -130,5 +130,5 @@ pub fn resolve_workspace_root(explicit: Option<PathBuf>) -> anyhow::Result<PathB
         return Ok(p);
     }
     let cwd = std::env::current_dir()?;
-    Ok(crate::engine::tools::search_exec_find_git_root(&cwd).unwrap_or(cwd))
+    Ok(crate::project_root::find_git_root(&cwd).unwrap_or(cwd))
 }
