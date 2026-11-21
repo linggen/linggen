@@ -229,7 +229,9 @@ test('at 60 seconds the clip is stopped and sent without a release', async () =>
   await r.clk.advance(60_000);
   assert.equal(r.open(), 0);
   assert.equal(r.fetched.length, 1);
-  assert.equal(r.talk.release('pointer'), 'tap', 'the press was already ended');
+  assert.equal(r.talk.release('pointer'), 'talk', 'the press was already ended, but it was a hold: its click is not a tap');
+  assert.equal(r.talk.release('pointer'), 'tap');
+  assert.equal(r.fetched.length, 1, 'the release sent nothing more');
 });
 
 // ── Rule 2: the microphone is open only while held ─────────────────────

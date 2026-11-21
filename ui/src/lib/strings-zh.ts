@@ -263,7 +263,6 @@ export const ZH: Record<string, string> = {
   'Talk to Yinyue': '和银月说话',
   'Talk to Yinyue…': '和银月说话…',
   'Spoken': '语音',
-  'Click to type, hold to talk': '点一下打字，按住说话',
   'Listening…': '正在听…',
   'Thinking…': '正在想…',
   "Didn't catch that.": '没听清。',

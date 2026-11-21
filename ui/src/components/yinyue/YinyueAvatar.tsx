@@ -175,6 +175,8 @@ export const YinyueAvatar: React.FC = () => {
     if (!target) return;
     const down = (e: Event) => {
       const k = e as KeyboardEvent;
+      // A held key repeats: it is still hers (no scrolling the page), not a new press.
+      if (k.repeat && isTalkKey({ code: k.code, repeat: false, metaKey: k.metaKey, ctrlKey: k.ctrlKey, altKey: k.altKey, target: k.target })) k.preventDefault();
       if (!isTalkKey(k)) return;
       k.preventDefault();
       talk.press('key');
@@ -230,7 +232,7 @@ export const YinyueAvatar: React.FC = () => {
       <canvas
         ref={canvasRef}
         className="h-full w-full cursor-pointer touch-none select-none"
-        title="Click to type, hold to talk"
+        title="Talk to Yinyue"
         onPointerDown={pressBody}
         onPointerMove={moveBody}
         onPointerUp={releaseBody}

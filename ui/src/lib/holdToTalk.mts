@@ -145,6 +145,9 @@ export function createHoldToTalk(deps: TalkDeps): HoldToTalk {
   let heard: string | null = null;
   let note: string | null = null;
   let source: Source | null = null;
+  // The 60 s cap sent the clip while the press was still down: its release is
+  // still a talk's (the avatar swallows the click), and does nothing more.
+  let lingering: Source | null = null;
   let generation = 0; // bumped when a hold starts or ends: older answers are dropped
   let take: Take | null = null;
   let unavailable: { reason: string; until: number } | null = null;
@@ -265,7 +268,11 @@ export function createHoldToTalk(deps: TalkDeps): HoldToTalk {
     if (mine !== generation) { opened.stop(); return; } // let go (or hidden) while it was opening
     take = opened;
     held = 'listening';
-    startTimer('cap', MAX_SPEECH_SECONDS * 1000, () => finishHold());
+    startTimer('cap', MAX_SPEECH_SECONDS * 1000, () => {
+      const by = source;
+      finishHold();
+      lingering = by;
+    });
     emit();
   }
 
@@ -324,6 +331,7 @@ export function createHoldToTalk(deps: TalkDeps): HoldToTalk {
 
   function press(by: Source): void {
     if (source !== null) return; // one press at a time
+    lingering = null;
     source = by;
     held = 'pressed';
     watch(true);
@@ -332,6 +340,10 @@ export function createHoldToTalk(deps: TalkDeps): HoldToTalk {
   }
 
   function release(by: Source): 'tap' | 'talk' {
+    if (lingering === by) {
+      lingering = null;
+      return 'talk';
+    }
     if (source !== by) return 'tap';
     if (held === 'pressed') {
       unpress();

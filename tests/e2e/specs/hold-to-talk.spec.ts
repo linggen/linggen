@@ -50,12 +50,13 @@ function fakeHearing(answer: { status: number; body: unknown }) {
   };
 }
 
+const her = (page: Page) => page.getByTitle('Talk to Yinyue');
 const liveTracks = (page: Page) => page.evaluate(() =>
   (window as unknown as { __streams: MediaStream[] }).__streams
     .flatMap((s) => s.getTracks()).filter((t) => t.readyState === 'live').length);
 
 async function holdHer(page: Page) {
-  const box = (await page.locator('canvas[title="Click to type, hold to talk"]').boundingBox())!;
+  const box = (await her(page).boundingBox())!;
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.down();
 }
@@ -87,6 +88,8 @@ test.describe('asked aloud by a held press', () => {
     await expect.poll(async () => (await world.calls()).filter((c) => c.agent === 'yinyue').length, { timeout: 30_000 }).toBe(2);
     const chats = await page.evaluate(() => (window as unknown as { __chat: unknown[] }).__chat);
     expect(chats).toEqual([{ text: HEARD, asked_aloud: true }]);
+    // Her answer reaches the page: in her bubble or her day's thread.
+    await expect(page.getByText('Nothing on today.').first()).toBeVisible({ timeout: 20_000 });
     expect(await liveTracks(page)).toBe(0);
     await expect(page.getByPlaceholder('Talk to Yinyue…')).toHaveCount(0);
 
@@ -107,7 +110,7 @@ test.describe('asked aloud by a held press', () => {
     await page.addInitScript(fakeHearing, { status: 200, body: { text: HEARD } });
     await page.goto(world.url);
     await expectWebRtc(page, httpRequests);
-    await page.locator('canvas[title="Click to type, hold to talk"]').click();
+    await her(page).click();
     await expect(page.getByPlaceholder('Talk to Yinyue…')).toBeVisible();
     expect(await page.evaluate(() => (window as unknown as { __streams: unknown[] }).__streams.length)).toBe(0);
   });
