@@ -25,9 +25,15 @@ fn err(code: StatusCode, msg: &str) -> Response {
 
 /// GET /api/people — each person of the household who is not the owner, with
 /// their settings, what they used today, and the devices that are theirs.
-pub(crate) async fn list(State(state): State<std::sync::Arc<crate::server::ServerState>>) -> Response {
+pub(crate) async fn list(
+    State(state): State<std::sync::Arc<crate::server::ServerState>>,
+) -> Response {
     let people = crate::server::people::current();
-    let mut persons: Vec<(Person, Vec<Value>, Option<crate::state_fs::devices::AccountRef>)> = Vec::new();
+    let mut persons: Vec<(
+        Person,
+        Vec<Value>,
+        Option<crate::state_fs::devices::AccountRef>,
+    )> = Vec::new();
     for device in crate::state_fs::devices::load_devices() {
         let person = of_row(&device);
         if !person.is_another() {

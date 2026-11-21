@@ -54,7 +54,7 @@ async fn messages(State(seen): State<Arc<AtomicUsize>>) -> impl IntoResponse {
 }
 
 /// The stand-in host: its address, and how many Messages requests it got.
-async fn host() -> (String, Arc<AtomicUsize>) {
+pub(crate) async fn host() -> (String, Arc<AtomicUsize>) {
     let seen = Arc::new(AtomicUsize::new(0));
     let app = Router::new()
         .route("/v1/models/{id}", get(|| async { StatusCode::NOT_FOUND }))

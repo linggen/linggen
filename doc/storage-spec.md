@@ -85,6 +85,7 @@ Project path encoding: `/Users/foo/project` → `-Users-foo-project` (same conve
 │   ├── trend.json                    # Daily free-space samples (a fortnight)
 │   └── conditions.json               # What was told per problem, and the person's answer (perception::told)
 ├── credentials.json                  # API keys for model providers (JSON)
+├── people.json                       # What each person of the household may use here: level, apps, models, daily tokens (permission-spec.md § People)
 ├── permissions.json                  # (legacy, ignored — see permission-spec.md)
 ├── missions/
 │   ├── {mission_id}/
@@ -187,6 +188,23 @@ Stored at `~/.linggen/credentials.json`. Keyed by model `id` from `linggen.toml`
 Stored at `~/.linggen/sessions/{session_id}/permission.json`. Per-session, cleared on session end. `path_modes[]` is the grant table of the session's own place (its skill, or home); `places` (absent until used) holds every other place's table by its key, `{"zz-game": [{path, mode}]}` (`session-spec.md` § A turn's place). Only explicit user approvals, mission frontmatter, and skill frontmatter write to it. See `permission-spec.md` for the full model.
 
 There is no `[permissions]` block in `linggen.toml` and no project-level `permissions.json`. The engine's hardcoded deny floor is baked into the binary, not user-configurable.
+
+### People (`people.json`)
+
+```json
+{
+  "version": 1,
+  "owner": { "mine_only": ["cfo"] },
+  "people": {
+    "u-alex":  { "level": "read", "apps": ["music", "game"], "models": ["deepseek-flash"], "daily_tokens": 200000 },
+    "device:<row id>": { "level": "chat" }
+  }
+}
+```
+
+Stored at `~/.linggen/people.json`; read and written only by `server::people`, atomically, one writer. Keyed by person as `server::person::Person` writes one: another account's id, or a signed-out phone's stamp. A key is not a device: two phones of one account are one entry. `level` is chat, read or edit (read when absent; admin is the owner's alone); `apps` is a list, or absent for every app but those in `owner.mine_only`; `models` are ids of this machine's models their turns may run on (absent or empty: none); `daily_tokens` limits what their turns use on those models (absent: no limit; the count is `token_usage.json`'s, by person, the day turning at UTC midnight); `arrival` (`moved` or `kept`, set when a phone signed in, cleared by the owner) says what became of the phone's settings. The owner has no entry. A file that does not read is taken as nothing set — every person at read, no model — and is never written over.
+
+The file is made on its first read from the device rows of `paired-devices.json`: a person's `level` is the lowest any of their rows held (a row with none held read). The rows' old `permission` field is then cleared and read by nothing.
 
 ### Met latch (`met/{agent}.json`)
 

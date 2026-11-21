@@ -354,4 +354,24 @@ mod tests {
         let t = transcript(&[row("user", "hi"), world, row("ling", "hello")]);
         assert_eq!(t, "[user] hi\n[ling] hello");
     }
+
+    /// A summary is a call on this Mac's model, paid like a turn: the owner's
+    /// is the model asked for as it is; a guest's or a household person's one
+    /// of the models they were given, the first when theirs is not one of them;
+    /// and none at all when they were given none.
+    #[test]
+    fn a_summary_runs_only_on_a_model_its_asker_was_given() {
+        use crate::engine::model_choice::Asker;
+        let models = crate::provider::models::ModelManager::new_with_credentials(
+            vec![],
+            &crate::credentials::Credentials::default(),
+        );
+        let given = vec!["gpt-6.1-terra".to_string()];
+        let said = |asker, model: &str| within(&models, asker, model.to_string());
+        assert_eq!(said(Asker::Owner, "gpt-6.2-sol"), Some("gpt-6.2-sol".to_string()));
+        assert_eq!(said(Asker::Owner, "not-here"), Some("not-here".to_string()), "the owner's, as ever");
+        assert_eq!(said(Asker::Guest(&given), "gpt-6.1-terra"), Some("gpt-6.1-terra".to_string()));
+        assert_eq!(said(Asker::Guest(&given), "gpt-6.2-sol"), Some("gpt-6.1-terra".to_string()), "the member's own is not theirs");
+        assert_eq!(said(Asker::Guest(&[]), "gpt-6.2-sol"), None, "given none");
+    }
 }

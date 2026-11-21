@@ -24,6 +24,18 @@ fn lan_address() -> std::net::IpAddr {
     ip
 }
 
+/// What the owner chose for people at this Mac (`people.json`, as the engine
+/// keeps it): the Mac's fake model shared with each of `people` — a person
+/// nobody shared a model with takes no turn on this Mac.
+fn share_the_model_with(w: &World, people: &[&str]) {
+    let rows: serde_json::Map<String, Value> = people
+        .iter()
+        .map(|id| (id.to_string(), json!({"models": ["fake-ling"]})))
+        .collect();
+    let file = json!({"version": 1, "owner": {"mine_only": []}, "people": rows});
+    std::fs::write(w.home.linggen_home().join("people.json"), file.to_string()).unwrap();
+}
+
 /// A phone paired to this Mac and signed in to another person's account.
 fn pair_friends_phone(w: &World) {
     let row = json!([{
@@ -91,6 +103,7 @@ async fn another_persons_phone_over_the_lan_gets_its_own_day_and_never_the_build
     }
     .script(Agent::Ling, vec![text("BUILDER-REPLY."), text("For the friend.")]);
     let (w, _) = day_world_at(12, setup).await;
+    share_the_model_with(&w, &["u-friend"]);
     pair_friends_phone(&w);
     let lan = Lan::new(&w);
     assert_eq!(lan.status("/api/sessions/day", None).await, 401, "not the LAN path");
@@ -157,6 +170,7 @@ async fn a_signed_out_phone_can_only_read_and_write_its_own_day() {
     let setup = Setup { lan: true, ..Setup::default() }
         .script(Agent::Ling, vec![text("Owner reply."), text("Phone reply.")]);
     let (w, _) = day_world_at(12, setup).await;
+    share_the_model_with(&w, &["device:phone-signed-out"]);
     let lan = pair_signed_out_phone(&w).await;
     let owner = w.api.get("/api/sessions/day").await["id"].as_str().unwrap().to_string();
     let mark = w.mark();
@@ -663,6 +677,7 @@ async fn a_phones_turn_runs_at_its_level() {
         vec![tool("Write", json!({"path": "FRIEND.txt", "content": "x"})), text("Could not.")],
     ))
     .await;
+    share_the_model_with(&w, &["u-friend"]);
     pair_friends_phone_with(&w, json!({"contract": 1}));
     let lan = Lan::new(&w);
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
@@ -693,4 +708,199 @@ async fn a_phones_turn_runs_at_its_level() {
         wrong.push(format!("her own thread at read: {her:?}"));
     }
     assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+/// Write what the owner chose for each person (`people.json`) and wait out
+/// the engine's re-read of the file.
+async fn set_people(w: &World, people: Value) {
+    let owner = people.get("owner").cloned().unwrap_or(json!({"mine_only": []}));
+    let file = json!({"version": 1, "owner": owner, "people": people["people"].clone()});
+    std::fs::write(w.home.linggen_home().join("people.json"), file.to_string()).unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(1300)).await;
+}
+
+async fn wait_for_the_phone(lan: &Lan) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while lan.status("/api/pair/me", Some(TOKEN)).await != 200 {
+        assert!(std::time::Instant::now() < deadline, "the phone is not known");
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+}
+
+/// A paired phone of another person is held to what the owner chose for
+/// them (doc/permission-spec.md § People): with no model of this Mac shared,
+/// its turn does not start — a fact, nothing kept — and shared, it runs; a
+/// model it was not given is not one its turn runs on.
+#[tokio::test]
+async fn a_persons_turn_starts_only_on_a_model_they_were_given() {
+    use reqwest::Method;
+    let w = World::start(Setup { lan: true, ..Setup::default() }.script(Agent::Ling, vec![text("Hello, friend.")])).await;
+    pair_friends_phone_with(&w, json!({"contract": 1}));
+    let lan = Lan::new(&w);
+    wait_for_the_phone(&lan).await;
+    let mut wrong = Vec::new();
+
+    let chat = json!({"project_root": w.work(), "message": "FIRST-TRY"});
+    let (status, said) = lan.send(Method::POST, "/api/chat", Some(chat.clone())).await;
+    if (status, said["status"].as_str()) != (200, Some("no_model")) {
+        wrong.push(format!("no model shared: {status} {said}"));
+    }
+    if w.model.calls().iter().any(|c| c.text().contains("FIRST-TRY")) {
+        wrong.push("a turn ran for a person with no model".into());
+    }
+
+    // Their session's summary is a call on this Mac's model too: refused alike.
+    let (_, own) = lan.send(Method::POST, "/api/sessions", Some(json!({"title": "Friend's"}))).await;
+    let sid = own["id"].as_str().unwrap_or_default().to_string();
+    let compact = json!({"project_root": w.work(), "session_id": sid});
+    let (_, said) = lan.send(Method::POST, "/api/chat/compact", Some(compact)).await;
+    if said["status"] != "no_model" {
+        wrong.push(format!("a summary for a person with no model: {said}"));
+    }
+
+    set_people(&w, json!({"people": {"u-friend": {"models": ["not-a-model-here"]}}})).await;
+    let (_, said) = lan.send(Method::POST, "/api/chat", Some(chat.clone())).await;
+    let ran_elsewhere = w.model.calls().iter().any(|c| c.text().contains("FIRST-TRY"));
+    if ran_elsewhere {
+        wrong.push(format!("a turn ran on a model that was not the person's: {said}"));
+    }
+
+    set_people(&w, json!({"people": {"u-friend": {"models": ["fake-ling"]}}})).await;
+    let mark = w.mark();
+    let (status, said) = lan.send(Method::POST, "/api/chat", Some(json!({"project_root": w.work(), "message": "SECOND-TRY"}))).await;
+    if status != 200 || said["status"] == json!("no_model") {
+        wrong.push(format!("a shared model: {status} {said}"));
+    } else if let Some(sid) = said["session_id"].as_str() {
+        w.finish_run(sid, Agent::Ling, mark).await;
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+/// A person with a daily limit takes no turn once their day's tokens are
+/// used: a turn on a model that reports its usage is counted, from what the
+/// turn spent, against the person alone.
+#[tokio::test]
+async fn a_person_over_their_daily_limit_takes_no_turn() {
+    use reqwest::Method;
+    let (url, _) = crate::spend::host().await;
+    let models = format!(
+        "\n[[models]]\nid = \"stub-metered\"\nprovider = \"anthropic\"\nurl = \"{url}\"\nmodel = \"claude-sonnet-5-5\"\napi_key = \"test-not-a-key\"\ncontext_window = 200000\nsupports_tools = true\n"
+    );
+    let w = World::start(Setup {
+        lan: true,
+        config_append: Some(Box::leak(models.into_boxed_str())),
+        default_model: Some("stub-metered"),
+        ..Setup::default()
+    })
+    .await;
+    set_people(&w, json!({"people": {"u-friend": {"models": ["stub-metered"], "daily_tokens": 5000}}})).await;
+    pair_friends_phone_with(&w, json!({"contract": 1}));
+    let lan = Lan::new(&w);
+    wait_for_the_phone(&lan).await;
+    let mark = w.mark();
+    let (status, said) = lan.send(Method::POST, "/api/chat", Some(json!({"project_root": w.work(), "message": "UNDER"}))).await;
+    assert_eq!((status, said["status"].as_str()), (200, Some("started")), "{said}");
+    w.finish_run(said["session_id"].as_str().unwrap(), Agent::Ling, mark).await;
+    // The count is made as the turn ends: look for it a moment.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let mut used = w.api.get("/api/people").await;
+    while used["people"][0]["used_today"].as_i64().unwrap_or(0) == 0 && std::time::Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        used = w.api.get("/api/people").await;
+    }
+    // What the stand-in host reports for one call: 1,200 + 3,000 + 5,000 in, 400 out.
+    assert_eq!(used["people"][0]["used_today"], 9_600, "{used}");
+    let (_, said) = lan.send(Method::POST, "/api/chat", Some(json!({"project_root": w.work(), "message": "OVER"}))).await;
+    assert_eq!(said["status"], "over_limit", "{said}");
+    set_people(&w, json!({"people": {"u-friend": {"models": ["stub-metered"], "daily_tokens": 20000}}})).await;
+    let mark = w.mark();
+    let (_, said) = lan.send(Method::POST, "/api/chat", Some(json!({"project_root": w.work(), "message": "AGAIN"}))).await;
+    assert_eq!(said["status"], "started", "a higher limit lets the turn start: {said}");
+    w.finish_run(said["session_id"].as_str().unwrap(), Agent::Ling, mark).await;
+}
+
+/// An app is for a person only when they may use it — by its page files, by
+/// the list of apps they are shown — and an app the owner keeps is the
+/// owner's alone, whatever a person's own list says.
+#[tokio::test]
+async fn a_person_reaches_and_is_shown_only_the_apps_they_may_use() {
+    use reqwest::Method;
+    let w = World::start(Setup { lan: true, ..Setup::default() }).await;
+    pair_friends_phone_with(&w, json!({"contract": 1}));
+    let lan = Lan::new(&w);
+    wait_for_the_phone(&lan).await;
+    let names = |list: &Value| -> Vec<String> {
+        list.as_array().map(|a| a.iter().filter_map(|s| s["name"].as_str().map(str::to_string)).collect()).unwrap_or_default()
+    };
+    let mut wrong = Vec::new();
+
+    // Nobody set anything: every app, in the page and in the list.
+    let (status, page) = lan.send(Method::GET, "/apps/dice/index.html", None).await;
+    if status != 200 {
+        wrong.push(format!("an app's page, by default: {status} {page}"));
+    }
+    let (_, list) = lan.send(Method::GET, "/api/skills", None).await;
+    if !names(&list).contains(&"dice".to_string()) {
+        wrong.push(format!("the default list lacks dice: {:?}", names(&list)));
+    }
+
+    // Their own list: dice is not on it.
+    set_people(&w, json!({"people": {"u-friend": {"apps": ["abacus"]}}})).await;
+    let (status, refused) = lan.send(Method::GET, "/apps/dice/index.html", None).await;
+    if (status, refused["error"].as_str()) != (403, Some("not_your_app")) {
+        wrong.push(format!("a page of an app off their list: {status} {refused}"));
+    }
+    let (_, list) = lan.send(Method::GET, "/api/skills", None).await;
+    if names(&list) != ["abacus"] {
+        wrong.push(format!("the list they are shown: {:?}", names(&list)));
+    }
+    let (status, tool) = lan.send(Method::POST, "/api/skills/dice/tools/Roll", Some(json!({}))).await;
+    if (status, tool["error"].as_str()) != (403, Some("not_your_app")) {
+        wrong.push(format!("a tool of an app off their list: {status} {tool}"));
+    }
+    let owners = w.api.get("/api/skills").await;
+    if !names(&owners).contains(&"dice".to_string()) {
+        wrong.push("the owner's list lost an app".into());
+    }
+
+    // The owner keeps dice: no list of theirs gives it.
+    set_people(&w, json!({"owner": {"mine_only": ["dice"]}, "people": {"u-friend": {"apps": ["dice", "abacus"]}}})).await;
+    let (status, refused) = lan.send(Method::GET, "/apps/dice/index.html", None).await;
+    if (status, refused["error"].as_str()) != (403, Some("not_your_app")) {
+        wrong.push(format!("an app the owner keeps: {status} {refused}"));
+    }
+    let (status, _) = lan.send(Method::GET, "/apps/abacus/index.html", None).await;
+    if status == 403 {
+        wrong.push("an app on their list was refused".into());
+    }
+    let (status, _) = w.api.call("GET", "/apps/dice/index.html").await;
+    if status != 200 {
+        wrong.push(format!("the owner's own page: {status}"));
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+/// The household is set only at this Mac: the owner's own page changes a
+/// person's settings, a paired phone — whoever it is — cannot, and a bad
+/// setting changes nothing.
+#[tokio::test]
+async fn the_household_is_set_only_at_this_mac() {
+    use reqwest::Method;
+    let w = World::start(Setup { lan: true, ..Setup::default() }).await;
+    pair_friends_phone_with(&w, json!({"contract": 1}));
+    let lan = Lan::new(&w);
+    wait_for_the_phone(&lan).await;
+    let body = json!({"level": "edit", "models": ["fake-ling"], "daily_tokens": 5});
+    let (status, refused) = lan.send(Method::PUT, "/api/people/u-friend", Some(body.clone())).await;
+    assert_eq!(status, 403, "{refused}");
+    assert_eq!(lan.send(Method::GET, "/api/people", None).await.0, 403);
+    let (status, set) = w.api.put_json("/api/people/u-friend", body).await;
+    assert_eq!(status, 200, "{set}");
+    let listed = w.api.get("/api/people").await;
+    assert_eq!(listed["people"][0]["id"], "u-friend", "{listed}");
+    assert_eq!(listed["people"][0]["level"], "edit");
+    assert_eq!(listed["people"][0]["settings"]["daily_tokens"], 5);
+    let (status, bad) = w.api.put_json("/api/people/u-friend", json!({"level": "admin"})).await;
+    assert_eq!(status, 400, "{bad}");
+    assert_eq!(w.api.get("/api/people").await["people"][0]["level"], "edit", "a bad setting left a trace");
 }

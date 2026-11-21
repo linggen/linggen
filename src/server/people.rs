@@ -157,14 +157,21 @@ impl People {
                 .filter(|app| self.may_use_app(person, app))
                 .cloned()
                 .collect(),
-            models: crate::server::rtc::room_config::with_successors(self.settings_of(person).models),
+            models: crate::server::rtc::room_config::with_successors(
+                self.settings_of(person).models,
+            ),
         }
     }
 
     /// Whether `person`'s turns may run on this Mac's model `model`: the owner
     /// any; anyone else those they were given.
     pub(crate) fn may_run_model(&self, person: &Person, model: &str) -> bool {
-        person.is_owner() || self.ceiling_of(person, &[]).models.iter().any(|m| m == model)
+        person.is_owner()
+            || self
+                .ceiling_of(person, &[])
+                .models
+                .iter()
+                .any(|m| m == model)
     }
 
     /// Why `person`'s next turn must not start, given the tokens `used` they
@@ -207,6 +214,19 @@ impl People {
         self.owner.mine_only = tidy(apps);
     }
 
+    /// A person became another (a signed-out phone signed in; a phone paired
+    /// again as a new row): what was set for the phone's person goes to the
+    /// one it became. Nothing happens unless the person before was a device
+    /// that is now someone else — the settings of an account stay the
+    /// account's, and a phone that claims this Mac's own account unverified is
+    /// still its device. What happened, for an account.
+    fn follow(&mut self, before: &Person, after: &Person) -> Option<Arrival> {
+        match before.is_device() && before != after {
+            true => self.carry(&before.wire(), after),
+            false => None,
+        }
+    }
+
     /// Move what was set for `from` (a signed-out phone's person) to `to`
     /// (who it became): another phone's stamp, kept as it was; an account,
     /// which keeps its own when it has some and takes the phone's when not.
@@ -235,7 +255,10 @@ impl People {
 impl PersonSettings {
     /// Apply the keys of `patch` — `level`, `apps` (null: all), `models`,
     /// `daily_tokens` (null: none), `arrival` (null: seen) — or none of them.
-    fn apply(&mut self, patch: &serde_json::Map<String, serde_json::Value>) -> Result<(), &'static str> {
+    fn apply(
+        &mut self,
+        patch: &serde_json::Map<String, serde_json::Value>,
+    ) -> Result<(), &'static str> {
         let mut next = self.clone();
         for (key, value) in patch {
             match key.as_str() {
@@ -273,7 +296,10 @@ fn optional<T>(
 
 fn strings(value: &serde_json::Value) -> Result<Vec<String>, &'static str> {
     let list = value.as_array().ok_or("a list of names")?;
-    let names: Option<Vec<String>> = list.iter().map(|v| v.as_str().map(str::to_string)).collect();
+    let names: Option<Vec<String>> = list
+        .iter()
+        .map(|v| v.as_str().map(str::to_string))
+        .collect();
     names.map(tidy).ok_or("a list of names")
 }
 
@@ -303,7 +329,10 @@ fn first_people(devices: &[PairedDevice], mac: Option<&str>) -> People {
         if !person.is_another() {
             continue;
         }
-        let level = row.legacy_permission.unwrap_or(DEVICE_DEFAULT).min(MOST_FOR_ANOTHER);
+        let level = row
+            .legacy_permission
+            .unwrap_or(DEVICE_DEFAULT)
+            .min(MOST_FOR_ANOTHER);
         let (any, lowest) = held.entry(person.wire()).or_insert((false, level));
         *any |= row.legacy_permission.is_some();
         *lowest = (*lowest).min(level);
@@ -406,7 +435,11 @@ impl Store {
 
     /// Read-modify-write under the one lock, written atomically; an
     /// unreadable file is not written over.
-    fn modify<R>(&self, origin: &dyn Origin, f: impl FnOnce(&mut People) -> R) -> std::io::Result<R> {
+    fn modify<R>(
+        &self,
+        origin: &dyn Origin,
+        f: impl FnOnce(&mut People) -> R,
+    ) -> std::io::Result<R> {
         let mut cache = self.lock();
         let mut people = self.read(origin)?;
         let result = f(&mut people);
@@ -421,7 +454,8 @@ impl Store {
     }
 }
 
-static STORE: LazyLock<Store> = LazyLock::new(|| Store::at(crate::paths::linggen_home().join("people.json")));
+static STORE: LazyLock<Store> =
+    LazyLock::new(|| Store::at(crate::paths::linggen_home().join("people.json")));
 
 /// Where the first file comes from.
 trait Origin {
@@ -461,16 +495,10 @@ pub(crate) fn modify<R>(f: impl FnOnce(&mut People) -> R) -> std::io::Result<R> 
 
 /// A person became another (a signed-out phone signed in; a phone paired
 /// again as a new row): what was chosen for the phone's person goes to the
-/// one it became ([`People::carry`]). Nothing happens unless the person
-/// before was a device — the settings of an account stay the account's. The
-/// one place this is decided; the sign-in (`rtc::peer::control`) and the
-/// pairing (`api::pair`) both ask it.
+/// one it became ([`People::follow`]). The one place this is decided; the
+/// sign-in (`rtc::peer::control`) and the pairing (`api::pair`) both ask it.
 pub(crate) fn person_changed(before: &Person, after: &Person) {
-    if !before.is_device() || before == after {
-        return;
-    }
-    let from = before.wire();
-    if let Err(e) = modify(|people| people.carry(&from, after)) {
+    if let Err(e) = modify(|people| people.follow(before, after)) {
         tracing::warn!("[people] could not carry a phone's settings to its person: {e}");
     }
 }
@@ -490,15 +518,26 @@ pub(crate) fn household_person(user_type: &str, user_id: Option<&str>) -> Option
 /// The household person a session is kept for, when it is one: whose
 /// `user_id` the session was made under. A session of the owner's or one
 /// no one made is not.
-pub(crate) fn household_person_of_session(state: &crate::server::ServerState, session_id: &str) -> Option<Person> {
-    let meta = state.manager.global_sessions.get_session_meta(session_id).ok().flatten()?;
+pub(crate) fn household_person_of_session(
+    state: &crate::server::ServerState,
+    session_id: &str,
+) -> Option<Person> {
+    let meta = state
+        .manager
+        .global_sessions
+        .get_session_meta(session_id)
+        .ok()
+        .flatten()?;
     Some(Person::from_wire(meta.user_id.as_deref())).filter(Person::is_another)
 }
 
 /// Why `person`'s turn must not start now: the owner's models are not
 /// shared with them, or the day's tokens are used (`state.token_usage`, the
 /// store the room budgets use, keyed by the person as a room's consumer is).
-pub(crate) async fn turn_refusal(state: &crate::server::ServerState, person: &Person) -> Option<Refusal> {
+pub(crate) async fn turn_refusal(
+    state: &crate::server::ServerState,
+    person: &Person,
+) -> Option<Refusal> {
     let people = current();
     let used = state.token_usage.lock().await.used_by(&person.wire());
     people.refusal_for(person, used.max(0) as u64)
@@ -509,7 +548,11 @@ pub(crate) async fn record_turn(state: &crate::server::ServerState, person: &Per
     if !person.is_another() || tokens == 0 {
         return;
     }
-    state.token_usage.lock().await.record_person(&person.wire(), tokens as i64);
+    state
+        .token_usage
+        .lock()
+        .await
+        .record_person(&person.wire(), tokens as i64);
 }
 
 #[cfg(test)]
@@ -530,7 +573,12 @@ mod tests {
         PairedDevice {
             id: id.into(),
             kind: Some(DeviceKind::Phone),
-            account: account.map(|a| AccountRef { id: a.into(), email: None, name: None, at: None }),
+            account: account.map(|a| AccountRef {
+                id: a.into(),
+                email: None,
+                name: None,
+                at: None,
+            }),
             legacy_permission: level,
             ..Default::default()
         }
@@ -542,7 +590,13 @@ mod tests {
         let people = People::default();
         let installed = vec!["music".to_string(), "cfo".to_string()];
         assert_eq!(people.level_of(&friend()), PermissionMode::Read);
-        assert_eq!(people.ceiling_of(&friend(), &installed), Ceiling { skills: installed.clone(), models: vec![] });
+        assert_eq!(
+            people.ceiling_of(&friend(), &installed),
+            Ceiling {
+                skills: installed.clone(),
+                models: vec![]
+            }
+        );
         assert_eq!(people.refusal_for(&friend(), 0), Some(Refusal::NoModel));
     }
 
@@ -570,7 +624,10 @@ mod tests {
             assert!(people.set(&friend(), &settings(bad)).is_err());
             assert_eq!(people, before, "a refused setting left a trace");
         }
-        assert!(people.set(&Person::test_owner(), &ok).is_err(), "the owner has no row");
+        assert!(
+            people.set(&Person::test_owner(), &ok).is_err(),
+            "the owner has no row"
+        );
         let all = settings(serde_json::json!({"apps": null, "daily_tokens": null}));
         people.set(&friend(), &all).unwrap();
         assert_eq!(people.settings_of(&friend()).apps, None);
@@ -583,16 +640,30 @@ mod tests {
     fn an_app_is_asked_in_one_place_and_the_owner_keeps_theirs() {
         let mut people = People::default();
         people.keep_for_owner(vec!["cfo".into()]);
-        people.set(&friend(), &settings(serde_json::json!({"apps": ["music", "cfo"]}))).unwrap();
+        people
+            .set(
+                &friend(),
+                &settings(serde_json::json!({"apps": ["music", "cfo"]})),
+            )
+            .unwrap();
         assert!(people.may_use_app(&friend(), "music"));
-        assert!(!people.may_use_app(&friend(), "cfo"), "kept for the owner, though listed");
+        assert!(
+            !people.may_use_app(&friend(), "cfo"),
+            "kept for the owner, though listed"
+        );
         assert!(!people.may_use_app(&friend(), "dj"), "not on their list");
         assert!(people.may_use_app(&Person::test_owner(), "cfo"));
         let stranger = Person::for_test(Some("u-stranger"));
-        assert!(people.may_use_app(&stranger, "dj"), "no list: every app but the owner's");
+        assert!(
+            people.may_use_app(&stranger, "dj"),
+            "no list: every app but the owner's"
+        );
         assert!(!people.may_use_app(&stranger, "cfo"));
         let installed = vec!["music".to_string(), "cfo".to_string(), "dj".to_string()];
-        assert_eq!(people.ceiling_of(&friend(), &installed).skills, vec!["music".to_string()]);
+        assert_eq!(
+            people.ceiling_of(&friend(), &installed).skills,
+            vec!["music".to_string()]
+        );
     }
 
     /// The turn's refusal: no model shared, then the day's tokens.
@@ -601,11 +672,18 @@ mod tests {
         let mut people = People::default();
         assert_eq!(people.refusal_for(&friend(), 0), Some(Refusal::NoModel));
         people
-            .set(&friend(), &settings(serde_json::json!({"models": ["m"], "daily_tokens": 100})))
+            .set(
+                &friend(),
+                &settings(serde_json::json!({"models": ["m"], "daily_tokens": 100})),
+            )
             .unwrap();
         assert_eq!(people.refusal_for(&friend(), 99), None);
         assert_eq!(people.refusal_for(&friend(), 100), Some(Refusal::OverLimit));
-        assert_eq!(people.refusal_for(&Person::test_owner(), u64::MAX), None, "the owner is never limited");
+        assert_eq!(
+            people.refusal_for(&Person::test_owner(), u64::MAX),
+            None,
+            "the owner is never limited"
+        );
         assert_eq!(Refusal::NoModel.status(), "no_model");
         assert_eq!(Refusal::OverLimit.status(), "over_limit");
     }
@@ -624,15 +702,26 @@ mod tests {
             row("d", Some("u-pal"), None),
             row("e", None, Some(Edit)),
             row("f", Some("u-other"), None),
-            PairedDevice { kind: Some(DeviceKind::Machine), ..row("g", None, Some(Chat)) },
+            PairedDevice {
+                kind: Some(DeviceKind::Machine),
+                ..row("g", None, Some(Chat))
+            },
         ];
         let people = first_people(&rows, mac);
         let level = |p: Person| people.settings_of(&p).level;
         assert_eq!(level(Person::for_test(Some("u-friend"))), Some(Chat));
-        assert_eq!(level(Person::for_test(Some("u-pal"))), Some(PermissionMode::Read), "one row unset: read");
+        assert_eq!(
+            level(Person::for_test(Some("u-pal"))),
+            Some(PermissionMode::Read),
+            "one row unset: read"
+        );
         assert_eq!(level(Person::for_test(Some(&stamp_of("e")))), Some(Edit));
         assert_eq!(level(Person::for_test(Some("u-other"))), None);
-        assert_eq!(people.people.len(), 3, "the owner's row and unset rows are not kept");
+        assert_eq!(
+            people.people.len(),
+            3,
+            "the owner's row and unset rows are not kept"
+        );
     }
 
     /// A phone that signs in: its settings become the account's when the
@@ -645,19 +734,48 @@ mod tests {
         let mut people = People::default();
         people.set(&phone, &level("edit")).unwrap();
         assert_eq!(people.carry(&phone.wire(), &friend()), Some(Arrival::Moved));
-        assert_eq!(people.settings_of(&friend()).level, Some(PermissionMode::Edit));
+        assert_eq!(
+            people.settings_of(&friend()).level,
+            Some(PermissionMode::Edit)
+        );
         assert_eq!(people.settings_of(&friend()).arrival, Some(Arrival::Moved));
-        assert_eq!(people.settings_of(&phone), PersonSettings::default(), "the phone's are gone");
+        assert_eq!(
+            people.settings_of(&phone),
+            PersonSettings::default(),
+            "the phone's are gone"
+        );
         // The account has its own: they stand, the phone's are dropped.
         let mut people = People::default();
         people.set(&phone, &level("edit")).unwrap();
         people.set(&friend(), &level("chat")).unwrap();
         assert_eq!(people.carry(&phone.wire(), &friend()), Some(Arrival::Kept));
-        assert_eq!(people.settings_of(&friend()).level, Some(PermissionMode::Chat));
+        assert_eq!(
+            people.settings_of(&friend()).level,
+            Some(PermissionMode::Chat)
+        );
         assert_eq!(people.settings_of(&friend()).arrival, Some(Arrival::Kept));
         assert_eq!(people.settings_of(&phone), PersonSettings::default());
         // Nothing was chosen for the phone: nothing to say.
         assert_eq!(People::default().carry(&phone.wire(), &friend()), None);
+        // A phone that claims the Mac's own account, not verified, is still
+        // its device: nothing moves, and nothing is put under the owner's id.
+        let mut people = People::default();
+        people.set(&phone, &level("edit")).unwrap();
+        assert_eq!(people.follow(&phone, &phone), None);
+        assert_eq!(people.settings_of(&phone).level, Some(PermissionMode::Edit));
+        // An account that signs out and in again, or into another, keeps its own.
+        people.set(&friend(), &level("chat")).unwrap();
+        assert_eq!(
+            people.follow(&friend(), &Person::for_test(Some("u-pal"))),
+            None
+        );
+        assert_eq!(
+            people.settings_of(&friend()).level,
+            Some(PermissionMode::Chat)
+        );
+        // A phone that became the owner's has no settings.
+        assert_eq!(people.follow(&phone, &Person::test_owner()), None);
+        assert_eq!(people.settings_of(&phone), PersonSettings::default());
     }
 
     /// A phone paired again is a new row of the same device: its settings
@@ -667,7 +785,9 @@ mod tests {
         let old = Person::for_test(Some(&stamp_of("p1")));
         let new = Person::for_test(Some(&stamp_of("p2")));
         let mut people = People::default();
-        people.set(&old, &settings(serde_json::json!({"level": "edit"}))).unwrap();
+        people
+            .set(&old, &settings(serde_json::json!({"level": "edit"})))
+            .unwrap();
         assert_eq!(people.carry(&old.wire(), &new), None);
         assert_eq!(people.settings_of(&new).level, Some(PermissionMode::Edit));
         assert_eq!(people.settings_of(&old), PersonSettings::default());
@@ -704,27 +824,48 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("people.json");
         let store = Store::at(path.clone());
-        let rows = Rows(vec![row("a", Some("u-friend"), Some(PermissionMode::Chat))], Default::default());
+        let rows = Rows(
+            vec![row("a", Some("u-friend"), Some(PermissionMode::Chat))],
+            Default::default(),
+        );
         let people = store.current(&rows);
         assert_eq!(people.level_of(&friend()), PermissionMode::Chat);
-        assert!(path.exists() && rows.1.get(), "written, then the rows let go");
+        assert!(
+            path.exists() && rows.1.get(),
+            "written, then the rows let go"
+        );
         store
-            .modify(&Nothing, |p| p.set(&friend(), &settings(serde_json::json!({"level": "edit"}))))
+            .modify(&Nothing, |p| {
+                p.set(&friend(), &settings(serde_json::json!({"level": "edit"})))
+            })
             .unwrap()
             .unwrap();
         let again = Store::at(path.clone()).current(&Nothing);
-        assert_eq!(again.level_of(&friend()), PermissionMode::Edit, "the first file was made once");
+        assert_eq!(
+            again.level_of(&friend()),
+            PermissionMode::Edit,
+            "the first file was made once"
+        );
         std::fs::write(&path, "{ not json").unwrap();
         let broken = Store::at(path.clone());
-        assert_eq!(broken.current(&Nothing).level_of(&friend()), PermissionMode::Read);
+        assert_eq!(
+            broken.current(&Nothing).level_of(&friend()),
+            PermissionMode::Read
+        );
         assert!(broken.modify(&Nothing, |_| ()).is_err());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "{ not json");
         // A file that cannot be written leaves the rows as they are.
         std::fs::write(dir.path().join("x"), "a file, not a folder").unwrap();
         let unwritable = Store::at(dir.path().join("x").join("people.json"));
-        let kept = Rows(vec![row("a", Some("u-friend"), Some(PermissionMode::Chat))], Default::default());
+        let kept = Rows(
+            vec![row("a", Some("u-friend"), Some(PermissionMode::Chat))],
+            Default::default(),
+        );
         let _ = unwritable.current(&kept);
-        assert!(!kept.1.get(), "the rows were let go before the file was written");
+        assert!(
+            !kept.1.get(),
+            "the rows were let go before the file was written"
+        );
     }
 
     fn rust_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
@@ -749,14 +890,22 @@ mod tests {
             rust_files(&root.join(dir), &mut files);
         }
         for file in files {
-            let rel = file.strip_prefix(root).unwrap().to_string_lossy().to_string();
+            let rel = file
+                .strip_prefix(root)
+                .unwrap()
+                .to_string_lossy()
+                .to_string();
             if rel == "src/server/people.rs" {
                 continue;
             }
             let text = std::fs::read_to_string(&file).unwrap();
             let code = text.split("#[cfg(test)]").next().unwrap_or(&text);
             let want = listed.iter().find(|(f, _, _)| *f == rel).map_or(0, |e| e.1);
-            assert_eq!(code.matches(pattern).count(), want, "{rel}: `{pattern}`: ask here, or look at it and list it");
+            assert_eq!(
+                code.matches(pattern).count(),
+                want,
+                "{rel}: `{pattern}`: ask here, or look at it and list it"
+            );
         }
     }
 
@@ -767,19 +916,47 @@ mod tests {
     #[test]
     fn the_people_file_is_read_and_written_here_alone_and_each_way_in_asks_here() {
         only_here_and(concat!("people", ".json"), &[]);
-        only_here_and("legacy_permission", &[("crates/linggen-engine/src/state_fs/devices/mod.rs", 2, "the field, and a new row's none")]);
-        only_here_and(".may_use_app(", &[
-            ("src/server/person.rs", 1, "the seam: every request that names an app (`judge_app`)"),
-            ("src/server/api/skills.rs", 1, "GET /api/skills"),
-            ("src/server/rtc/page_state.rs", 1, "the page state's apps"),
-        ]);
-        only_here_and(".may_run_model(", &[
-            ("src/server/api/status.rs", 1, "GET /api/models"),
-            ("src/server/rtc/page_state.rs", 1, "the page state's models"),
-        ]);
-        only_here_and("commit_device(", &[
-            ("crates/linggen-engine/src/state_fs/devices/mod.rs", 1, "its own definition"),
-            ("src/server/api/pair/mod.rs", 1, "`commit_paired`, which both pairings call"),
-        ]);
+        only_here_and(
+            "legacy_permission",
+            &[(
+                "crates/linggen-engine/src/state_fs/devices/mod.rs",
+                2,
+                "the field, and a new row's none",
+            )],
+        );
+        only_here_and(
+            ".may_use_app(",
+            &[
+                (
+                    "src/server/person.rs",
+                    1,
+                    "the seam: every request that names an app (`judge_app`)",
+                ),
+                ("src/server/api/skills.rs", 1, "GET /api/skills"),
+                ("src/server/rtc/page_state.rs", 1, "the page state's apps"),
+            ],
+        );
+        only_here_and(
+            ".may_run_model(",
+            &[
+                ("src/server/api/status.rs", 1, "GET /api/models"),
+                ("src/server/rtc/page_state.rs", 1, "the page state's models"),
+            ],
+        );
+        only_here_and(
+            "commit_device(",
+            &[
+                (
+                    "crates/linggen-engine/src/state_fs/devices/mod.rs",
+                    1,
+                    "its own definition",
+                ),
+                (
+                    "src/server/api/pair/mod.rs",
+                    1,
+                    "`commit_paired`, which both pairings call",
+                ),
+            ],
+        );
     }
 }
