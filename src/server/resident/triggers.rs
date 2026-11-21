@@ -660,7 +660,8 @@ pub(super) async fn deliver_to_chat_agent(
             &ctx,
             &mut engine,
             &state.manager,
-            (None, crate::engine::turn_place::entrance::LiveState::Read),
+            None,
+            (crate::engine::turn_place::entrance::LiveState::Read, crate::server::chat::ModelBy::TheMembersKeptModel),
         )
         .await;
         state.manager.clear_agent_chat_session(&session_id);

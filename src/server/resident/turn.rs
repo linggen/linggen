@@ -301,7 +301,14 @@ async fn run_at(
             place: turn.place.clone(),
             turn: turn_settings(turn, origin),
         };
-        crate::server::chat::run_session_turn(&ctx, &mut engine, &state.manager, (cap, crate::engine::turn_place::entrance::LiveState::ReadAtTheDoor)).await;
+        crate::server::chat::run_session_turn(
+            &ctx,
+            &mut engine,
+            &state.manager,
+            cap,
+            (crate::engine::turn_place::entrance::LiveState::ReadAtTheDoor, crate::server::chat::ModelBy::TheDoorBeforeTheTurn),
+        )
+        .await;
 
         if origin == Origin::AgentChat {
             state.manager.clear_agent_chat_session(session_id);

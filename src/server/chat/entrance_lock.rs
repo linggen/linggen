@@ -140,3 +140,22 @@ fn a_door_that_starts_the_loop_opens_its_turn_through_the_entrance() {
         assert!(!why.is_empty() && !opening.iter().any(|f| f == door), "{door} stays outside: {why}");
     }
 }
+
+/// Who chooses a session turn's model (`run_session_turn`'s `ModelBy`): a
+/// person's chat and her turn choose it themselves before the turn; a task's
+/// end (told to an agent that is not hers) and a delivered `agent_chat`
+/// have the member's kept model chosen for them by the turn core. Pinned as
+/// the calls: a delivery cannot be reached on a rebuilt engine from a system
+/// test (with no engine alive its message lands in a session of its own).
+#[test]
+fn a_task_end_and_a_delivery_have_the_members_kept_model_chosen_for_them() {
+    assert_eq!(
+        files_with(&["ModelBy::TheMembersKeptModel"]),
+        // The turn core (which chooses it) and the two doors that ask for it.
+        ["src/server/chat/handler.rs", "src/server/resident/triggers.rs", "src/server/tasks.rs"]
+    );
+    assert_eq!(
+        files_with(&["ModelBy::TheDoorBeforeTheTurn"]),
+        ["src/server/chat/handler.rs", "src/server/resident/turn.rs", "src/server/tasks.rs"]
+    );
+}

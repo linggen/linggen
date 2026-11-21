@@ -53,7 +53,7 @@ pub(crate) use admin::{
     get_system_prompt_api, pending_ask_user_handler,
 };
 pub(crate) use handler::{
-    chat_handler, mark_steered, question_open_for_queued, queued_session, run_session_turn,
+    chat_handler, mark_steered, question_open_for_queued, queued_session, run_session_turn, ModelBy,
     say_in_app, say_in_session,
 };
 pub(crate) use light::{reply_in_session, reply_now};

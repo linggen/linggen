@@ -263,7 +263,7 @@ fn collect(dir: &std::path::Path, root: &std::path::Path, out: &mut Vec<(String,
 }
 
 // The entrance of a session turn (`turn_place::entrance`): each step a door
-// may not take (`...AsFound`) is a real difference, which stage 2 decides.
+// may not take is named for the reason it does not.
 mod entrance {
     use super::*;
     use crate::engine::turn_place::entrance::{

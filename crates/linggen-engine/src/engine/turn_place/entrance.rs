@@ -15,7 +15,7 @@
 //!
 //! A turn that continues a person's session is set up as that session's
 //! turns are. A door skips a step only when the step cannot apply to it, and
-//! the variant says why. `grep AsFound` lists what is left undecided.
+//! the variant says why.
 //!
 //! Not in the entrance, and why: a light reply (no tools, no loop; it begins
 //! a turn for its language alone), a delegated child (a fresh engine its
@@ -71,12 +71,9 @@ pub enum ModelStep<'a> {
     },
     /// The door chooses it by `resolve_effective_model` (the member's own
     /// model, with its kept-model rules): a person's chat and her turn before
-    /// the entrance, a plan's run right after it.
+    /// the entrance; a plan's run, a task's end and a delivered message right
+    /// after it.
     ChosenByTheDoor,
-    /// Not chosen: a task's end and a delivered message run on the model the
-    /// engine was left on (kept as found, 2026-11: see R4 stage 2 — not
-    /// settled; after a restart a member's kept model is not the engine's).
-    NotChosenAsFound,
 }
 
 /// Whether an asked model that cannot run may be replaced.

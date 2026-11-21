@@ -869,11 +869,25 @@ async fn apply_session_bound_mission(engine: &mut crate::engine::AgentEngine, ct
     .await;
 }
 
+/// Who chooses a session turn's model (`run_session_turn`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ModelBy {
+    /// The door chose it before the turn, by its own rule: a person's chat
+    /// (the picker's model, its kept-model rules) and her turn (her
+    /// preparation, `prepare_her_engine`).
+    TheDoorBeforeTheTurn,
+    /// The turn core chooses the member's own model right after the
+    /// entrance, as a chat turn with no picked model does
+    /// (`choose_members_model`): a task's end and a delivered message.
+    TheMembersKeptModel,
+}
+
 pub(crate) async fn run_session_turn(
     ctx: &ChatRunCtx,
     engine: &mut crate::engine::AgentEngine,
     manager: &Arc<AgentManager>,
-    (max_live_msgs, live_state): (Option<usize>, LiveState),
+    max_live_msgs: Option<usize>,
+    (live_state, model_by): (LiveState, ModelBy),
 ) {
     ctx.start.stand_for_reads(engine);
     // Its place is the running one while it runs, unless whoever took the
@@ -901,13 +915,13 @@ pub(crate) async fn run_session_turn(
             // doors, where they choose the model (`ReadAtTheDoor`); a task's
             // end and a delivered message read it here, and choose none.
             live_state,
-            model: match live_state {
-                LiveState::Read => ModelStep::NotChosenAsFound,
-                LiveState::ReadAtTheDoor => ModelStep::ChosenByTheDoor,
-            },
+            model: ModelStep::ChosenByTheDoor,
             seat: turn_seat(ctx).await,
         })
         .await;
+    if model_by == ModelBy::TheMembersKeptModel {
+        choose_members_model(engine, ctx).await;
+    }
     super::thread::sync(engine, ctx).await;
     // After the sync (and before this turn's user message + fresh recall
     // are pushed), the buffer holds only completed prior turns — safe to
@@ -1648,7 +1662,7 @@ pub(crate) async fn start_turn(
             turn,
         };
 
-        run_session_turn(&ctx, &mut engine, &manager, (None, LiveState::ReadAtTheDoor)).await;
+        run_session_turn(&ctx, &mut engine, &manager, None, (LiveState::ReadAtTheDoor, ModelBy::TheDoorBeforeTheTurn)).await;
         count_person_turn(&state_clone, (&req_user_type, req_user_id.as_deref()), &mut engine).await;
         hear_her_at_table(&state_clone, &engine, &ctx, &session_id_for_queue);
 

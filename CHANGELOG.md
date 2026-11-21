@@ -50,7 +50,9 @@ The phone's part ships with the phone app.
 - **A turn a host program tells Yinyue — `agent_run` in her session, or a
   restart's continue turn — runs as hers**: on her model, with her recall.
 - **A task's end sees a setting you changed since the session's last turn**
-  (when a long thread is compacted, for one).
+  (when a long thread is compacted, for one). After a restart, a turn that
+  follows a finished task or a message from another agent runs on the model
+  the session keeps for that agent.
 
 ## [2.6.0] - unreleased — hold Yinyue and talk to her
 

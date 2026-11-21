@@ -396,7 +396,7 @@ async fn tell_in_place(
     let language = crate::server::resident::language_of_turn(&state, &session, origin, None).await;
     let mut engine = engine.lock().await;
     engine.set_parent_agent(None);
-    let (policy, cap, live_state) = prepared_for(&state, &mut engine, &agent, (&session, &root, &told_at), language.clone()).await;
+    let (policy, cap, (live_state, model_by)) = prepared_for(&state, &mut engine, &agent, (&session, &root, &told_at), language.clone()).await;
     let ctx = super::chat::ChatRunCtx {
         via: None,
         state: state.clone(),
@@ -415,7 +415,7 @@ async fn tell_in_place(
         place: told_at.clone(),
         turn: crate::engine::turn_place::TurnSettings { language, ..Default::default() },
     };
-    super::chat::run_session_turn(&ctx, &mut engine, &state.manager, (cap, live_state)).await;
+    super::chat::run_session_turn(&ctx, &mut engine, &state.manager, cap, (live_state, model_by)).await;
     let ended = running.as_ref().is_some_and(crate::server::resident::RunningOrigin::was_ended);
     if origin.held() && !ended {
         let reply = engine.last_assistant_text.clone().map(|t| crate::server::resident::Turned::of(t, origin));
@@ -436,13 +436,22 @@ async fn prepared_for(
     agent: &str,
     (session, root, place): (&str, &std::path::Path, &crate::engine::turn_place::TurnPlace),
     language: Option<String>,
-) -> (crate::engine::session_policy::SessionPolicy, Option<usize>, crate::engine::turn_place::entrance::LiveState) {
+) -> (
+    crate::engine::session_policy::SessionPolicy,
+    Option<usize>,
+    (crate::engine::turn_place::entrance::LiveState, super::chat::ModelBy),
+) {
     use crate::engine::turn_place::entrance::LiveState;
+    use super::chat::ModelBy;
     if super::chat::members::is_companion(agent) {
         let (policy, cap) = crate::server::resident::prepare_told_turn(state, engine, (session, root, place), language).await;
-        return (policy, cap, LiveState::ReadAtTheDoor);
+        return (policy, cap, (LiveState::ReadAtTheDoor, ModelBy::TheDoorBeforeTheTurn));
     }
-    (super::chat::policy::turn_policy(super::chat::policy::TurnBy::Engine), None, LiveState::Read)
+    (
+        super::chat::policy::turn_policy(super::chat::policy::TurnBy::Engine),
+        None,
+        (LiveState::Read, ModelBy::TheMembersKeptModel),
+    )
 }
 
 /// `place` in the session's turn line, with the admission gate to hold

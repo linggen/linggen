@@ -384,3 +384,52 @@ async fn a_restarts_continue_turn_for_her_runs_on_her_model() {
     until_calls(&w, Agent::Yinyue, 1).await;
     assert_eq!(call(&w, Agent::Yinyue, 0).model(), "fake-yinyue-1");
 }
+
+// ---- R4 stage 2, the model of a task's end and a continue turn ----
+
+/// A session whose member keeps a model that is not the default (the
+/// picker's): its chat turn runs on it.
+async fn keeps_the_eye_model(w: &World) -> String {
+    let sid = w.api.create_session(json!({"title": "Chat"})).await;
+    w.api.patch("/api/sessions", json!({"session_id": sid, "agent_id": "ling", "model_id": "fake-eye"})).await;
+    sid
+}
+
+/// A turn that follows a finished task or a message from another agent runs
+/// on the model the session keeps for its agent — after a restart too,
+/// when the engine is built again (here a restart's continue turn, told as a
+/// task's end is). A delivered `agent_chat` is the same `run_session_turn`
+/// call; it cannot be reached on a rebuilt engine from a system test (with no
+/// engine alive its message lands in a session of its own), so it is covered
+/// as a pin of who passes what (`entrance_lock.rs`:
+/// `a_task_end_and_a_delivery_have_the_members_kept_model_chosen_for_them`).
+#[tokio::test]
+async fn a_continue_turn_on_a_rebuilt_engine_runs_on_the_members_kept_model() {
+    let mut w = World::start(Setup::default().setting_off().script(Agent::Ling, vec![text("One."), text("Back.")])).await;
+    let sid = keeps_the_eye_model(&w).await;
+    w.turn(&sid, &w.work(), "One.", Agent::Ling).await;
+    assert_eq!(call(&w, Agent::Ling, 0).model(), "fake-eye-1", "the kept model runs its chat turn");
+    crate::restart::leave_plan(&w, json!([{"session_id": sid, "agent_id": "ling", "caller": true, "tasks": ["make (sh-1)"]}]));
+    w.engine.restart(&w.home).await;
+    until_calls(&w, Agent::Ling, 2).await;
+    assert_eq!(call(&w, Agent::Ling, 1).model(), "fake-eye-1");
+}
+
+/// On the live engine a task's end runs on the model the last turn left it
+/// on, which is the kept one — before and after the model is chosen for it.
+#[tokio::test]
+async fn a_task_end_turn_on_the_live_engine_runs_on_the_members_kept_model() {
+    let w = World::start(Setup::default().setting_off().script(
+        Agent::Ling,
+        vec![
+            tool("Bash", json!({"cmd": "sleep 2; echo finished", "run_in_background": true})),
+            text("Started it."),
+            text("Noted the end."),
+        ],
+    ))
+    .await;
+    let sid = keeps_the_eye_model(&w).await;
+    first_turn(&w, &sid).await;
+    until_calls(&w, Agent::Ling, 3).await;
+    assert_eq!(call(&w, Agent::Ling, 2).model(), "fake-eye-1");
+}
