@@ -124,15 +124,22 @@ typed line at the page stays text.
   once beside the voice model), in the voice sidecar that already speaks her
   (`mlx_sidecar.rs`, one process, one slot; `mlx_voice.py`). Same machine
   needs as her voice (Apple Silicon, 16 GB — no lane of its own). Fetched at
-  first use, not at boot: the first ask answers 503 "Fetching the hearing
-  model", and the progress rides the `tasks` topic as her voice's does. The
+  first use: the first ask answers 503 "Fetching the hearing
+  model", and the progress rides the `tasks` topic as her voice's does. A Mac
+  that already holds the model loads it at start, after her voice is ready and
+  with the pet on (`background::warm_at_start`), so the first press does not
+  wait; a Mac that never fetched it does nothing at start. The
   fetch is one attempt (`runtime::Attempt`): a failure is "failed", never
   "fetching", and the next press tries again and says it is a retry. Loading
   the model is its own step with its own long wait (`op: "load"`, started when
   the fetch ends and at a press that finds it on disk but not loaded; "Getting
   ready to listen…" until then) — a hear is never the load, and waits longer
-  for the sidecar's one slot than her voice does. The language setting is the
-  clip's language, with a Simplified prompt for Chinese; segments the model
+  for the sidecar's one slot than her voice does. The clip's language is told to
+  the model, decided in one place (`stt::language_to_hear`): the language
+  setting; under Auto, the language of the line the person last typed to her
+  (`resident::language_person_writes`, the reading her own engine-started turns
+  follow); else the page's language (the Mac's, then English). Chinese carries
+  a Simplified prompt (`stt_mlx::hint_of`); segments the model
   reports as no speech, low confidence or a repetition loop are not words
   (`stt_mlx::words_of`).
 - **The sound is never kept or sent.** The provider is handed samples (no path,
@@ -163,7 +170,12 @@ typed line at the page stays text.
   full-/half-width folded, never a substring, never free text, never a grant
   for every folder. Anything else relays nothing; she says what she heard and
   that it must be typed or tapped. The labels are the options' own (English
-  "Allow once", "Deny"); a typed answer is as it was.
+  "Allow once", "Deny"), and for those two answers the words the page shows in
+  the person's language are the label too ("允许一次", "拒绝" on a Chinese
+  page): one table beside the labels (`permission::label_shown_in`), held to
+  the page's string table by a test. Nothing else is accepted — not 好, 可以,
+  yes, ok. A Traditional-Chinese clip ("允許一次") is not the words the page
+  shows and relays nothing. A typed answer is as it was.
 
 ## Herald — what she tells of Ling's work, decided in one place
 
