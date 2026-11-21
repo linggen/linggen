@@ -36,15 +36,11 @@ The phone's part ships with the phone app.
 
 - **A session's summary, the prompt preview and Yinyue's pushed line run on
   the model the turn itself runs on.** For a person given models, the summary
-  and its window now follow the models they were given, as their turn does;
-  before, the summary could name another of them than their turn did. Nothing
-  outside what a person was given is named.
-- **Switching models is one switch.** Turned off in settings, a turn that
-  asked for a model this Mac lacks (chat, Yinyue's, a mission's) now fails on
-  it, as it did when the session's own switch was off; before, it ran on the
-  default and cleared the pick. The words are the client's "model not found",
-  not the named refusal of a session with switching off.
-- **A model a failed call moves a member to is kept as a picked one is.**
+  and its window now follow the models they were given, as their turn does:
+  their first given model, not the agent's default when both are given.
+  Nothing outside what a person was given is named.
+- **A model a failed call moves a member to is kept as a picked one is.** A
+  member the session had not seated yet now joins with the lead first.
 
 ## [2.6.0] - unreleased — hold Yinyue and talk to her
 

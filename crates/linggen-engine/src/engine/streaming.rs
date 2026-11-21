@@ -1263,57 +1263,6 @@ mod fallback_window_tests {
         assert_eq!(seated, [("ling", None), ("yinyue", Some("gpt-6.1-terra"))]);
     }
 
-    /// With only the routing config's switch off, a model this machine lacks
-    /// fails the call, naming the model, but in the client's own words: the
-    /// stream's refusal "off for this session" is the session's switch's, and
-    /// is not said when the session's switch is on.
-    #[tokio::test]
-    async fn a_model_this_machine_lacks_fails_when_only_the_config_switch_is_off() {
-        let root = tempfile::tempdir().unwrap();
-        let config = crate::config::Config::default();
-        let cfg = EngineConfig::from_app_config(&config, root.path().into(), InterfaceMode::Web);
-        let models = Arc::new(ModelManager::new_with_credentials(
-            vec![],
-            &crate::credentials::Credentials::default(),
-        ));
-        let mut engine =
-            AgentEngine::new(cfg, models, "ghost-model".into(), AgentRole::Lead).unwrap();
-        engine.agent_id = Some("ling".into());
-        engine.allow_model_fallback = false;
-        let (mut manager, _events) = AgentManager::new(
-            config,
-            None,
-            Arc::new(crate::engine::test_registries::Empty),
-            Arc::new(crate::engine::test_registries::Empty),
-            Arc::new(crate::engine::test_registries::Empty),
-            InterfaceMode::Web,
-        );
-        Arc::get_mut(&mut manager)
-            .expect("a fresh manager")
-            .global_sessions =
-            crate::state_fs::SessionStore::leaked(root.path().join("sessions"));
-        manager
-            .global_sessions
-            .add_session(&crate::state_fs::sessions::SessionMeta {
-                id: "s-ghost".into(),
-                ..Default::default()
-            })
-            .unwrap();
-        engine.set_manager_context(manager);
-        engine.session_id = Some("s-ghost".into());
-        let err = engine
-            .stream_with_fallback(&[ChatMessage::new("user", "hi")], None)
-            .await
-            .err()
-            .expect("no such model, and no other to try");
-        let said = err.to_string();
-        assert!(said.contains("ghost-model"), "{said}");
-        assert!(
-            !said.starts_with(crate::provider::error::NO_FALLBACK_MARK),
-            "the session's switch is on: {said}"
-        );
-    }
-
     #[tokio::test]
     async fn a_model_this_machine_lacks_fails_named_when_switching_is_off() {
         let root = tempfile::tempdir().unwrap();

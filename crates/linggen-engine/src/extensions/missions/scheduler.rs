@@ -799,7 +799,7 @@ async fn dispatch_mission_prompt(
     // session that may not switch models, is kept so the run fails on it,
     // named.
     engine.read_live_state(&manager).await;
-    let may_switch = engine.switching(session_id.as_deref()).may();
+    let may_switch = engine.switching(session_id.as_deref()).session_allows();
     let choice = crate::engine::model_choice::resolve(
         &engine.model_manager,
         mission.model.as_deref(),

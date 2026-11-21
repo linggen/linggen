@@ -191,7 +191,7 @@ One rule, `engine/model_choice::resolve(asked, standing, rule)`, for a chat turn
 - **Asked** — the picker's model, the one a session keeps for a member, the companion's Pet setting (`auto`: Linggen Cloud when signed in, else nothing), or a mission's `model:`. A retired built-in id runs, and is kept, as its successor.
 - **Nothing asked** — the place's standing model: the agent's own, from its chain (config override, frontmatter, the star, the first configured model).
 - **Asked but cannot run** (not on this machine, or not shared with a room's guest) — the standing model runs instead, the kept pin is cleared, and the same `ModelFallback` notice as a mid-call fallback says which model answers and why.
-- **Switching off** (`[routing] model_fallback = false`, or a session's own `model_fallback: false`; a delegated `agent_run` session by default; `model_choice::Switching` holds both) — the asked model is kept and the turn fails on it. With the session's switch off the refusal is named and says so; with only the config's off it is the client's own "model not found". A guest's shared list is an access rule, not a failure: it holds either way.
+- **Switching off** (`model_fallback: false`; a delegated `agent_run` session by default) — the asked model is kept and the turn fails on it, named. A guest's shared list is an access rule, not a failure: it holds either way.
 - **A room's guest** runs only the models the room shares — before the turn and in the fallback below. A room that shares none refuses the turn.
 
 `AgentEngine::run_on` is the one writer of a turn's model; a lock test fails on any other.

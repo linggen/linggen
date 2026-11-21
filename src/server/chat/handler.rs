@@ -662,7 +662,7 @@ pub(super) async fn resolve_effective_model(
     manager: &Arc<AgentManager>,
 ) {
     use crate::engine::model_choice::{self, Rule};
-    let may_switch = engine.switching(session_id).may();
+    let may_switch = engine.switching(session_id).session_allows();
     let choice = model_choice::resolve(
         &engine.model_manager,
         asked.id(),
@@ -1631,13 +1631,13 @@ pub(crate) async fn start_turn(
 
 #[cfg(test)]
 mod tests {
-    /// A door asks `model_choice::Switching` whether the turn may switch
-    /// models, which holds both switches — the routing config's and the
-    /// session's: with either off, an asked model this machine lacks is
-    /// kept and the turn fails on it, named; with both on it gives way to
-    /// the standing one.
+    /// A door asks `model_choice::Switching::session_allows`: an asked model
+    /// this machine lacks gives way to the standing one, and the pick is
+    /// cleared, unless the SESSION's switch is off — then it is kept and the
+    /// turn fails on it. The routing config's switch is the mid-call
+    /// fallback's, and changes nothing here.
     #[tokio::test]
-    async fn a_door_lets_a_turn_switch_models_only_when_both_switches_are_on() {
+    async fn a_door_gives_way_to_the_standing_model_unless_the_sessions_switch_is_off() {
         use super::{resolve_effective_model, TurnModel};
         use crate::engine::agent::AgentManager;
         use crate::engine::{AgentEngine, AgentRole, EngineConfig, InterfaceMode};
@@ -1648,7 +1648,8 @@ mod tests {
         for (config_on, session_switch, kept) in [
             (true, None, false),
             (true, Some(true), false),
-            (false, None, true),
+            (false, None, false),
+            (false, Some(true), false),
             (true, Some(false), true),
             (false, Some(false), true),
         ] {
@@ -1672,7 +1673,10 @@ mod tests {
                 .add_session(&crate::state_fs::sessions::SessionMeta {
                     id: session.clone(),
                     model_fallback: session_switch,
-                    agents: vec![crate::state_fs::sessions::SessionMember::new("ling")],
+                    agents: vec![crate::state_fs::sessions::SessionMember {
+                        id: "ling".into(),
+                        model: Some("ghost-model".into()),
+                    }],
                     ..Default::default()
                 })
                 .unwrap();
@@ -1699,6 +1703,10 @@ mod tests {
                 engine.model_id, want,
                 "config {config_on}, session {session_switch:?}"
             );
+            let meta = manager.global_sessions.get_session_meta(&session).unwrap().unwrap();
+            let pick = meta.member("ling").and_then(|m| m.model.as_deref());
+            let want_pick = kept.then_some("ghost-model");
+            assert_eq!(pick, want_pick, "the pick: config {config_on}, session {session_switch:?}");
         }
     }
 

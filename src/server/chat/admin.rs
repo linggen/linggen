@@ -227,11 +227,8 @@ async fn seat_for_export(
         .unwrap_or_else(|| crate::state_fs::sessions::SessionMember::new(agent_id));
     // A preview, not a turn: the model `members::model_of` names, for the
     // asker the export's own policy has (the owner's).
-    let shared = engine.guest_models();
-    let asker = shared
-        .as_deref()
-        .map_or(crate::engine::model_choice::Asker::Owner, crate::engine::model_choice::Asker::Guest);
-    let Some(choice) = super::members::model_of(&state.manager, root, &member, asker).await else {
+    let by = engine.asked_by();
+    let Some(choice) = super::members::model_of(&state.manager, root, &member, by.asker()).await else {
         return;
     };
     engine.run_on(&choice, "prompt preview").await;
@@ -330,10 +327,8 @@ pub(crate) async fn compact_chat_api(
         }
         None => None,
     };
-    let asker = given
-        .as_deref()
-        .map_or(crate::engine::model_choice::Asker::Owner, crate::engine::model_choice::Asker::Guest);
-    let Some(models) = super::compact_rows::session_models(&state.manager, &root, &members, asker).await
+    let by = crate::engine::model_choice::AskedBy::of(given);
+    let Some(models) = super::compact_rows::session_models(&state.manager, &root, &members, by.asker()).await
     else {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,

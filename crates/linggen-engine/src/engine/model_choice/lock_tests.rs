@@ -283,3 +283,19 @@ fn one_place_writes_the_model_a_session_keeps_for_a_member() {
         );
     }
 }
+
+/// An asker is made from "the models it was given" in one place:
+/// `AskedBy::asker`. The path `Asker::Guest` handed on as a function (as in
+/// `.map_or(Asker::Owner, Asker::Guest)`) is how that decision was once
+/// written at each door; it fails here wherever it is written again. (The
+/// scan sees that spelling, not every way of writing the same decision.)
+#[test]
+fn an_asker_is_made_in_one_place() {
+    for (rel, text) in scanned() {
+        assert_eq!(
+            text.matches("Asker::Guest)").count(),
+            0,
+            "{rel} makes an asker from a list of models: use AskedBy::of(..).asker()"
+        );
+    }
+}

@@ -232,11 +232,8 @@ pub(super) async fn compact_if_due(engine: &mut AgentEngine, ctx: &ChatRunCtx) -
         return false;
     };
     let members = super::members::of_session(&ctx.manager, sid).await;
-    let shared = engine.guest_models();
-    let asker = shared
-        .as_deref()
-        .map_or(crate::engine::model_choice::Asker::Owner, crate::engine::model_choice::Asker::Guest);
-    let Some(models) = session_models(&ctx.manager, &ctx.root, &members, asker).await else {
+    let by = engine.asked_by();
+    let Some(models) = session_models(&ctx.manager, &ctx.root, &members, by.asker()).await else {
         return false;
     };
     let threshold = engine

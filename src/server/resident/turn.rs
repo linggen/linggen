@@ -477,7 +477,7 @@ async fn apply_her_model(
     let pinned = kept.is_some();
     let wanted = kept.or_else(|| resolve_pet_model(&pet.model));
     engine.read_live_state(&state.manager).await;
-    let may_switch = engine.switching(Some(session_id)).may();
+    let may_switch = engine.switching(Some(session_id)).session_allows();
     let choice = her_choice(engine, wanted.as_deref(), may_switch);
     engine.run_on(&choice, "[yinyue]").await;
     // A kept model she cannot run is cleared, as a chat turn clears it: the
