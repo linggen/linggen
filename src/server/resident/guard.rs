@@ -36,10 +36,11 @@ pub(crate) enum Source {
 }
 
 impl Source {
-    /// The kind of turn of hers this source is. The two share one name per
-    /// kind (`Origin::name`): a log line and the activity log's `hold`
-    /// record never call the same kind two things.
-    pub(crate) fn origin(self) -> Origin {
+    /// The kind of turn of hers whose name this source shares: one name per
+    /// kind (`Origin::name`), so a log line and the activity log's `hold`
+    /// record never call the same kind two things. Not a mapping from
+    /// origin to source — that is `triggers::unprompted_source`.
+    fn named_as(self) -> Origin {
         match self {
             Source::Glance => Origin::Glance,
             Source::Moment => Origin::Moment,
@@ -51,7 +52,7 @@ impl Source {
 
     /// The word the activity log's `hold` record carries.
     pub(crate) fn name(self) -> &'static str {
-        self.origin().name()
+        self.named_as().name()
     }
 
     /// Whether her line counts toward the hourly ceiling.

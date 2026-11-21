@@ -205,7 +205,7 @@ fn a_fault_waits_through_quiet_hours_and_is_outside_the_ceiling() {
 #[test]
 fn a_kind_of_unprompted_line_has_one_name_in_every_log() {
     for source in [Source::Glance, Source::Moment, Source::InUse, Source::Note, Source::Fault] {
-        assert_eq!(source.name(), source.origin().name(), "{source:?}");
+        assert_eq!(source.name(), source.named_as().name(), "{source:?}");
     }
     assert_eq!(Source::Glance.name(), "glance");
     assert_eq!(Source::InUse.name(), "moment-in-use");
