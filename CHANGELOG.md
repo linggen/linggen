@@ -41,12 +41,68 @@
   (256 KiB a file, 512 KiB in all), not text.
 - **A change to a parent folder's rules or to an imported file** is picked up
   on the next turn.
+- **Rules for part of a project reach a coding session when it gets there.** A
+  rule file in a sub-folder (`ui/CLAUDE.md`), and a rule under `.claude/rules/`
+  whose `paths:` match, join the session's instructions the first time it
+  reads or changes a file under them — once, and they stay. A rule under
+  `.claude/rules/` with no `paths:` is read from the start.
+- **A change made before its place's rules were read waits one round.** The
+  model gets the rules and makes the change again with them in view; you see
+  one line, "Held once: this place's rules were just loaded."
 
 ### Permissions
 
 - **The folder a caller hands a run follows one rule**, for `write_dir` as for
   a preset grant: an existing absolute folder, never `/`, the home folder, or
   Linggen's own folder (or one inside it or holding it).
+- **A coding session honours the `deny` and `ask` rules in your Claude Code
+  settings** (`~/.claude/settings.json`, and a project's
+  `.claude/settings.json` and `.claude/settings.local.json`). A `deny` refuses
+  whatever the session's level and names its rule and file; an `ask` asks
+  every time — allow once or deny, never a grant. `allow` is never read: a
+  file shipped inside a project cannot widen what a session may do. A rule
+  Linggen cannot read exactly is listed when the run starts; such a deny
+  refuses its whole tool.
+- **A change to one of those settings files is asked every time**, in every
+  kind of session: allow once or deny. Reading them is not asked.
+- **A request from another device or a room's guest names only sessions that
+  are its person's**, and its JSON body is an object.
+- **A permission level is read from its word in one place.** A path grant
+  written `chat` in a skill or a mission is chat (it was read as read).
+
+### Yinyue
+
+- **She tells you of Ling's work once, by voice, and only while you are
+  away**: a reply is ready, a run waits for you, a run failed. At the screen
+  the page already shows it, so she says nothing.
+- **What she said is a mark on the thing it was about** — "Yinyue said this
+  while you were away", her line inside — on the reply, the failure line or
+  the waiting question's card. It is no longer a message of its own in the
+  thread, and it is set only when the line was really said aloud.
+- **A waiting question can be answered in her bubble**: the same card, the
+  same buttons as on the page. Answered anywhere, it leaves her bubble.
+- **One telling for a turn that waits**, however many questions it asks; a
+  question that was folded in is told if the first telling came to nothing.
+- **A run another tool started is never told** (an `agent_run` from Claude
+  Code or Codex): its caller has it.
+- **A turn the engine started for her that ends without words shows nothing**
+  on any page, then or after a reload.
+
+### Models and cost
+
+- **Signing in is read in one place.** A ChatGPT model reaches the phone as a
+  sign-in model, not as a key model with no key; `ling status` names a model
+  on your Linggen account as that.
+- **A session's cost is one answer**, the same in the chat's top bar and in
+  `agent_status`. Its `usage` now also carries `prompt` on each count,
+  `priced_tokens`, `unpriced_tokens` and `spent`; the page only words them.
+- **A follow-up to a delegated run is sent as the tool that started it.** A
+  Codex run's follow-up is Codex's, not Claude Code's.
+
+### Sessions
+
+- **Installing, updating or removing a skill no longer ends other sessions'
+  work in memory.** Each session reads the new skills at its next turn.
 
 ### Claude sessions are Linggen sessions
 
