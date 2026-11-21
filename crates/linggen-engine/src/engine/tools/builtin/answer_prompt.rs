@@ -30,16 +30,25 @@ async fn kept_elsewhere(tools: &Tools, session: Option<&str>) -> Option<String> 
 mod tests {
     use super::*;
 
+    /// A relay on a page in English: the labels are the only words.
+    fn relay_en(
+        question: Option<&crate::engine::tools::AskUserQuestion>,
+        answer: &str,
+        heard: Option<&str>,
+    ) -> std::result::Result<Vec<String>, &'static str> {
+        relay_selection(question, answer, heard, "en")
+    }
+
     #[test]
     fn a_permission_relay_needs_one_exact_non_global_label() {
         let mut question = crate::engine::permission::build_exceeds_ceiling_question(
             "Read", &PermissionMode::Read, "/project/file", &["/project".into()],
         );
-        assert_eq!(relay_selection(Some(&question), "  dENY ", None).unwrap(), ["Deny"]);
-        assert!(relay_selection(Some(&question), "grant:at:read", None).is_err());
-        assert!(relay_selection(Some(&question), "grant:all:read", None).is_err());
+        assert_eq!(relay_en(Some(&question), "  dENY ", None).unwrap(), ["Deny"]);
+        assert!(relay_en(Some(&question), "grant:at:read", None).is_err());
+        assert!(relay_en(Some(&question), "grant:all:read", None).is_err());
         question.permission = None;
-        assert_eq!(relay_selection(Some(&question), "I said Deny", None).unwrap(), ["Deny"]);
+        assert_eq!(relay_en(Some(&question), "I said Deny", None).unwrap(), ["Deny"]);
     }
 
     /// A permission question with the labels "Allow once" and "Deny" (the
@@ -57,12 +66,12 @@ mod tests {
     #[test]
     fn a_spoken_answer_must_be_one_option_whole() {
         let question = permission_question();
-        let relayed = |heard: &str| relay_selection(Some(&question), "Allow once", Some(heard));
+        let relayed = |heard: &str| relay_en(Some(&question), "Allow once", Some(heard));
         for heard in ["Allow once", "allow once", "  ALLOW ONCE  ", "Allow once.", "Allow once!", "\u{201c}Allow once\u{201d}", "Allow  once", "Ａｌｌｏｗ　ｏｎｃｅ"] {
             assert_eq!(relayed(heard).unwrap(), ["Allow once"], "{heard:?}");
         }
         for heard in ["Deny", "deny.", "DENY。", "Ｄｅｎｙ"] {
-            assert_eq!(relay_selection(Some(&question), "Deny", Some(heard)).unwrap(), ["Deny"], "{heard:?}");
+            assert_eq!(relay_en(Some(&question), "Deny", Some(heard)).unwrap(), ["Deny"], "{heard:?}");
         }
         // Near misses never grant: a hedge, a stock phrase the model invents from
         // a noisy room, an option inside a sentence or the sentence inside an
@@ -70,10 +79,69 @@ mod tests {
         for heard in [
             "allow it I guess", "Thank you for watching.", "字幕由某某提供", "I said Deny", "Deny the request",
             "please allow once", "allow once or deny", "denied", "allow", "once", "yes", "", "   ", "。",
-            "Allow once Deny", "允许一次",
+            "Allow once Deny",
         ] {
             assert!(relayed(heard).is_err(), "{heard:?} must not relay");
         }
+    }
+
+    /// Rule 1: said as the person sees it. For the two permission answers the
+    /// engine writes, the words the page shows in the person's language are the
+    /// label too — whole, by the heard words alone, and only in that language.
+    #[test]
+    fn a_spoken_answer_may_be_said_as_the_page_shows_it() {
+        let question = permission_question();
+        let zh = |heard: &str| relay_selection(Some(&question), "x", Some(heard), "zh-Hans");
+        for heard in ["允许一次", "允许一次。", " 允许一次！", "“允许一次”", "允许一次，"] {
+            assert_eq!(zh(heard).unwrap(), ["Allow once"], "{heard:?}");
+        }
+        for heard in ["拒绝", "拒绝。", "拒绝！"] {
+            assert_eq!(zh(heard).unwrap(), ["Deny"], "{heard:?}");
+        }
+        // The English labels still count on a Chinese page: the clip may be written either way.
+        assert_eq!(zh("Allow once.").unwrap(), ["Allow once"]);
+        assert_eq!(zh("deny").unwrap(), ["Deny"]);
+        // Every Chinese tag is the page's Chinese; the words are those it shows.
+        for tag in ["zh", "zh-CN", "zh-Hant", "zh_TW"] {
+            assert_eq!(relay_selection(Some(&question), "x", Some("允许一次"), tag).unwrap(), ["Allow once"], "{tag}");
+        }
+        // On an English page they are not the label: the person is not shown them.
+        for tag in ["en", "en-US", "ja", ""] {
+            assert!(relay_selection(Some(&question), "x", Some("允许一次"), tag).is_err(), "{tag}");
+            assert!(relay_selection(Some(&question), "x", Some("拒绝"), tag).is_err(), "{tag}");
+        }
+    }
+
+    /// The near misses stay refused in the person's language as in English:
+    /// consent in other words, the label inside a sentence or a sentence
+    /// inside the label, a half of it, its opposite, a spelling the page does
+    /// not show (Traditional), and the words of another option together.
+    #[test]
+    fn near_misses_stay_refused_in_chinese() {
+        let question = permission_question();
+        for heard in [
+            "好", "好的", "可以", "行", "同意", "批准", "确认", "是", "嗯", "yes", "ok", "OK", "okay", "sure", "approve",
+            "允许", "一次", "允许一下", "允许一次吧", "请允许一次", "我说允许一次", "允许一次，拒绝", "允许一次拒绝", "允许一次 拒绝",
+            "不允许一次", "不拒绝", "拒绝一次", "不要", "别", "拒绝它", "允许 一次", "允許一次", "拒絕", "允许一次允许一次",
+            "谢谢观看", "字幕由某某提供", "", "   ", "。",
+        ] {
+            assert!(relay_selection(Some(&question), "Allow once", Some(heard), "zh-Hans").is_err(), "{heard:?} must not relay");
+        }
+    }
+
+    /// The answer a person is never to give by voice is the same in any language.
+    #[test]
+    fn nothing_but_the_two_answers_is_said_in_chinese() {
+        let grants = crate::engine::permission::build_exceeds_ceiling_question(
+            "Read", &PermissionMode::Read, "/project/file", &["/project".into()],
+        );
+        for heard in ["本文件夹只读", "全部路径只读", "Read everywhere", "只读"] {
+            assert!(relay_selection(Some(&grants), "", Some(heard), "zh-Hans").is_err(), "{heard:?}");
+        }
+        assert_eq!(relay_selection(Some(&grants), "", Some("拒绝"), "zh-Hans").unwrap(), ["Deny"]);
+        let all = grants.options.iter().find(|o| o.label.starts_with("grant:all:")).unwrap();
+        assert!(relay_selection(Some(&grants), "", Some(&all.label), "zh-Hans").is_err());
+        assert!(relay_selection(None, "x", Some("拒绝"), "zh-Hans").is_err(), "no question to name an option of");
     }
 
     /// The model's rendering of what it heard is not the words: a hedge that
@@ -81,10 +149,10 @@ mod tests {
     #[test]
     fn a_spoken_answer_is_weighed_by_the_words_heard_not_the_models_argument() {
         let question = permission_question();
-        assert!(relay_selection(Some(&question), "Allow once", Some("allow it I guess")).is_err());
-        assert!(relay_selection(Some(&question), "Allow once", Some("")).is_err(), "no words, no relay");
+        assert!(relay_en(Some(&question), "Allow once", Some("allow it I guess")).is_err());
+        assert!(relay_en(Some(&question), "Allow once", Some("")).is_err(), "no words, no relay");
         // And the other way: the argument cannot take back what was said exactly.
-        assert_eq!(relay_selection(Some(&question), "something else", Some("Deny")).unwrap(), ["Deny"]);
+        assert_eq!(relay_en(Some(&question), "something else", Some("Deny")).unwrap(), ["Deny"]);
     }
 
     /// A grant for every folder is answered on screen, spoken or typed; and a
@@ -95,16 +163,16 @@ mod tests {
             "Read", &PermissionMode::Read, "/project/file", &["/project".into()],
         );
         let all = grants.options.iter().find(|o| o.label.starts_with("grant:all:")).expect("the grant question offers it");
-        assert!(relay_selection(Some(&grants), "", Some(&all.label)).is_err());
-        assert_eq!(relay_selection(Some(&grants), "", Some("deny")).unwrap(), ["Deny"], "its Deny can be spoken");
+        assert!(relay_en(Some(&grants), "", Some(&all.label)).is_err());
+        assert_eq!(relay_en(Some(&grants), "", Some("deny")).unwrap(), ["Deny"], "its Deny can be spoken");
         let mut open = permission_question();
         open.permission = None;
-        assert_eq!(relay_selection(Some(&open), "x", Some("deny")).unwrap(), ["Deny"]);
-        assert!(relay_selection(Some(&open), "x", Some("I said Deny")).is_err(), "typed may; spoken may not");
-        assert!(relay_selection(Some(&open), "x", Some("whatever the person said")).is_err(), "no free-text answer by voice");
-        assert!(relay_selection(None, "x", Some("Deny")).is_err(), "no question to name an option of");
+        assert_eq!(relay_en(Some(&open), "x", Some("deny")).unwrap(), ["Deny"]);
+        assert!(relay_en(Some(&open), "x", Some("I said Deny")).is_err(), "typed may; spoken may not");
+        assert!(relay_en(Some(&open), "x", Some("whatever the person said")).is_err(), "no free-text answer by voice");
+        assert!(relay_en(None, "x", Some("Deny")).is_err(), "no question to name an option of");
         // Typed, with no question on record, is as it was: the words go through.
-        assert_eq!(relay_selection(None, "anything", None).unwrap(), Vec::<String>::new());
+        assert_eq!(relay_en(None, "anything", None).unwrap(), Vec::<String>::new());
     }
 
     /// Through the tool itself: a turn the person spoke relays the exact
@@ -189,18 +257,21 @@ mod tests {
 ///
 /// `heard`: the words the person SPOKE to start this turn, when they did.
 /// A spoken answer is weighed by those words and by nothing the model made of
-/// them: they must be exactly one option's label (see [`folded`]) — never part
-/// of a longer sentence, never free text, never a grant for every folder — or
-/// nothing is relayed and she says what she heard. A typed answer is as it
-/// always was: a permission question wants one exact label, any other
-/// question takes a label by substring or the words as custom text.
+/// them: they must be exactly one option's label (see [`folded`]) — or, for
+/// the two permission answers, the words the page shows for it in
+/// `shown_in`, the person's language — never part of a longer sentence,
+/// never free text, never a grant for every folder; or nothing is relayed and
+/// she says what she heard. A typed answer is as it always was: a permission
+/// question wants one exact label, any other question takes a label by
+/// substring or the words as custom text.
 fn relay_selection(
     question: Option<&super::super::AskUserQuestion>,
     answer: &str,
     heard: Option<&str>,
+    shown_in: &str,
 ) -> std::result::Result<Vec<String>, &'static str> {
     if let Some(words) = heard {
-        return relay_heard(question, words);
+        return relay_heard(question, words, shown_in);
     }
     let Some(question) = question else { return Ok(Vec::new()) };
     let permission = question.permission.is_some();
@@ -224,10 +295,14 @@ fn relay_selection(
     Ok(if matches.len() == 1 { matches } else { Vec::new() })
 }
 
-/// A spoken answer: the heard `words` name exactly one option, or nothing is relayed.
+/// A spoken answer: the heard `words` name exactly one option, or nothing is
+/// relayed. An option is named by its label, or by the words the page shows
+/// for it in `shown_in` (`permission::label_shown_in`: "允许一次" for "Allow
+/// once" on a Chinese page) — the whole of either, nothing near it.
 fn relay_heard(
     question: Option<&super::super::AskUserQuestion>,
     words: &str,
+    shown_in: &str,
 ) -> std::result::Result<Vec<String>, &'static str> {
     const NOT_EXACT: &str = "refused: what was heard is not exactly one of the options. Tell the person what you heard \
                              and that this answer must be typed or tapped on screen; relay nothing.";
@@ -236,7 +311,10 @@ fn relay_heard(
         .into_iter()
         .flat_map(|q| &q.options)
         .map(|option| option.label.as_str())
-        .filter(|label| !heard.is_empty() && folded(label) == heard)
+        .filter(|label| {
+            let shown = crate::engine::permission::label_shown_in(label, shown_in);
+            !heard.is_empty() && (folded(label) == heard || shown.is_some_and(|shown| folded(shown) == heard))
+        })
         .collect();
     match named.as_slice() {
         [label] if label.starts_with("grant:all:") => {
@@ -354,7 +432,12 @@ impl Tool for AnswerPromptTool {
                     "no single open prompt to answer — nothing relayed.".into(),
                 ));
             };
-            let selected = match relay_selection(pending.questions.first(), &args.answer, tools.heard_aloud.as_deref()) {
+            let selected = match relay_selection(
+                pending.questions.first(),
+                &args.answer,
+                tools.heard_aloud.as_deref(),
+                &crate::language::effective(),
+            ) {
                 Ok(selected) => selected,
                 Err(reason) => return Ok(ToolResult::Success(reason.into())),
             };
