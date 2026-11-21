@@ -24,9 +24,12 @@ fn err(code: StatusCode, msg: &str) -> Response {
 }
 
 /// GET /api/people — each person of the household who is not the owner, with
-/// their settings, what they used today, and the devices that are theirs.
+/// their settings, what they used today, and the devices that are theirs;
+/// and whether the asker is at this Mac, where alone they are set.
 pub(crate) async fn list(
     State(state): State<std::sync::Arc<crate::server::ServerState>>,
+    ConnectInfo(peer): ConnectInfo<std::net::SocketAddr>,
+    headers: HeaderMap,
 ) -> Response {
     let people = crate::server::people::current();
     let mut persons: Vec<(
@@ -57,7 +60,11 @@ pub(crate) async fn list(
             "devices": devices,
         }));
     }
-    Json(json!({ "owner": people.owner, "people": out })).into_response()
+    // Said so the page offers controls only where a change is accepted
+    // (`set_person` asks the same question and decides).
+    let at_this_mac = crate::server::api::ling_mem_connect::is_at_this_mac(peer, &headers);
+    let installed = crate::server::people::installed(&state.skills).await;
+    Json(json!({ "owner": people.owner, "people": out, "apps": installed, "at_this_mac": at_this_mac })).into_response()
 }
 
 /// PUT /api/people/{person} — set what the body names (`level`, `apps`,

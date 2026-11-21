@@ -22,6 +22,7 @@ export const SETTINGS_SECTIONS = [
   { id: 'tools', label: 'Tools & MCP', group: 'Capabilities', bare: true, needsConfig: false, requires: [] },
   { id: 'mission', label: 'Missions', group: 'Capabilities', bare: false, needsConfig: false, requires: [] },
   { id: 'phone', label: 'Phone', group: 'Devices', bare: false, needsConfig: true, requires: [] },
+  { id: 'people', label: 'People', group: 'Devices', bare: false, needsConfig: false, requires: [] },
   { id: 'room', label: 'Room', group: 'Devices', bare: true, needsConfig: false, requires: ['rooms'] },
   { id: 'memory', label: 'Memory', group: 'Data', bare: false, needsConfig: false, requires: [] },
   { id: 'storage', label: 'Storage', group: 'Data', bare: false, needsConfig: false, requires: [] },

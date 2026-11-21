@@ -564,6 +564,32 @@ pub(crate) fn household_person_of_session(
     Some(Person::from_wire(meta.user_id.as_deref())).filter(Person::is_another)
 }
 
+/// A skill a person's apps list may hold: the names `may_use_app` is asked
+/// about, and whether the skill has an app page (the People page shows
+/// apps first, the rest under their own label).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct Installed {
+    pub name: String,
+    pub app: bool,
+}
+
+/// Every installed skill, by name — the one list a turn's ceiling is built
+/// from (`chat::handler`, as `installed` of `ceiling_of`) and the People page
+/// offers (`GET /api/people`), so nothing a person's list can hold is
+/// impossible to tick.
+pub(crate) async fn installed(skills: &crate::extensions::skills::SkillLoader) -> Vec<Installed> {
+    installed_from(skills.list_skills().await)
+}
+
+fn installed_from(skills: Vec<crate::engine::skill::Skill>) -> Vec<Installed> {
+    let mut list: Vec<Installed> = skills
+        .into_iter()
+        .map(|s| Installed { app: s.app.is_some(), name: s.name })
+        .collect();
+    list.sort_by(|a, b| a.name.cmp(&b.name));
+    list
+}
+
 /// Why `person`'s turn must not start now: the owner's models are not
 /// shared with them, or the day's tokens are used (`state.token_usage`, the
 /// store the room budgets use, keyed by the person as a room's consumer is).
@@ -931,6 +957,31 @@ mod tests {
         );
     }
 
+    /// What the People page offers is what a turn's ceiling is built from:
+    /// the same names, in the same function, apps flagged.
+    #[test]
+    fn the_names_offered_are_the_names_the_ceiling_is_given() {
+        let skill = |name: &str, app: bool| {
+            let extra = if app { "app:\n  launcher: web\n  entry: index.html\n" } else { "" };
+            crate::extensions::skills::parse_skill_text(
+                &format!("---\nname: {name}\ndescription: d\n{extra}---\nb\n"),
+                crate::engine::skill::SkillSource::Global,
+            )
+            .unwrap()
+        };
+        let list = super::installed_from(vec![skill("notes", false), skill("dice", true)]);
+        assert_eq!(
+            list,
+            vec![
+                super::Installed { name: "dice".into(), app: true },
+                super::Installed { name: "notes".into(), app: false },
+            ]
+        );
+        let names: Vec<String> = list.iter().map(|s| s.name.clone()).collect();
+        let given = People::default().ceiling_of(&friend(), &names);
+        assert_eq!(given.skills, names, "a person nobody set anything for is offered, and may use, each one");
+    }
+
     fn rust_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
         for entry in std::fs::read_dir(dir).unwrap().flatten() {
             let path = entry.path();
@@ -1005,6 +1056,12 @@ mod tests {
                 ("src/server/api/status.rs", 1, "GET /api/models"),
                 ("src/server/rtc/page_state.rs", 1, "the page state's models"),
             ],
+        );
+        only_here_and(
+            "people::installed(",
+            // (`chat::handler` asks too, for a turn's ceiling; its own test
+            // module comes first in the file, so this walk cannot count it.)
+            &[("src/server/api/people.rs", 1, "GET /api/people")],
         );
         only_here_and(
             "commit_device(",

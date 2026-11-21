@@ -5,6 +5,7 @@
  */
 import type { StatusResponse } from '../types/generated/StatusResponse';
 import type { AgentFileInfo, AppConfig, BuiltInSkillInfo, ModelHealthInfo, OllamaPsResponse, SkillInfoFull } from '../types';
+import type { PeopleReply, PersonPatch, PersonSettings } from './people.mts';
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from './api';
 
 const q = (params: Record<string, string | undefined>) => {
@@ -214,8 +215,18 @@ export const pairApi = {
   keepalive: () => apiPost<{ generation?: number } | null>('/api/pair/window/keepalive'),
   updateDevice: (id: string, patch: Record<string, unknown>) => apiPatch<void>(`/api/pair/devices/${id}`, patch),
   removeDevice: (id: string) => apiDelete<void>(`/api/pair/devices/${id}`),
-  /** The level a device that is not the owner's stands at: chat, read or edit. */
-  setPermission: (id: string, permission: string) => apiPut<void>(`/api/pair/devices/${id}/permission`, { permission }),
+};
+
+// ── People (Settings → People) ──────────────────────────────────────────
+
+/** The household as this Mac's owner sets it (server/api/people.rs): each person's
+ *  level, apps, models and daily limit. A person is the string the engine keeps them as. */
+export const peopleApi = {
+  list: () => apiGet<PeopleReply>('/api/people'),
+  set: (person: string, patch: PersonPatch) =>
+    apiPut<{ settings: PersonSettings }>(`/api/people/${encodeURIComponent(person)}`, patch),
+  /** The apps no one else uses. */
+  keepForOwner: (apps: string[]) => apiPut<{ owner: PeopleReply['owner'] }>('/api/people/owner', { mine_only: apps }),
 };
 
 // ── Storage browser ─────────────────────────────────────────────────────
