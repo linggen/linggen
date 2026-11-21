@@ -88,7 +88,7 @@ fn page_update_tool_def() -> SkillToolDef {
             .to_string(),
         cmd: String::new(),
         endpoint: None,
-        tier: None,
+        class: Default::default(),
         args,
         returns: Some("ok".to_string()),
         timeout_ms: 1000,
@@ -740,7 +740,7 @@ pub fn parse_skill_text(text: &str, source: SkillSource) -> Result<Skill> {
         &frontmatter.name,
         &tool_defs
             .iter()
-            .map(|t| (t.name.clone(), t.tier.clone().unwrap_or_else(|| "admin".into())))
+            .map(|t| (t.name.clone(), t.class))
             .collect::<Vec<_>>(),
         frontmatter.app.is_some(),
     );
@@ -1150,7 +1150,7 @@ This is the skill content."#;
                     skill: "shifu".into(),
                     tool: "Scan".into(),
                     args: serde_json::Value::Null,
-                    tier: "read".into()
+                    tier: crate::engine::permission::ActionClass::Read
                 },
             ],
             "a tool it does not declare is left out; the skill still loads"
@@ -1195,7 +1195,7 @@ This is the skill content."#;
                 None => Some("admin"),
                 _ => None,
             } {
-                assert_eq!(tier, expect, "{name}");
+                assert_eq!(tier.word(), expect, "{name}");
             }
         }
     }

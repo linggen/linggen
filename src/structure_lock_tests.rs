@@ -16,6 +16,9 @@
 //!   into a `PermissionMode` only by the engine's `PermissionMode::parse` /
 //!   `parse_written`: no other match arm on those words makes a mode, and no
 //!   other list of them is kept.
+//! - The class a skill writes for a tool (`tier:`) is read only by
+//!   `ActionClass::declared`, called from the one place a skill's tools are
+//!   read: no other production code turns a written tier word into a class.
 //! - The words a calling host names its permission mode with (`agent_run`'s
 //!   `permission_mode`) are written once, in `mcp_agent::HostMode`: the
 //!   schema, its descriptions and the grant are made from it.
@@ -35,6 +38,8 @@ const AUTHOR_DECIDER: &str = "crates/linggen-engine/src/state_fs/row_author.rs";
 const POLICY_DECIDER: &str = "src/server/chat/policy.rs";
 /// The one place a permission-mode word becomes a `PermissionMode`.
 const MODE_WORDS_DECIDER: &str = "crates/linggen-engine/src/permission_mode.rs";
+/// The one place a skill tool's written class word becomes an `ActionClass`.
+const CLASS_WORDS_DECIDER: &str = "crates/linggen-engine/src/engine/permission/action_class.rs";
 /// The one place a host's permission-mode words are written.
 const HOST_WORDS_DECIDER: &str = "src/server/mcp_agent.rs::word";
 
@@ -70,6 +75,8 @@ struct Found {
     /// `file::fn` of every production string literal holding a host's mode
     /// word `acceptEdits` or `bypassPermissions` (a macro body once).
     host_words: Vec<String>,
+    /// `file::fn` of every production use of `ActionClass::declared`.
+    class_reads: Vec<String>,
 }
 
 /// The permission-mode words, the `write` alias with them.
@@ -224,6 +231,10 @@ impl<'ast> Visit<'ast> for Scan<'_> {
         if owner {
             let here = self.here();
             self.found.owner_policies.push(here);
+        }
+        if names.ends_with(&["ActionClass".into(), "declared".into()]) {
+            let here = self.here();
+            self.found.class_reads.push(here);
         }
         visit::visit_expr_path(self, path);
     }
@@ -414,6 +425,19 @@ fn a_permission_mode_word_is_parsed_in_one_place() {
 }
 
 #[test]
+fn a_skill_tools_written_class_is_read_in_one_place() {
+    let found: Vec<String> = production()
+        .class_reads
+        .into_iter()
+        .filter(|at| !at.starts_with(CLASS_WORDS_DECIDER))
+        .collect();
+    assert!(
+        found.is_empty(),
+        "a skill tool's `tier:` word is read by `ActionClass`'s deserializer alone; hold the class (`SkillToolDef::class`), never the word: {found:#?}"
+    );
+}
+
+#[test]
 fn a_hosts_permission_words_are_written_once() {
     assert_eq!(
         production().host_words,
@@ -429,6 +453,7 @@ fn the_scan_finds_policies_mode_words_and_host_words_but_not_test_fixtures() {
            fn b(t: &str) { let c = Ctx { policy: Default::default() }; SessionPolicy::person(a, b); }
            fn c(m: &str) -> PermissionMode { match m { "edit" | "write" => PermissionMode::Edit, _ => PermissionMode::Read } }
            fn d(m: &str) -> &str { match m { "edit" => "edited", _ => "" } }
+           fn g(w: &str) -> ActionClass { ActionClass::declared(w) }
            const VALID: &[&str] = &["read", "edit", "admin"];
            fn e() { json!({"enum": ["plan", "acceptEdits"]}); let s = "default/bypassPermissions"; }
            #[cfg(test)] mod tests { fn f() { SessionPolicy::owner(); let s = "acceptEdits"; } }
@@ -447,6 +472,7 @@ fn the_scan_finds_policies_mode_words_and_host_words_but_not_test_fixtures() {
     assert_eq!(found.owner_policies, ["lib.rs::a", "lib.rs::a", "lib.rs::b", "lib.rs::b"]);
     assert_eq!(found.mode_parses, ["lib.rs::c", "lib.rs::"]);
     assert_eq!(found.host_words, ["lib.rs::e", "lib.rs::e"]);
+    assert_eq!(found.class_reads, ["lib.rs::g"]);
 }
 
 #[test]

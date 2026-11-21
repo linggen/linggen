@@ -683,13 +683,6 @@ pub fn tool_action_tier(tool: &str) -> PermissionMode {
     }
 }
 
-/// Parse the `tier:` string from a skill tool's manifest into a
-/// `PermissionMode` ([`PermissionMode::parse_written`]). `chat` is no tier:
-/// a tool that says it is falls back as an unknown one does.
-pub fn parse_skill_tier(tier: &str) -> Option<PermissionMode> {
-    PermissionMode::parse_written(tier).filter(|mode| *mode != PermissionMode::Chat)
-}
-
 // ---------------------------------------------------------------------------
 // Permission check
 // ---------------------------------------------------------------------------

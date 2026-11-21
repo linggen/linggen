@@ -10,6 +10,7 @@
 //! the skills (`offers:` in their frontmatter, keyed by the problem), mirrored
 //! here by the skill loader so a glance reads them without waiting on it.
 
+use crate::engine::permission::ActionClass;
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 
@@ -23,9 +24,9 @@ pub enum Offer {
         tool: String,
         #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
         args: serde_json::Value,
-        /// The tool's declared tier (`read`, `edit`, `admin`): anything above
-        /// read asks before it runs.
-        tier: String,
+        /// The tool's class: anything but a read asks the person before it
+        /// runs.
+        tier: ActionClass,
     },
     /// A skill's page, at one of its views when it names one.
     Open {
@@ -40,9 +41,10 @@ impl Offer {
     fn fact(&self) -> String {
         match self {
             Offer::Tool { skill, tool, tier, .. } => {
-                let tier = match tier.as_str() {
-                    "read" => "only reads",
-                    _ => "changes things, asks the person first",
+                let tier = if tier.only_reads() {
+                    "only reads"
+                } else {
+                    "changes things, asks the person first"
                 };
                 format!("run {skill}'s {tool} ({tier})")
             }
@@ -128,7 +130,7 @@ const KEY_MAX: usize = 32;
 pub fn usable(
     raw: Option<serde_json::Value>,
     skill: &str,
-    tools: &[(String, String)],
+    tools: &[(String, ActionClass)],
     has_page: bool,
 ) -> Vec<Declared> {
     let Some(serde_json::Value::Object(map)) = raw else {
@@ -157,7 +159,7 @@ pub fn usable(
     out
 }
 
-fn resolve(d: Decl, skill: &str, tools: &[(String, String)], has_page: bool) -> Result<Offer, String> {
+fn resolve(d: Decl, skill: &str, tools: &[(String, ActionClass)], has_page: bool) -> Result<Offer, String> {
     match (d.tool, d.open) {
         (Some(tool), None) => {
             let (_, tier) = tools
@@ -172,7 +174,7 @@ fn resolve(d: Decl, skill: &str, tools: &[(String, String)], has_page: bool) -> 
                 skill: skill.to_string(),
                 tool,
                 args,
-                tier: tier.clone(),
+                tier: *tier,
             })
         }
         (None, Some(view)) if has_page => Ok(Offer::Open {

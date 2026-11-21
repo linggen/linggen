@@ -12,7 +12,7 @@ use serde_json::{json, Map, Value};
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::engine::skill::tools::{remote_tools, tier_of};
+use crate::engine::skill::tools::remote_tools;
 use crate::engine::skill::Skill;
 use crate::engine::skill_tool::{SkillParamDef, SkillToolDef};
 use crate::server::{api, ServerState};
@@ -68,7 +68,7 @@ fn entry(app: &str, tool: &SkillToolDef) -> Value {
         "wire_name": wire_name(app, &tool.name),
         "description": tool.description,
         "params": params(tool),
-        "tier": tier_of(tool).to_string(),
+        "tier": tool.class.word(),
     })
 }
 

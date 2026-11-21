@@ -21,9 +21,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use crate::engine::permission::{
-    effective_mode_for_path, parse_skill_tier, PathMode, PermissionMode,
-};
+use crate::engine::permission::{effective_mode_for_path, ActionClass, PathMode, PermissionMode};
 use crate::engine::skill::params::SessionParams;
 use crate::engine::skill::Skill;
 use crate::engine::skill_tool::{SkillToolDef, SkillToolKind};
@@ -175,7 +173,7 @@ pub async fn notice_facts(skill: &Skill, cmd: &str) -> Result<String, Refusal> {
         description: "What a declared line would say.".into(),
         cmd: cmd.to_string(),
         endpoint: None,
-        tier: Some("read".into()),
+        class: ActionClass::Read,
         args: Default::default(),
         returns: None,
         timeout_ms: STAMP_TIMEOUT_MS,
@@ -258,7 +256,7 @@ fn on_list_tool(skill: &Skill, cmd: String) -> SkillToolDef {
         description: "Bring the synced folder up to date.".into(),
         cmd,
         endpoint: None,
-        tier: Some("edit".into()),
+        class: ActionClass::Edit,
         args: Default::default(),
         returns: None,
         timeout_ms: ON_LIST_TIMEOUT_MS,
@@ -306,7 +304,7 @@ fn stamp_tool(skill: &Skill, id: &str, at: &str) -> Result<SkillToolDef, Refusal
         description: "Stamp a quest done.".into(),
         cmd: q.stamp.replace("{id}", "{{id}}").replace("{at}", "{{at}}"),
         endpoint: None,
-        tier: Some("edit".into()),
+        class: ActionClass::Edit,
         args: [arg("id"), arg("at")].into_iter().collect(),
         returns: None,
         timeout_ms: STAMP_TIMEOUT_MS,
@@ -356,7 +354,7 @@ fn pet_gate(skill: &Skill, tool_name: &str) -> Result<(), Refusal> {
             skill.name
         )));
     }
-    if tier_of(tool) > PermissionMode::Read {
+    if tool.class.level_needed() > PermissionMode::Read {
         return Err(Refusal::NotForPet(format!(
             "'{tool_name}' may change '{}'; you may only read",
             skill.name
@@ -370,7 +368,7 @@ pub fn pet_tools(skill: &Skill) -> impl Iterator<Item = &SkillToolDef> {
     skill
         .tool_defs
         .iter()
-        .filter(|t| t.pet && t.kind() == SkillToolKind::Shell && tier_of(t) <= PermissionMode::Read)
+        .filter(|t| t.pet && t.kind() == SkillToolKind::Shell && t.class.level_needed() <= PermissionMode::Read)
 }
 
 /// The tools a skill offers another device's agent (`remote: true`) that
@@ -423,15 +421,8 @@ fn working_folder(skill: &Skill) -> PathBuf {
     }
 }
 
-pub fn tier_of(tool: &SkillToolDef) -> PermissionMode {
-    tool.tier
-        .as_deref()
-        .and_then(parse_skill_tier)
-        .unwrap_or(PermissionMode::Admin)
-}
-
 fn may_write(tool: &SkillToolDef) -> bool {
-    tier_of(tool) > PermissionMode::Read
+    tool.class.level_needed() > PermissionMode::Read
 }
 
 /// The tool's tier must be covered by what the skill's own permission block
@@ -449,7 +440,7 @@ fn within_grant(skill: &Skill, tool: &SkillToolDef, cwd: &Path) -> Result<(), Re
         })
         .collect();
     let granted = effective_mode_for_path(&grants, cwd).unwrap_or(PermissionMode::Chat);
-    let needed = tier_of(tool);
+    let needed = tool.class.level_needed();
     if needed > granted {
         return Err(Refusal::BeyondGrant(format!(
             "'{}' needs {needed} on {}; the skill grants {granted}",
@@ -462,7 +453,7 @@ fn within_grant(skill: &Skill, tool: &SkillToolDef, cwd: &Path) -> Result<(), Re
 
 /// The tool's tier must be within the level its caller stands at.
 fn within_level(tool: &SkillToolDef, caller: PermissionMode) -> Result<(), Refusal> {
-    let needs = tier_of(tool);
+    let needs = tool.class.level_needed();
     if needs > caller {
         return Err(Refusal::BeyondLevel {
             level: caller,

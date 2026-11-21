@@ -99,7 +99,7 @@ mod tests {
                 skill: "shifu".into(),
                 tool: "ScanDisk".into(),
                 args: serde_json::Value::Null,
-                tier: "read".into(),
+                tier: crate::engine::permission::ActionClass::Read,
             },
         ]
     }

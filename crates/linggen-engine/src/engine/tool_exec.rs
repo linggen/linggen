@@ -668,17 +668,13 @@ impl AgentEngine {
             Some(self.tools.builtins.cwd().to_string_lossy().to_string())
         };
 
-        // Skill-declared tier wins over the built-in table. For HTTP and
-        // shell skill tools that declare `tier: read|edit|admin` in their
-        // manifest, parse it into a PermissionMode and pass to
-        // check_permission as an override. Unknown / missing tier falls
-        // back to the built-in classification.
+        // A skill tool's class wins over the built-in table: the level it
+        // needs is passed to check_permission as an override.
         let skill_tier_override = self
             .tools
             .skill_tools
             .get(t.canonical)
-            .and_then(|def| def.tier.as_deref())
-            .and_then(permission::parse_skill_tier);
+            .map(|def| def.class.level_needed());
 
         let mut last_grant: Option<(String, permission::PermissionMode)> = None;
         loop {
