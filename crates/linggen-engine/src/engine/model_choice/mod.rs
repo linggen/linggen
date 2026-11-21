@@ -36,7 +36,10 @@ pub enum Asker<'a> {
 #[derive(Debug, Clone, Copy)]
 pub struct Rule<'a> {
     pub asker: Asker<'a>,
-    /// The session's model-switching switch (`SessionMeta::model_fallback`).
+    /// Whether the turn may switch models: `Switching::may` (both the routing
+    /// config's switch and the session's own), or a named constant of this
+    /// module for a place with no switch of its own.
+    ///
     /// Off, an owner's turn keeps an unavailable asked model and fails on it,
     /// named. A guest's list is an access rule, not a failure: it holds
     /// whatever the switch says.

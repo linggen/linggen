@@ -466,6 +466,8 @@ pub struct RoutingConfig {
     // The retired `auto_fallback` key is ignored, whatever its value.
     /// When true, automatically try the next model on transient errors
     /// (timeout, rate limit, 502/503, connection failures). Default: true.
+    /// Off, a turn also keeps an asked model this machine lacks and fails on
+    /// it, as a session whose own switch is off does (`model_choice::Switching`).
     pub model_fallback: bool,
     /// Seconds a model may say nothing at all — no response headers, no
     /// first stream event — before the call is abandoned and retried (then
