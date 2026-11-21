@@ -436,6 +436,17 @@ pub(crate) async fn language_of_turn(
     sample.as_deref().and_then(super::spoken::language_of_sample)
 }
 
+/// The language of the latest line the person TYPED to her (a line they
+/// spoke is the hearing's own output, so it is not evidence for the next one),
+/// when it can be told from the line (`spoken::language_of_sample`: Chinese or
+/// nothing). What `api::stt::language_to_hear` reads under Auto. Her thread is
+/// the day's session, so the first press of a day finds no line.
+pub(crate) async fn language_person_typed_to_her(state: &Arc<ServerState>) -> Option<String> {
+    let session = super::session_roll::resolve_current_session(state).await;
+    let line = super::triggers::last_typed_line(state, &session).await;
+    line.as_deref().and_then(super::spoken::language_of_sample)
+}
+
 /// Whether her turn at this table stands in an app, or the table is a
 /// mission's — not a person's own chat.
 fn table_is_not_a_persons(state: &Arc<ServerState>, turn: &Turn) -> bool {

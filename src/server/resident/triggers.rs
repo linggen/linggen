@@ -164,6 +164,15 @@ pub(super) fn handle_notification(state: &Arc<ServerState>, payload: Notificatio
 /// payloads are skipped. `None` when the session has nothing quotable, and
 /// for a private app's session: its words are never quoted to her.
 pub(super) async fn last_user_line(state: &Arc<ServerState>, session_id: &str) -> Option<String> {
+    last_person_line(state, session_id, false).await
+}
+
+/// [`last_user_line`], of the lines the person typed: one they spoke is passed over.
+pub(super) async fn last_typed_line(state: &Arc<ServerState>, session_id: &str) -> Option<String> {
+    last_person_line(state, session_id, true).await
+}
+
+async fn last_person_line(state: &Arc<ServerState>, session_id: &str, typed_only: bool) -> Option<String> {
     let place = crate::server::chat::turn_place::of_session_id(&state.manager, session_id);
     let day_on = crate::server::day_session::enabled(&state.manager).await;
     if place.private_app(&*state.manager.skills, day_on).await.is_some() {
@@ -173,7 +182,7 @@ pub(super) async fn last_user_line(state: &Arc<ServerState>, session_id: &str) -
     let line = history
         .iter()
         .rev()
-        .filter(|m| m.author().is_person())
+        .filter(|m| m.author().is_person() && !(typed_only && m.heard))
         .map(|m| m.content.trim())
         .find(|c| !c.is_empty() && !c.starts_with('{') && !c.contains("[HIDDEN]"))?;
     let mut out: String = line.chars().take(80).collect();

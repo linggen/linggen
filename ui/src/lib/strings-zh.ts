@@ -252,8 +252,12 @@ export const ZH: Record<string, string> = {
   'Read · {path}': '{path} · 只读',
   'Edit · {path}': '{path} · 可编辑',
   'Admin · {path}': '{path} · 管理员',
+  // The two answers of a permission question that can be said aloud: the engine's
+  // table (`permission::label_shown_in`, prompt.rs) holds these same words, and a
+  // test there fails when the two differ — change both or neither.
+  'Allow once': '允许一次',
   'Deny': '拒绝',
-  'Tell the agent what to do instead': '告诉智能体改做什么',
+  'Tell the agent what to do instead':'告诉智能体改做什么',
   'Tell the agent what to do instead…': '告诉智能体改做什么…',
   'Allow for this session': '本会话允许',
   'Compacting conversation': '正在压缩对话',
