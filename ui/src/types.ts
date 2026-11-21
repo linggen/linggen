@@ -291,7 +291,7 @@ export interface AppConfig {
   agent: { max_iters: number; write_safety_mode: string; default_permission_mode?: PermissionMode | null; prompt_loop_breaker?: string | null; compact_threshold?: number | null; memory_inject_min_score?: number; memory_recall_count?: number; suggest_followups?: boolean; daily_session?: boolean };
   logging: { level?: string | null; directory?: string | null; retention_days?: number | null };
   agents: { id: string; spec_path: string; model?: string | null }[];
-  routing?: { default_models?: string[]; auto_fallback?: boolean };
+  routing?: { default_models?: string[]; model_fallback?: boolean };
   /** Yinyue's settings. The key stays `pet` on disk so old files and phones keep working. */
   pet?: { enabled?: boolean; pet?: string; show_text?: boolean; recall_count?: number; recall_min_score?: number; model?: string; voice?: string; muted?: boolean; unprompted_per_hour?: number; quiet_hours?: string };
 }

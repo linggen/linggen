@@ -214,7 +214,7 @@ async fn engine_on(
         &crate::credentials::Credentials::default(),
     ));
     let mut engine = AgentEngine::new(cfg, models, id, AgentRole::Lead).unwrap();
-    engine.auto_fallback = false;
+    engine.allow_model_fallback = false;
     engine.set_task("write a long file".to_string());
     (engine, root)
 }

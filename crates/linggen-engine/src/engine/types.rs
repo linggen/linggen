@@ -477,7 +477,7 @@ pub struct AgentEngine {
     /// Ordered list of default model IDs from routing config (for fallback chain).
     pub default_models: Vec<String>,
     /// Whether to automatically try fallback models on transient errors.
-    pub auto_fallback: bool,
+    pub allow_model_fallback: bool,
     /// Cached context window size (in tokens) for the active model.
     /// Queried at loop start and used to adapt compaction thresholds.
     pub context_window_tokens: Option<usize>,
@@ -774,7 +774,7 @@ impl AgentEngine {
             session_dir: None,
             default_models: Vec::new(),
             // Decided once, by the routing default (config.rs).
-            auto_fallback: crate::config::RoutingConfig::default().auto_fallback,
+            allow_model_fallback: crate::config::RoutingConfig::default().model_fallback,
             context_window_tokens: None,
             context_window_model: None,
             compact_threshold: None,
@@ -923,7 +923,7 @@ impl AgentEngine {
         let models = manager.models.read().await.clone();
         self.cfg.apply_settings(&config);
         self.default_models = config.routing.default_models.clone();
-        self.auto_fallback = config.routing.auto_fallback;
+        self.allow_model_fallback = config.routing.model_fallback;
         let frontmatter = self.spec.as_ref().and_then(|s| s.model.clone());
         let default = self.agent_id.as_deref().and_then(|agent| {
             crate::engine::agent::AgentManager::default_model_for(&config, &models, agent, frontmatter)
@@ -987,7 +987,7 @@ mod tests {
     /// A new engine falls back as a config with no word on it does: the
     /// default is decided once, by `RoutingConfig::default`.
     #[test]
-    fn a_new_engine_takes_auto_fallback_from_the_routing_default() {
+    fn a_new_engine_takes_model_fallback_from_the_routing_default() {
         let models =
             std::sync::Arc::new(crate::provider::models::ModelManager::new_with_credentials(
                 vec![],
@@ -995,8 +995,8 @@ mod tests {
             ));
         let engine = AgentEngine::new(cfg(), models, "m".into(), AgentRole::Lead).unwrap();
         assert_eq!(
-            engine.auto_fallback,
-            crate::config::RoutingConfig::default().auto_fallback
+            engine.allow_model_fallback,
+            crate::config::RoutingConfig::default().model_fallback
         );
     }
 

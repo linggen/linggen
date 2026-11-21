@@ -463,9 +463,10 @@ pub struct RoutingConfig {
     #[serde(skip_serializing)]
     #[cfg_attr(any(test, feature = "test-support"), ts(skip))]
     claude_default_model: Option<String>,
+    // The retired `auto_fallback` key is ignored, whatever its value.
     /// When true, automatically try the next model on transient errors
     /// (timeout, rate limit, 502/503, connection failures). Default: true.
-    pub auto_fallback: bool,
+    pub model_fallback: bool,
     /// Seconds a model may say nothing at all — no response headers, no
     /// first stream event — before the call is abandoned and retried (then
     /// moved down the chain). Unset: 30. `0` turns the guard off. A backend
@@ -481,7 +482,7 @@ impl Default for RoutingConfig {
         Self {
             default_models: Vec::new(),
             claude_default_model: None,
-            auto_fallback: true,
+            model_fallback: true,
             first_event_timeout_secs: None,
         }
     }
@@ -1092,24 +1093,46 @@ mod tests {
         )
         .unwrap();
         assert_eq!(routing.default_models, vec!["m1".to_string()]);
-        assert!(routing.auto_fallback);
+        assert!(routing.model_fallback);
     }
 
-    /// `auto_fallback` has one default, `RoutingConfig::default`: a config
+    #[test]
+    fn retired_auto_fallback_is_ignored_and_never_saved() {
+        for old in ["false", "true", "'invalid'"] {
+            let mut file = toml::Value::try_from(Config::default()).unwrap();
+            file["routing"] = toml::from_str(&format!("auto_fallback = {old}\n")).unwrap();
+            let cfg = Config::from_toml(&toml::to_string(&file).unwrap()).unwrap();
+            assert!(cfg.routing.model_fallback, "old value {old}");
+            assert!(!toml::to_string(&cfg).unwrap().contains("auto_fallback"));
+        }
+    }
+
+    #[test]
+    fn model_fallback_off_survives_save_and_reload() {
+        let mut file = toml::Value::try_from(Config::default()).unwrap();
+        file["routing"] = toml::from_str("model_fallback = false\n").unwrap();
+        let cfg = Config::from_toml(&toml::to_string(&file).unwrap()).unwrap();
+        assert!(!cfg.routing.model_fallback);
+        let saved = toml::to_string(&cfg).unwrap();
+        assert!(!saved.contains("auto_fallback"));
+        assert!(!Config::from_toml(&saved).unwrap().routing.model_fallback);
+    }
+
+    /// `model_fallback` has one default, `RoutingConfig::default`: a config
     /// made fresh (no file), a file without `[routing]`, and a `[routing]`
     /// without the key all say true. The engine asks the same default (see
     /// `engine::types` tests).
     #[test]
-    fn auto_fallback_has_one_default() {
-        let fresh = Config::default().routing.auto_fallback;
+    fn model_fallback_has_one_default() {
+        let fresh = Config::default().routing.model_fallback;
         let mut file = toml::Value::try_from(Config::default()).unwrap();
         file.as_table_mut().unwrap().remove("routing");
         let no_table: Config = toml::from_str(&toml::to_string(&file).unwrap()).unwrap();
         let no_key: RoutingConfig = toml::from_str("default_models = [\"m1\"]\n").unwrap();
-        assert!(RoutingConfig::default().auto_fallback);
+        assert!(RoutingConfig::default().model_fallback);
         assert!(fresh, "a fresh config");
-        assert!(no_table.routing.auto_fallback, "a file without [routing]");
-        assert!(no_key.auto_fallback, "a [routing] without the key");
+        assert!(no_table.routing.model_fallback, "a file without [routing]");
+        assert!(no_key.model_fallback, "a [routing] without the key");
         // Every routing key: missing from the file means the Rust default.
         let empty: RoutingConfig = toml::from_str("").unwrap();
         assert_eq!(

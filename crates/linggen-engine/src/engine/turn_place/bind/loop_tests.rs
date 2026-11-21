@@ -82,7 +82,7 @@ async fn a_turn_in_a_second_place_sends_nothing_of_the_first() {
     m.id = id.clone();
     let models = Arc::new(ModelManager::new_with_credentials(vec![m], &crate::credentials::Credentials::default()));
     let mut engine = AgentEngine::new(cfg, models, id, AgentRole::Lead).unwrap();
-    engine.auto_fallback = false;
+    engine.allow_model_fallback = false;
     engine.tools.builtins.set_session_id(Some("sess-1-loop-places".into()));
     crate::engine::session_policy::SessionPolicy::owner().apply(&mut engine);
 

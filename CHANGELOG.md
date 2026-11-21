@@ -90,6 +90,7 @@
 
 ### Models and cost
 
+- Automatic fallback to your next default model is on again for installs made by 2.3.0–2.5.1, where it was saved off by mistake; set `model_fallback = false` under `[routing]` to turn it off.
 - **Signing in is read in one place.** A ChatGPT model reaches the phone as a
   sign-in model, not as a key model with no key; `ling status` names a model
   on your Linggen account as that.
