@@ -152,20 +152,24 @@ pub(crate) async fn stt_handler(
 }
 
 /// The route's whole decision, on what it is handed (so a test needs no
-/// server): who asks, then whether this machine can hear at all (a press
-/// that finds it cannot starts the fetch it waits on), then what the body
-/// is, then whether it holds speech, and only then the model.
+/// server): who asks, then which of the two body forms it is (a third is
+/// refused before anything starts), then whether this machine can hear at
+/// all (a press that finds it cannot starts the fetch it waits on), then
+/// what the body holds, whether that is speech, and only then the model.
 async fn answer(stt: &dyn SttProvider, (level, content_type): (PermissionMode, &str), body: &[u8]) -> Response {
     if let Some(refused) = crate::server::person::owners_only(level) {
         return refused;
     }
+    let Some(form) = BodyForm::of(content_type) else {
+        return unsupported_media_type();
+    };
     // Before the clip is looked at: a silent clip on a machine that cannot
     // hear gets the reason, as a loud one does.
     stt.begin_fetch();
     if let Err(no) = hears_now(stt) {
         return unavailable(&no);
     }
-    let samples = match samples_of(content_type, body) {
+    let samples = match samples_of(form, body) {
         Ok(samples) => samples,
         Err(refusal) => return refusal.into_response(),
     };
@@ -183,6 +187,35 @@ async fn answer(stt: &dyn SttProvider, (level, content_type): (PermissionMode, &
         }
         Err(no) => unavailable(&no),
     }
+}
+
+/// The two forms a request body takes: the clip itself (`audio/wav`), or
+/// `{"wav_b64": …}` (`application/json`, which a data-channel request is).
+/// Nothing else — a `text/plain` form post is the one body a foreign page can
+/// send without asking first — and the check is on the media type itself.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum BodyForm {
+    Wav,
+    Json,
+}
+
+impl BodyForm {
+    fn of(content_type: &str) -> Option<Self> {
+        let media_type = content_type.split(';').next().unwrap_or("").trim().to_ascii_lowercase();
+        match media_type.as_str() {
+            "audio/wav" => Some(Self::Wav),
+            "application/json" => Some(Self::Json),
+            _ => None,
+        }
+    }
+}
+
+fn unsupported_media_type() -> Response {
+    (
+        StatusCode::UNSUPPORTED_MEDIA_TYPE,
+        Json(json!({ "error": "unsupported_media_type", "reason": "Send audio/wav, or application/json with wav_b64." })),
+    )
+        .into_response()
 }
 
 fn unavailable(no: &Unavailable) -> Response {
@@ -215,13 +248,13 @@ impl IntoResponse for Refusal {
 }
 
 /// The clip's samples, from the form it came in.
-fn samples_of(content_type: &str, body: &[u8]) -> Result<Vec<i16>, Refusal> {
+fn samples_of(form: BodyForm, body: &[u8]) -> Result<Vec<i16>, Refusal> {
     #[derive(serde::Deserialize)]
     struct Json {
         wav_b64: String,
     }
     let decoded;
-    let wav = match content_type.starts_with("application/json") {
+    let wav = match form == BodyForm::Json {
         true => {
             let parsed: Json = serde_json::from_slice(body)
                 .map_err(|_| Refusal::NotThatWav("expected a WAV clip, or {\"wav_b64\": …}"))?;
@@ -373,6 +406,30 @@ mod tests {
             assert_eq!((status, body), (StatusCode::OK, json!({ "text": "" })));
         }
         assert_eq!(fake.calls(), 0);
+    }
+
+    /// Only the two body forms are taken, and a third is refused before the
+    /// press begins a fetch or a hearing (a cross-site `text/plain` form post
+    /// is the one body a page can send without asking).
+    #[tokio::test]
+    async fn only_the_two_body_forms_are_taken_and_a_third_starts_nothing() {
+        let fake = Fake::saying("ok", "en");
+        for content_type in ["text/plain", "", "application/jsonx", "audio/mpeg", "multipart/form-data", "audio/x-wav", "application/octet-stream"] {
+            let (status, body) = ask(&fake, OWNER, content_type, &wav(speech(1.0))).await;
+            assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE, "{content_type:?}");
+            assert_eq!(body["error"], "unsupported_media_type", "{content_type:?}");
+        }
+        assert_eq!((fake.fetches(), fake.calls()), (0, 0));
+        // The two forms, in any case and with parameters, are taken.
+        let b64 = base64::engine::general_purpose::STANDARD.encode(wav(speech(1.0)));
+        let json_body = json!({ "wav_b64": b64 }).to_string();
+        for (content_type, body) in [("Audio/WAV", wav(speech(1.0))), ("application/json; charset=utf-8", json_body.into_bytes())] {
+            assert_eq!(ask(&fake, OWNER, content_type, &body).await.0, StatusCode::OK, "{content_type}");
+        }
+        // The knock a page sends to start a fetch is JSON and is taken.
+        let deaf = Fake::fetching("Fetching the hearing model (1.6 GB). Try again when it is done.");
+        assert_eq!(ask(&deaf, OWNER, "application/json", b"{}").await.0, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(deaf.fetches(), 1);
     }
 
     #[tokio::test]

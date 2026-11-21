@@ -64,3 +64,14 @@ async fn a_minute_of_audio_in_the_json_form_is_read() {
     let (status, body) = w.api.post_with_status("/api/stt", json!({ "wav_b64": b64 })).await;
     assert_eq!((status, body["error"].as_str()), (503, Some("unavailable")));
 }
+
+/// Only the two body forms are taken: any other is refused before a hearing
+/// or a fetch can start, whatever the machine.
+#[tokio::test]
+async fn a_body_that_is_neither_wav_nor_json_is_refused_whatever_the_machine() {
+    let w = deaf_world().await;
+    for content_type in ["text/plain", "application/octet-stream", "audio/mpeg"] {
+        let (status, body) = w.api.post_bytes("/api/stt", content_type, silence(2)).await;
+        assert_eq!((status, body["error"].as_str()), (415, Some("unsupported_media_type")), "{content_type}");
+    }
+}

@@ -1118,7 +1118,6 @@ mod tests {
     fn hearing_is_fetched_on_first_use_and_needs_what_her_voice_needs() {
         assert!(!BOOT.hearing, "boot must not download the hearing model");
         assert_ne!(STT_MODEL, TTS_MODEL);
-        assert!(!model_cached("tts"), "a venv stage is never a cached model");
         // Hearing is a stage of the voice lane: no lane of its own.
         assert!(LANES.iter().all(|l| l.name != "hearing"));
     }

@@ -62,7 +62,9 @@ impl VoiceSidecar {
             cmd.args(args);
             return Ok(cmd);
         }
-        let script = crate::runtime::runtime_dir().join("mlx_voice.py");
+        let dir = crate::runtime::runtime_dir();
+        remove_old_script(&dir).await;
+        let script = dir.join("mlx_voice.py");
         tokio::fs::write(&script, SIDECAR_SRC).await?;
         let mut cmd = tokio::process::Command::new(crate::runtime::env_bin("tts", "python3"));
         cmd.arg(&script)
@@ -184,6 +186,21 @@ impl VoiceSidecar {
     }
 }
 
+/// The voice-only script this one replaced, `mlx_tts.py`: the engine wrote it
+/// to the runtime folder at every spawn, its first line says so, and nothing
+/// reads it now. Removed only when that first line is there — a file of the
+/// same name that something else put in the folder is not the engine's to delete.
+async fn remove_old_script(dir: &std::path::Path) {
+    let old = dir.join("mlx_tts.py");
+    let Ok(text) = tokio::fs::read_to_string(&old).await else { return };
+    if text.starts_with(OLD_SCRIPT_HEADER) {
+        let _ = tokio::fs::remove_file(&old).await;
+    }
+}
+
+/// The first line the engine's `mlx_tts.py` carried.
+const OLD_SCRIPT_HEADER: &str = "# mlx_tts.py — resident TTS sidecar for the Linggen engine.";
+
 async fn read_json(
     stdout: &mut BufReader<tokio::process::ChildStdout>,
 ) -> anyhow::Result<serde_json::Value> {
@@ -217,6 +234,22 @@ mod tests {
     }
 
     const SECS: Duration = Duration::from_secs(10);
+
+    /// The engine's own old script goes; a file of that name it did not write stays.
+    #[tokio::test]
+    async fn the_old_voice_script_is_removed_only_when_the_engine_wrote_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = dir.path().join("mlx_tts.py");
+        std::fs::write(&old, format!("{OLD_SCRIPT_HEADER}\n# Written to ~/.linggen/runtime/ …\nimport sys\n")).unwrap();
+        remove_old_script(dir.path()).await;
+        assert!(!old.exists(), "the engine's old script is removed");
+
+        std::fs::write(&old, "# my own notes\n").unwrap();
+        remove_old_script(dir.path()).await;
+        assert!(old.exists(), "a file the engine did not write stays");
+
+        remove_old_script(&dir.path().join("nowhere")).await; // nothing there: nothing happens
+    }
 
     #[tokio::test]
     async fn a_request_gets_the_sidecars_reply() {
