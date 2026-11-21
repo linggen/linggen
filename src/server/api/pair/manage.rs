@@ -113,6 +113,9 @@ pub(super) fn resolve_model_catalog(
         .collect()
 }
 
+/// Not asked through `model_choice::resolve`: this is a display list for a
+/// phone from the settings alone, with no turn, session or asker to resolve for.
+///
 /// Which model each agent runs on here, by agent id — what a phone with no
 /// pick of its own follows. The lead agent uses the routing default chain's first entry;
 /// the companion (`[pet] pet`) her `[pet] model`, with "auto" resolved the way her turns resolve it

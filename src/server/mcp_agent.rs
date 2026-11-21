@@ -222,7 +222,9 @@ pub async fn run(
     let model = if let Some(model) = model {
         let models = state.manager.models.read().await;
         // A delegated run never falls back: a model this machine lacks is
-        // refused here, before the run starts.
+        // refused here, before the run starts. Not `model_choice::resolve`'s
+        // answer: `resolve` would give way to a standing model, and the caller
+        // asked for this one by name.
         let resolved = crate::engine::model_choice::live(
             &models,
             crate::engine::model_choice::Asker::Owner,

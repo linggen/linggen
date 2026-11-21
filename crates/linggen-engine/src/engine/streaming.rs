@@ -570,6 +570,10 @@ impl AgentEngine {
             ));
         }
 
+        // Not `model_choice`'s: the cooldown skip and the stall retry below are
+        // this call's own, about a model that failed a moment ago — `resolve`
+        // chooses a turn's model before it starts, not during the call.
+        //
         // A model that has already told us it is rate-limited is not worth a
         // round trip: spend the turn on something that can answer. Only when
         // the chain has an alternative — otherwise try it anyway and let the
