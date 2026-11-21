@@ -1,6 +1,6 @@
 //! A change of skills on disk reaches every live engine at its next turn and
 //! takes nothing else from it (`AgentManager::mark_skills_changed`,
-//! `AgentEngine::read_skills_if_changed`). The server's one follow-up,
+//! `AgentEngine::read_changes_if_any`). The server's one follow-up,
 //! `server::api::skills::skills_changed`, is the only caller.
 
 use super::{AgentEngine, AgentRole, EngineConfig, InterfaceMode};
@@ -73,15 +73,11 @@ async fn a_change_of_skills_keeps_every_live_engine() {
         InterfaceMode::Web,
     );
     let mut built = engine();
-    built.read_skills_if_changed(&manager).await;
+    built.read_changes_if_any(&manager).await;
     let declined = std::env::temp_dir().join("declined-here");
     built.declined_scopes.decline(&declined.to_string_lossy());
     let live = Arc::new(tokio::sync::Mutex::new(built));
-    manager
-        .session_engines
-        .lock()
-        .await
-        .insert(("s".into(), "ling".into()), live.clone());
+    manager.insert_session_engine("s", "ling", live.clone()).await;
 
     // The turn holds its engine; a skill is saved meanwhile.
     let turn = live.lock().await;
@@ -103,7 +99,7 @@ async fn a_change_of_skills_keeps_every_live_engine() {
     // Its next turn: the new skill is listed, the decline is still held.
     let mut engine = live.lock().await;
     assert_eq!(names(&engine), ["old"]);
-    engine.read_skills_if_changed(&manager).await;
+    engine.read_changes_if_any(&manager).await;
     assert_eq!(names(&engine), ["old", "new"]);
     assert!(engine
         .declined_scopes
@@ -112,6 +108,6 @@ async fn a_change_of_skills_keeps_every_live_engine() {
 
     // No change since: the list is not read again.
     listed.0.lock().unwrap().clear();
-    engine.read_skills_if_changed(&manager).await;
+    engine.read_changes_if_any(&manager).await;
     assert_eq!(names(&engine), ["old", "new"]);
 }

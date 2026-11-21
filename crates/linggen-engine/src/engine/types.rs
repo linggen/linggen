@@ -173,6 +173,9 @@ pub struct EngineConfig {
     /// Recalled rows injected per turn — the top-K cap applied after the
     /// project-scope filter. See `config::AgentConfig::memory_recall_count`.
     pub memory_recall_count: usize,
+    /// A member tuned its own recall (`AgentEngine::tune_recall`): the
+    /// configured recall no longer applies to this engine.
+    pub recall_tuned: bool,
 }
 
 impl EngineConfig {
@@ -184,11 +187,12 @@ impl EngineConfig {
         ws_root: PathBuf,
         interface_mode: InterfaceMode,
     ) -> Self {
-        Self {
+        let mut cfg = Self {
             ws_root,
             max_iters: config.agent.max_iters,
             coding_max_iters: config.agent.coding_max_iters,
             write_safety_mode: config.agent.write_safety_mode,
+            // Taken once, here: a changed default applies to new sessions.
             permission_mode: config.agent.default_permission_mode.unwrap_or_default(),
             prompt_loop_breaker: config.agent.prompt_loop_breaker.clone(),
             interface_mode,
@@ -200,6 +204,25 @@ impl EngineConfig {
             compact_threshold_default: config.agent.compact_threshold,
             memory_inject_min_score: config.agent.memory_inject_min_score,
             memory_recall_count: config.agent.memory_recall_count,
+            recall_tuned: false,
+        };
+        cfg.apply_settings(config);
+        cfg
+    }
+
+    /// The limits and safety settings an engine takes from the app config:
+    /// the one place that maps them, at build and again when the config
+    /// changes (`AgentEngine::read_changes_if_any`). The default permission
+    /// mode is not among them — it is a new session's, not a live one's.
+    pub fn apply_settings(&mut self, config: &crate::config::Config) {
+        self.max_iters = config.agent.max_iters;
+        self.coding_max_iters = config.agent.coding_max_iters;
+        self.write_safety_mode = config.agent.write_safety_mode;
+        self.prompt_loop_breaker = config.agent.prompt_loop_breaker.clone();
+        self.compact_threshold_default = config.agent.compact_threshold;
+        if !self.recall_tuned {
+            self.memory_inject_min_score = config.agent.memory_inject_min_score;
+            self.memory_recall_count = config.agent.memory_recall_count;
         }
     }
 
@@ -332,10 +355,11 @@ pub struct AgentEngine {
     // body, so the agent treats it as instructions rather than a user turn.
     pub(crate) active_mission: Option<ActiveMission>,
     /// Metadata for skills available to the model via the Skill tool: (name, description).
-    /// Written only by `read_skills_if_changed`.
+    /// Written only by `read_changes_if_any`.
     pub available_skills_metadata: Vec<(String, String, bool)>,
-    /// The change of skills that list reflects (`AgentManager::skills_generation`).
-    skills_read_at: Option<u64>,
+    /// The change of skills or settings this engine's copies reflect
+    /// (`AgentManager::changes_generation`).
+    read_at: Option<u64>,
     /// Metadata for agents available for delegation via the Task tool: (id, description).
     pub available_agents_metadata: Vec<(String, String)>,
     pub parent_agent_id: Option<String>,
@@ -710,7 +734,7 @@ impl AgentEngine {
             active_skill: Default::default(),
             active_mission: None,
             available_skills_metadata: Vec::new(),
-            skills_read_at: None,
+            read_at: None,
             available_agents_metadata: Vec::new(),
             parent_agent_id: None,
             parent_run_id: None,
@@ -873,21 +897,39 @@ impl AgentEngine {
         // installed skill-declared tools); currently nothing to do.
     }
 
-    /// Read `available_skills_metadata` — (name, description, is_app) for
-    /// every installed skill the model may take up — when the skills on disk
-    /// changed since this engine last read it (`mark_skills_changed`), or
-    /// never did. The one place the listing is read: when the engine is
-    /// built and at the start of each run, so a change of skills reaches a
-    /// live session at its next turn without dropping its engine. The
-    /// generation is read before the list, so a change landing between the
-    /// two is read again next time, never missed.
-    pub async fn read_skills_if_changed(&mut self, manager: &crate::engine::agent::AgentManager) {
-        let now = manager.skills_generation();
-        if self.skills_read_at == Some(now) {
+    /// Read what this engine takes from outside itself — the installed
+    /// skills (`available_skills_metadata`), the config's limits and safety
+    /// settings, the routing chain, the model list and the agent's default
+    /// model — when any of it changed since this engine last read it
+    /// (`mark_skills_changed`, `mark_settings_changed`), or never did. The
+    /// one reader: at build and at the start of each turn, so a change
+    /// reaches a live session at its next turn without dropping its engine
+    /// (and what it holds: its prompt, what the person declined, its plan).
+    /// A running turn is not touched — it holds the engine until it ends.
+    /// The generation is read before the rest, so a change landing between
+    /// the two is read again next time, never missed.
+    pub async fn read_changes_if_any(&mut self, manager: &crate::engine::agent::AgentManager) {
+        let now = manager.changes_generation();
+        if self.read_at == Some(now) {
             return;
         }
         self.available_skills_metadata = manager.skills.list_metadata().await;
-        self.skills_read_at = Some(now);
+        self.read_settings(manager).await;
+        self.read_at = Some(now);
+    }
+
+    async fn read_settings(&mut self, manager: &crate::engine::agent::AgentManager) {
+        let config = manager.get_config_snapshot().await;
+        let models = manager.models.read().await.clone();
+        self.cfg.apply_settings(&config);
+        self.default_models = config.routing.default_models.clone();
+        self.auto_fallback = config.routing.auto_fallback;
+        let frontmatter = self.spec.as_ref().and_then(|s| s.model.clone());
+        let default = self.agent_id.as_deref().and_then(|agent| {
+            crate::engine::agent::AgentManager::default_model_for(&config, &models, agent, frontmatter)
+        });
+        self.model_manager = models;
+        self.follow_default_model(default);
     }
 
     /// Populate `available_agents_metadata` with (name, description) pairs

@@ -797,6 +797,7 @@ async fn dispatch_mission_prompt(
     // one this machine lacks falls back to the agent's default — or, in a
     // session that may not switch models, is kept so the run fails on it,
     // named.
+    engine.read_live_state(&manager).await;
     let may_switch = session_id
         .as_deref()
         .is_none_or(|s| manager.global_sessions.model_fallback_allowed(s));

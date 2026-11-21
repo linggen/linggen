@@ -452,6 +452,7 @@ async fn apply_her_model(
         .manager
         .global_sessions
         .model_fallback_allowed(session_id);
+    engine.read_live_state(&state.manager).await;
     let choice = her_choice(engine, wanted.as_deref(), may_switch);
     engine.run_on(&choice, "[yinyue]").await;
     // A kept model she cannot run is cleared, as a chat turn clears it: the
