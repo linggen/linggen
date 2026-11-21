@@ -409,12 +409,8 @@ pub(super) fn send_for_peer(
     let standing = standing_for(user_ctx, device);
     let level = standing.level();
     if user_ctx.is_consumer() {
-        if !crate::server::routes::classes::sent_unchanged(url_path) {
-            return Err(crate::server::person::Refused::BadPath);
-        }
-        return crate::server::person::send_as(method, url_path, body, (standing.person(), user_type))
-            .map(|url| (url, level))
-            .map_err(crate::server::person::Refused::NotTheirs);
+        return crate::server::person::send_as_guest(method, url_path, body, &standing, user_type)
+            .map(|url| (url, level));
     }
     crate::server::person::send_judged(method, url_path, body, &standing, user_type).map(|url| (url, level))
 }
@@ -736,6 +732,38 @@ mod tests {
         assert_eq!(super::media_get(&UserContext::pairing(), None, "/shared/a.js"), None);
         let unknown = super::media_get(&UserContext::paired(), Some("not-paired"), "/api/skills");
         assert_eq!(unknown, None, "a device not paired is no one at chat");
+    }
+
+    /// A guest (room consumer) names a session by id only to act on their
+    /// own: the builder's, another guest's, and a day of another person are
+    /// refused wherever the request names them, whatever the method; their
+    /// own go through.
+    #[test]
+    fn a_guest_acts_only_on_their_own_sessions() {
+        let guest = UserContext::consumer(
+            "u-guest-probe".into(),
+            "linggen".into(),
+            crate::engine::permission::PermissionMode::Chat,
+            None,
+            None,
+        );
+        crate::server::person::keep_session_for_test("sess-probe-guest-own", Some("u-guest-probe"));
+        crate::server::person::keep_session_for_test("sess-probe-guest-other", Some("u-other-guest"));
+        crate::server::person::keep_session_for_test("sess-probe-guest-builder", None);
+        let sent = |method: &str, url: &str, mut body: serde_json::Value| {
+            super::send_for_peer(&guest, None, (method, url, &mut body), "consumer").is_ok()
+        };
+        for sid in ["sess-probe-guest-other", "sess-probe-guest-builder", "sess-day-2026-11-16"] {
+            assert!(!sent("DELETE", "/api/sessions/all", json!({ "session_id": sid })), "delete {sid}");
+            assert!(!sent("GET", &format!("/api/workspace/state?session_id={sid}"), json!(null)), "workspace {sid}");
+            assert!(!sent("GET", &format!("/api/skill-sessions/state?session_id={sid}"), json!(null)), "skill {sid}");
+        }
+        // A body that is not an object is filled into a route's body type by
+        // position (`["sess-…"]`), naming a session where the seam never looks.
+        let by_position = json!(["sess-probe-guest-builder"]);
+        assert!(!sent("DELETE", "/api/sessions/all", by_position), "delete by position");
+        assert!(sent("DELETE", "/api/sessions/all", json!({ "session_id": "sess-probe-guest-own" })));
+        assert!(sent("GET", "/api/workspace/state?session_id=sess-probe-guest-own", json!(null)));
     }
 
     #[tokio::test]

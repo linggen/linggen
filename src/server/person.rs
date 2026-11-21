@@ -6,7 +6,10 @@
 //! seam a session id from off this machine passes: a request naming a
 //! session its person may not enter (`day_session::may_enter`: another
 //! person's day or session; `session_id` or `session`, in the query or at
-//! the top of a JSON body, any method) is refused there.
+//! the top of a JSON body, any method) is refused there. [`send_as`] is
+//! private: a device's request enters through [`send_judged`], a room
+//! guest's through [`send_as_guest`], and no other way sends a request as
+//! its person.
 
 /// The ways into the day a page reads by URL, a person's notes and the
 /// retained readings: each is answered for the person on this channel, never
@@ -75,6 +78,10 @@ pub(crate) enum Refused {
     /// Its peer has named no device (no one) and the route is not the way
     /// in (`routes::classes::is_way_in`).
     Unnamed,
+    /// Its JSON body is an array, a number or a boolean: a route's body type
+    /// can be filled from an array by position, naming a session where the
+    /// seam does not look.
+    BadBody,
 }
 
 impl Refused {
@@ -86,6 +93,7 @@ impl Refused {
             Refused::NotTheirs(n) => serde_json::json!({ "error": n.reason() }),
             Refused::BadPath => serde_json::json!({ "error": "Invalid URL path" }),
             Refused::Unnamed => serde_json::json!({ "error": "unnamed" }),
+            Refused::BadBody => serde_json::json!({ "error": "a JSON request body must be an object" }),
             Refused::BeyondLevel { level, needs } => serde_json::json!({
                 "error": "beyond_level",
                 "level": level.to_string(),
@@ -121,7 +129,25 @@ pub(crate) fn send_judged(
             needs,
         });
     }
-    send_as(method, url_path, body, (standing.person(), user_type)).map_err(Refused::NotTheirs)
+    send_as(method, url_path, body, (standing.person(), user_type))
+}
+
+/// A room guest's request sent as its person: its path as it is sent
+/// ([`Refused::BadPath`]), then the same [`send_as`] a device's passes — so a
+/// guest, like a device, names only sessions that are theirs. Its route was
+/// admitted by the room gate (`routes::classes::tunnel_allows`) before it
+/// came here; the room's levels are not the route classes' (`ROOM`).
+pub(crate) fn send_as_guest(
+    method: &str,
+    url_path: &str,
+    body: &mut serde_json::Value,
+    standing: &Standing,
+    user_type: &str,
+) -> Result<String, Refused> {
+    if !crate::server::routes::classes::sent_unchanged(url_path) {
+        return Err(Refused::BadPath);
+    }
+    send_as(method, url_path, body, (standing.person(), user_type))
 }
 
 /// `body` sent as `person`, of `user_type`: what the page put there is
@@ -157,19 +183,25 @@ fn names_user_id(pair: &str) -> bool {
 }
 
 /// A request into a session sent as `person`, of `user_type`: refused
-/// ([`NotTheirs`]) when it names a session that person may not enter; else a
+/// ([`Refused::BadBody`]) when its body is an array or a bare number or
+/// boolean, as the LAN gate refuses it too ([`lan_body`]); refused
+/// ([`Refused::NotTheirs`]) when it names a session that person may not
+/// enter; else a
 /// way into the day by URL asks for that person, a way in by body (any
 /// method but GET) carries them, and any `user_id` the caller put in a
 /// body is theirs. Returns the URL to send.
-pub(crate) fn send_as(
+fn send_as(
     method: &str,
     url_path: &str,
     body: &mut serde_json::Value,
     (person, user_type): (&Person, &str),
-) -> Result<String, NotTheirs> {
+) -> Result<String, Refused> {
+    if body.is_array() || body.is_number() || body.is_boolean() {
+        return Err(Refused::BadBody);
+    }
     let (path, query) = url_path.split_once('?').unwrap_or((url_path, ""));
     if let Some(day) = named_sessions(query, body).find(|sid| !crate::server::day_session::may_enter(sid, person)) {
-        return Err(NotTheirs(day));
+        return Err(Refused::NotTheirs(NotTheirs(day)));
     }
     let id = person.wire();
     let takes = takes_body(method, path);
@@ -377,6 +409,16 @@ fn consumer_in(user_id: &str, mac: Option<&str>) -> Standing {
     }
 }
 
+/// A session kept in the process's store for `user` (`None`: the builder),
+/// for tests elsewhere that name sessions.
+#[cfg(test)]
+pub(crate) fn keep_session_for_test(id: &str, user: Option<&str>) {
+    let mut meta = crate::state_fs::sessions::SessionMeta::default();
+    meta.id = id.into();
+    meta.user_id = user.map(str::to_string);
+    crate::state_fs::SessionStore::global().add_session(&meta).unwrap();
+}
+
 /// A standing of `person` at `level`, for tests elsewhere.
 #[cfg(test)]
 pub(crate) fn for_test(person: &str, level: PermissionMode) -> Standing {
@@ -466,7 +508,8 @@ pub(crate) async fn lan_request_as(
     Ok(axum::extract::Request::from_parts(parts, axum::body::Body::from(bytes)))
 }
 
-/// A LAN request's body as the gate may send it on: a JSON object, to be
+/// A LAN request's body as the gate may send it on (what a body may be is
+/// decided in [`send_as`]; this answers 400 before the body is sent): a JSON object, to be
 /// sent as its person (`Some`); bytes that are not JSON, passed through
 /// untouched (`None`); JSON of any other kind, refused — a route's body
 /// type can be filled from an array by position, and such a body would go
@@ -899,6 +942,26 @@ mod tests {
             assert_eq!(judged(method, url), Err(super::Refused::Unnamed), "{method} {url}");
         }
         assert!(super::send_judged("POST", "/api/chat", &mut serde_json::json!({}), &at(crate::engine::permission::PermissionMode::Chat), "paired").is_ok());
+    }
+
+    /// A body that is an array (a route's body type is filled from it by
+    /// position, naming a session where the seam does not look), a number or
+    /// a boolean is refused, for a device and for a guest alike; an object,
+    /// no body and a text body pass.
+    #[test]
+    fn a_body_that_is_not_an_object_is_refused() {
+        use crate::engine::permission::PermissionMode::Chat;
+        let device = at(Chat);
+        let guest = super::consumer("u-friend");
+        for bad in [serde_json::json!(["sess-1-builder"]), serde_json::json!(3), serde_json::json!(true)] {
+            let by_device = super::send_judged("POST", "/api/chat/compact", &mut bad.clone(), &device, "paired");
+            assert_eq!(by_device, Err(super::Refused::BadBody), "{bad}");
+            let by_guest = super::send_as_guest("DELETE", "/api/sessions/all", &mut bad.clone(), &guest, "consumer");
+            assert_eq!(by_guest, Err(super::Refused::BadBody), "{bad}");
+        }
+        for ok in [serde_json::json!({"session_id": "sess-9-new"}), serde_json::Value::Null, serde_json::json!("text")] {
+            assert!(super::send_as_guest("DELETE", "/api/sessions/all", &mut ok.clone(), &guest, "consumer").is_ok(), "{ok}");
+        }
     }
 
     /// The day rule still holds under the level.
