@@ -136,6 +136,7 @@ Three groups of fields. Standard fields work across tools; the others are extens
 | `install` | Script that runs once on installation |
 | `sync` | Declares a directory the engine serves to paired devices (see "Device sync") |
 | `cloud` | A save and/or a token meter kept on linggen.dev for the account (see "Cloud") |
+| `keep` | Files of the skill that are the person's, kept on update (see "What an update keeps") |
 | `product` | The Linggen Cloud product its turns bill to (see "Product") |
 | `closing-ask` | `true`: the skill's tools hand each turn its closing question; the engine asks it when the model doesn't (see "Closing question") |
 | `queue` | `steer` (default) or `after-turn`: whether a message sent mid-turn steers the turn or waits for it (see "Queue") |
@@ -153,11 +154,29 @@ Three groups of fields. Standard fields work across tools; the others are extens
 
 A skill's directory is replaced on every install, except the person's own
 files, which come through unchanged: `data/`, `state/`, `sessions/`,
-`config.json`, `.installed`, the paths of `cloud.save` and `cloud.skip`, and
-any file named `*.local.*`. The rule is written once per repo (the engine's
-`marketplace.rs` `state_paths`; the skills repo's `install-skill.mjs` and
-`pulse/install.sh`) and held together by `extensions/user_state_cases.json`,
-the same file as `skills/tests/user-state-cases.json`, run by each.
+`config.json`, `.installed`, the paths of `cloud.save` and `cloud.skip`, the
+paths of `keep`, and any file named `*.local.*`. Caches are not the person's:
+a folder named `__pycache__` or `node_modules` is replaced like any other.
+
+```yaml
+keep: [references/brief.md, notes]   # a skill's own file the person edits
+```
+
+`keep` is a top-level list of paths relative to the skill folder, files or
+folders, written as one inline list on one line (the installers outside the
+engine read it line by line; the skills repo's frontmatter test refuses a block
+list). It adds to the fixed roots, `cloud` and `*.local.*`; it never removes
+from them. A path outside the skill folder (absolute, or with `..`) is
+ignored. A release that starts declaring a path keeps the person's copy at the
+update that brings the declaration.
+
+The rule is run by four installers — the engine's marketplace update
+(`marketplace.rs` `state_paths`), the skills repo's `install-skill.mjs` and
+`pulse/install.sh`, and the Mac app's bundled-skill sync (linggen-app
+`shell/src/skill_sync`) — and held together by
+`extensions/user_state_cases.json`, the same file as
+`skills/tests/user-state-cases.json` and
+`linggen-app/shell/src/skill_sync/user_state_cases.json`, run by each.
 
 ## Renaming a skill
 

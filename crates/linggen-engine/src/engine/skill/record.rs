@@ -524,6 +524,12 @@ pub struct Skill {
     /// `CloudConfig`.
     #[serde(default)]
     pub cloud: Option<CloudConfig>,
+    /// Paths under the skill folder (files or folders) that are the person's
+    /// own — edited or written by them — and come through an update
+    /// unchanged, beside the fixed roots, `cloud.save`/`cloud.skip` and
+    /// `*.local.*` files. See `doc/skill-spec.md` § What an update keeps.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub keep: Vec<String>,
     /// The Linggen Cloud product this skill's turns bill to (sent as
     /// X-Linggen-App). Absent: the shared 'linggen' bucket. Declared by the
     /// skill so the engine never names an app — see `doc/skill-spec.md`
