@@ -81,6 +81,9 @@ pub struct ServerState {
     /// Voice backend for `/api/tts` (Yinyue's speech). Held here so a
     /// model-backed provider (Kokoro) loads once rather than per request.
     pub tts: Arc<dyn crate::server::api::tts::TtsProvider>,
+    /// Hearing backend for `/api/stt` (what the person says to her). Shares
+    /// her voice's one sidecar process.
+    pub stt: Arc<dyn crate::server::api::stt::SttProvider>,
     /// Browser bridge hub — the connected `linggen-browser` extension (if any)
     /// plus in-flight request correlation. See `server/bridge.rs`.
     pub bridge: Arc<BridgeHub>,

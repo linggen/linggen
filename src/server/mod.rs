@@ -76,6 +76,9 @@ async fn prepare_server(
     ));
     crate::extensions::skills::assets_link::spawn(assets.clone(), skills.clone());
 
+    // Her voice and her hearing are two users of one sidecar process.
+    let voice_sidecar = api::mlx_sidecar::VoiceSidecar::new();
+
     let state = Arc::new(ServerState {
         manager,
         dev_mode,
@@ -105,7 +108,8 @@ async fn prepare_server(
             rtc::token_store::TokenUsageStore::load(),
         )),
         codex_login_task: Arc::new(tokio::sync::Mutex::new(None)),
-        tts: api::tts::default_provider(),
+        tts: api::tts::default_provider(voice_sidecar.clone()),
+        stt: api::stt::default_provider(voice_sidecar),
         bridge: Arc::new(bridge::BridgeHub::new()),
         current_view: Arc::new(std::sync::Mutex::new(None)),
         yinyue_presenters: Arc::new(std::sync::Mutex::new(Vec::new())),

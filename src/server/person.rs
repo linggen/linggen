@@ -445,8 +445,9 @@ pub(crate) fn unnamed(owner_known: bool) -> Standing {
 }
 
 /// The most of a body the LAN gate reads to send a request as its person:
-/// the framework's own limit for a route's body (axum's `DefaultBodyLimit`,
-/// which no route here changes).
+/// the framework's own limit for a route's body (axum's `DefaultBodyLimit`),
+/// which one route raises — `/api/stt`, a minute of audio — and that body
+/// goes on unread, for its route to read under its own limit.
 const LAN_BODY_LIMIT: usize = 2 * 1024 * 1024;
 
 /// The LAN gate's request from paired device `device`, sent as its person
@@ -935,6 +936,7 @@ mod tests {
             ("POST", "/api/memory/search"),
             ("POST", "/api/push/device"),
             ("POST", "/api/tts"),
+            ("POST", "/api/stt"),
             ("GET", "/api/rtc/token"),
             ("POST", "/api/rtc/whip"),
             ("POST", "/api/agent-cancel"),

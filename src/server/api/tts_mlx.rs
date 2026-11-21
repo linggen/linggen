@@ -1,36 +1,23 @@
-//! Qwen3-TTS on the Mac's GPU, spoken through a resident Python sidecar.
+//! Qwen3-TTS on the Mac's GPU, spoken through the resident Python sidecar
+//! ([`super::mlx_sidecar`], shared with her hearing).
 //!
-//! MLX is only practically callable from Python, so the model runs in a
-//! child process on the managed runtime's `tts` venv (see
-//! [`crate::runtime`]) and the engine talks JSON lines over its stdio:
-//! one `{text, voice, lang}` request in — one short clause, see
+//! One `{text, voice, lang}` request in — one short clause, see
 //! [`super::tts_text`] — one complete base64 WAV out. A take that drifts
-//! (too slow for its length) is made once more. One request is in
-//! flight at a time — the caller holds the child lock, and
-//! generation saturates the GPU anyway.
+//! (too slow for its length) is made once more.
 //!
 //! Every failure — venv missing (Intel Mac, prewarm not done), sidecar
 //! dead, malformed reply, timeout — falls back to [`KokoroProvider`], so
-//! the pet always has a voice. The sidecar script is embedded in the
-//! binary and rewritten to disk at spawn, so upgrades ride the engine.
+//! the pet always has a voice.
 
-use std::process::Stdio;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use base64::Engine as _;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::sync::Mutex;
 
+use super::mlx_sidecar::VoiceSidecar;
 use super::tts::TtsProvider;
 use super::tts_text::{self, Take};
 use super::tts_wav;
-
-const SIDECAR_SRC: &str = include_str!("../../runtime_py/mlx_tts.py");
-
-/// The model the sidecar serves. Apache-2.0 (upstream Qwen and the MLX
-/// conversion both) — license-checked 2026-08-19.
-const MODEL: &str = crate::runtime::TTS_MODEL;
 
 /// Multilingual (zh + en in one timbre), so unlike Kokoro no script→voice
 /// mapping is needed. Names must match the model's speaker roster.
@@ -38,8 +25,6 @@ const DEFAULT_VOICE: &str = "vivian";
 pub(super) const SPEAKERS: [&str; 9] = [
     "serena", "vivian", "uncle_fu", "ryan", "aiden", "ono_anna", "sohee", "eric", "dylan",
 ];
-
-const READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
 /// Per-clip budget, scaled to the text: healthy synthesis runs ~0.3×
 /// realtime, but the GPU can degrade machine-wide (thermal / competing
@@ -52,21 +37,15 @@ fn synth_timeout(text: &str) -> std::time::Duration {
     std::time::Duration::from_secs((12 + chars / 3).clamp(15, 60))
 }
 
-struct Sidecar {
-    child: tokio::process::Child,
-    stdin: tokio::process::ChildStdin,
-    stdout: BufReader<tokio::process::ChildStdout>,
-}
-
 pub struct MlxTtsProvider {
-    sidecar: Arc<Mutex<Option<Sidecar>>>,
+    sidecar: Arc<VoiceSidecar>,
     fallback: Box<dyn TtsProvider>,
 }
 
 impl MlxTtsProvider {
-    pub fn new() -> Self {
+    pub fn new(sidecar: Arc<VoiceSidecar>) -> Self {
         Self {
-            sidecar: Arc::new(Mutex::new(None)),
+            sidecar,
             fallback: super::tts::fallback_provider(),
         }
     }
@@ -77,97 +56,15 @@ impl MlxTtsProvider {
         crate::runtime::voice_ready()
     }
 
-    async fn spawn() -> anyhow::Result<Sidecar> {
-        let script = crate::runtime::runtime_dir().join("mlx_tts.py");
-        tokio::fs::write(&script, SIDECAR_SRC).await?;
-
-        let mut child = tokio::process::Command::new(crate::runtime::env_bin("tts", "python3"))
-            .arg(&script)
-            .arg(MODEL)
-            .env("HF_HOME", crate::runtime::hf_home())
-            .env("HF_ENDPOINT", crate::hf_mirror::endpoint().await)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()?;
-
-        let stdin = child.stdin.take().expect("piped stdin");
-        let stdout = BufReader::new(child.stdout.take().expect("piped stdout"));
-        // The sidecar's stderr (HF progress, MLX chatter) goes to debug logs
-        // instead of vanishing — release-print invisibility bites otherwise.
-        if let Some(stderr) = child.stderr.take() {
-            tokio::spawn(async move {
-                let mut lines = BufReader::new(stderr).lines();
-                while let Ok(Some(line)) = lines.next_line().await {
-                    tracing::debug!("[tts-mlx] {line}");
-                }
-            });
-        }
-
-        let mut sidecar = Sidecar {
-            child,
-            stdin,
-            stdout,
-        };
-        let ready = tokio::time::timeout(READY_TIMEOUT, read_json(&mut sidecar.stdout)).await??;
-        if ready.get("ready").and_then(|v| v.as_bool()) != Some(true) {
-            anyhow::bail!("sidecar first line was not ready: {ready}");
-        }
-        tracing::info!("[tts-mlx] sidecar ready ({MODEL})");
-        Ok(sidecar)
-    }
-
-    /// One round-trip against the (spawned-if-needed) sidecar. Any error
-    /// leaves the slot empty so the next call respawns from scratch.
+    /// One clip from the sidecar. Any error — busy, dead, timed out — is
+    /// the caller's cue to fall back.
     async fn request(&self, text: &str, voice: &str) -> anyhow::Result<Vec<u8>> {
-        // Bounded waits on the way in: if the sidecar is mid-spawn (boot
-        // prewarm holds the lock for up to READY_TIMEOUT) or another clip
-        // is hogging it, give up fast — warm Kokoro beats a silent queue.
-        let mut guard =
-            tokio::time::timeout(std::time::Duration::from_secs(5), self.sidecar.lock())
-                .await
-                .map_err(|_| anyhow::anyhow!("sidecar busy (spawning or mid-clip)"))?;
-        if guard.is_none() {
-            *guard = Some(
-                tokio::time::timeout(std::time::Duration::from_secs(15), Self::spawn())
-                    .await
-                    .map_err(|_| anyhow::anyhow!("sidecar spawn too slow"))??,
-            );
-        }
-        let sidecar = guard.as_mut().expect("just spawned");
-
-        let result = tokio::time::timeout(synth_timeout(text), async {
-            let req = serde_json::json!({
-                "text": text,
-                "voice": voice,
-                "lang": tts_text::language_for(text, crate::language::setting().as_deref()),
-            });
-            sidecar
-                .stdin
-                .write_all(format!("{req}\n").as_bytes())
-                .await?;
-            sidecar.stdin.flush().await?;
-            read_json(&mut sidecar.stdout).await
-        })
-        .await;
-
-        let reply = match result {
-            Ok(Ok(v)) => v,
-            Ok(Err(e)) => return self.kill_and_err(&mut guard, e).await,
-            Err(_) => {
-                return self
-                    .kill_and_err(&mut guard, anyhow::anyhow!("synthesis timed out"))
-                    .await
-            }
-        };
-        if reply.get("ok").and_then(|v| v.as_bool()) != Some(true) {
-            // The sidecar survived and reported a per-request error — keep it.
-            anyhow::bail!(
-                "sidecar error: {}",
-                reply.get("error").and_then(|v| v.as_str()).unwrap_or("?")
-            );
-        }
+        let req = serde_json::json!({
+            "text": text,
+            "voice": voice,
+            "lang": tts_text::language_for(text, crate::language::setting().as_deref()),
+        });
+        let reply = self.sidecar.ask(&req, synth_timeout(text)).await?;
         let b64 = reply
             .get("wav_b64")
             .and_then(|v| v.as_str())
@@ -209,43 +106,6 @@ fn judge_take(text: &str, wav: &[u8]) -> Take {
     })
 }
 
-impl MlxTtsProvider {
-    /// Kill the sidecar and start a replacement in the background, so the
-    /// clip after a failure doesn't also pay the ~3.5s respawn.
-    async fn kill_and_err(
-        &self,
-        guard: &mut Option<Sidecar>,
-        e: anyhow::Error,
-    ) -> anyhow::Result<Vec<u8>> {
-        if let Some(mut s) = guard.take() {
-            let _ = s.child.kill().await;
-        }
-        let slot = self.sidecar.clone();
-        tokio::spawn(async move {
-            // Locks after the caller's guard drops; a request that raced in
-            // first will have respawned already, and this becomes a no-op.
-            let mut guard = slot.lock().await;
-            if guard.is_none() {
-                match Self::spawn().await {
-                    Ok(s) => *guard = Some(s),
-                    Err(e) => tracing::warn!("[tts-mlx] background respawn failed: {e:#}"),
-                }
-            }
-        });
-        Err(e)
-    }
-}
-
-async fn read_json(
-    stdout: &mut BufReader<tokio::process::ChildStdout>,
-) -> anyhow::Result<serde_json::Value> {
-    let mut line = String::new();
-    if stdout.read_line(&mut line).await? == 0 {
-        anyhow::bail!("sidecar closed stdout");
-    }
-    Ok(serde_json::from_str(line.trim())?)
-}
-
 #[async_trait]
 impl TtsProvider for MlxTtsProvider {
     async fn synthesize(&self, text: &str, voice: Option<&str>) -> anyhow::Result<Vec<u8>> {
@@ -285,12 +145,8 @@ impl TtsProvider for MlxTtsProvider {
             tracing::info!("[tts-mlx] tts venv not ready; Kokoro remains the voice");
             return;
         }
-        let mut guard = self.sidecar.lock().await;
-        if guard.is_none() {
-            match Self::spawn().await {
-                Ok(s) => *guard = Some(s),
-                Err(e) => tracing::warn!("[tts-mlx] pre-warm failed ({e:#}); Kokoro remains"),
-            }
+        if let Err(e) = self.sidecar.warm().await {
+            tracing::warn!("[tts-mlx] pre-warm failed ({e:#}); Kokoro remains");
         }
     }
 

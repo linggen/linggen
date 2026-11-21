@@ -34,6 +34,11 @@ pub(super) mod storage;
 /// reaches the user's other devices, and perception publishes this Mac's own
 /// state on one.
 pub(crate) mod topic;
+/// `pub(super)`: the sidecar is made once, in `server::run`, and handed to
+/// her voice and her hearing.
+pub(super) mod mlx_sidecar;
+pub(super) mod stt;
+pub(super) mod stt_mlx;
 pub(super) mod tts;
 pub(super) mod tts_mlx;
 /// `pub(crate)`: the `pet_speak` event carries a line's clauses.

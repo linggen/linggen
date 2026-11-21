@@ -1,22 +1,35 @@
-# mlx_tts.py — resident TTS sidecar for the Linggen engine.
+# mlx_voice.py — resident voice sidecar for the Linggen engine: her voice
+# (speech out) and her hearing (speech in), one process on one runtime.
 #
 # Written to ~/.linggen/runtime/ by the engine at spawn time (the copy in
 # the source tree is the truth; edits need an engine rebuild). Runs inside
 # the `tts` venv on the managed Python runtime, which is the only place
 # MLX is callable from — there is no Rust binding worth shipping.
 #
+# argv: <tts model id> <hearing model id>
+#
 # Protocol, JSON lines on stdio:
-#   startup  ->  {"ready": true}                  (after the model loads)
-#   request  <-  {"text": "...", "voice": "...", "lang": "english"}
-#                (lang: auto | chinese | english; absent = auto. The
-#                engine sends one short clause per request and names the
-#                language whenever the clause's script or the user's
+#   startup  ->  {"ready": true}       (after the voice model loads; the
+#                                       hearing model loads on its first use)
+#   speak    <-  {"text": "...", "voice": "...", "lang": "english"}
+#                (no "op"; lang: auto | chinese | english; absent = auto.
+#                The engine sends one short clause per request and names
+#                the language whenever the clause's script or the user's
 #                language setting makes it known.)
 #   reply    ->  {"ok": true, "wav_b64": "...", "sr": 24000}
-#            ->  {"ok": false, "error": "..."}    (the loop keeps serving)
+#   hear     <-  {"op": "hear", "pcm_b64": "..."}
+#                (16 kHz mono 16-bit little-endian samples, nothing else)
+#   reply    ->  {"ok": true, "text": "...", "language": "zh"}
+#   either   ->  {"ok": false, "error": "..."}    (the loop keeps serving)
 #
 # One request at a time by design — the engine holds a lock across
 # write+read, and generation saturates the GPU anyway.
+#
+# What is heard stays in memory: the samples arrive on stdin and are handed
+# to the model as an array. No file is written, and this script has no
+# network code — the hearing model is read from the local cache by path
+# (local_files_only), never by a hub lookup. A test holds both
+# (`stt_mlx::the_sidecar_script_keeps_what_it_hears_to_itself`).
 
 import base64
 import io
@@ -53,8 +66,27 @@ def to_wav_bytes(chunks, sr):
     return buf.getvalue()
 
 
+def hear(req, state):
+    """Words from 16 kHz mono PCM16 samples. The model loads on first use."""
+    if state.get("stt") is None:
+        from huggingface_hub import snapshot_download
+        from mlx_audio.stt.utils import load_model as load_stt
+
+        path = snapshot_download(state["stt_id"], local_files_only=True)
+        state["stt"] = load_stt(path)
+    pcm = np.frombuffer(base64.b64decode(req["pcm_b64"]), dtype="<i2")
+    audio = pcm.astype(np.float32) / 32768.0
+    out = state["stt"].generate(audio, verbose=False)
+    return {
+        "ok": True,
+        "text": (out.text or "").strip(),
+        "language": getattr(out, "language", None) or "",
+    }
+
+
 def main():
     model_id = sys.argv[1]
+    state = {"stt": None, "stt_id": sys.argv[2]}
     from mlx_audio.tts.utils import load_model
 
     model = load_model(model_id)
@@ -66,6 +98,9 @@ def main():
             continue
         try:
             req = json.loads(line)
+            if req.get("op") == "hear":
+                emit(hear(req, state))
+                continue
             chunks, sr = [], 24000
             # Cap generation by the text's plausible audio length (speech
             # tokens run at 12Hz; ~0.5s of audio per char is already twice
