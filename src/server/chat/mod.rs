@@ -42,6 +42,8 @@ pub(crate) use skill_dispatch::slash_command;
 mod structured;
 pub(crate) mod thread;
 pub(crate) mod turn_place;
+mod turn_start;
+pub(crate) use turn_start::TurnStart;
 pub(crate) mod types;
 
 pub(crate) use admin::{
@@ -50,7 +52,7 @@ pub(crate) use admin::{
 };
 pub(crate) use handler::{
     chat_handler, mark_steered, question_open_for_queued, queued_session, run_session_turn,
-    say_in_app, say_in_session, Typed,
+    say_in_app, say_in_session,
 };
 pub(crate) use light::{reply_in_session, reply_now};
 pub(crate) use plan_flow::{approve_plan_handler, edit_plan_handler, reject_plan_handler};
@@ -80,10 +82,10 @@ pub(super) struct ChatRunCtx {
     pub(super) sender: Option<String>,
     /// Device this agent continues the user's task from (see `ChatRequest::via`).
     pub(super) via: Option<String>,
-    /// Where the turn comes from. For a turn of hers the engine started it
-    /// decides whether her reply is held for the finalizer, and which speaking
-    /// contract the model reads; every other turn is a person's.
-    pub(crate) origin: crate::server::resident::Origin,
+    /// Who started the turn: what it may read, whether a person spoke, and
+    /// for a turn of hers whether her reply is held and which speaking
+    /// contract the model reads (`turn_start`).
+    pub(crate) start: TurnStart,
     /// The place this turn stands in: what it takes from an app
     /// (`turn_place`) is set from this when it starts and cleared when it
     /// ends.
@@ -114,7 +116,7 @@ impl ChatRunCtx {
     /// origin names — the one place a turn of hers gets it, so a held turn
     /// without it cannot exist. The row the thread keeps stays `clean_msg`.
     pub(super) fn told(&self) -> String {
-        match self.origin.contract() {
+        match self.start.origin().contract() {
             Some(contract) => format!("{} {contract}", self.clean_msg),
             None => self.clean_msg.clone(),
         }

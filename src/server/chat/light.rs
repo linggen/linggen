@@ -47,7 +47,7 @@ pub(crate) async fn reply_in_session(
         sender: None,
         via: None,
         // Not a turn of hers: another agent's, answered as any is.
-        origin: crate::server::resident::Origin::Person,
+        start: super::TurnStart::Engine,
         place,
         turn: Default::default(),
     };
@@ -98,7 +98,7 @@ pub(crate) async fn reply_now(
         sender: None,
         via: None,
         // Not a turn of hers: another agent's, answered as any is.
-        origin: crate::server::resident::Origin::Person,
+        start: super::TurnStart::Engine,
         place: crate::engine::turn_place::TurnPlace::of_session(Some(&meta)),
         turn: Default::default(),
     };

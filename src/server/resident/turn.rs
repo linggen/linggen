@@ -105,7 +105,7 @@ pub(super) async fn run_home(
         language,
         place,
     };
-    run_at(state, &turn, &pet, task, origin).await
+    run_at(state, &turn, &pet, task, crate::server::chat::TurnStart::at_her_door(origin)).await
 }
 
 /// The place her turn at `table` stands in: in a day's session the app the
@@ -170,7 +170,7 @@ async fn run_at_table(
         language,
         place,
     };
-    run_at(state, &turn, &pet, task, origin).await
+    run_at(state, &turn, &pet, task, crate::server::chat::TurnStart::at_her_door(origin)).await
 }
 
 /// Her own folder: where her turns run, and what her permissions cover.
@@ -201,8 +201,9 @@ async fn run_at(
     turn: &Turn,
     pet: &crate::config::PetConfig,
     task: String,
-    origin: Origin,
+    start: crate::server::chat::TurnStart,
 ) -> Option<Turned> {
+    let origin = start.origin();
     let Turn {
         session_id, root, ..
     } = turn;
@@ -295,12 +296,12 @@ async fn run_at(
             sender: None,
             // A turn the engine started shows and keeps nothing itself: what
             // she chose to say is published by the finalizer (`spoken`).
-            origin,
+            start,
             place: turn.place.clone(),
             turn: turn_settings(turn, origin),
         };
         let cap = turn.home.then_some(YINYUE_MAX_LIVE_MSGS);
-        crate::server::chat::run_session_turn(&ctx, &mut engine, &state.manager, cap, crate::server::chat::Typed::ByNobody).await;
+        crate::server::chat::run_session_turn(&ctx, &mut engine, &state.manager, cap).await;
 
         if origin == Origin::AgentChat {
             state.manager.clear_agent_chat_session(session_id);
@@ -379,7 +380,7 @@ fn resend_hers(
             }
             tokio::spawn(async move {
                 let pet = state.manager.get_config_snapshot().await.pet;
-                let Some(reply) = run_at(&state, &turn, &pet, task, origin).await else {
+                let Some(reply) = run_at(&state, &turn, &pet, task, crate::server::chat::TurnStart::resent_at_her_door(origin)).await else {
                     return;
                 };
                 let Some(answer) = reply.answer() else {

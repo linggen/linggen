@@ -331,7 +331,8 @@ async fn tell_in_place(
     };
     // Where this turn comes from is recorded the moment it holds the lock: a
     // person's message that comes now ends it, and a restart's plan reads it.
-    let origin = Origin::for_agent(&agent, told);
+    let start = super::chat::TurnStart::told(&agent, told);
+    let origin = start.origin();
     let running = crate::server::resident::RunningOrigin::at_lock(&session, origin);
     // A person's message was waiting for the session: this notice's turn does
     // not run. (A restart's own continue turn, `mark`, keeps its retry
@@ -409,11 +410,11 @@ async fn tell_in_place(
         sender: Some(sender),
         // Told to her, the notice is an event: what she chooses to say is
         // published by the finalizer, nothing of her reply is kept as prose.
-        origin,
+        start,
         place: told_at.clone(),
         turn: crate::engine::turn_place::TurnSettings { language, ..Default::default() },
     };
-    super::chat::run_session_turn(&ctx, &mut engine, &state.manager, None, super::chat::Typed::ByNobody).await;
+    super::chat::run_session_turn(&ctx, &mut engine, &state.manager, None).await;
     let ended = running.as_ref().is_some_and(crate::server::resident::RunningOrigin::was_ended);
     if origin.held() && !ended {
         let reply = engine.last_assistant_text.clone().map(|t| crate::server::resident::Turned::of(t, origin));

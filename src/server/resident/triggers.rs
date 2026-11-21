@@ -637,11 +637,11 @@ pub(super) async fn deliver_to_chat_agent(
             images: Vec::new(),
             policy: crate::server::chat::policy::turn_policy(crate::server::chat::policy::TurnBy::Engine),
             sender: Some(from.clone()),
-            origin: Origin::Person,
+            start: crate::server::chat::TurnStart::Engine,
             place: delivered_place(&state, &session_id, app.as_deref()),
             turn: Default::default(),
         };
-        crate::server::chat::run_session_turn(&ctx, &mut engine, &state.manager, None, crate::server::chat::Typed::ByNobody).await;
+        crate::server::chat::run_session_turn(&ctx, &mut engine, &state.manager, None).await;
         state.manager.clear_agent_chat_session(&session_id);
     }
 

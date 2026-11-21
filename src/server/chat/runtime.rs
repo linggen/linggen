@@ -120,7 +120,7 @@ pub(super) async fn run_loop_with_tracking(
 pub(super) fn wire_inbox(ctx: &ChatRunCtx, engine: &mut crate::engine::AgentEngine) {
     // A held turn (one the engine started) takes in nothing: a person's
     // message waits and runs as its own turn, answered and shown as ever.
-    if ctx.origin.held() {
+    if ctx.start.origin().held() {
         return;
     }
     let key = crate::server::chat::helpers::fold_key(ctx.session_id.as_deref(), &ctx.agent_id);
