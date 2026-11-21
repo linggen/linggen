@@ -208,8 +208,8 @@ pub fn build_outward_question(
     }
 }
 
-/// An action a rule in the person's Claude Code settings asks before
-/// (`claude_rules`): allow once or deny, like [`build_outward_question`] —
+/// An action a rule in the person's Claude Code settings asks before, or a
+/// change to one of those files (`claude_rules`): allow once or deny, like [`build_outward_question`] —
 /// no grant can satisfy the rule.
 pub fn build_rule_question(
     tool_summary: &str,
@@ -217,7 +217,7 @@ pub fn build_rule_question(
     path: &str,
 ) -> AskUserQuestion {
     let mut question = build_outward_question(tool_summary, target_mode, path);
-    question.options[0].description = Some("Run this one action; your Claude Code settings ask every time".into());
+    question.options[0].description = Some("Run this one action; it is asked every time".into());
     question
 }
 

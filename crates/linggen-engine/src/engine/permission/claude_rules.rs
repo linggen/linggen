@@ -10,6 +10,11 @@
 //! This module is the one place that reads Claude's rule syntax ([`parse`])
 //! and says whether a call matches ([`ClaudeCall::denies`],
 //! [`ClaudeCall::asks`]); the check decides what a match does.
+//!
+//! It is also the one place that names the files the rules are read from
+//! ([`sources`]), so the same list says which files a change is asked about
+//! every time ([`ClaudeCall::asks`]): a run must not take a rule away by
+//! editing or deleting the file that holds it.
 
 use super::model::{command_run, commands_as_written, display_path, file_name, normalize_path};
 use std::path::{Component, Path, PathBuf};
@@ -21,6 +26,11 @@ const MAX_FILE_BYTES: u64 = 1 << 20;
 /// The first words of every refusal a deny rule makes. The gate shows a
 /// refusal that starts with them in full ([`is_refusal`]).
 const REFUSAL_HEAD: &str = "Refused by Claude Code settings:";
+
+/// What the person is told when a call changes a file the rules are read
+/// from (≤ 20 words: the gate shows it under the action).
+const SETTINGS_FILE_ASK: &str =
+    "This changes a Claude Code settings file: asked every time, never granted.";
 
 /// Whether a `Blocked` reason is a deny rule's refusal, which names the
 /// rule and its file and is shown as it is.
@@ -112,6 +122,38 @@ struct Source {
     base: PathBuf,
 }
 
+/// The files the rules are read from: the person's own under `home`, and
+/// the project's two in `project` and at its git root when that is another
+/// folder. The one list — reading the rules and asking about changes to
+/// these files both go through it.
+fn sources(home: Option<&Path>, project: &Path) -> Vec<Source> {
+    let mut sources = Vec::new();
+    if let Some(home) = home {
+        let dir = home.join(".claude");
+        sources.push(Source {
+            file: dir.join("settings.json"),
+            anchor: dir,
+            base: project.to_path_buf(),
+        });
+    }
+    let mut folders = vec![project.to_path_buf()];
+    if let Some(root) = crate::engine::tools::search_exec_find_git_root(project) {
+        if normalize_path(&root.to_string_lossy()) != normalize_path(&project.to_string_lossy()) {
+            folders.push(root);
+        }
+    }
+    for folder in folders {
+        for name in ["settings.json", "settings.local.json"] {
+            sources.push(Source {
+                file: folder.join(".claude").join(name),
+                anchor: folder.clone(),
+                base: folder.clone(),
+            });
+        }
+    }
+    sources
+}
+
 /// The rules in force for one run: read at its start, so a change the run
 /// makes to the files does not take a rule away mid-run.
 #[derive(Debug, Clone, Default)]
@@ -119,6 +161,9 @@ pub struct ClaudeRules {
     rules: Vec<Rule>,
     not_understood: Vec<String>,
     home: Option<PathBuf>,
+    /// Every file the rules are read from — present or not yet written —
+    /// taken from [`sources`], the list `load` reads.
+    settings_files: Vec<PathBuf>,
 }
 
 /// The rules and what of a call they need beyond the check's own inputs.
@@ -147,6 +192,7 @@ static NONE: ClaudeRules = ClaudeRules {
     rules: Vec::new(),
     not_understood: Vec::new(),
     home: None,
+    settings_files: Vec::new(),
 };
 
 impl ClaudeRules {
@@ -162,33 +208,10 @@ impl ClaudeRules {
     /// in `project` (and at its git root, when that is another folder).
     /// Only `permissions.deny` and `permissions.ask` are read.
     pub fn load(home: Option<&Path>, project: &Path) -> Self {
-        let mut sources = Vec::new();
-        if let Some(home) = home {
-            let dir = home.join(".claude");
-            sources.push(Source {
-                file: dir.join("settings.json"),
-                anchor: dir,
-                base: project.to_path_buf(),
-            });
-        }
-        let mut folders = vec![project.to_path_buf()];
-        if let Some(root) = crate::engine::tools::search_exec_find_git_root(project) {
-            if normalize_path(&root.to_string_lossy()) != normalize_path(&project.to_string_lossy())
-            {
-                folders.push(root);
-            }
-        }
-        for folder in folders {
-            for name in ["settings.json", "settings.local.json"] {
-                sources.push(Source {
-                    file: folder.join(".claude").join(name),
-                    anchor: folder.clone(),
-                    base: folder.clone(),
-                });
-            }
-        }
+        let sources = sources(home, project);
         let mut rules = ClaudeRules {
             home: home.map(Path::to_path_buf),
+            settings_files: sources.iter().map(|source| source.file.clone()).collect(),
             ..Default::default()
         };
         for source in &sources {
@@ -287,7 +310,7 @@ impl ClaudeRules {
 impl ClaudeCall<'_> {
     /// No rule to judge: the check is exactly as without the files.
     pub(super) fn is_empty(&self) -> bool {
-        self.rules.rules.is_empty()
+        self.rules.rules.is_empty() && self.rules.settings_files.is_empty()
     }
 
     /// The refusal of the first deny rule the call matches.
@@ -301,14 +324,38 @@ impl ClaudeCall<'_> {
         })
     }
 
-    /// The reason of the first ask rule the call matches.
-    pub(super) fn asks(&self, facts: &Facts<'_>) -> Option<String> {
-        self.first(Kind::Ask, facts).map(|rule| {
+    /// Why the call is asked, once: the first ask rule it matches (only in
+    /// a coding session — the rules are not read elsewhere), else — in any
+    /// session — that it changes a file the rules are read from.
+    pub(super) fn asks(&self, facts: &Facts<'_>, coding: bool) -> Option<String> {
+        let by_rule = self.first(Kind::Ask, facts).filter(|_| coding).map(|rule| {
             format!(
                 "`{}` in {} asks before this, every time.",
                 rule.text,
                 display_path(&rule.file)
             )
+        });
+        by_rule.or_else(|| {
+            self.changes_a_settings_file(facts)
+                .then(|| SETTINGS_FILE_ASK.to_string())
+        })
+    }
+
+    /// Whether the call changes a file the rules are read from, or the
+    /// `.claude` folder holding it (removing it takes the file along): a
+    /// file tool's path, or, for a command that is more than a read, any
+    /// file it names. A read is never asked.
+    fn changes_a_settings_file(&self, facts: &Facts<'_>) -> bool {
+        let targets: &[PathBuf] = match facts.tool {
+            "Write" | "Edit" => facts.path.as_slice(),
+            "Bash" if facts.bash_writes => &facts.bash_paths,
+            _ => &[],
+        };
+        targets.iter().any(|target| {
+            self.rules
+                .settings_files
+                .iter()
+                .any(|file| names_file_or_its_folder(target, file))
         })
     }
 
@@ -503,6 +550,25 @@ impl PathPattern {
             }) || (rel.as_os_str().is_empty() && self.glob.is_match(""))
         })
     }
+}
+
+/// Whether `target` is `file` or the folder holding it, by any name that
+/// reaches it: as written and with links resolved, letter case ignored (a
+/// Mac's disk does not tell `Settings.JSON` from `settings.json`).
+fn names_file_or_its_folder(target: &Path, file: &Path) -> bool {
+    let folder = file.parent();
+    let reaches = |same: &dyn Fn(&Path) -> PathBuf| {
+        let target = lowercase(&same(target));
+        [Some(file), folder]
+            .into_iter()
+            .flatten()
+            .any(|place| lowercase(&same(place)) == target)
+    };
+    reaches(&lexical) || reaches(&|path| PathBuf::from(normalize_path(&path.to_string_lossy())))
+}
+
+fn lowercase(path: &Path) -> PathBuf {
+    PathBuf::from(path.to_string_lossy().to_lowercase())
 }
 
 /// `path` with `.` and `..` collapsed, without asking the disk.

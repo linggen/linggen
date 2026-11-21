@@ -825,7 +825,9 @@ pub(crate) fn check_permission_with_read_approvals(
 /// settings (`claude_rules`) as one more source in a coding session: a
 /// call a `deny` rule matches is refused before anything else is judged,
 /// whatever the grants; one an `ask` rule matches is asked, once, even
-/// where the grants would let it through. Nothing they hold can allow.
+/// where the grants would let it through. Nothing they hold can allow. A
+/// change to a file they are read from is asked the same way in every
+/// session, rules or none.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn check_permission_under_rules(
     tool: &str, bash_command: Option<&str>, file_path: Option<&str>, session_cwd: &Path,
@@ -846,9 +848,12 @@ pub(crate) fn check_permission_under_rules(
     if inner.iter().any(|text| is_hardcoded_deny(text)) {
         return PermissionCheckResult::Blocked(BashReason::Floor.sentence(PermissionMode::Admin, ""));
     }
-    let facts = (coding && !claude.is_empty())
+    // Built in any session: a change to a file the rules are read from is
+    // asked everywhere (`claude.asks`), while the rules themselves are
+    // only judged in a coding session.
+    let facts = (!claude.is_empty())
         .then(|| call_facts(tool, bash_command, &inner, file_path, session_cwd));
-    if let Some(refusal) = facts.as_ref().and_then(|facts| claude.denies(facts)) {
+    if let Some(refusal) = facts.as_ref().filter(|_| coding).and_then(|facts| claude.denies(facts)) {
         return PermissionCheckResult::Blocked(refusal);
     }
     let result = check_grants(
@@ -873,7 +878,7 @@ pub(crate) fn check_permission_under_rules(
             let target = super::sensitive::resolved(target);
             approved.iter().any(|once| target.starts_with(once))
         });
-        claude.asks(facts).filter(|_| !approved_once).map(|why| (why, facts))
+        claude.asks(facts, coding).filter(|_| !approved_once).map(|why| (why, facts))
     });
     let result = match asked {
         Some((why, facts)) => {
