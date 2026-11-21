@@ -1781,13 +1781,17 @@ mod tests {
 }
 
 #[cfg(test)]
+#[path = "tool_exec_app_action_tests.rs"]
+mod app_action_gate_tests;
+
+#[cfg(test)]
 mod declined_gate_tests {
     use super::*;
     use crate::engine::permission::{PermissionMode, SessionPermissions};
 
-    type Pending = Arc<tokio::sync::Mutex<HashMap<String, tools::PendingAskUser>>>;
+    pub(super) type Pending = Arc<tokio::sync::Mutex<HashMap<String, tools::PendingAskUser>>>;
 
-    fn engine(root: &std::path::Path, pending: &Pending, ask_caller: bool) -> AgentEngine {
+    pub(super) fn engine(root: &std::path::Path, pending: &Pending, ask_caller: bool) -> AgentEngine {
         let cfg = crate::engine::EngineConfig::from_app_config(
             &crate::config::Config::default(),
             root.into(),
@@ -1899,7 +1903,7 @@ mod declined_gate_tests {
 
     /// Answer the first prompt with `answer`; what it offered and whether
     /// it went to the caller.
-    fn answer_first(
+    pub(super) fn answer_first(
         pending: &Pending,
         answer: &'static str,
     ) -> tokio::sync::oneshot::Receiver<(Vec<String>, Option<tools::CallerPermissionRequest>)> {

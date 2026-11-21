@@ -1159,6 +1159,47 @@ This is the skill content."#;
         assert!(project.offers.is_empty(), "installed skills only");
     }
 
+    /// What a tap on an offer says of its tool, whatever way its tier was
+    /// written: only a read runs without asking first; the words a tap
+    /// carries for the read, edit and admin tools and for one with no tier.
+    #[test]
+    fn a_tap_asks_first_unless_its_tool_only_reads() {
+        use crate::perception::offer::{Offer, Remedy};
+        let words = [
+            ("TRead", Some("read")),
+            ("TEdit", Some("edit")),
+            ("TWrite", Some("write")),
+            ("TAdmin", Some("admin")),
+            ("TAbsent", None),
+            ("TChat", Some("chat")),
+            ("TNonsense", Some("nonsense")),
+        ];
+        let mut tools = String::new();
+        let mut offers = String::new();
+        for (name, word) in words {
+            let tier = word.map(|w| format!("    tier: {w}\n")).unwrap_or_default();
+            tools.push_str(&format!("  - name: {name}\n    description: d\n    cmd: \"echo hi\"\n{tier}"));
+            offers.push_str(&format!("  p-{}:\n    - {{ tool: {name} }}\n", name.to_lowercase()));
+        }
+        let text = format!("---\nname: zz\ndescription: d\ntools:\n{tools}offers:\n{offers}---\nBody");
+        let skill = parse_skill_text(&text, SkillSource::Global).unwrap();
+        assert_eq!(skill.offers.len(), words.len());
+        for (declared, (name, word)) in skill.offers.iter().zip(words) {
+            let facts = Remedy::of(vec![declared.offer.clone()], "none").facts();
+            let reads = word == Some("read");
+            let said = if reads { "(only reads)" } else { "(changes things, asks the person first)" };
+            assert!(facts.contains(said), "{name}: {facts}");
+            let Offer::Tool { tier, .. } = &declared.offer else { panic!("{name}") };
+            if let Some(expect) = match word {
+                Some("read" | "edit" | "admin") => word,
+                None => Some("admin"),
+                _ => None,
+            } {
+                assert_eq!(tier, expect, "{name}");
+            }
+        }
+    }
+
     #[test]
     fn a_tool_declares_what_others_read_of_its_result() {
         let text = "---\nname: game\ndescription: Play\ntools:\n  - name: Look\n    description: Look.\n    cmd: \"echo hi\"\n    others_read: [scene.place, page_did]\n  - name: Bag\n    description: Bag.\n    cmd: \"echo hi\"\n---\nBody";
