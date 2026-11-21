@@ -797,6 +797,26 @@ mod tests {
         assert!(asked.elapsed() < Duration::from_millis(200));
     }
 
+    /// A body sent over the channel reaches the route as `application/json`
+    /// — the one media type `POST /api/stt` takes for a clip or a knock sent
+    /// this way (`stt::BodyForm`; its tests hold that type is taken).
+    #[tokio::test]
+    async fn a_post_over_the_channel_reaches_its_route_as_application_json() {
+        use crate::engine::permission::PermissionMode;
+        async fn type_of(headers: axum::http::HeaderMap) -> String {
+            headers.get("content-type").and_then(|v| v.to_str().ok()).unwrap_or("").to_string()
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/probe", listener.local_addr().unwrap());
+        let app = axum::Router::new().route("/probe", axum::routing::post(type_of));
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let reply = super::loopback(&client, ("POST", &url, &json!({ "wav_b64": "AAAA" })), "local", None, PermissionMode::Admin)
+            .await
+            .unwrap();
+        assert_eq!(reply.text().await.unwrap(), "application/json");
+    }
+
     #[test]
     fn text_replies_ride_as_text() {
         for ct in [

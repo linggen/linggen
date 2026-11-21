@@ -26,9 +26,10 @@ use super::mlx_sidecar::VoiceSidecar;
 use super::stt::{Heard, SttProvider, Unavailable, RATE};
 use crate::runtime::{Attempt, AttemptState};
 
-/// The least a hear waits for the model's reply once it has the slot; the
-/// model is loaded by now, but the first clip compiles its kernels.
-const BASE_WAIT_SECS: u64 = 20;
+/// The least a hear waits for the model's reply once it has the slot. The
+/// model is loaded and warmed (`mlx_voice.py`'s `load_hearing` runs one silent
+/// clip through it), so this is slack, not the first clip's kernel compile.
+const BASE_WAIT_SECS: u64 = 30;
 
 /// What a segment may report and still be speech. The numbers are the model
 /// library's own defaults for telling silence and failed decodes from words
@@ -499,9 +500,84 @@ done
         assert!(!hear.contains("snapshot_download") && !hear.contains("load_model"), "hear() loads nothing");
         assert!(hear.contains("raise NotLoaded()"));
         assert!(code.contains("def load_hearing("));
+        // The load warms the model, so a hear's short wait never holds the first compile.
+        let load = &code[code.find("def load_hearing(").unwrap()..code.find("def finite(").unwrap()];
+        assert!(load.contains(".generate("), "load_hearing() must warm the model");
         // The model it loads for hearing is the one the runtime names, by path.
         assert!(code.contains("snapshot_download(state[\"stt_id\"], local_files_only=True)"));
         assert!(code.contains("load_stt(Path(path))"));
+    }
+
+    /// The script itself, run under the machine's `python3` with stand-ins for
+    /// numpy and the model library (nothing real is loaded, nothing downloaded):
+    /// `probe` is Python run after the script is imported as `m`, and prints
+    /// one JSON line through `emit`'s own pipe. `None` where there is no `python3`.
+    fn run_script(dir: &std::path::Path, probe: &str) -> Option<serde_json::Value> {
+        let files: [(&str, &str); 6] = [
+            ("numpy/__init__.py", "class _A:\n    def astype(self, t): return self\n    def __truediv__(self, o): return self\nfloat32 = 'float32'\ndef frombuffer(b, dtype=None): return _A()\ndef zeros(n, dtype=None): return _A()\n"),
+            ("huggingface_hub/__init__.py", "def snapshot_download(name, local_files_only=False):\n    assert local_files_only\n    return '/nowhere/' + name\n"),
+            ("mlx_audio/__init__.py", ""),
+            ("mlx_audio/stt/__init__.py", ""),
+            ("mlx_audio/stt/utils.py", "import types\nclass Model:\n    def __init__(self): self.calls = []\n    def generate(self, audio, **kw):\n        self.calls.append(kw)\n        return types.SimpleNamespace(text='hi', language='zh', segments=[{'text': 'hi', 'no_speech_prob': float('nan'), 'avg_logprob': -0.2, 'compression_ratio': 1.0}])\ndef load_model(path):\n    return Model()\n"),
+            ("mlx_voice.py", include_str!("../../runtime_py/mlx_voice.py")),
+        ];
+        for (name, text) in files {
+            let path = dir.join(name);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        let code = format!("import json, sys\nimport mlx_voice as m\n{probe}\n");
+        let out = std::process::Command::new("python3")
+            .arg("-c")
+            .arg(code)
+            .env("PYTHONPATH", dir)
+            .env("PYTHONDONTWRITEBYTECODE", "1")
+            .output()
+            .ok()?;
+        assert!(out.status.success(), "the probe failed: {}", String::from_utf8_lossy(&out.stderr));
+        // The script keeps the real stdout for its protocol; the probe speaks on it.
+        Some(serde_json::from_slice(&out.stdout).unwrap_or_else(|e| panic!("{e}: {}", String::from_utf8_lossy(&out.stdout))))
+    }
+
+    /// Rule 2 and 3, on the script itself: a hear before the load is the
+    /// `not_loaded` error, never a load; the load warms the model once; a hear
+    /// passes the language and prompt through and asks the library to print
+    /// nothing; and the numbers of a segment are always JSON — NaN (which the
+    /// library's own no-speech figure is, without its token) goes as null, as
+    /// JSON has no NaN and the engine kills a sidecar whose reply it cannot read.
+    #[test]
+    fn the_script_loads_apart_from_hearing_and_sends_numbers_json_can_carry() {
+        let dir = tempfile::tempdir().unwrap();
+        let probe = r#"
+state = {"stt": None, "stt_id": "some/model"}
+try:
+    m.hear({"pcm_b64": "AAA="}, state)
+    refused = False
+except m.NotLoaded:
+    refused = True
+m.load_hearing(state)
+warmed = len(state["stt"].calls)
+reply = m.hear({"pcm_b64": "AAA=", "language": "zh", "prompt": "P"}, state)
+bare = m.hear({"pcm_b64": "AAA="}, state)
+m._proto.write(json.dumps({
+    "refused": refused, "warmed": warmed,
+    "kw": state["stt"].calls[-2], "bare_kw": state["stt"].calls[-1],
+    "reply": json.loads(json.dumps(reply, allow_nan=False)),
+    "finite": [m.finite(float("nan")), m.finite(float("inf")), m.finite("x"), m.finite(None), m.finite(-0.5), m.finite("2")],
+}))
+m._proto.flush()
+"#;
+        let Some(got) = run_script(dir.path(), probe) else {
+            eprintln!("SKIPPED: no python3 on this machine for the script probe");
+            return;
+        };
+        assert_eq!(got["refused"], true, "a hear never loads");
+        assert_eq!(got["warmed"], 1, "the load warms the model with one clip");
+        assert_eq!(got["kw"], serde_json::json!({ "verbose": null, "language": "zh", "initial_prompt": "P" }));
+        assert_eq!(got["bare_kw"], serde_json::json!({ "verbose": null }), "no hint, nothing forced");
+        assert_eq!(got["reply"]["segments"][0]["no_speech_prob"], serde_json::Value::Null);
+        assert_eq!(got["reply"]["segments"][0]["avg_logprob"], -0.2);
+        assert_eq!(got["finite"], serde_json::json!([null, null, null, null, -0.5, 2.0]));
     }
 
     /// The model is named once, beside the voice model, and fetched in the

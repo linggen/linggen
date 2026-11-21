@@ -74,23 +74,27 @@ struct StderrLog {
 
 impl StderrLog {
     /// The text to log for `line`, if any.
+    ///
+    /// A marker is matched at the end of its line: the library may leave a
+    /// line unfinished (a progress bar erased with `\r`), and the marker then
+    /// arrives glued to it. What came before a begin marker is not the hear's
+    /// and goes with it; before an end marker it is the hear's, and counted.
     fn take(&mut self, line: &str) -> Option<String> {
-        match (line, self.in_hear) {
-            (HEAR_BEGIN, _) => {
-                self.in_hear = true;
-                self.counted = 0;
-                None
-            }
-            (HEAR_END, _) => {
-                self.in_hear = false;
-                Some(format!("{} lines on stderr during a hear (not logged)", self.counted))
-            }
-            (_, true) => {
-                self.counted += 1;
-                None
-            }
-            (text, false) => Some(text.to_string()),
+        if line.ends_with(HEAR_BEGIN) {
+            self.in_hear = true;
+            self.counted = 0;
+            return None;
         }
+        if let Some(before) = line.strip_suffix(HEAR_END) {
+            self.in_hear = false;
+            let counted = self.counted + usize::from(!before.is_empty());
+            return Some(format!("{counted} lines on stderr during a hear (not logged)"));
+        }
+        if self.in_hear {
+            self.counted += 1;
+            return None;
+        }
+        Some(line.to_string())
     }
 }
 
@@ -432,6 +436,12 @@ mod tests {
         let closing = log.take(HEAR_END).unwrap();
         assert_eq!(closing, "2 lines on stderr during a hear (not logged)");
         assert_eq!(log.take("after").as_deref(), Some("after"));
+        // An unfinished line in front of a marker (a progress bar erased with a
+        // carriage return) does not hide it: its text is never logged either.
+        let mut log = StderrLog::default();
+        assert_eq!(log.take(&format!("30%|███  \r{HEAR_BEGIN}")), None);
+        assert_eq!(log.take("今天"), None);
+        assert_eq!(log.take(&format!("100%|██████| \r{HEAR_END}")).unwrap(), "2 lines on stderr during a hear (not logged)");
         // The next hear counts from zero.
         log.take(HEAR_BEGIN);
         assert_eq!(log.take(HEAR_END).unwrap(), "0 lines on stderr during a hear (not logged)");

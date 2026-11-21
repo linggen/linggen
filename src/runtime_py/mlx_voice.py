@@ -48,6 +48,7 @@
 import base64
 import io
 import json
+import math
 import os
 import sys
 import wave
@@ -102,6 +103,24 @@ def load_hearing(state):
     # A Path, not a str: mlx-audio reads the repo's name off the cache
     # path (its `hub` part) when it picks the model class.
     state["stt"] = load_stt(Path(path))
+    # One second of silence through the model, so its first kernels compile
+    # here, inside the load's own long wait, and not in the first hear's short
+    # one. Whatever it makes of silence is dropped; a failure here is the
+    # first hear's to meet.
+    try:
+        state["stt"].generate(np.zeros(16000, dtype=np.float32), verbose=None)
+    except Exception:
+        pass
+
+
+def finite(value):
+    """A number the engine can read: JSON has no NaN, and the library's own
+    no-speech figure is NaN where its tokenizer has no such token."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
 
 
 def hear(req, state):
@@ -126,9 +145,9 @@ def hear(req, state):
         "segments": [
             {
                 "text": seg.get("text", ""),
-                "no_speech_prob": seg.get("no_speech_prob", 0.0),
-                "avg_logprob": seg.get("avg_logprob", 0.0),
-                "compression_ratio": seg.get("compression_ratio", 0.0),
+                "no_speech_prob": finite(seg.get("no_speech_prob")),
+                "avg_logprob": finite(seg.get("avg_logprob")),
+                "compression_ratio": finite(seg.get("compression_ratio")),
             }
             for seg in (out.segments or [])
         ],

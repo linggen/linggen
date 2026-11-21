@@ -603,6 +603,27 @@ mod tests {
         }
     }
 
+    /// The words a person spoke to her avatar reach her turn's tools — what a
+    /// spoken answer is weighed by (`answer_prompt`) — from her door's start
+    /// and nowhere else: a typed line, her own kinds and a resent turn hold none,
+    /// and a spoken turn handed none holds an empty line, which names no option.
+    #[test]
+    fn the_words_a_person_spoke_reach_her_turn_and_a_typed_line_carries_none() {
+        use crate::server::chat::TurnStart;
+        let heard = |start: TurnStart, words: Option<&str>| {
+            let mut engine = her_engine();
+            let turn = Turn { heard: words.map(str::to_string), ..turn(true) };
+            ready_for_turn(&mut engine, &turn, &Default::default());
+            engine.begin_turn(start.settings(turn_settings(&turn, start.origin())));
+            engine.turn_settings().heard
+        };
+        assert_eq!(heard(TurnStart::at_her_avatar(true), Some("Allow once")).as_deref(), Some("Allow once"));
+        assert_eq!(heard(TurnStart::at_her_avatar(true), None).as_deref(), Some(""));
+        assert_eq!(heard(TurnStart::at_her_avatar(false), Some("Allow once")), None, "a typed line is not weighed as spoken");
+        assert_eq!(heard(TurnStart::resent_at_her_door(Origin::Person), Some("Allow once")), None);
+        assert_eq!(heard(TurnStart::at_her_door(Origin::Glance), Some("Allow once")), None);
+    }
+
     #[test]
     fn only_a_persons_turn_is_run_again_from_a_restarts_plan() {
         for origin in [Origin::Person, Origin::Asked] {
