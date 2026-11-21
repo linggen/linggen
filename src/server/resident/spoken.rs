@@ -89,7 +89,8 @@ impl Origin {
         }
     }
 
-    /// The origin's name, for the log.
+    /// The origin's name, for the log and the activity log's `hold` record
+    /// (`guard::Source::name` is this): one name per kind of turn.
     pub(crate) fn name(self) -> &'static str {
         match self {
             Self::Person => "user",
@@ -98,8 +99,8 @@ impl Origin {
             Self::AgentChat => "agent_chat",
             Self::Fault => "fault",
             Self::Moment => "moment",
-            Self::InUse => "event-in-use",
-            Self::Glance => "timer",
+            Self::InUse => "moment-in-use",
+            Self::Glance => "glance",
             Self::Note => "note",
             Self::TaskEnd => "task end",
         }

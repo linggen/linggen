@@ -619,10 +619,16 @@ impl AgentEngine {
         if self.active_mission.is_some() || self.tools.builtins.private_app.is_some()
             || self.tools.builtins.turn_place.as_ref().is_some_and(|place| place.skill.is_some())
         {
-            permission::ReadOrigin::Other
+            permission::ReadStart::NoStanding.standing()
         } else {
             self.session_spec.read_origin
         }
+    }
+
+    /// What a `Task` child of this turn stands as for reads — a Task tool
+    /// call and a batch of delegations alike.
+    pub(crate) fn child_read_origin(&self) -> permission::ReadOrigin {
+        permission::ReadStart::TaskChild(self.read_origin()).standing()
     }
 
     /// The path/tier permission gate (permission-spec.md), asking the user
@@ -1562,7 +1568,7 @@ impl AgentEngine {
                 self.tools.builtins.parent_allowed_tools = allowed_tools.clone();
                 self.tools.builtins.parent_path_modes = self.session_permissions.path_modes.clone();
                 self.tools.builtins.parent_interactive = self.session_permissions.interactive;
-                self.tools.builtins.parent_read_origin = self.read_origin().task_child();
+                self.tools.builtins.parent_read_origin = self.child_read_origin();
                 let tools_clone = self.tools_for_call(&exec);
                 // Each tool declares its own ceiling (`Tool::max_duration`);
                 // `None` means open-ended by nature — AskUser waits on a
@@ -1943,7 +1949,7 @@ mod declined_gate_tests {
 
     #[test]
     fn read_policy_origin_matrix() {
-        use crate::engine::permission::{PermissionCheckResult, ReadOrigin};
+        use crate::engine::permission::{PermissionCheckResult, ReadOrigin, ReadStart};
         let world = tempfile::tempdir_in(dirs::home_dir().unwrap()).unwrap();
         let target = world.path().join("notes.txt");
         std::fs::write(&target, "fixture").unwrap();
@@ -1952,7 +1958,7 @@ mod declined_gate_tests {
         for (label, origin, coding, ceiling, allowed) in [
             ("local coding chat", ReadOrigin::LocalOwner, true, None, true),
             ("local coding delegate", ReadOrigin::LocalDelegate, true, None, true),
-            ("coding Task", ReadOrigin::LocalDelegate.task_child(), true, None, true),
+            ("coding Task", ReadStart::TaskChild(ReadOrigin::LocalDelegate).standing(), true, None, true),
             ("ordinary chat", ReadOrigin::LocalOwner, false, None, false),
             ("handoff", ReadOrigin::Other, true, None, false),
             ("app", ReadOrigin::Other, false, None, false),
@@ -1963,7 +1969,7 @@ mod declined_gate_tests {
             ("room guest", ReadOrigin::Other, false, None, false),
             ("remote person", ReadOrigin::Other, true, None, false),
             ("paired admin", ReadOrigin::Other, true, Some(PermissionMode::Admin), false),
-            ("remote Task", ReadOrigin::Other.task_child(), true, None, false),
+            ("remote Task", ReadStart::TaskChild(ReadOrigin::Other).standing(), true, None, false),
         ] {
             for tool in ["Read", "Glob", "Grep", "Bash"] {
                 let result = permission::check_permission_with_read_approvals(

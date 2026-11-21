@@ -408,6 +408,6 @@ mod tests;
 pub(crate) fn coding_caller_fixture() -> SessionSpec {
     let mut spec = SessionSpec::delegated_child(None, false, Some(Work::Code), None);
     spec.permission = Permission::AskCaller;
-    spec.read_origin = super::permission::ReadOrigin::LocalDelegate;
+    spec.read_origin = super::permission::ReadStart::HostAtThisMac.standing();
     spec
 }

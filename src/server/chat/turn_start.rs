@@ -11,12 +11,13 @@
 //!
 //! Not decided here, and why: the session policy (`policy::TurnBy` — decided
 //! before the start, because the owner's chat needs the policy's preset), and
-//! the starts the engine crate makes itself (a mission run, a Task child, the
-//! MCP door's headless run), which stand for reads through
-//! `ReadOrigin` directly.
+//! the starts the engine makes itself (a mission, a Task child, the MCP door's
+//! headless run). Those are members of the engine crate's own closed set,
+//! `ReadStart`, which `reads` projects onto and which alone says what any
+//! start may read (lock: `a_standing_for_reads_is_named_in_one_place`).
 
 use super::handler::TurnOrigin;
-use crate::engine::permission::ReadOrigin;
+use crate::engine::permission::{ReadOrigin, ReadStart};
 use crate::engine::turn_place::TurnSettings;
 use crate::engine::AgentEngine;
 use crate::server::resident::Origin;
@@ -87,14 +88,16 @@ impl TurnStart {
     /// What the turn stands as for reads, given what the session stood as
     /// when the turn before it ended: only the owner's own typing stands as
     /// the owner (a secret file may be asked of them); any other start keeps
-    /// how freely it may look and nothing more (`ReadOrigin::unattended`).
+    /// how freely it may look and nothing more. Projected onto the engine's
+    /// own closed set of starts, which says what each reads (`ReadStart`).
     fn reads(self, was: ReadOrigin) -> ReadOrigin {
         match self {
-            Self::OwnerHere => ReadOrigin::LocalOwner,
+            Self::OwnerHere => ReadStart::OwnerTyped,
             Self::Person | Self::Relayed | Self::Resumed | Self::Engine | Self::Hers(_) => {
-                was.unattended()
+                ReadStart::Unattended(was)
             }
         }
+        .standing()
     }
 
     /// Whether the turn answers a person's own words in this session: what
@@ -154,7 +157,7 @@ mod tests {
             (TurnStart::Resumed, LocalTask, LocalTask, false, "user"),
             (TurnStart::Engine, LocalTask, LocalTask, false, "user"),
             (TurnStart::Hers(Origin::Asked), LocalTask, LocalTask, false, "asked"),
-            (TurnStart::Hers(Origin::Glance), LocalTask, LocalTask, false, "timer"),
+            (TurnStart::Hers(Origin::Glance), LocalTask, LocalTask, false, "glance"),
         ];
         for (start, after_owner, after_task, spoke, name) in rows {
             assert_eq!(start.reads(LocalOwner), after_owner, "{start:?}");
@@ -234,15 +237,10 @@ mod structure_lock {
     /// `turn_start.rs` and nowhere else.
     #[test]
     fn a_start_is_decided_and_projected_in_one_place() {
-        // Only `of_chat` says the owner typed a turn; only `stand_for_reads`
-        // writes the owner's standing (the read rule reads it).
+        // Only `of_chat` says the owner typed a turn (the owner's standing is
+        // `ReadStart::OwnerTyped`, held to its one door by
+        // `a_standing_for_reads_is_named_in_one_place`).
         only_here("OwnerHere");
-        let written = found("ReadOrigin::LocalOwner");
-        let outside: Vec<_> = written
-            .iter()
-            .filter(|(rel, _)| rel != "src/server/chat/turn_start.rs" && !rel.ends_with("permission/read_scope.rs"))
-            .collect();
-        assert!(outside.is_empty(), "the owner's standing is written outside its one place: {outside:?}");
         // Whether a person spoke is the start's.
         only_here("person_spoke");
         // A turn of hers is made only from an origin the constructors read.
@@ -255,6 +253,70 @@ mod structure_lock {
         assert_eq!(
             calls,
             [("src/server/chat/handler.rs".to_string(), 1), ("src/server/chat/plan_flow.rs".to_string(), 1)],
+        );
+    }
+
+    /// What a turn may read without asking is decided by one exhaustive
+    /// `match` (`ReadStart::standing`, engine crate): no other production code
+    /// names a standing, derives one from another, or builds a start the
+    /// match does not list. A new kind of start does not compile until it
+    /// says what it reads.
+    #[test]
+    fn a_standing_for_reads_is_named_in_one_place() {
+        let home = "crates/linggen-engine/src/engine/permission/read_scope.rs";
+        let outside = |needle: &str| -> Vec<(String, usize)> {
+            found(needle).into_iter().filter(|(rel, _)| rel != home).collect()
+        };
+        for word in ["LocalOwner", "LocalDelegate", "LocalTask", "ReadOrigin::Other", "ReadOrigin::{", ".task_child(", ".unattended("] {
+            let named = outside(word);
+            assert!(named.is_empty(), "`{word}` names a standing for reads outside `read_scope.rs`: {named:?}");
+        }
+        // The starts, one by one: each is made at its own door and nowhere
+        // else — this is the design table. (A start moved to another door, or
+        // a door made to use another start, fails here.)
+        let want = |rel: &str, n: usize| (rel.to_string(), n);
+        let engine = "crates/linggen-engine/src/engine/";
+        let table: [(&str, Vec<(String, usize)>); 5] = [
+            // The owner typed it, at this Mac, in their own chat.
+            ("ReadStart::OwnerTyped", vec![want("src/server/chat/turn_start.rs", 1)]),
+            // A host program at this Mac, through the owner's own door.
+            ("ReadStart::HostAtThisMac", vec![want("src/server/mcp/mod.rs", 1)]),
+            // Any other start of a turn nobody typed; an instruction file the engine reads for the prompt.
+            (
+                "ReadStart::Unattended(",
+                vec![want(&format!("{engine}permission/model.rs"), 1), want("src/server/chat/turn_start.rs", 1)],
+            ),
+            // A Task child, a Task tool call's and a batch of delegations' alike.
+            ("ReadStart::TaskChild(", vec![want(&format!("{engine}tool_exec.rs"), 1)]),
+            // Not this Mac's door; a mission, a private app's or a skill's page (`read_origin()`);
+            // a check that names no turn (`check_permission_for`, no caller outside tests).
+            (
+                "ReadStart::NoStanding",
+                vec![
+                    want(&format!("{engine}permission/model.rs"), 1),
+                    want(&format!("{engine}tool_exec.rs"), 1),
+                    want("src/server/mcp/mod.rs", 1),
+                ],
+            ),
+        ];
+        for (start, sites) in table {
+            assert_eq!(outside(start), sites, "`{start}` is made at its own doors only");
+        }
+        // A session no start has been put on yet stands as no one: the
+        // default, which is `NoStanding`, held in these places only.
+        assert_eq!(outside("read_origin: Default::default()"), [want(&format!("{engine}session_spec/mod.rs"), 2)]);
+        assert_eq!(
+            outside("parent_read_origin: Default::default()"),
+            [want(&format!("{engine}tools/mod.rs"), 1)],
+        );
+        // Where a standing is put on an engine or a child: it is only passed.
+        assert_eq!(
+            outside("read_origin ="),
+            [
+                want("crates/linggen-engine/src/engine/tools/delegation.rs", 1), // the child's, as given
+                want("src/server/chat/turn_start.rs", 1), // `stand_for_reads`
+                want("src/server/mcp_agent.rs", 1), // the door's, as given
+            ],
         );
     }
 

@@ -345,7 +345,7 @@ fn held_moments<'a>(
 ) -> super::resident::guard::Withheld<'a> {
     super::resident::guard::Withheld {
         what: format!("app moments from {}", app_names(moments)),
-        source: "moment",
+        source: super::resident::guard::Source::Moment.name(),
         key: format!("moments-{}-{}", held.reason(), now / 3600),
     }
 }
