@@ -111,6 +111,10 @@ pub(crate) struct People {
     /// By the person's kept string (`Person::wire`).
     #[serde(default)]
     people: BTreeMap<String, PersonSettings>,
+    /// The file is there and could not be read: until it reads again, no one
+    /// but the owner is given anything ([`People::closed`]).
+    #[serde(skip)]
+    closed: bool,
 }
 
 const VERSION: u32 = 1;
@@ -122,7 +126,24 @@ impl People {
         if !person.is_another() {
             return PersonSettings::default();
         }
+        if self.closed {
+            return PersonSettings {
+                level: Some(PermissionMode::Chat),
+                apps: Some(Vec::new()),
+                ..PersonSettings::default()
+            };
+        }
         self.people.get(&person.wire()).cloned().unwrap_or_default()
+    }
+
+    /// What stands in for a people file that is there and does not read:
+    /// everyone but the owner at chat, with no app and no model. What the
+    /// owner chose cannot be known, so nothing is given.
+    fn closed() -> Self {
+        Self {
+            closed: true,
+            ..Self::default()
+        }
     }
 
     /// The level `person` stands at when they are not the owner.
@@ -340,6 +361,7 @@ fn first_people(devices: &[PairedDevice], mac: Option<&str>) -> People {
     People {
         version: VERSION,
         owner: OwnerSide::default(),
+        closed: false,
         people: held
             .into_iter()
             .filter(|(_, (any, _))| *any)
@@ -391,8 +413,8 @@ impl Store {
     }
 
     /// The people as they are: from memory, the file looked at again when it
-    /// is older than [`RECHECK`]. A file that does not read gives the safe
-    /// default (everyone at read, no models) and is never written over.
+    /// is older than [`RECHECK`]. A file that does not read gives no one but
+    /// the owner anything ([`People::closed`]) and is never written over.
     fn current(&self, origin: &dyn Origin) -> Arc<People> {
         let mut cache = self.lock();
         if let Some(c) = cache.as_ref().filter(|c| c.checked.elapsed() < RECHECK) {
@@ -403,7 +425,13 @@ impl Store {
             c.checked = Instant::now();
             return c.people.clone();
         }
-        let people = Arc::new(self.read(origin).unwrap_or_default());
+        let people = Arc::new(self.read(origin).unwrap_or_else(|e| {
+            tracing::error!(
+                "[people] {} does not read ({e}): no one but the owner is given anything until it does",
+                self.path.display()
+            );
+            People::closed()
+        }));
         let stamp = stamp_of(&self.path);
         *cache = Some(Cached {
             people: people.clone(),
@@ -419,9 +447,14 @@ impl Store {
         match std::fs::read_to_string(&self.path) {
             Ok(text) => serde_json::from_str(&text).map_err(std::io::Error::other),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                // What the owner chose is known from the origin whether or
+                // not the file can be written: a failed write keeps the
+                // origin (it is not told `made`) and is tried again.
                 let people = origin.first();
-                self.write(&people)?;
-                origin.made();
+                match self.write(&people) {
+                    Ok(()) => origin.made(),
+                    Err(e) => tracing::warn!("[people] {} could not be written yet: {e}", self.path.display()),
+                }
                 Ok(people)
             }
             Err(e) => Err(e),
@@ -557,6 +590,30 @@ pub(crate) async fn record_turn(state: &crate::server::ServerState, person: &Per
 
 #[cfg(test)]
 mod tests {
+    /// A people file that is there and does not read gives no one but the
+    /// owner anything, and is left as it is.
+    #[test]
+    fn a_file_that_does_not_read_gives_only_the_owner_anything() {
+        struct Never;
+        impl super::Origin for Never {
+            fn first(&self) -> super::People {
+                panic!("the file is there: it is never made again")
+            }
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("people.json");
+        std::fs::write(&path, "{ not json").unwrap();
+        let people = super::Store::at(path.clone()).current(&Never);
+        let friend = super::Person::for_test(Some("u-friend"));
+        assert_eq!(people.level_of(&friend), super::PermissionMode::Chat);
+        assert!(!people.may_use_app(&friend, "music"));
+        assert!(!people.may_run_model(&friend, "any-model"));
+        assert_eq!(people.refusal_for(&friend, 0), Some(super::Refusal::NoModel));
+        let owner = super::Person::test_owner();
+        assert!(people.may_use_app(&owner, "music") && people.may_run_model(&owner, "any-model"));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "{ not json", "never written over");
+    }
+
     use super::*;
     use crate::server::person::stamp_of;
     use crate::state_fs::devices::{AccountRef, DeviceKind};
@@ -850,7 +907,8 @@ mod tests {
         let broken = Store::at(path.clone());
         assert_eq!(
             broken.current(&Nothing).level_of(&friend()),
-            PermissionMode::Read
+            PermissionMode::Chat,
+            "what the owner chose cannot be read: nothing is given"
         );
         assert!(broken.modify(&Nothing, |_| ()).is_err());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "{ not json");
@@ -861,10 +919,15 @@ mod tests {
             vec![row("a", Some("u-friend"), Some(PermissionMode::Chat))],
             Default::default(),
         );
-        let _ = unwritable.current(&kept);
+        let unwritten = unwritable.current(&kept);
         assert!(
             !kept.1.get(),
             "the rows were let go before the file was written"
+        );
+        assert_eq!(
+            unwritten.level_of(&friend()),
+            PermissionMode::Chat,
+            "what the rows held stands while the file cannot be written"
         );
     }
 
