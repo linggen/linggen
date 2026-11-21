@@ -372,10 +372,13 @@ pub(crate) async fn chat_handler(
     // If a worker agent is currently blocked on a prompt, frame this turn so she
     // can relay the answer with `answer_prompt` rather than just chatting — the
     // user's reply and the open prompt land in the same turn (no cross-turn recall).
-    let task = frame_with_pending_prompt(&state, &text).await;
+    let task = frame_with_pending_prompt(&state, &text, req.asked_aloud).await;
     let start = crate::server::chat::TurnStart::at_her_avatar(req.asked_aloud);
+    // The words as heard go with the turn: a spoken answer is weighed by them
+    // in `answer_prompt` and by nothing she made of them.
+    let heard = req.asked_aloud.then_some(text);
     tokio::spawn(async move {
-        if let Some(reply) = crate::server::resident::run_avatar_turn(&state, task, start).await {
+        if let Some(reply) = crate::server::resident::run_avatar_turn(&state, task, start, heard).await {
             if let Some(answer) = reply.whole_answer() {
                 crate::server::resident::speak_reply(&state, answer, Default::default());
             }
@@ -477,7 +480,8 @@ async fn say_at_table(state: &Arc<ServerState>, session_id: String, text: &str) 
 /// `answer_prompt`. Plain message through when nothing is waiting. A
 /// question kept to a private app (`turn_place::question_kept_to`) is
 /// framed only as that the app waits: nothing of it, and no id to answer.
-async fn frame_with_pending_prompt(state: &Arc<ServerState>, text: &str) -> String {
+/// `aloud`: the words were spoken and heard, not typed (see [`frame_open`]).
+async fn frame_with_pending_prompt(state: &Arc<ServerState>, text: &str, aloud: bool) -> String {
     let first = {
         let pending = state.pending_ask_user.lock().await;
         pending
@@ -490,13 +494,15 @@ async fn frame_with_pending_prompt(state: &Arc<ServerState>, text: &str) -> Stri
     };
     match crate::engine::turn_place::question_kept_to(&state.manager, session.as_deref()).await {
         Some(app) => frame_kept(&app, text),
-        None => frame_open(&agent, &qid, question.as_ref(), text),
+        None => frame_open(&agent, &qid, question.as_ref(), text, aloud),
     }
 }
 
 /// The user's message with a question it may answer: what it asks, its
-/// options and id.
-fn frame_open(agent: &str, qid: &str, q0: Option<&crate::engine::tools::AskUserQuestion>, text: &str) -> String {
+/// options and id. Spoken words (`aloud`) are only told as heard, and the
+/// one place that lets them answer is `answer_prompt`'s `relay_selection`
+/// (exactly one option, whole): here she is told how to meet its refusal.
+fn frame_open(agent: &str, qid: &str, q0: Option<&crate::engine::tools::AskUserQuestion>, text: &str, aloud: bool) -> String {
     let question = q0.map(|q| q.question.as_str()).unwrap_or("their input");
     let options = q0
         .map(|q| {
@@ -507,11 +513,17 @@ fn frame_open(agent: &str, qid: &str, q0: Option<&crate::engine::tools::AskUserQ
                 .join(" / ")
         })
         .unwrap_or_default();
+    let heard = match aloud {
+        true => " These words were HEARD through the microphone, not typed: they answer only if \
+                  they are exactly one option; if `answer_prompt` refuses them, tell the user \
+                  what you heard and that this answer must be typed or tapped on screen.",
+        false => "",
+    };
     format!(
         "[The agent \"{agent}\" is blocked, waiting on an answer to: \"{question}\" \
          (options: {options}; question_id \"{qid}\"). If the user's message below is their \
          answer, relay it with `answer_prompt` — only their actual words, never your own \
-         decision. Otherwise just talk with them normally.]\n\nUser says: {text}"
+         decision.{heard} Otherwise just talk with them normally.]\n\nUser says: {text}"
     )
 }
 
@@ -649,6 +661,19 @@ mod voice_tests {
         }
         assert_eq!(door_for(None, true), Door::Her, "a spoken line to her own thread is hers");
         assert_eq!(door_for(None, false), Door::Her);
+    }
+
+    /// A question that waits, framed for a turn the person SPOKE, is told as
+    /// heard words — and a typed one is framed as it ever was.
+    #[test]
+    fn a_waiting_question_framed_for_spoken_words_says_they_were_heard() {
+        use super::frame_open;
+        let typed = frame_open("ling", "q1", None, "Deny", false);
+        let spoken = frame_open("ling", "q1", None, "Deny", true);
+        assert!(spoken.contains("HEARD through the microphone") && spoken.contains("typed or tapped"), "{spoken}");
+        assert!(!typed.contains("HEARD"), "a typed line is framed as it was");
+        assert!(typed.ends_with("User says: Deny") && spoken.ends_with("User says: Deny"));
+        assert!(spoken.contains("question_id \"q1\""));
     }
 
     #[test]

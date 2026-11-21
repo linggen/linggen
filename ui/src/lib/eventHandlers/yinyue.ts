@@ -12,7 +12,7 @@
 import type { UiEventOf } from '../../types';
 import type { SpokenChunk } from '../../types/generated/SpokenChunk';
 import { useUiStore, type SpeechAbout } from '../../stores/uiStore';
-import { speechAbout } from '../petCue.mts';
+import { speechAbout, voicedHere } from '../petCue.mts';
 import type { OfferButton } from '../../types/generated/OfferButton';
 
 // One shared AudioContext, created lazily on first cue.
@@ -118,6 +118,14 @@ function stopQueued(): void {
   for (const src of playing) src.stop();
 }
 
+/// A hold to talk is on (lib/yinyueTalk.ts says so): the person is speaking, so
+/// a line of hers that arrives is shown and not voiced.
+let personTalking = false;
+
+export function setPersonTalking(on: boolean): void {
+  personTalking = on;
+}
+
 /// Whether a clip started at `generation` may still sound on this surface.
 function mayStillSpeak(generation: number): boolean {
   return generation === voiceGeneration && useUiStore.getState().yinyuePresenter;
@@ -160,9 +168,10 @@ export function handlePetSpeak(item: UiEventOf<'pet_speak'>): void {
   console.info(`[yinyue] speak (${emotion}): ${text}`);
   // Her offers, or — telling of a wait — the waiting question's card.
   const raised: SpeechAbout | undefined = speechAbout<OfferButton>(item.data);
-  // A line the person can see where it shows, or her voice muted: the words,
-  // no audio fetched. Like any new line it supersedes one still sounding.
-  if (item.data?.voice === false) {
+  // A line the person can see where it shows, her voice muted, or the person
+  // speaking to her right now: the words, no audio fetched. Like any new line it
+  // supersedes one still sounding. The one place this page decides sound.
+  if (!voicedHere(item.data?.voice, personTalking)) {
     hush();
     showWords(text, emotion, raised);
     return;

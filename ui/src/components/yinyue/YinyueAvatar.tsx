@@ -176,6 +176,7 @@ export const YinyueAvatar: React.FC = () => {
     const down = (e: Event) => {
       const k = e as KeyboardEvent;
       // A held key repeats: it is still hers (no scrolling the page), not a new press.
+      if (!talk.offered()) return;
       if (k.repeat && isTalkKey({ code: k.code, repeat: false, metaKey: k.metaKey, ctrlKey: k.ctrlKey, altKey: k.altKey, target: k.target })) k.preventDefault();
       if (!isTalkKey(k)) return;
       k.preventDefault();
