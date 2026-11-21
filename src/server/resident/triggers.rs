@@ -280,6 +280,12 @@ pub(crate) fn moment_origin(asked: bool, in_use: bool) -> Origin {
     }
 }
 
+/// The guardrail an unasked moment's turn answers to, read before the turn
+/// from the same mapping the last word uses ([`unprompted_source`]).
+pub(crate) fn moment_source(in_use: bool) -> Option<Source> {
+    unprompted_source(Reach::Sealed, moment_origin(false, in_use))
+}
+
 /// The app chat a moment's turn runs at: its session, and the app the
 /// moment came from — the turn's place in a day's session, where every app
 /// is at the one table (`server::day_session`).
@@ -637,11 +643,11 @@ pub(super) async fn deliver_to_chat_agent(
             images: Vec::new(),
             policy: crate::server::chat::policy::turn_policy(crate::server::chat::policy::TurnBy::Engine),
             sender: Some(from.clone()),
-            origin: Origin::Person,
+            start: crate::server::chat::TurnStart::Engine,
             place: delivered_place(&state, &session_id, app.as_deref()),
             turn: Default::default(),
         };
-        crate::server::chat::run_session_turn(&ctx, &mut engine, &state.manager, None, crate::server::chat::Typed::ByNobody).await;
+        crate::server::chat::run_session_turn(&ctx, &mut engine, &state.manager, None).await;
         state.manager.clear_agent_chat_session(&session_id);
     }
 

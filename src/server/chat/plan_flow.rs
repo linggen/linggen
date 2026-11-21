@@ -459,10 +459,12 @@ async fn run_approved_plan_task(
         policy: super::policy::turn_policy(super::policy::TurnBy::Engine),
         sender: None,
         via: None,
-        origin: crate::server::resident::Origin::Person,
+        start: super::TurnStart::Engine,
         place,
         turn: Default::default(),
     };
+    // The run reads as the engine's, not as the turn that made the plan did.
+    ctx.start.stand_for_reads(&mut engine);
     let ended = run_plan_in_place(&ctx, &mut engine, task).await;
     complete_plan(&mut engine, &manager, &root, (&sid_default, &agent_id, &stamp), ended).await;
     engine.end_turn();

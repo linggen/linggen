@@ -71,6 +71,24 @@ impl Origin {
         !matches!(self, Self::Person | Self::Asked)
     }
 
+    /// Whether this is a kind of turn the engine started for her; false for
+    /// `Person`, the answer path (a person's words, or any other agent's
+    /// turn). Exhaustive: a new origin is decided here.
+    pub(crate) fn is_hers(self) -> bool {
+        match self {
+            Self::Person => false,
+            Self::Asked
+            | Self::Herald
+            | Self::AgentChat
+            | Self::Fault
+            | Self::Moment
+            | Self::InUse
+            | Self::Glance
+            | Self::Note
+            | Self::TaskEnd => true,
+        }
+    }
+
     /// The origin's name, for the log.
     pub(crate) fn name(self) -> &'static str {
         match self {
