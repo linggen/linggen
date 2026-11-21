@@ -128,11 +128,13 @@ async fn her_soul(state: &Arc<ServerState>) -> Result<String, String> {
 }
 
 /// The model her turns run on, as `members::model_of` names it: her Pet
-/// setting when this Mac has it, else her own chain. A push line is the
-/// owner's, as her own turn is (`TurnBy::Engine`), so the owner asks.
+/// setting when this Mac has it, else her own chain. A push line is asked
+/// as her own turn is, by the policy the engine's turns run under.
 async fn her_model(state: &Arc<ServerState>) -> Option<String> {
+    use crate::server::chat::policy::{turn_policy, TurnBy};
     let her = SessionMember::new(COMPANION);
-    let asker = crate::engine::model_choice::Asker::Owner;
+    let policy = turn_policy(TurnBy::Engine);
+    let asker = policy.asker();
     let choice = crate::server::chat::members::model_of(&state.manager, &her_root(), &her, asker).await?;
     Some(choice.model().to_string())
 }
