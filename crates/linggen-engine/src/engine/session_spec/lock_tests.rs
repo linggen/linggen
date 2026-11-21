@@ -309,13 +309,8 @@ const UPWARD_EDGES: &[(&str, usize, &str)] = &[
     ),
     (
         "state_fs/sessions.rs",
-        3,
-        "lead agent for an empty roster, repo lookup, and fallback row place",
-    ),
-    (
-        "perception/activity.rs",
-        1,
-        "the activity actor list uses the engine's companion id",
+        2,
+        "repo lookup, and fallback row place",
     ),
 ];
 

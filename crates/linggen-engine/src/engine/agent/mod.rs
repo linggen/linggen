@@ -10,13 +10,7 @@ use crate::provider::models::ModelManager;
 use crate::state_fs::{SessionStore, StateFile, StateFs};
 use crate::util::LockExt;
 
-/// The resident companion agent — a built-in agent like `ling`, not a skill.
-/// Everything the engine does specially for her (heralds, the presenter
-/// registry, relaying another agent's prompt) keys on this one id.
-pub const COMPANION_AGENT_ID: &str = "yinyue";
-/// The agent an ordinary session seats, and the one that answers on the Mac
-/// when a message names nobody (`doc/shared-session-spec.md` § Who answers).
-pub const LEAD_AGENT_ID: &str = "ling";
+pub use crate::agent_ids::{COMPANION_AGENT_ID, LEAD_AGENT_ID};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};

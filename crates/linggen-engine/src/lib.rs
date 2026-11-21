@@ -2,6 +2,7 @@
 //! server, its CLI and `main` (doc/architecture-review.md § 2, step 3.2).
 
 pub mod account;
+pub mod agent_ids;
 pub mod assets;
 pub mod cannot_run;
 pub mod config;

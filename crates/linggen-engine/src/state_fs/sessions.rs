@@ -289,7 +289,7 @@ impl SessionMeta {
         let id = legacy
             .agent_id
             .or_else(|| answered().into_iter().next())
-            .unwrap_or_else(|| crate::engine::agent::LEAD_AGENT_ID.to_string());
+            .unwrap_or_else(|| crate::agent_ids::LEAD_AGENT_ID.to_string());
         self.agents = vec![SessionMember {
             id,
             model: legacy.model_id,
