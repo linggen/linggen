@@ -420,6 +420,8 @@ export const ZH: Record<string, string> = {
   'Remove from defaults': '从默认中移除',
   'Add to defaults': '加入默认',
   // ── People ──
+  '{name} · Phone': '{name} · 手机',
+  '{name} · Computer': '{name} · 电脑',
   'Set in People': '在“成员”里设置',
   'Who else uses this Mac, and what each person may use. A change holds at once.': '谁还在用这台 Mac，每个人可以用什么。修改立即生效。',
   'No one else yet. A person appears here once their phone is paired.': '还没有其他人。手机配对后，这个人会出现在这里。',

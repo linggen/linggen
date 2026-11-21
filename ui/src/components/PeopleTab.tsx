@@ -36,9 +36,14 @@ function usePeople() {
   const [refused, setRefused] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
+  // Replies can land out of order (the poll, a save's refresh): only the latest ask is shown.
+  const asked = React.useRef(0);
   const refresh = React.useCallback(async () => {
+    const mine = ++asked.current;
     try {
-      setReply(await peopleApi.list());
+      const next = await peopleApi.list();
+      if (mine !== asked.current) return;
+      setReply(next);
       setRefused(false);
     } catch (e) {
       // Below admin the engine refuses the list: the page is not at this Mac.

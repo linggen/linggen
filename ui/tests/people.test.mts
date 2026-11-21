@@ -84,4 +84,6 @@ test('a sign-in that moved or kept settings is told once, in one line; none says
 test('a device under a person is named with its kind', () => {
   assert.equal(deviceLabel({ id: '1', name: "Friend's phone", kind: 'phone' }), "Friend's phone · Phone");
   assert.equal(deviceLabel({ id: '2', name: 'Studio', kind: 'machine' }), 'Studio · Computer');
+  assert.equal(translateFrom(ZH, deviceLabel({ id: '1', name: "Friend's phone", kind: 'phone' })), "Friend's phone · 手机");
+  assert.equal(translateFrom(ZH, deviceLabel({ id: '2', name: 'Studio', kind: 'machine' })), 'Studio · 电脑');
 });
