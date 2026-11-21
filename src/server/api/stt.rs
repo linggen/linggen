@@ -44,8 +44,8 @@ pub(crate) const BODY_LIMIT: usize = 3 * 1024 * 1024;
 /// A clip shorter than this holds no sentence.
 const MIN_SAMPLES: usize = RATE as usize / 4;
 /// A clip whose loudest 20 ms is quieter than this (RMS, 1.0 = full scale;
-/// about -48 dBFS, below a quiet room's own noise floor on a laptop
-/// microphone) holds no speech. It is never put to the model: Whisper
+/// about -48 dBFS — an estimate, to be tuned on a real microphone: speech
+/// sits some 20 to 30 dB above it, a quiet room's hiss below) holds no speech. It is never put to the model: Whisper
 /// invents words from silence.
 const SILENCE_RMS: f32 = 0.004;
 const FRAME: usize = RATE as usize / 50;

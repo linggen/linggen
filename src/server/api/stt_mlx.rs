@@ -170,7 +170,7 @@ done
         }
         // The model it loads for hearing is the one the runtime names, by path.
         assert!(code.contains("snapshot_download(state[\"stt_id\"], local_files_only=True)"));
-        assert!(code.contains("load_stt(path)"));
+        assert!(code.contains("load_stt(Path(path))"));
     }
 
     /// The model is named once, beside the voice model, and fetched in the

@@ -69,14 +69,18 @@ def to_wav_bytes(chunks, sr):
 def hear(req, state):
     """Words from 16 kHz mono PCM16 samples. The model loads on first use."""
     if state.get("stt") is None:
+        from pathlib import Path
+
         from huggingface_hub import snapshot_download
         from mlx_audio.stt.utils import load_model as load_stt
 
         path = snapshot_download(state["stt_id"], local_files_only=True)
-        state["stt"] = load_stt(path)
+        # A Path, not a str: mlx-audio reads the repo's name off the cache
+        # path (its `hub` part) when it picks the model class.
+        state["stt"] = load_stt(Path(path))
     pcm = np.frombuffer(base64.b64decode(req["pcm_b64"]), dtype="<i2")
     audio = pcm.astype(np.float32) / 32768.0
-    out = state["stt"].generate(audio, verbose=False)
+    out = state["stt"].generate(audio)
     return {
         "ok": True,
         "text": (out.text or "").strip(),

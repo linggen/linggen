@@ -66,9 +66,10 @@ pub const TTS_MODEL: &str = "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16"
 /// venv, `mlx-audio`): Whisper large-v3 turbo in MLX fp16, the Whisper repo
 /// `mlx-audio` itself lists for speech-to-text. Whisper is multilingual (one
 /// model hears Chinese, English and the two mixed in a sentence, language
-/// picked per clip), MIT-licensed upstream; large-v3 turbo is the large-v3
-/// encoder with a 4-layer decoder, about 0.8B parameters, 1.61 GB on disk,
-/// the fast large Whisper. Chosen over a smaller Whisper because a mis-heard
+/// picked per clip), MIT-licensed (openai/whisper-large-v3-turbo's card,
+/// checked 2026-11-21; the MLX conversion states none); large-v3 turbo is the
+/// large-v3 with its decoder cut from 32 layers to 4, 809M parameters, 1.61 GB
+/// on disk, the fast large Whisper. Chosen over a smaller Whisper because a mis-heard
 /// word is a wrong question to her; over Qwen3-ASR and the like because
 /// Whisper is the one with years of use on Chinese-English speech.
 /// Unlike the voice model it is fetched on first use, not at boot

@@ -21,6 +21,7 @@ mod event_speech_people;
 mod drawing;
 mod fixtures;
 mod heralds;
+mod hearing;
 mod memory_ops;
 mod met;
 mod leftovers;
