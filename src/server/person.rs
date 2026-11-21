@@ -67,6 +67,8 @@ impl NotTheirs {
 pub(crate) enum Refused {
     /// It names a session its person may not enter.
     NotTheirs(NotTheirs),
+    /// It is for an app its person may not use (`people::may_use_app`).
+    NotYourApp(String),
     /// Its route's class (`routes::classes`) is above the caller's level.
     BeyondLevel {
         level: PermissionMode,
@@ -91,6 +93,7 @@ impl Refused {
     pub(crate) fn body(&self) -> serde_json::Value {
         match self {
             Refused::NotTheirs(n) => serde_json::json!({ "error": n.reason() }),
+            Refused::NotYourApp(app) => serde_json::json!({ "error": "not_your_app", "app": app }),
             Refused::BadPath => serde_json::json!({ "error": "Invalid URL path" }),
             Refused::Unnamed => serde_json::json!({ "error": "unnamed" }),
             Refused::BadBody => serde_json::json!({ "error": "a JSON request body must be an object" }),
@@ -129,7 +132,26 @@ pub(crate) fn send_judged(
             needs,
         });
     }
+    if crate::server::routes::classes::app_named(method, url_path, body).is_some() {
+        judge_app(&crate::server::people::current(), (method, url_path), body, standing.person())?;
+    }
     send_as(method, url_path, body, (standing.person(), user_type))
+}
+
+/// A request for an app (`routes::classes::app_named`) from `person`:
+/// refused ([`Refused::NotYourApp`]) when `people` do not let them use it.
+/// The one way into an app by a request — its page files, its tools, its
+/// sync, its save, its chat, its launch — asks [`People::may_use_app`] here.
+fn judge_app(
+    people: &crate::server::people::People,
+    (method, url_path): (&str, &str),
+    body: &serde_json::Value,
+    person: &Person,
+) -> Result<(), Refused> {
+    match crate::server::routes::classes::app_named(method, url_path, body) {
+        Some(app) if !people.may_use_app(person, &app) => Err(Refused::NotYourApp(app)),
+        _ => Ok(()),
+    }
 }
 
 /// A room guest's request sent as its person: its path as it is sent
@@ -304,6 +326,20 @@ pub(crate) fn of_row(device: &crate::state_fs::devices::PairedDevice) -> Person 
 /// Who the device holding `token` is now; `None` for a token no row holds.
 pub(crate) fn of_token(token: &str) -> Option<Person> {
     crate::state_fs::devices::device_by_token(token).map(|d| of_row(&d))
+}
+
+/// Who a request that reached a handler (over loopback, from the channel
+/// or the LAN gate) is from: the paired device it names, else — with no level
+/// stamped on it, as from this machine's own page — the owner, else no one.
+/// For a handler that answers by person (a list of apps).
+pub(crate) fn of_headers(headers: &axum::http::HeaderMap) -> Person {
+    if let Some(device) = crate::server::api::pair::caller_device(headers) {
+        return standing_of(&device).person().clone();
+    }
+    match headers.contains_key(crate::server::api::pair::LEVEL_HEADER) {
+        true => no_one(),
+        false => owner(),
+    }
 }
 
 /// Who a request's `user_id` names: that person, and no one when it names
@@ -1045,5 +1081,45 @@ mod tests {
         let patch = serde_json::json!({ "level": "chat" });
         people.set(&super::Person::for_test(Some("u-friend")), patch.as_object().unwrap()).unwrap();
         assert_eq!((at(&people, &a), at(&people, &b)), (Chat, Chat));
+    }
+
+    /// An app is for a person only when they may use it: every way a request
+    /// names one — its page files, its tools, its sync, a chat said in it, a
+    /// launch, its sessions — is refused for another, whatever the level,
+    /// and passes for the one it is theirs and for the owner.
+    #[test]
+    fn a_request_for_an_app_the_person_may_not_use_is_refused_at_the_seam() {
+        use serde_json::json;
+        let mut people = crate::server::people::People::default();
+        people.keep_for_owner(vec!["cfo".into()]);
+        let friend = super::Person::for_test(Some("u-friend"));
+        let patch = json!({"apps": ["music", "cfo"]});
+        people.set(&friend, patch.as_object().unwrap()).unwrap();
+        let mut ways: Vec<(&str, &str, serde_json::Value)> = Vec::new();
+        for app in ["cfo", "dj"] {
+            ways.push(("GET", Box::leak(format!("/apps/{app}/index.html").into_boxed_str()), json!(null)));
+            ways.push(("POST", Box::leak(format!("/api/skills/{app}/tools/Snapshot").into_boxed_str()), json!({})));
+            ways.push(("GET", Box::leak(format!("/api/skill-sync/{app}/items").into_boxed_str()), json!(null)));
+            ways.push(("GET", Box::leak(format!("/api/skill-save/{app}").into_boxed_str()), json!(null)));
+            ways.push(("GET", Box::leak(format!("/api/skill-sessions/state?skill={app}&x=1").into_boxed_str()), json!(null)));
+            ways.push(("POST", "/api/chat", json!({"skill_name": app, "message": "hi"})));
+            ways.push(("POST", "/api/apps/launch", json!({"skill": app})));
+        }
+        for (method, url, body) in &ways {
+            let kept = super::judge_app(&people, (method, url), body, &friend);
+            assert!(matches!(kept, Err(super::Refused::NotYourApp(_))), "{method} {url}: {kept:?}");
+            assert_eq!(super::judge_app(&people, (method, url), body, &super::Person::test_owner()), Ok(()), "{method} {url}");
+        }
+        for (method, url, body) in [
+            ("GET", "/apps/music/index.html", json!(null)),
+            ("POST", "/api/chat", json!({"skill_name": "music"})),
+            ("POST", "/api/chat", json!({"message": "no app"})),
+            ("GET", "/api/status", json!(null)),
+        ] {
+            assert_eq!(super::judge_app(&people, (method, url), &body, &friend), Ok(()), "{method} {url}");
+        }
+        // The path is read as the server reads it: an app written another way.
+        let escaped = super::judge_app(&people, ("GET", "/apps/%63fo/index.html"), &json!(null), &friend);
+        assert!(matches!(escaped, Err(super::Refused::NotYourApp(_))), "{escaped:?}");
     }
 }

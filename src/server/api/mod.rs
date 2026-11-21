@@ -19,6 +19,7 @@ pub(super) mod notes;
 /// store, not just its handlers, and perception reads it to say whether a
 /// device exists at all.
 pub(crate) mod pair;
+pub(super) mod people;
 pub(super) mod permissions;
 pub(super) mod quests;
 pub(super) mod rooms;

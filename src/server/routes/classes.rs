@@ -199,6 +199,9 @@ pub(crate) const CLASSES: &[(&str, &str, RouteClass)] = &[
     ("GET", "/api/pair/qr", At(Admin)),
     ("PATCH", "/api/pair/devices/{id}", At(Admin)),
     ("PUT", "/api/pair/devices/{id}/permission", At(Admin)),
+    ("GET", "/api/people", At(Admin)),
+    ("PUT", "/api/people/owner", At(Admin)),
+    ("PUT", "/api/people/{person}", At(Admin)),
     ("GET", "/pair", At(Admin)),
     ("GET", "/api/ling-mem/connect/pending", At(Admin)),
     ("POST", "/api/ling-mem/connect/{id}/{verdict}", At(Admin)),
@@ -334,17 +337,76 @@ const STATIC_PAGE: RouteClass = At(Chat);
 /// route that matches; a page file for a GET outside the API; else admin.
 pub(crate) fn class_of(method: &str, path: &str) -> RouteClass {
     let path = path.split('?').next().unwrap_or(path);
-    let best = CLASSES
-        .iter()
-        .filter(|(m, pattern, _)| (*m == "*" || *m == method) && matches(pattern, path))
-        .max_by_key(|(_, pattern, _)| specificity(pattern));
-    if let Some((_, _, class)) = best {
+    if let Some((_, _, class)) = best_route(method, path) {
         return *class;
     }
     if method == "GET" && is_page_file(path) {
         return STATIC_PAGE;
     }
     At(Admin)
+}
+
+/// The most specific declared route `method` on `path` (no query) is.
+fn best_route(method: &str, path: &str) -> Option<&'static (&'static str, &'static str, RouteClass)> {
+    CLASSES
+        .iter()
+        .filter(|(m, pattern, _)| (*m == "*" || *m == method) && matches(pattern, path))
+        .max_by_key(|(_, pattern, _)| specificity(pattern))
+}
+
+/// The placeholders of a route's path that name an app (a skill).
+const APP_PLACEHOLDERS: &[&str] = &["{skill}", "{skill_name}", "{app}"];
+
+/// Routes that name their app in the query, not the path: `(method, path,
+/// the query's key)`.
+const APP_IN_QUERY: &[(&str, &str, &str)] = &[
+    ("GET", "/api/skill-sessions", "skill"),
+    ("GET", "/api/skill-sessions/state", "skill"),
+    ("DELETE", "/api/skill-sessions", "skill"),
+];
+
+/// Routes that name their app at the top of the body: `(method, path, the
+/// body's key)`. A chat names the app it is said in; a launch the app it
+/// brings up.
+const APP_IN_BODY: &[(&str, &str, &str)] = &[
+    ("POST", "/api/chat", "skill_name"),
+    ("POST", "/api/apps/launch", "skill"),
+];
+
+/// The app a request is for, when its route names one — in its path (a
+/// placeholder of [`APP_PLACEHOLDERS`]: the app's page files, its tools, its
+/// sync, save, quests and assets), its query ([`APP_IN_QUERY`]) or its body
+/// ([`APP_IN_BODY`]). The one place a route says which app it is; the seam
+/// asks `people::may_use_app` of it (`person::send_judged`). A new route
+/// that names its app by a placeholder is covered by its name alone
+/// (`every_route_that_names_an_app_is_found`).
+pub(crate) fn app_named(method: &str, url: &str, body: &serde_json::Value) -> Option<String> {
+    let (path, query) = url.split_once('?').unwrap_or((url, ""));
+    let decode = |text: &str| urlencoding::decode(text).ok().map(|t| t.into_owned());
+    if let Some((_, pattern, _)) = best_route(method, path) {
+        let named = pattern
+            .split('/')
+            .zip(path.split('/'))
+            .find(|(want, _)| APP_PLACEHOLDERS.contains(want))
+            .and_then(|(_, got)| decode(got));
+        if named.is_some() {
+            return named;
+        }
+    }
+    let in_query = APP_IN_QUERY.iter().find(|(m, p, _)| *m == method && *p == path).and_then(|(_, _, key)| {
+        query
+            .split('&')
+            .filter_map(|pair| pair.split_once('='))
+            .find(|(k, _)| decode(k).as_deref() == Some(*key))
+            .and_then(|(_, v)| decode(v))
+    });
+    in_query.or_else(|| {
+        APP_IN_BODY
+            .iter()
+            .find(|(m, p, _)| *m == method && *p == path)
+            .and_then(|(_, _, key)| body.get(*key)?.as_str().map(str::to_string))
+            .filter(|name| !name.is_empty())
+    })
 }
 
 /// Whether `url` (a path with its query, as a caller gave it) is sent to
@@ -654,5 +716,43 @@ mod tests {
                 vec!["GET".into(), "DELETE".into()]
             )]
         );
+    }
+
+    /// Every route that names its app by a placeholder gives it back, and the
+    /// routes that name one in a query or a body are listed: a new route for
+    /// an app is judged by `people` as soon as it is declared with its
+    /// placeholder, and these are all there are today.
+    #[test]
+    fn every_route_that_names_an_app_is_found() {
+        let body = serde_json::Value::Null;
+        for (method, pattern, _) in CLASSES {
+            let named = pattern.split('/').any(|seg| APP_PLACEHOLDERS.contains(&seg));
+            let url = pattern
+                .replace("{skill_name}", "x-app")
+                .replace("{skill}", "x-app")
+                .replace("{app}", "x-app")
+                .replace("{tool_name}", "t")
+                .replace("{tool}", "t")
+                .replace("{*file_path}", "f.js")
+                .replace("{id}", "i")
+                .replace("{file}", "f")
+                .replace("{verdict}", "v")
+                .replace("{person}", "p")
+                .replace("{*path}", "p")
+                .replace("{*rest}", "r")
+                .replace("{verb}", "v");
+            let method = if *method == "*" { "GET" } else { method };
+            if best_route(method, &url).is_some_and(|(_, p, _)| p == pattern) {
+                assert_eq!(app_named(method, &url, &body).is_some(), named, "{method} {pattern}");
+            }
+        }
+        let by_name: Vec<&str> = CLASSES
+            .iter()
+            .filter(|(_, p, _)| p.split('/').any(|seg| APP_PLACEHOLDERS.contains(&seg)))
+            .map(|(_, p, _)| *p)
+            .collect();
+        assert!(by_name.len() >= 8, "the routes that name an app: {by_name:?}");
+        assert_eq!(APP_IN_QUERY.len(), 3);
+        assert_eq!(APP_IN_BODY.len(), 2);
     }
 }

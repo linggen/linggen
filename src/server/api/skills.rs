@@ -36,8 +36,15 @@ impl SkillListQuery {
 pub(crate) async fn list_skills(
     State(state): State<Arc<ServerState>>,
     Query(q): Query<SkillListQuery>,
+    headers: axum::http::HeaderMap,
 ) -> impl IntoResponse {
     let mut skills: Vec<Skill> = state.skills.list_skills().await;
+    // A person is shown the apps they may use, and no others.
+    let person = crate::server::person::of_headers(&headers);
+    if !person.is_owner() {
+        let people = crate::server::people::current();
+        skills.retain(|s| people.may_use_app(&person, &s.name));
+    }
     if q.is_brief() {
         for skill in &mut skills {
             skill.content = String::new();

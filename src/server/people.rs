@@ -726,4 +726,60 @@ mod tests {
         let _ = unwritable.current(&kept);
         assert!(!kept.1.get(), "the rows were let go before the file was written");
     }
+
+    fn rust_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                rust_files(&path, out);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                out.push(path);
+            }
+        }
+    }
+
+    /// Each file's count of `pattern` in its code (its tests left out), this
+    /// file aside, against `listed`: a place that asks without being listed,
+    /// or a listed one that no longer asks, fails. (The same walk as
+    /// `person::who`'s lock, for what is decided here.)
+    fn only_here_and(pattern: &str, listed: &[(&str, usize, &str)]) {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut files = Vec::new();
+        for dir in ["src", "crates/linggen-engine/src"] {
+            rust_files(&root.join(dir), &mut files);
+        }
+        for file in files {
+            let rel = file.strip_prefix(root).unwrap().to_string_lossy().to_string();
+            if rel == "src/server/people.rs" {
+                continue;
+            }
+            let text = std::fs::read_to_string(&file).unwrap();
+            let code = text.split("#[cfg(test)]").next().unwrap_or(&text);
+            let want = listed.iter().find(|(f, _, _)| *f == rel).map_or(0, |e| e.1);
+            assert_eq!(code.matches(pattern).count(), want, "{rel}: `{pattern}`: ask here, or look at it and list it");
+        }
+    }
+
+    /// The people file has one reader and writer, the level a row once held
+    /// one reader, and each way into an app and each list of apps or models a
+    /// person is shown asks `may_use_app` / `may_run_model` — a new one that
+    /// does not is not listed, and fails here.
+    #[test]
+    fn the_people_file_is_read_and_written_here_alone_and_each_way_in_asks_here() {
+        only_here_and(concat!("people", ".json"), &[]);
+        only_here_and("legacy_permission", &[("crates/linggen-engine/src/state_fs/devices/mod.rs", 2, "the field, and a new row's none")]);
+        only_here_and(".may_use_app(", &[
+            ("src/server/person.rs", 1, "the seam: every request that names an app (`judge_app`)"),
+            ("src/server/api/skills.rs", 1, "GET /api/skills"),
+            ("src/server/rtc/page_state.rs", 1, "the page state's apps"),
+        ]);
+        only_here_and(".may_run_model(", &[
+            ("src/server/api/status.rs", 1, "GET /api/models"),
+            ("src/server/rtc/page_state.rs", 1, "the page state's models"),
+        ]);
+        only_here_and("commit_device(", &[
+            ("crates/linggen-engine/src/state_fs/devices/mod.rs", 1, "its own definition"),
+            ("src/server/api/pair/mod.rs", 1, "`commit_paired`, which both pairings call"),
+        ]);
+    }
 }
