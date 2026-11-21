@@ -14,6 +14,8 @@ default_models: Array<string>,
 /**
  * When true, automatically try the next model on transient errors
  * (timeout, rate limit, 502/503, connection failures). Default: true.
+ * Off, a turn also keeps an asked model this machine lacks and fails on
+ * it, as a session whose own switch is off does (`model_choice::Switching`).
  */
 model_fallback: boolean, 
 /**
