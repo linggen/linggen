@@ -110,12 +110,18 @@ pub fn judge(asker: Asker<'_>, action: &Action<'_>) -> Verdict {
     }
 }
 
+/// An action the app does not offer to the one asking, outside the app's
+/// own session.
+pub fn not_offered(app: &str, tool: &str) -> Refusal {
+    Refusal::NotForPet(format!("'{app}' does not offer '{tool}' to you"))
+}
+
 /// What the companion may run: the offer first, then the class.
 fn companion(offer: Offer, person_asked: bool, action: &Action<'_>) -> Verdict {
     let refuse = |why: String| Verdict::Refuse(Refusal::NotForPet(why));
     let (app, tool) = (action.app, action.tool);
     if offer == Offer::Nobody {
-        return refuse(format!("'{app}' does not offer '{tool}' to you"));
+        return Verdict::Refuse(not_offered(app, tool));
     }
     if !action.class.changes_things() {
         return Verdict::Allow;

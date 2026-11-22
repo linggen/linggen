@@ -14,6 +14,15 @@ description = "One line per available skill"
 vars = ["name", "description"]
 text = "\n- **{name}**: {description}"
 
+[apps_header]
+description = "Section header listing the apps whose actions the AppTool reaches from a session that is not the app's own"
+text = "\n\n## Apps you can reach\n\nWhat an app offers can be done from here with the `AppTool`: give the `app` and leave out `tool` to see its actions and their arguments, then call with `tool` and `args`. Apps:"
+
+[app_entry]
+description = "One line per app with actions offered anywhere"
+vars = ["name", "about", "actions"]
+text = "\n- **{name}**: {about} Actions: {actions}."
+
 [active_skill_frame]
 description = "Wraps the active skill content injected into the system prompt"
 vars = ["name", "description", "content"]

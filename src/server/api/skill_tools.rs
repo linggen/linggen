@@ -39,6 +39,7 @@ fn status_of(refusal: &Refusal) -> StatusCode {
         Refusal::SignedOut => StatusCode::UNAUTHORIZED,
         Refusal::BeyondGrant(_)
         | Refusal::NotForPet(_)
+        | Refusal::NotYours(_)
         | Refusal::ByGate(_)
         | Refusal::NeedsPerson(_)
         | Refusal::BeyondLevel { .. } => StatusCode::FORBIDDEN,

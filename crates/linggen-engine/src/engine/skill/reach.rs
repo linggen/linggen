@@ -78,6 +78,15 @@ impl Offer {
             (Reach::Here, false) => Self::Nobody,
         }
     }
+
+    /// What `tool` is offered as to a caller: a model that is not the
+    /// companion is never offered what is hers alone.
+    pub fn to_caller(tool: &SkillToolDef, companion: bool) -> Self {
+        match Self::of(tool) {
+            Self::HerRead if !companion => Self::Nobody,
+            offer => offer,
+        }
+    }
 }
 
 #[cfg(test)]

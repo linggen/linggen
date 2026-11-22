@@ -4,7 +4,7 @@ pub use builtin::builtin_tier;
 pub(crate) use builtin::tool_cacheable;
 pub(crate) use builtin::tool_max_duration;
 pub(crate) use builtin::unavailable as unavailable_builtins;
-pub(crate) use builtin::RightNow;
+pub(crate) use builtin::{AppCall, RightNow};
 
 pub mod browser_tool;
 mod file_tools;
@@ -576,6 +576,11 @@ impl Tools {
     /// The calling agent's id (the sender, for `agent_chat`).
     pub fn agent_id(&self) -> Option<&str> {
         self.agent_id.as_deref()
+    }
+
+    /// Whether the calling agent is the companion (Yinyue).
+    pub(crate) fn is_companion(&self) -> bool {
+        self.agent_id() == Some(crate::engine::agent::COMPANION_AGENT_ID)
     }
 
     /// The workspace root: where a session with no folder of its own works.

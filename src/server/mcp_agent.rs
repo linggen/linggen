@@ -2723,6 +2723,9 @@ mod permit_tests {
         let write = delegate_tool_scope(true).unwrap();
         assert!(!read.contains("Bash") && write.contains("Bash") && write.contains("Edit"));
         assert!(!write.contains("Task") && !write.contains("AskUser"));
+        // A delegated run reaches no app but through its own tools: AppTool
+        // is not on either list.
+        assert!(!read.contains("AppTool") && !write.contains("AppTool"));
     }
 }
 

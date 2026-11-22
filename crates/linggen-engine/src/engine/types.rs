@@ -357,6 +357,10 @@ pub struct AgentEngine {
     /// Metadata for skills available to the model via the Skill tool: (name, description).
     /// Written only by `read_changes_if_any`.
     pub available_skills_metadata: Vec<(String, String, bool)>,
+    /// The installed skills with an action offered anywhere (`reach:
+    /// anywhere`): what the prompt's index of apps is made from
+    /// (`prompt::app_index`). Written only by `read_changes_if_any`.
+    pub(crate) anywhere_apps: Vec<Skill>,
     /// The change of skills or settings this engine's copies reflect
     /// (`AgentManager::changes_generation`).
     read_at: Option<u64>,
@@ -734,6 +738,7 @@ impl AgentEngine {
             active_skill: Default::default(),
             active_mission: None,
             available_skills_metadata: Vec::new(),
+            anywhere_apps: Vec::new(),
             read_at: None,
             available_agents_metadata: Vec::new(),
             parent_agent_id: None,
@@ -914,6 +919,13 @@ impl AgentEngine {
             return;
         }
         self.available_skills_metadata = manager.skills.list_metadata().await;
+        self.anywhere_apps = manager
+            .skills
+            .list_skills()
+            .await
+            .into_iter()
+            .filter(|skill| crate::engine::skill::tools::anywhere_tools(skill).next().is_some())
+            .collect();
         self.read_settings(manager).await;
         self.read_at = Some(now);
     }

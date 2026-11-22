@@ -6,7 +6,7 @@
 //! Every app here is a made-up fixture installed by its test.
 
 use crate::support::model::Agent;
-use crate::support::{text, Setup, World};
+use crate::support::{text, tool, Setup, World};
 use serde_json::json;
 
 /// Install a made-up app `name` whose tools are `tools` (SKILL.md `tools:`
@@ -71,5 +71,50 @@ async fn a_plain_sessions_tool_schema_does_not_grow_with_the_apps_installed() {
     eprintln!("tool schema of a plain Ling session: {six} chars with six apps, {seven} with seven");
     assert_eq!(six, seven, "an app grew the tool schema");
     assert!(six > 0, "no tools were sent");
+    w.assert_all_scripted();
+}
+
+/// The index names an app with an action offered anywhere, and its actions'
+/// names — and an app whose actions are all its own, none; with no such app
+/// there is no section at all.
+#[tokio::test]
+async fn the_prompt_indexes_the_apps_with_actions_offered_anywhere() {
+    let setup = Setup::default().script(Agent::Ling, vec![text("One."), text("Two.")]);
+    let w = World::start(setup).await;
+    let tools = action("Tune", "read", false, "echo tuned");
+    install_app(&w, "radio", "Only plays in its own page.", &tools).await;
+    let sid = w.api.create_session(json!({"title": "Chat"})).await;
+    w.turn(&sid, &w.work(), "Hello.", Agent::Ling).await;
+    install_jukebox(&w, "jukebox").await;
+    let sid = w.api.create_session(json!({"title": "Chat"})).await;
+    w.turn(&sid, &w.work(), "Hello again.", Agent::Ling).await;
+
+    let calls = w.model.calls_of(Agent::Ling);
+    assert!(!calls[0].text().contains("Apps you can reach"), "a section with no app to list");
+    let seen = calls[1].text();
+    assert!(seen.contains("Apps you can reach"), "no index");
+    assert!(seen.contains("jukebox") && seen.contains("Plays music on this Mac."), "{seen}");
+    assert!(seen.contains("List, Play, Delete"), "the actions' names: {seen}");
+    assert!(!seen.contains("Only plays in its own page.") || seen.matches("radio").count() <= 1, "radio is indexed");
+    w.assert_all_scripted();
+}
+
+/// "放首歌" to Yinyue: she calls `AppTool` and answers once she has the
+/// result — two model calls, and the result is in her second.
+#[tokio::test]
+async fn asked_to_play_yinyue_runs_the_action_in_two_model_calls() {
+    let play = tool("AppTool", json!({"app": "jukebox", "tool": "Play", "args": {"what": "jazz"}}));
+    let setup = Setup::default().script(Agent::Yinyue, vec![play, text("Playing jazz.")]);
+    let w = World::start(setup).await;
+    install_jukebox(&w, "jukebox").await;
+    let mark = w.mark();
+    w.api.post("/api/yinyue/chat", json!({"text": "放首轻音乐"})).await;
+    w.wait_agent(Agent::Yinyue, mark).await;
+
+    let calls = w.model.calls_of(Agent::Yinyue);
+    assert_eq!(calls.len(), 2, "her call that emits AppTool, and her answer after the result");
+    assert!(calls[1].text().contains("playing jazz"), "the result did not reach her: {}", calls[1].text());
+    assert!(calls[0].text().contains("Apps you can reach"), "she was not shown the index");
+    assert!(w.model.calls_of(Agent::Ling).is_empty(), "no message went to Ling");
     w.assert_all_scripted();
 }

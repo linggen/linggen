@@ -23,7 +23,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::engine::permission::{effective_mode_for_path, ActionClass, PathMode, PermissionMode};
 use crate::engine::skill::judge::{judge, Action, Asker};
-use crate::engine::skill::reach::Offer;
+use crate::engine::skill::reach::{Offer, Reach};
 use crate::engine::skill::params::SessionParams;
 use crate::engine::skill::Skill;
 use crate::engine::skill_tool::{SkillToolDef, SkillToolKind};
@@ -47,6 +47,9 @@ pub enum Refusal {
         needs: PermissionMode,
     },
     NotForPet(String),
+    /// The app is not one the asking session's person may use, or the
+    /// session keeps it out.
+    NotYours(String),
     /// A model's call the session's own gate refused (`judge`'s model
     /// asker), in the gate's words.
     ByGate(String),
@@ -71,6 +74,7 @@ impl std::fmt::Display for Refusal {
             | Refusal::NotRunnable(m)
             | Refusal::BeyondGrant(m)
             | Refusal::NotForPet(m)
+            | Refusal::NotYours(m)
             | Refusal::ByGate(m)
             | Refusal::NeedsPerson(m)
             | Refusal::BadCall(m)
@@ -387,6 +391,16 @@ pub fn pet_tools(skill: &Skill, person_asked: bool) -> impl Iterator<Item = &Ski
     })
 }
 
+/// The tools a skill offers any session's model outside its own
+/// (`reach: anywhere`): shell tools of a skill a model may start.
+pub fn anywhere_tools(skill: &Skill) -> impl Iterator<Item = &SkillToolDef> {
+    skill.tool_defs.iter().filter(|t| {
+        !skill.disable_model_invocation
+            && t.reach == Reach::Anywhere
+            && t.kind() == SkillToolKind::Shell
+    })
+}
+
 /// The tools a skill offers another device's agent (`remote: true`) that
 /// would actually run when called: a shell tool (the door runs nothing
 /// else), never `page_only` (the caller is a model), and within the skill's
@@ -401,7 +415,7 @@ pub fn remote_tools(skill: &Skill) -> impl Iterator<Item = &SkillToolDef> {
     })
 }
 
-fn declared<'a>(skill: &'a Skill, name: &str) -> Result<&'a SkillToolDef, Refusal> {
+pub(crate) fn declared<'a>(skill: &'a Skill, name: &str) -> Result<&'a SkillToolDef, Refusal> {
     skill
         .tool_defs
         .iter()
@@ -424,7 +438,7 @@ fn shell_tool(skill: &Skill, name: &str) -> Result<SkillToolDef, Refusal> {
 }
 
 /// Where the tool runs: the skill's declared `cwd`, else its own folder.
-fn working_folder(skill: &Skill) -> PathBuf {
+pub(crate) fn working_folder(skill: &Skill) -> PathBuf {
     let declared = skill
         .cwd
         .as_deref()

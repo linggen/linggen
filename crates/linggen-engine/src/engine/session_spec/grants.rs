@@ -72,6 +72,18 @@ fn stamp(grants: &PresetGrants, perms: &mut SessionPermissions) -> bool {
     changed
 }
 
+/// What `perms` would be with `skill`'s declared `permission.paths` stamped
+/// on a copy, as taking the skill up stamps them (`PresetGrants::of_skill`)
+/// — for one call into the skill's folder from a session that did not take
+/// it up. The session's own table is never changed.
+pub(crate) fn with_skill_grants(perms: &SessionPermissions, skill: &crate::engine::skill::Skill) -> SessionPermissions {
+    let mut copy = perms.clone();
+    if let Some(declared) = skill.permission.as_ref() {
+        stamp(&PresetGrants::of_skill(declared), &mut copy);
+    }
+    copy
+}
+
 impl SessionSpec {
     /// A session made before any engine runs it (an `agent_run` delegate):
     /// its preset grants on `base`, saved as its `permission.json`.
