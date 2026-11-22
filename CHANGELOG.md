@@ -1,5 +1,9 @@
 # Changelog
 
+## [2.6.1] - unreleased
+
+- The moon in the page's sky shows tonight's real phase.
+
 ## [2.6.0] - 2026-11-21 — the Mac app shows the web UI; rule files can import
 
 ### One UI
