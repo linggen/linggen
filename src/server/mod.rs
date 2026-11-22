@@ -90,6 +90,7 @@ async fn prepare_server(
         last_user_turn_at: Arc::new(AtomicU64::new(unix_secs_now())),
         events_tx,
         skills,
+        mac_tools_refresh: Default::default(),
         assets,
         missions,
         queued_chats: Arc::new(Mutex::new(HashMap::new())),
@@ -562,7 +563,7 @@ mod tests {
         ];
 
         for (i, event) in events.into_iter().enumerate() {
-            let result = map_server_event_to_ui_message(event, i as u64);
+            let result = map_server_event_to_ui_message(event, i as u64, &person::owner());
             // All variants should produce Some(...), except Message which may
             // return None if sanitization strips it. We just verify no panics.
             let _ = result;

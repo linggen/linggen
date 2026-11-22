@@ -1187,6 +1187,7 @@ impl PeerLoop {
             session_ids: &mut self.user_session_ids,
             user_id: whose.as_deref().unwrap_or(&self.user_ctx.user_id),
             is_admin: whose.is_none() && self.user_ctx.permission == PermissionMode::Admin,
+            person: now.person(),
             view: self.view_ctx.view.as_deref(),
             pinned_session_id: if self.view_ctx.view.as_deref() == Some("embed") {
                 self.view_ctx.session_id.as_deref()

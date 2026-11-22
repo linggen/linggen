@@ -24,6 +24,7 @@ pub(super) struct EventFilter<'a> {
     pub(super) session_ids: &'a mut HashSet<String>,
     pub(super) user_id: &'a str,
     pub(super) is_admin: bool,
+    pub(super) person: &'a crate::server::person::Person,
     /// Which UI entry is connected: "main" | "embed" | "consumer" | None (pre-PR2).
     pub(super) view: Option<&'a str>,
     /// For embed: the pinned session id. Broadcasts from other sessions are dropped.
@@ -95,10 +96,11 @@ pub(super) fn forward_event_to_channels(
     let seq = state
         .event_seq
         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let ui_msg = match crate::server::map_server_event_to_ui_message(event.clone(), seq) {
-        Some(msg) => crate::server::ui_events::with_place(msg, &state.manager),
-        None => return,
-    };
+    let ui_msg =
+        match crate::server::map_server_event_to_ui_message(event.clone(), seq, filter.person) {
+            Some(msg) => crate::server::ui_events::with_place(msg, &state.manager),
+            None => return,
+        };
 
     // Yinyue singleton: her voice (`pet_speak`) and expression (`pet_express`)
     // go ONLY to the presenter — the FCFS lock holder — so that with multiple

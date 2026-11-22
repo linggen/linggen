@@ -317,11 +317,29 @@ pub(super) struct AllowanceSpentData {
 #[derive(Serialize)]
 #[cfg_attr(test, derive(TS), ts(export))]
 pub(super) struct DeviceTopicData {
-    pub topic: String,
-    pub op: String,
+    topic: String,
+    op: String,
     #[cfg_attr(test, ts(type = "unknown"))]
-    pub payload: serde_json::Value,
-    pub from_device: Option<String>,
+    payload: serde_json::Value,
+    from_device: Option<String>,
+}
+
+impl DeviceTopicData {
+    pub(super) fn for_receiver(
+        topic: String,
+        op: String,
+        payload: serde_json::Value,
+        from_device: Option<String>,
+        receiver: &crate::server::person::Person,
+    ) -> Self {
+        let payload = crate::server::api::topic::payload_for(&topic, &op, payload, receiver);
+        Self {
+            topic,
+            op,
+            payload,
+            from_device,
+        }
+    }
 }
 
 /// `pet_voice`.

@@ -22,8 +22,8 @@
 //! work to be done exactly once, while a retained topic holds only the newest
 //! because a fresher reading makes the older one worthless.
 //!
-//! The payload stays opaque here, as it is for a live publish. What is in it,
-//! and how stale is too stale, are contracts between the surfaces.
+//! Publishing and retention keep the original payload. Both wire paths ask
+//! `payload_for` for the receiving person's view.
 
 use axum::{
     extract::{Query, State},
@@ -31,11 +31,33 @@ use axum::{
     Json,
 };
 use serde::Deserialize;
+use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::server::{ServerEvent, ServerState};
+use crate::server::person::Person;
+use crate::server::{mac_tools, ServerEvent, ServerState};
+
+type ReceiverView = fn(Value, &Person) -> Value;
+
+/// Topics with their own receiver view can be read outside the builder's day.
+fn receiver_view(topic: &str, op: &str) -> Option<ReceiverView> {
+    // Retained names can address the same file on a case-insensitive disk.
+    if topic.eq_ignore_ascii_case(mac_tools::TOPIC) && op.eq_ignore_ascii_case(mac_tools::OP) {
+        return Some(mac_tools::for_person);
+    }
+    None
+}
+
+/// The only place a topic payload becomes a wire payload, on both the
+/// retained reply and the live event. All other topics pass through intact.
+pub(crate) fn payload_for(topic: &str, op: &str, payload: Value, receiver: &Person) -> Value {
+    match receiver_view(topic, op) {
+        Some(view) => view(payload, receiver),
+        None => payload,
+    }
+}
 
 /// Publish one control message to the user's devices.
 pub(crate) fn publish_topic(
@@ -232,7 +254,8 @@ pub(crate) struct LatestQuery {
 /// 404 when nothing has been retained, which is a real answer and not an
 /// error: it means nobody has published this yet. Callers must show that as
 /// "no reading" rather than inventing one. Read by the same person rule as
-/// [`publish`]: another person's is given nothing.
+/// [`publish`] for shared topics. A topic with a receiver view is instead
+/// read by each person under that view.
 pub(crate) async fn latest(
     State(state): State<Arc<ServerState>>,
     Query(q): Query<LatestQuery>,
@@ -241,8 +264,11 @@ pub(crate) async fn latest(
         axum::http::StatusCode::NOT_FOUND,
         Json(serde_json::json!({ "error": "nothing retained on this topic" })),
     );
-    let asker = crate::server::person::Person::from_wire(q.user_id.as_deref());
-    if !crate::server::day_session::shares_builders(&state.manager, &asker).await {
+    // The RTC and LAN request seams stamp this query with the receiver's person.
+    let asker = Person::from_wire(q.user_id.as_deref());
+    if receiver_view(&q.topic, &q.op).is_none()
+        && !crate::server::day_session::shares_builders(&state.manager, &asker).await
+    {
         return missing;
     }
     let Some(path) = retained_path(&q.topic, &q.op) else {
@@ -254,6 +280,7 @@ pub(crate) async fn latest(
     let Ok(payload) = serde_json::from_str::<serde_json::Value>(&text) else {
         return missing;
     };
+    let payload = payload_for(&q.topic, &q.op, payload, &asker);
     let retained_at = std::fs::metadata(&path)
         .and_then(|m| m.modified())
         .map(|t| {

@@ -22,7 +22,9 @@ pub(super) fn spawn(state: &Arc<ServerState>) {
                 Err(RecvError::Closed) => return,
             };
             seq += 1;
-            let Some(ui) = super::map_server_event_to_ui_message(event, seq) else {
+            let Some(ui) =
+                super::map_server_event_to_ui_message(event, seq, &super::person::owner())
+            else {
                 continue;
             };
             let ui = super::ui_events::with_place(ui, &manager);

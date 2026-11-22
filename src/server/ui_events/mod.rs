@@ -66,8 +66,12 @@ impl Ui {
     }
 }
 
-pub(crate) fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Option<UiEvent> {
-    let ui = map_event(event, seq, crate::server::rooms_switch::on())?;
+pub(crate) fn map_server_event_to_ui_message(
+    event: ServerEvent,
+    seq: u64,
+    receiver: &crate::server::person::Person,
+) -> Option<UiEvent> {
+    let ui = map_event(event, seq, crate::server::rooms_switch::on(), receiver)?;
     // A turn the engine started for her shows nothing on a page: decided
     // in one place (`resident::shows_on_page`).
     let shown = crate::server::resident::shows_on_page(
@@ -81,7 +85,12 @@ pub(crate) fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Op
 
 /// [`map_server_event_to_ui_message`], with the rooms switch given: room chat
 /// reaches no page while rooms are off, whichever way it was sent.
-fn map_event(event: ServerEvent, seq: u64, rooms_on: bool) -> Option<UiEvent> {
+fn map_event(
+    event: ServerEvent,
+    seq: u64,
+    rooms_on: bool,
+    receiver: &crate::server::person::Person,
+) -> Option<UiEvent> {
     use ServerEvent::*;
     let ui = Ui {
         seq,
@@ -121,7 +130,7 @@ fn map_event(event: ServerEvent, seq: u64, rooms_on: bool) -> Option<UiEvent> {
         | SkillSaveChanged { .. }
         | QuestsChanged { .. }
         | AllowanceSpent { .. }
-        | DeviceTopic { .. } => global::map(event, ui),
+        | DeviceTopic { .. } => global::map(event, ui, receiver),
         // Internal: consumed by Yinyue's watch loop, never a UI banner.
         AgentChat { .. } => None,
         // Internal: the server folds it into `tasks` (server/tasks.rs).
