@@ -1358,8 +1358,9 @@ impl AgentEngine {
     /// server's (`mcp__memory`) — is withheld from this turn.
     pub fn is_withheld(&self, tool: &str) -> bool {
         let name = crate::engine::tools::canonical_tool_name(tool).unwrap_or(tool);
-        // A mission reaches no app from outside the one it belongs to.
-        (name == "AppTool" && self.active_mission.is_some())
+        // A mission, and the lead of an app's own session, reach no app
+        // from outside the one they stand in.
+        (name == "AppTool" && (self.active_mission.is_some() || self.is_app_session()))
             || self.turn_tool_allowlist.as_ref().is_some_and(|allowed| !allowed.contains(name))
             || self
                 .withheld_tools

@@ -139,6 +139,22 @@ mod tests {
         assert!(e.is_withheld("AppTool") && e.is_withheld("app_tool"));
     }
 
+    /// In an app's own session its lead has no `AppTool`, so no index: that
+    /// is its app's place, and what it needs of it is its own tools.
+    #[tokio::test]
+    async fn an_apps_own_session_has_no_apptool_and_no_index() {
+        let mut e = engine(vec![app("jukebox", "")]);
+        let own = crate::extensions::skills::parse_skill_text(
+            "---\nname: dice\ndescription: d\napp:\n  launcher: web\n  entry: index.html\n---\nbody",
+            SkillSource::Project,
+        )
+        .unwrap();
+        assert!(!e.is_withheld("AppTool"));
+        e.activate_skill(own, crate::engine::ActivationMode::SessionBound).await;
+        assert!(e.is_withheld("AppTool"), "its lead has none");
+        assert_eq!(e.app_index(None), "");
+    }
+
     /// What a call would refuse is not indexed: an app the person was not
     /// given, a private app in the day, a user-only app.
     #[test]
