@@ -420,7 +420,8 @@ pub(crate) fn app_named(method: &str, url: &str, body: &serde_json::Value) -> Op
             .find(|(m, p, _)| *m == method && *p == path)
             .and_then(|(_, _, key)| body.get(*key)?.as_str())
             .map(|name| match (method, path) {
-                // These handlers trim the name before using it.
+                // The name judged here is the name the handler will use:
+                // these two take it as written, the others trim it first.
                 ("POST", "/api/sessions" | "/api/apps/launch") => name,
                 _ => name.trim(),
             })
