@@ -97,7 +97,7 @@ The person is at that page when one of its own surfaces reads present
 gesture, never the talking loop, and fetches no audio — as when muted. When
 and how often she speaks up is unchanged. The phone has no spoken voice.
 
-### Asked aloud — answered aloud (2.6, engine half built)
+### Asked aloud — answered aloud (2.7, engine half built)
 
 A person who speaks to her is not reading, so the rule above has one agreed
 exception: **asked aloud, answered aloud**, also with the page in view.

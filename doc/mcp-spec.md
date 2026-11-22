@@ -4,7 +4,7 @@ reader: Coding agent and users
 guide: |
   Product specification — describe what the system should do and why.
   Keep it brief. Aim to guide design and implementation, not document code.
-status: 2.6 — one door, thirteen tools (memory 5, agents 4, browser 3, apps 1) at /mcp; the two-server layout (24 + 17 tools) is retired
+status: 2.7 — one door, thirteen tools (memory 5, agents 4, browser 3, apps 1) at /mcp; the two-server layout (24 + 17 tools) is retired
 ---
 
 # Linggen MCP — the one door
@@ -315,7 +315,7 @@ Kept so the decisions are not lost. Everything in this section is retired.
   door and cut 41 tools to twelve. The reason: memory needs the engine (dream,
   scan, review), and one install should show the other tools, such as
   `agent_run`, beside it.
-- **2.6** (2026-11-21, the owner's call) added a thirteenth tool, `app`: an
+- **2.7** (2026-11-21, the owner's call) added a thirteenth tool, `app`: an
   outside agent reaches the person's apps the way a session does, never the
   file and shell tools.
 
@@ -347,4 +347,4 @@ tool namespace is gone with the second server.
 1. Memory on `/mcp` (2026-07), taken out for its own server (2026-07-30),
    served by the engine from 2.3. History.
 2. **2.5: one door, twelve tools.** Done.
-3. **2.6: the thirteenth tool, `app`.** Done.
+3. **2.7: the thirteenth tool, `app`.** Done.

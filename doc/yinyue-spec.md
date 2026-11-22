@@ -467,7 +467,7 @@ user's region and time without asking.
 | Desktop pet (body) | `linggen-app/shell/src/pet.rs` — thin native window → core `?pet=1` |
 | Pet renderer (web + native) | `linggen/ui` — `PetStage` + `PetApp` (`?pet=1`) + `YinyueAvatar` overlay |
 | Voice (TTS provider) | `linggen/src/server/api/tts.rs` (`TtsProvider`), `tts_mlx.rs` (Qwen3-TTS), `tts_text.rs` (clauses, language, drift check); Kokoro via any-tts as fallback; the Python process is `mlx_sidecar.rs` (`runtime_py/mlx_voice.py`), shared with her hearing |
-| Hearing (STT provider, 2.6) | `linggen/src/server/api/stt.rs` (`POST /api/stt`, `SttProvider`), `stt_mlx.rs` (Whisper large-v3 turbo in the same sidecar); asked aloud → `yinyue-companion-spec.md` § Asked aloud |
+| Hearing (STT provider, 2.7) | `linggen/src/server/api/stt.rs` (`POST /api/stt`, `SttProvider`), `stt_mlx.rs` (Whisper large-v3 turbo in the same sidecar); asked aloud → `yinyue-companion-spec.md` § Asked aloud |
 | Pet coordination — lease + surface registry | `linggen/src/server/` (engine API, planned) |
 | Menubar tray + face animator | `linggen-app/shell/src/menubar.rs` (planned) |
 | Tray face frames + generator | `linggen-app/shell/pet-ui` capture tool → staged `tray/` (planned) |
