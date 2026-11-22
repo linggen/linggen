@@ -13,6 +13,14 @@ The phone's part ships with the phone app.
   the reason. Your own click on the app's page runs as before.
 - **One place decides whether a caller may run an app's action** — a
   model, a page, a tap and Yinyue all ask it; what each may run is as it was.
+- **An app can offer an action anywhere.** `reach: anywhere` on a tool, and
+  from any chat of yours — not only the app's own — Ling and Yinyue can do
+  it: "play a song" works where you are. The prompt carries one line per
+  such app, so the tools a chat is sent do not grow with the apps you install.
+- **Yinyue plays, queues and the like when you ask her to**, in two model
+  calls instead of four; never in a turn she started herself, and never
+  anything that deletes — that you do in the app. A destructive action a
+  model asks for always asks you first, by its own name.
 
 ### People
 
