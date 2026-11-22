@@ -625,3 +625,393 @@ impl Tool for BrowserTabsTool {
         Ok(ToolResult::Success(data.to_string()))
     }
 }
+
+/// Today's behaviour of the ten tools, pinned before they move: what each
+/// asks the bridge (op, params, time limit), what it answers the model, how
+/// it fails, and what the engine knows of it around the call (tier, reach,
+/// cache, time ceiling, status line, progress label).
+#[cfg(test)]
+mod pins {
+    use super::*;
+    use crate::engine::permission::PermissionMode;
+    use crate::engine::tools::PlaceReach;
+    use std::sync::{Arc, Mutex};
+
+    /// Every call the tools made over the bridge, and a reply to give.
+    struct FakeBridge {
+        seen: Mutex<Vec<(String, String, Value, u64)>>,
+        reply: Value,
+        progress: Option<&'static str>,
+    }
+
+    #[async_trait]
+    impl BrowserBridge for FakeBridge {
+        async fn call(
+            &self,
+            module: &str,
+            op: &str,
+            params: Value,
+            timeout_ms: u64,
+            on_progress: Option<BridgeProgress>,
+        ) -> Value {
+            self.seen
+                .lock()
+                .unwrap()
+                .push((module.into(), op.into(), params, timeout_ms));
+            if let (Some(line), Some(report)) = (self.progress, on_progress) {
+                report(line.to_string());
+            }
+            self.reply.clone()
+        }
+    }
+
+    fn tools_with(reply: Value, progress: Option<&'static str>) -> (Tools, Arc<FakeBridge>) {
+        let bridge = Arc::new(FakeBridge {
+            seen: Mutex::new(Vec::new()),
+            reply,
+            progress,
+        });
+        let mut tools = Tools::new(std::path::PathBuf::from(".")).unwrap();
+        tools.set_browser_bridge(bridge.clone());
+        (tools, bridge)
+    }
+
+    fn ok(data: Value) -> Value {
+        json!({"ok": true, "data": data})
+    }
+
+    async fn run(tools: &Tools, tool: &str, args: Value) -> Result<ToolResult> {
+        tools
+            .execute(ToolCall {
+                tool: tool.into(),
+                args,
+                block_id: None,
+            })
+            .await
+    }
+
+    fn said(result: Result<ToolResult>) -> String {
+        match result.expect("the call ran") {
+            ToolResult::Success(text) => text,
+            other => panic!("not a text answer: {other:?}"),
+        }
+    }
+
+    /// One call of one old tool: its args, the bridge op and params it
+    /// sends, the limit it waits, the bridge's data and the model's text.
+    struct Case {
+        tool: &'static str,
+        args: Value,
+        op: &'static str,
+        sent: Value,
+        timeout_ms: u64,
+        data: Value,
+        text: &'static str,
+    }
+
+    fn cases() -> Vec<Case> {
+        let page = || json!({"url": "https://a.b/x", "title": "T", "tree": "[n1] link"});
+        vec![
+            Case {
+                tool: "Browser_navigate",
+                args: json!({"url": "https://a.b/"}),
+                op: "navigate",
+                sent: json!({"url": "https://a.b/"}),
+                timeout_ms: 150_000,
+                data: json!({"url": "https://a.b/x", "title": "T"}),
+                text: "navigated to https://a.b/x — \"T\"",
+            },
+            Case {
+                tool: "Browser_readPage",
+                args: json!({}),
+                op: "read_page",
+                sent: json!({}),
+                timeout_ms: 20_000,
+                data: page(),
+                text: "https://a.b/x — \"T\"\n\n[n1] link",
+            },
+            Case {
+                tool: "Browser_readPage",
+                args: json!({"filter": "interactive"}),
+                op: "read_page",
+                sent: json!({"filter": "interactive"}),
+                timeout_ms: 20_000,
+                data: json!({"url": "u", "title": "T", "tree": "t", "truncated": true}),
+                text: "u — \"T\" (tree truncated — scroll or filter to see more)\n\nt",
+            },
+            Case {
+                tool: "Browser_click",
+                args: json!({"ref": "n42", "button": "right", "double": true}),
+                op: "click",
+                sent: json!({"ref": "n42", "button": "right", "double": true}),
+                timeout_ms: 150_000,
+                data: json!({"target": "button Go", "url": "https://a.b/y"}),
+                text: "clicked button Go — page is now https://a.b/y",
+            },
+            Case {
+                tool: "Browser_type",
+                args: json!({"text": "hello", "ref": "n2", "clear": true}),
+                op: "type",
+                sent: json!({"text": "hello", "ref": "n2", "clear": true}),
+                timeout_ms: 150_000,
+                data: json!({"typed": 5}),
+                text: "typed 5 characters",
+            },
+            Case {
+                tool: "Browser_key",
+                args: json!({"keys": "Enter", "repeat": 3}),
+                op: "key",
+                sent: json!({"keys": "Enter", "repeat": 3}),
+                timeout_ms: 150_000,
+                data: json!({"pressed": "Enter"}),
+                text: "pressed Enter",
+            },
+            Case {
+                tool: "Browser_scroll",
+                args: json!({"direction": "down", "amount": 300, "ref": "n3"}),
+                op: "scroll",
+                sent: json!({"direction": "down", "amount": 300, "ref": "n3"}),
+                timeout_ms: 20_000,
+                data: json!({"scrolled": "down", "amount": 300}),
+                text: "scrolled down by 300px",
+            },
+            Case {
+                tool: "Browser_wait",
+                args: json!({"for": "ms", "value": "500"}),
+                op: "wait",
+                sent: json!({"for": "ms", "value": "500"}),
+                timeout_ms: 45_000,
+                data: json!({"waited": "ms"}),
+                text: "waited for ms",
+            },
+            Case {
+                tool: "Browser_readConsole",
+                args: json!({"limit": 5}),
+                op: "read_console",
+                sent: json!({"limit": 5}),
+                timeout_ms: 20_000,
+                data: json!({"messages": [{"level": "error", "text": "boom"}, {"text": "hi"}]}),
+                text: "[error] boom\n[log] hi",
+            },
+            Case {
+                tool: "Browser_readConsole",
+                args: json!({}),
+                op: "read_console",
+                sent: json!({}),
+                timeout_ms: 20_000,
+                data: json!({"messages": []}),
+                text: "console is empty",
+            },
+            Case {
+                tool: "Browser_tabs",
+                args: json!({"action": "list"}),
+                op: "tabs",
+                sent: json!({"action": "list"}),
+                timeout_ms: 20_000,
+                data: json!({"tabs": []}),
+                text: "{\"tabs\":[]}",
+            },
+            Case {
+                tool: "Browser_tabs",
+                args: json!({"action": "open", "url": "https://a.b/"}),
+                op: "tabs",
+                sent: json!({"action": "open", "url": "https://a.b/"}),
+                timeout_ms: 150_000,
+                data: json!({"url": "https://a.b/", "title": "T"}),
+                text: "{\"url\":\"https://a.b/\",\"title\":\"T\"}",
+            },
+            Case {
+                tool: "Browser_tabs",
+                args: json!({"action": "switch"}),
+                op: "tabs",
+                sent: json!({"action": "switch"}),
+                timeout_ms: 20_000,
+                data: json!({"url": "u", "title": "T"}),
+                text: "{\"url\":\"u\",\"title\":\"T\"}",
+            },
+            Case {
+                tool: "Browser_tabs",
+                args: json!({"action": "close"}),
+                op: "tabs",
+                sent: json!({"action": "close"}),
+                timeout_ms: 20_000,
+                data: json!({"closed": true}),
+                text: "{\"closed\":true}",
+            },
+        ]
+    }
+
+    #[tokio::test]
+    async fn each_tool_asks_the_bridge_for_its_op_and_tells_the_model_what_came_back() {
+        for case in cases() {
+            let (tools, bridge) = tools_with(ok(case.data.clone()), None);
+            let text = said(run(&tools, case.tool, case.args.clone()).await);
+            let seen = bridge.seen.lock().unwrap().clone();
+            let want = vec![("control".to_string(), case.op.to_string(), case.sent.clone(), case.timeout_ms)];
+            assert_eq!(seen, want, "{} {}", case.tool, case.args);
+            assert_eq!(text, case.text, "{} {}", case.tool, case.args);
+        }
+    }
+
+    #[tokio::test]
+    async fn a_screenshot_is_an_image_of_the_page_with_the_region_it_was_asked() {
+        let reply = ok(json!({"url": "https://a.b/", "base64": "AAAA"}));
+        let (tools, bridge) = tools_with(reply.clone(), None);
+        let region = json!({"x": 1, "y": 2, "width": 3, "height": 4});
+        let shot = run(&tools, "Browser_screenshot", json!({"region": region})).await;
+        match shot.expect("the call ran") {
+            ToolResult::Screenshot { url, base64, id } => {
+                assert_eq!((url.as_str(), base64.as_str(), id.as_str()), ("https://a.b/", "AAAA", ""));
+            }
+            other => panic!("not a screenshot: {other:?}"),
+        }
+        let seen = bridge.seen.lock().unwrap().clone();
+        let want = vec![("control".to_string(), "screenshot".to_string(), json!({"region": region}), 20_000)];
+        assert_eq!(seen, want);
+        // No region: none is sent.
+        let (tools, bridge) = tools_with(reply, None);
+        run(&tools, "Browser_screenshot", json!({})).await.unwrap();
+        assert_eq!(bridge.seen.lock().unwrap()[0].2, json!({}));
+    }
+
+    #[tokio::test]
+    async fn a_failure_reads_the_way_it_does_today() {
+        let fail = |code: &str, message: &str| json!({"ok": false, "code": code, "message": message});
+        let said_err = |reply: Value, tool: &'static str, args: Value| async move {
+            let (tools, _) = tools_with(reply, None);
+            run(&tools, tool, args).await.unwrap_err().to_string()
+        };
+        let not_connected = "browser not connected — the linggen-browser extension (with the control \
+             module) must be running in Chrome. Ask the user to install or enable it, \
+             then retry.";
+        for code in ["no_bridge", "module_unavailable"] {
+            let got = said_err(fail(code, "x"), "Browser_readPage", json!({})).await;
+            assert_eq!(got, not_connected, "{code}");
+        }
+        let got = said_err(fail("element_gone", "n9"), "Browser_click", json!({"ref": "n9"})).await;
+        assert_eq!(
+            got,
+            "element_gone: n9. The page changed — call Browser_readPage again and use a fresh ref."
+        );
+        let got = said_err(fail("not_permitted", "no"), "Browser_type", json!({"text": "a"})).await;
+        assert_eq!(got, "not_permitted: no");
+        let got = said_err(json!({"ok": false}), "Browser_key", json!({"keys": "a"})).await;
+        assert_eq!(got, "upstream_error: ");
+        // No bridge wired (CLI, evals).
+        let mut tools = Tools::new(std::path::PathBuf::from(".")).unwrap();
+        tools.browser_bridge = None;
+        let got = run(&tools, "Browser_tabs", json!({"action": "list"})).await.unwrap_err();
+        assert_eq!(got.to_string(), "browser control is unavailable in this context (no daemon bridge)");
+        // A navigate with no url is refused before the bridge is asked.
+        let (tools, bridge) = tools_with(ok(json!({})), None);
+        let got = run(&tools, "Browser_navigate", json!({})).await.unwrap_err();
+        assert_eq!(got.to_string(), "Browser_navigate requires url");
+        assert!(bridge.seen.lock().unwrap().is_empty());
+    }
+
+    /// The bridge's progress line rides the running tool, under the label
+    /// `Browser_<bridge op>`.
+    #[tokio::test]
+    async fn progress_rides_the_running_tool_under_its_bridge_op() {
+        for case in cases() {
+            let (mut tools, _) = tools_with(ok(case.data.clone()), Some("waiting for your OK"));
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+            tools.set_progress_tx(tx);
+            run(&tools, case.tool, case.args.clone()).await.unwrap();
+            let got = rx.try_recv().expect("a progress line");
+            let label = format!("Browser_{}", case.op);
+            assert_eq!(got, (label, "status".to_string(), "waiting for your OK".to_string()));
+        }
+    }
+
+    /// What the engine knows of each tool around the call.
+    #[test]
+    fn each_tool_is_read_tier_stays_in_place_and_is_never_cached() {
+        for name in OLD_NAMES {
+            let tool = super::super::builtin::lookup(name).unwrap_or_else(|| panic!("{name}"));
+            assert_eq!(tool.name(), name);
+            assert_eq!(tool.tier(), PermissionMode::Read, "{name}");
+            assert_eq!(tool.place_reach(), PlaceReach::Stays, "{name}");
+            assert!(!tool.cacheable(), "{name}");
+            assert!(tool.model_facing() && tool.offered().is_ok(), "{name}");
+            assert_eq!(tool.max_duration(), Some(std::time::Duration::from_secs(300)), "{name}");
+            assert_eq!(crate::engine::tools::builtin_tier(name), Some(PermissionMode::Read), "{name}");
+        }
+    }
+
+    const OLD_NAMES: [&str; 10] = [
+        "Browser_navigate",
+        "Browser_readPage",
+        "Browser_screenshot",
+        "Browser_click",
+        "Browser_type",
+        "Browser_key",
+        "Browser_scroll",
+        "Browser_wait",
+        "Browser_readConsole",
+        "Browser_tabs",
+    ];
+
+    /// The session is sent the ten, in this order, each with a schema.
+    #[test]
+    fn a_session_is_offered_the_ten_in_this_order() {
+        let offered: Vec<String> = super::super::json_schema::oai_tool_definitions(None)
+            .iter()
+            .filter_map(|d| d["function"]["name"].as_str().map(String::from))
+            .filter(|n| n.starts_with("Browser_"))
+            .collect();
+        assert_eq!(offered, OLD_NAMES);
+    }
+
+    /// The names a declaration or a stale call may use, and the delegate's
+    /// fixed list: the ten, each its own tool.
+    #[test]
+    fn the_ten_names_resolve_and_the_delegate_holds_them() {
+        let aliases = [
+            ("browser_navigate", "Browser_navigate"),
+            ("browser_read_page", "Browser_readPage"),
+            ("Browser_read_page", "Browser_readPage"),
+            ("browser_screenshot", "Browser_screenshot"),
+            ("browser_click", "Browser_click"),
+            ("browser_type", "Browser_type"),
+            ("browser_key", "Browser_key"),
+            ("browser_scroll", "Browser_scroll"),
+            ("browser_wait", "Browser_wait"),
+            ("browser_read_console", "Browser_readConsole"),
+            ("Browser_read_console", "Browser_readConsole"),
+            ("browser_tabs", "Browser_tabs"),
+        ];
+        for (alias, name) in aliases {
+            assert_eq!(crate::engine::tools::canonical_tool_name(alias), Some(name), "{alias}");
+        }
+        let delegate = crate::engine::session_spec::delegate::tool_scope(false).unwrap();
+        for name in OLD_NAMES {
+            assert!(delegate.contains(name), "{name}");
+        }
+        let scope = crate::engine::tool_scope::compute_tool_scope(&["Browser_click".to_string()]);
+        assert_eq!(scope.unwrap().into_iter().collect::<Vec<_>>(), ["Browser_click"]);
+    }
+
+    /// The line a session's chat shows for each, before, during and after.
+    #[test]
+    fn each_tool_has_its_status_line() {
+        use crate::engine::tool_render::{tool_status_line, ToolStatusPhase::*};
+        let rows: [(&str, Value, [&str; 3]); 10] = [
+            ("Browser_navigate", json!({"url": "https://a.b/"}), ["Browsing to: https://a.b/", "Browsed to: https://a.b/", "Navigation failed: https://a.b/"]),
+            ("Browser_readPage", json!({}), ["Reading page", "Read page", "Page read failed"]),
+            ("Browser_screenshot", json!({}), ["Capturing page", "Captured page", "Capture failed"]),
+            ("Browser_click", json!({"ref": "n4"}), ["Clicking: n4", "Clicked: n4", "Click failed: n4"]),
+            ("Browser_type", json!({"text": "hi"}), ["Typing: hi", "Typed: hi", "Typing failed: hi"]),
+            ("Browser_key", json!({"keys": "Enter"}), ["Pressing: Enter", "Pressed: Enter", "Key press failed: Enter"]),
+            ("Browser_scroll", json!({"direction": "down"}), ["Scrolling: down", "Scrolled: down", "Scroll failed: down"]),
+            ("Browser_wait", json!({"for": "load"}), ["Waiting for page: load", "Waited for page: load", "Wait failed: load"]),
+            ("Browser_readConsole", json!({}), ["Reading console", "Read console", "Console read failed"]),
+            ("Browser_tabs", json!({"action": "list"}), ["Browser tab: list", "Browser tab: list", "Browser tab action failed: list"]),
+        ];
+        for (tool, args, [start, done, failed]) in rows {
+            assert_eq!(tool_status_line(tool, Some(&args), Start), start, "{tool}");
+            assert_eq!(tool_status_line(tool, Some(&args), Done), done, "{tool}");
+            assert_eq!(tool_status_line(tool, Some(&args), Failed), failed, "{tool}");
+        }
+    }
+}
