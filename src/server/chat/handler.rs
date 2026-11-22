@@ -754,7 +754,7 @@ async fn promote_mission_session_to_user(
 /// any promotion): the session's preset, typed by `policy`, its memory that
 /// of who the turn belongs to (`turn_place::turn_creator`), at no more than
 /// the level its request was judged at (`ChatRequest::level`).
-fn typed_spec(
+pub(crate) fn typed_spec(
     state: &Arc<ServerState>,
     session_id: &str,
     engine: &crate::engine::AgentEngine,
@@ -937,21 +937,6 @@ pub(crate) async fn run_session_turn(
     dispatch_turn(ctx, engine, manager, &ctx.clean_msg).await;
     super::thread::mark(engine, ctx);
     engine.end_turn();
-}
-
-/// What a household person's turn used on this Mac's models, counted
-/// against their day (`people::record_turn`); the owner's and a room
-/// guest's are not counted here.
-async fn count_person_turn(
-    state: &Arc<ServerState>,
-    (user_type, user_id): (&str, Option<&str>),
-    engine: &mut crate::engine::AgentEngine,
-) {
-    let Some(person) = crate::server::people::household_person(user_type, user_id) else {
-        return;
-    };
-    let (usage, _) = engine.take_spend();
-    crate::server::people::record_turn(state, &person, (usage.prompt + usage.output) as u64).await;
 }
 
 /// Her words at a table that isn't her own thread go to her stage too —
@@ -1580,19 +1565,28 @@ pub(crate) async fn start_turn(
             }
         }
 
+        use super::policy::{person_turn, turn_policy, TurnBy};
         let is_consumer = req_user_type == "consumer";
-        // The turn's one ceiling, before anything of it runs: the model is
-        // chosen within it (`policy.asker()`), then its spec is typed by it.
-        let installed: Vec<String> = crate::server::people::installed(&state_clone.skills)
-            .await
-            .into_iter()
-            .map(|s| s.name)
-            .collect();
-        let policy = super::policy::turn_policy(super::policy::TurnBy::Person {
-            user_type: &req_user_type,
-            user_id: req_user_id.as_deref(),
-            installed: &installed,
-        });
+        // Judge again at the turn lock: the person's settings or budget may
+        // have changed in line. Task ends ask the same door (`person_turn`).
+        let household = crate::server::people::household_person(&req_user_type, req_user_id.as_deref());
+        let judged = if let Some(person) = household {
+            match person_turn(&state_clone, person, req_level).await {
+                Ok(judged) => Some(judged),
+                Err(why) => {
+                    super::policy::keep_refusal(&state_clone, &session_id_for_queue, &target_id_clone, why).await;
+                    super::runtime::close_turn(&state_clone, target_id_clone, session_id, None).await;
+                    return;
+                }
+            }
+        } else {
+            None
+        };
+        let (policy, level) = match &judged {
+            Some(judged) => (judged.policy.clone(), Some(judged.level)),
+            None if is_consumer => (turn_policy(TurnBy::Consumer), req_level),
+            None => (turn_policy(TurnBy::Owner), req_level),
+        };
         let pet = state.manager.get_config_snapshot().await.pet;
         let members = super::members::of_session(&state.manager, &session_id_for_queue).await;
         let asked = turn_model(
@@ -1619,7 +1613,7 @@ pub(crate) async fn start_turn(
         // A person's turn: the session's spec typed by this policy — the
         // lead's tools, verbatim, its memory the turn's (an app's or a
         // mission's keeps less of the biography).
-        let spec = typed_spec(&state_clone, &session_id_for_queue, &engine, &policy, (session_creator, req_level));
+        let spec = typed_spec(&state_clone, &session_id_for_queue, &engine, &policy, (session_creator, level));
         let owners_own_chat = !is_consumer
             && session_creator == "user"
             && turn_place.skill.is_none()
@@ -1663,7 +1657,9 @@ pub(crate) async fn start_turn(
         };
 
         run_session_turn(&ctx, &mut engine, &manager, None, (LiveState::ReadAtTheDoor, ModelBy::TheDoorBeforeTheTurn)).await;
-        count_person_turn(&state_clone, (&req_user_type, req_user_id.as_deref()), &mut engine).await;
+        if let Some(judged) = judged {
+            judged.count(&state_clone, &mut engine).await;
+        }
         hear_her_at_table(&state_clone, &engine, &ctx, &session_id_for_queue);
 
         // TurnComplete gives the Web UI a single finalizer.

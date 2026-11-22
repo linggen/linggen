@@ -886,6 +886,182 @@ async fn a_person_over_their_daily_limit_takes_no_turn() {
     w.finish_run(said["session_id"].as_str().unwrap(), Agent::Ling, mark).await;
 }
 
+const TASK_MODEL: &str = r#"
+[[models]]
+id = "task-metered"
+provider = "anthropic"
+url = "{{MODEL_URL}}"
+model = "task-metered-wire"
+api_key = "test-not-a-key"
+context_window = 32000
+supports_tools = true
+
+[[models]]
+id = "task-alternate"
+provider = "anthropic"
+url = "{{MODEL_URL}}"
+model = "task-alternate-wire"
+api_key = "test-not-a-key"
+context_window = 32000
+supports_tools = true
+"#;
+
+async fn task_end_world(cold: bool, after: Vec<crate::support::model::Reply>) -> (World, Lan, String) {
+    let mut script = vec![
+        tool("Bash", json!({"cmd": "sleep 5; echo TASK-RESULT", "run_in_background": true})),
+        text("Background task started."),
+    ];
+    script.extend(after);
+    let setup = Setup {
+        lan: true,
+        config_append: Some(TASK_MODEL),
+        env: if cold { vec![("LINGGEN_TEST_COLD_TASK_END", "1".into())] } else { vec![] },
+        ..Setup::default()
+    };
+    let w = World::start(setup.script(Agent::Ling, script)).await;
+    crate::app_index::install_jukebox(&w, "jukebox").await;
+    pair_friends_phone_with(&w, json!({"contract": 1}));
+    let lan = Lan::new(&w);
+    wait_for_the_phone(&lan).await;
+    set_task_person(&w, json!({"level": "edit", "apps": ["jukebox"], "models": ["task-metered"]})).await;
+    let session = lan.post("/api/sessions", json!({"title": "Background work", "project_root": w.work()})).await;
+    let sid = session["id"].as_str().unwrap().to_string();
+    w.api.patch("/api/sessions/permission", json!({"session_id": sid, "path": "*", "mode": "edit"})).await;
+    let mark = w.mark();
+    assert_eq!(task_chat(&w, &lan, &sid, "Start the background task.").await["status"], "started");
+    w.finish_run(&sid, Agent::Ling, mark).await;
+    assert!(task_rows(&w, &sid).contains("Started in the background as task"), "{}", task_rows(&w, &sid));
+    (w, lan, sid)
+}
+
+async fn set_task_person(w: &World, patch: Value) {
+    let (status, body) = w.api.put_json("/api/people/u-friend", patch).await;
+    assert_eq!(status, 200, "{body}");
+}
+
+async fn task_chat(w: &World, lan: &Lan, sid: &str, message: &str) -> Value {
+    lan.post("/api/chat", json!({"session_id": sid, "project_root": w.work(), "message": message})).await
+}
+
+fn task_rows(w: &World, sid: &str) -> String {
+    serde_json::to_string(&w.raw_rows(sid)).unwrap()
+}
+
+async fn changed_task_action(change: Value, action: crate::support::model::Reply, denial: &str) {
+    let mut wrong = Vec::new();
+    for cold in [false, true] {
+        let (w, lan, sid) = task_end_world(cold, vec![action.clone(), text("Task end checked."), action.clone(), text("Typed check done.")]).await;
+        let mark = w.mark();
+        set_task_person(&w, change.clone()).await;
+        w.finish_run(&sid, Agent::Ling, mark).await;
+        let end = w.raw_rows(&sid);
+        let end_text = serde_json::to_string(&end).unwrap();
+        assert!(end_text.contains("Last output:\\nTASK-RESULT"), "{end_text}");
+        if !end_text.contains(denial) {
+            wrong.push(format!("cold={cold}: task-end action was not refused with {denial}"));
+        }
+        let mark = w.mark();
+        assert_eq!(task_chat(&w, &lan, &sid, "Check the same action.").await["status"], "started");
+        w.finish_run(&sid, Agent::Ling, mark).await;
+        let rows = w.raw_rows(&sid);
+        let typed = serde_json::to_string(&rows[end.len()..]).unwrap();
+        assert!(typed.contains(denial), "typed action must be refused: {typed}");
+        w.assert_all_scripted();
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+#[tokio::test]
+async fn a_task_end_uses_the_persons_lowered_level() {
+    changed_task_action(
+        json!({"level": "read"}),
+        tool("Write", json!({"path": "TASK-WRITE.txt", "content": "fixture"})),
+        "Beyond this turn's level",
+    ).await;
+}
+
+#[tokio::test]
+async fn a_task_end_cannot_reach_an_app_taken_away() {
+    changed_task_action(
+        json!({"apps": []}),
+        tool("AppTool", json!({"app": "jukebox", "tool": "List", "args": {"what": "jazz"}})),
+        "is not one of the apps you may use",
+    ).await;
+}
+
+async fn refused_task_end(change: Value, status: &str) {
+    let mut wrong = Vec::new();
+    for cold in [false, true] {
+        let (w, lan, sid) = task_end_world(cold, vec![text("Unexpected task-end reply.")]).await;
+        let calls = w.model.calls_of(Agent::Ling).len();
+        set_task_person(&w, change.clone()).await;
+        assert_eq!(task_chat(&w, &lan, &sid, "Cannot start a turn.").await["status"], status);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        let rows = loop {
+            let rows = task_rows(&w, &sid);
+            if rows.contains(status) || w.model.calls_of(Agent::Ling).len() > calls {
+                break rows;
+            }
+            assert!(std::time::Instant::now() < deadline, "no task result: {rows}");
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        };
+        assert!(rows.contains("Last output:\\nTASK-RESULT"), "{rows}");
+        if !rows.contains(status) || w.model.calls_of(Agent::Ling).len() != calls {
+            wrong.push(format!("cold={cold}: expected {status} without an extra model call"));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+#[tokio::test]
+async fn a_task_result_is_kept_after_all_the_persons_models_are_taken_away() {
+    refused_task_end(json!({"models": []}), "no_model").await;
+}
+
+#[tokio::test]
+async fn a_task_result_is_kept_when_the_person_is_over_the_daily_limit() {
+    refused_task_end(json!({"daily_tokens": 1}), "over_limit").await;
+}
+
+#[tokio::test]
+async fn a_task_end_switches_models_and_counts_use_to_its_person() {
+    let mut wrong = Vec::new();
+    for cold in [false, true] {
+        let (w, lan, sid) = task_end_world(cold, vec![text("Task end answered."), text("Typed answer.")]).await;
+        let used = || async { w.api.get("/api/people").await["people"][0]["used_today"].as_u64().unwrap() };
+        let before = used().await;
+        assert!(before > 0, "the initiating typed turn must report usage");
+        let mark = w.mark();
+        set_task_person(&w, json!({"models": ["task-alternate"]})).await;
+        w.finish_run(&sid, Agent::Ling, mark).await;
+        let end_model = w.model.calls_of(Agent::Ling).last().unwrap().model().to_string();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while used().await == before && std::time::Instant::now() < deadline {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        let after_end = used().await;
+        if after_end <= before {
+            wrong.push(format!("cold={cold}: no usage charged for task end"));
+        }
+        let mark = w.mark();
+        assert_eq!(task_chat(&w, &lan, &sid, "Check the current model.").await["status"], "started");
+        w.finish_run(&sid, Agent::Ling, mark).await;
+        let calls = w.model.calls_of(Agent::Ling);
+        let typed_model = calls.last().unwrap().model();
+        if end_model != typed_model {
+            wrong.push(format!("cold={cold}: task model {end_model} differs from typed {typed_model}"));
+        }
+        assert_eq!(typed_model, "task-alternate-wire");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while used().await == after_end && std::time::Instant::now() < deadline {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        assert!(used().await > after_end, "typed turn must count for the same person");
+        w.assert_all_scripted();
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
 /// An app is for a person only when they may use it — by its page files, by
 /// the list of apps they are shown — and an app the owner keeps is the
 /// owner's alone, whatever a person's own list says.

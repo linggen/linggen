@@ -224,6 +224,12 @@ async fn settle(state: &std::sync::Arc<super::ServerState>, session: &str, task:
     else {
         return;
     };
+    // System tests exercise completion with a cold session engine while
+    // leaving the background registry and the session's records intact.
+    #[cfg(feature = "test-support")]
+    if std::env::var_os("LINGGEN_TEST_COLD_TASK_END").is_some() {
+        state.manager.remove_session_engine(session).await;
+    }
     let (_, place) = super::chat::helpers::take_turn_place(state.manager.session_turn(session));
     let told = (session.to_string(), agent_id, notice, "system".to_string());
     let origin = crate::server::resident::Origin::TaskEnd;
@@ -396,7 +402,33 @@ async fn tell_in_place(
     let language = crate::server::resident::language_of_turn(&state, &session, origin, None).await;
     let mut engine = engine.lock().await;
     engine.set_parent_agent(None);
-    let (policy, cap, (live_state, model_by)) = prepared_for(&state, &mut engine, &agent, (&session, &root, &told_at), language.clone()).await;
+    // Judge after taking the turn lock and keeping the task result.
+    let judged = match judge_task_end(&state, &session, &agent, told).await {
+        Ok(judged) => judged,
+        Err(why) => {
+            super::chat::policy::keep_refusal(&state, &session, &agent, why).await;
+            return;
+        }
+    };
+    if let Some(turn) = &judged {
+        super::chat::typed_spec(
+            &state,
+            &session,
+            &engine,
+            &turn.policy,
+            (&meta.creator, Some(turn.level)),
+        )
+        .apply(&mut engine);
+    }
+    let (policy, cap, (live_state, model_by)) = prepared_for(
+        &state,
+        &mut engine,
+        &agent,
+        (&session, &root, &told_at),
+        language.clone(),
+        judged.as_ref(),
+    )
+    .await;
     let ctx = super::chat::ChatRunCtx {
         via: None,
         state: state.clone(),
@@ -416,12 +448,32 @@ async fn tell_in_place(
         turn: crate::engine::turn_place::TurnSettings { language, ..Default::default() },
     };
     super::chat::run_session_turn(&ctx, &mut engine, &state.manager, cap, (live_state, model_by)).await;
+    if let Some(turn) = judged {
+        turn.count(&state, &mut engine).await;
+    }
     let ended = running.as_ref().is_some_and(crate::server::resident::RunningOrigin::was_ended);
     if origin.held() && !ended {
         let reply = engine.last_assistant_text.clone().map(|t| crate::server::resident::Turned::of(t, origin));
         drop(engine);
         crate::server::resident::say_event(&state, reply.as_ref(), (&session, &told_at)).await;
     }
+}
+
+/// A task end runs for the session's person, not the notice's sender.
+/// The companion's own notices keep their own door.
+async fn judge_task_end(
+    state: &super::ServerState,
+    session: &str,
+    agent: &str,
+    told: Origin,
+) -> Result<Option<super::chat::policy::PersonTurn>, super::people::Refusal> {
+    if told != Origin::TaskEnd || super::chat::members::is_companion(agent) {
+        return Ok(None);
+    }
+    let Some(person) = super::people::household_person_of_session(state, session) else {
+        return Ok(None);
+    };
+    super::chat::policy::person_turn(state, person, None).await.map(Some)
 }
 
 /// How a turn told to `agent` is set up beyond what every session turn gets:
@@ -436,6 +488,7 @@ async fn prepared_for(
     agent: &str,
     (session, root, place): (&str, &std::path::Path, &crate::engine::turn_place::TurnPlace),
     language: Option<String>,
+    judged: Option<&super::chat::policy::PersonTurn>,
 ) -> (
     crate::engine::session_policy::SessionPolicy,
     Option<usize>,
@@ -448,7 +501,10 @@ async fn prepared_for(
         return (policy, cap, (LiveState::ReadAtTheDoor, ModelBy::TheDoorBeforeTheTurn));
     }
     (
-        super::chat::policy::turn_policy(super::chat::policy::TurnBy::Engine),
+        judged.map_or_else(
+            || super::chat::policy::turn_policy(super::chat::policy::TurnBy::Engine),
+            |turn| turn.policy.clone(),
+        ),
         None,
         (LiveState::Read, ModelBy::TheMembersKeptModel),
     )
