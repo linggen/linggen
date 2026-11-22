@@ -6,6 +6,7 @@ pub(crate) use builtin::tool_max_duration;
 pub(crate) use builtin::unavailable as unavailable_builtins;
 pub(crate) use builtin::{AppCall, RightNow};
 
+pub mod browser_def;
 pub mod browser_tool;
 mod file_tools;
 pub(crate) use file_tools::glob_roots;
