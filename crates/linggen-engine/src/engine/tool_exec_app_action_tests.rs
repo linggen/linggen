@@ -139,6 +139,88 @@ fn destroy_engine(root: &std::path::Path, grant: PermissionMode, interactive: bo
 
 const ONCE_OR_DENY: [&str; 2] = [crate::engine::permission::ALLOW_ONCE, "Deny"];
 
+/// The same stored grants stand for the owner and the household member;
+/// only the owner may be asked to confirm the model's destructive action.
+#[tokio::test]
+async fn stored_interactivity_cannot_make_a_capped_turn_ask() {
+    use crate::engine::events::ServerEvent;
+    use crate::engine::session_policy::SessionPolicy;
+    use crate::engine::session_spec::Memory;
+
+    let work = in_home();
+    let sessions = crate::paths::global_sessions_dir();
+    std::fs::create_dir_all(&sessions).unwrap();
+    let saved = tempfile::tempdir_in(sessions).unwrap();
+    let sid = saved.path().file_name().unwrap().to_str().unwrap();
+    let pending: Pending = Default::default();
+    let level = PermissionMode::Edit;
+    let mut capped = destroy_engine(work.path(), level, true, false, &pending);
+    capped.session_permissions.try_save(saved.path()).unwrap();
+    assert!(SessionPermissions::load(saved.path()).interactive);
+    capped.respec(|spec| {
+        *spec = spec.clone().typed(
+            SessionPolicy::person(vec![], vec![]),
+            Memory::None,
+            Some(level),
+        );
+    });
+    capped.load_session_permissions(sid);
+
+    let mut events = capped.tools.ask_user_bridge().unwrap().events_tx.listen();
+    let wait = std::time::Duration::from_secs(5);
+    let denied = tokio::time::timeout(wait, async {
+        tokio::select! {
+            biased;
+            event = events.recv() => panic!("capped turn emitted {event:?}"),
+            result = judged(&mut capped, "TDestroy") => result.expect("refused"),
+        }
+    })
+    .await
+    .expect("refused without waiting for a confirmation");
+    assert!(denied.contains("destroys"), "{denied}");
+    assert!(events.try_recv().is_err(), "no confirmation was issued");
+    assert!(pending.lock().await.is_empty(), "no pending confirmation");
+    assert!(!capped.session_permissions.interactive, "settled after load");
+
+    let mut owner = destroy_engine(work.path(), level, true, false, &pending);
+    owner.load_session_permissions(sid);
+    let mut events = owner.tools.ask_user_bridge().unwrap().events_tx.listen();
+    let answer = answer_first(&pending, "Deny");
+    assert!(tokio::time::timeout(wait, judged(&mut owner, "TDestroy"))
+        .await
+        .unwrap()
+        .is_some());
+    let (labels, caller) = tokio::time::timeout(wait, answer).await.unwrap().unwrap();
+    assert_eq!(labels, ONCE_OR_DENY);
+    assert!(caller.is_none(), "the owner, not a delegated caller");
+    assert!(matches!(events.try_recv(), Ok(ServerEvent::AskUser { .. })));
+    assert!(pending.lock().await.is_empty(), "the owner answered");
+
+    // The page has already confirmed the same action. It still runs at edit.
+    let app = format!(
+        "---\nname: zz-confirmation\ndescription: test app\npermission:\n  paths:\n    - {{ path: \"{}\", mode: edit }}\ntools:\n  - name: TDestroy\n    description: d\n    cmd: echo ok\n    tier: destructive\n---\nbody\n",
+        work.path().display()
+    );
+    let mut app = crate::extensions::skills::parse_skill_text(
+        &app,
+        crate::engine::skill::SkillSource::Project,
+    )
+    .unwrap();
+    app.skill_dir = Some(work.path().to_path_buf());
+    let page = crate::engine::skill::tools::run_at(
+        &app,
+        "TDestroy",
+        &serde_json::json!({}),
+        &Default::default(),
+        level,
+    )
+    .await
+    .expect("an edit-level page caller can run the confirmed action");
+    let output = crate::engine::skill::tools::output(page);
+    assert_eq!(output["exit_code"], 0);
+    assert_eq!(output["stdout"].as_str().unwrap().trim(), "ok");
+}
+
 /// Whatever was granted — admin on the folder and on everything — the person
 /// is asked, and only "Allow once" or "Deny" answers.
 #[tokio::test]

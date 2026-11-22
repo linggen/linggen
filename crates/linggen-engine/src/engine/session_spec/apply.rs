@@ -45,8 +45,7 @@ impl SessionSpec {
         engine.cfg.mission_allowed_tools = tools;
         engine.cfg.consumer_allowed_tools = consumer_tools;
         engine.cfg.consumer_allowed_skills = consumer_skills;
-        engine.session_permissions.interactive = self.permission == Permission::Interactive;
-        engine.session_permissions.ask_caller = self.permission == Permission::AskCaller;
+        self.write_permission_answer(&mut engine.session_permissions, self.permission);
         engine.session_creator = self.creator.clone();
         // Subagents inherit the asking person's policy through delegation.
         engine.tools.builtins.session_policy = self.policy.clone();
@@ -58,6 +57,26 @@ impl SessionSpec {
             engine.cached_system_prompt = None;
         }
         engine.session_spec = self.clone();
+    }
+
+    /// Write the effective flags, never the unbounded input.
+    fn write_permission_answer(
+        &self,
+        permissions: &mut crate::engine::permission::SessionPermissions,
+        answer: Permission,
+    ) {
+        let answer = self.answer_under_ceiling(answer);
+        permissions.interactive = answer == Permission::Interactive;
+        permissions.ask_caller = answer == Permission::AskCaller;
+    }
+
+    /// A ceiling ends the question, whoever would otherwise answer it.
+    fn answer_under_ceiling(&self, answer: Permission) -> Permission {
+        if self.ceiling.is_some() {
+            Permission::Unattended
+        } else {
+            answer
+        }
     }
 
     fn consumer_sets(&self) -> (Option<HashSet<String>>, Option<HashSet<String>>) {
@@ -136,12 +155,34 @@ impl AgentEngine {
         }
     }
 
-    /// After a loop loads the session's `permission.json`: a restricted
-    /// session (a consumer's, a mission's, a delegate's) never prompts the
-    /// person, whatever the file says.
+    /// Whether the stored settings call for a default path grant. This
+    /// is not turn interactivity: the ceiling doesn't change the grants.
+    pub(crate) fn seeds_default_grant(&self) -> bool {
+        self.session_permissions.interactive
+            && self.cfg.consumer_allowed_tools.is_none()
+            && self.cfg.mission_allowed_tools.is_none()
+    }
+
+    /// Make the loaded flags reflect who can answer in this loop.
     pub(crate) fn settle_loaded_permissions(&mut self) {
-        if self.cfg.consumer_allowed_tools.is_some() || self.cfg.mission_allowed_tools.is_some() {
-            self.session_permissions.interactive = false;
+        let answer = self.permission_answer(self.seeds_default_grant());
+        self.session_spec
+            .write_permission_answer(&mut self.session_permissions, answer);
+    }
+
+    /// Who can answer, including before settlement if grants were preloaded.
+    pub(crate) fn turn_permission_answer(&self) -> Permission {
+        self.session_spec
+            .answer_under_ceiling(self.permission_answer(self.session_permissions.interactive))
+    }
+
+    fn permission_answer(&self, interactive: bool) -> Permission {
+        if interactive {
+            Permission::Interactive
+        } else if self.session_permissions.ask_caller {
+            Permission::AskCaller
+        } else {
+            Permission::Unattended
         }
     }
 }

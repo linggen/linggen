@@ -799,8 +799,10 @@ impl AgentEngine {
             // Non-interactive sessions (mission, proxy consumer) cannot prompt —
             // return permission-needed immediately. One whose caller answers
             // (an MCP delegate) asks the caller instead and waits.
-            let asks_caller = !self.session_permissions.interactive;
-            if asks_caller && !self.session_permissions.ask_caller {
+            use crate::engine::session_spec::Permission;
+            let answer = self.turn_permission_answer();
+            let asks_caller = answer == Permission::AskCaller;
+            if answer == Permission::Unattended {
                 let permission::PromptKind::ExceedsCeiling { target_mode, reason, .. } = &prompt_kind;
                 self.record_denial(t, &target_mode.to_string(), reason.as_deref().unwrap_or("Action exceeds session grants (non-interactive)"));
                 let msg = with_gate_reason(self.permission_denied_msg(t), reason.as_deref());

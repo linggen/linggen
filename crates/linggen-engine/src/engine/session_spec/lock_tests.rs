@@ -123,6 +123,48 @@ fn the_spec_is_the_one_writer_of_a_sessions_behaviour() {
     }
 }
 
+/// Whole-table replacement can overwrite the permission flags too. Count
+/// it as a writer even when a site only intends to change the grants.
+#[test]
+fn permission_flag_writers_are_accounted_for() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/engine");
+    let mut files = Vec::new();
+    rust_files(&root, &mut files);
+    for file in files {
+        let rel = file.strip_prefix(&root).unwrap().to_str().unwrap();
+        let text = std::fs::read_to_string(&file).unwrap();
+        let (flags, tables) = match rel {
+            "session_spec/apply.rs" => (2, 0), // The ceiling-aware setter.
+            "session_spec/lock_tests.rs" => (1, 0), // Assignment scanner fixture.
+            "mod.rs" => (0, 2), // Load; test fixture.
+            "turn_place/bind.rs" => (2, 1), // Restore the same flags with the own-place grants.
+            "tools/delegation.rs" => (1, 0), // Inherit the parent's flag.
+            "tool_exec.rs" => (1, 4), // Preserve flags on a grant update; fixtures.
+            "permission/mod.rs" => (3, 0), // Tests.
+            "permission/ceiling_tests.rs" => (1, 0), // Test.
+            "tool_exec/app_gate_tests.rs" | "tool_exec_app_action_tests.rs"
+            | "turn_place/bind/grants_tests.rs" => (0, 1), // Tests.
+            _ => (0, 0),
+        };
+        assert_eq!(
+            assignments(&text, ".interactive") + assignments(&text, ".ask_caller"),
+            flags,
+            "{rel}: permission flag writers must go through the session spec",
+        );
+        let replacements = text
+            .match_indices(".session_permissions")
+            .filter(|(at, field)| {
+                let rest = text[at + field.len()..].trim_start();
+                rest.starts_with('=') && !rest.starts_with("==")
+            })
+            .count();
+        assert_eq!(
+            replacements, tables,
+            "{rel}: replacing permissions also replaces the flags",
+        );
+    }
+}
+
 /// Calls that write a session's grant table.
 const GRANTS: &[&str] = &["set_path_mode(", "apply_grants("];
 

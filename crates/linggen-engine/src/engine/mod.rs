@@ -252,15 +252,9 @@ impl AgentEngine {
         let sdir = crate::paths::global_sessions_dir().join(sid);
         self.read_session_grants(sid, self.grants_place().as_deref());
 
-        // Mission and proxy-consumer sessions are non-interactive — they
-        // pause/fail instead of prompting. Re-apply after load, since
-        // permission.json may have been written before this flag was set.
-        self.settle_loaded_permissions();
-
-        // Initialize default path_modes if empty (new user session →
-        // configured default mode on starting cwd). Mission/consumer
-        // sessions get their grants from frontmatter; skip the default.
-        if self.session_permissions.path_modes.is_empty() && self.session_permissions.interactive {
+        // Seed and save the same default grants as before, without
+        // persisting any turn-specific limits on who can answer.
+        if self.session_permissions.path_modes.is_empty() && self.seeds_default_grant() {
             let actual_cwd = self.tools.builtins.cwd();
             let cwd_str = if let Some(home) = dirs::home_dir() {
                 let ws = actual_cwd.to_string_lossy();
@@ -278,6 +272,7 @@ impl AgentEngine {
             self.session_permissions.save(&sdir);
         }
 
+        self.settle_loaded_permissions();
         self.session_dir = Some(sdir);
     }
 
