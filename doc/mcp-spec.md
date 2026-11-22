@@ -89,9 +89,12 @@ for, its actions' names; with `app`: that app's actions, each with its
 class, description and arguments) and `call` (`app`, `action`, `args`: runs it
 and returns its result; a command that exits non-zero is a tool error).
 
-It is not a second list or a second judge. What it lists is what a session's
-`AppTool` lists — the actions a skill declares `reach: anywhere`
-(`skill-spec.md` § reach) — and every call is judged by `skill::judge` as the
+It is not a second list or a second judge. What it lists is the actions a
+skill declares `reach: anywhere` (`skill-spec.md` § reach), as a session's
+`AppTool` finds them, kept to the ones an outside agent may run: a
+destructive, admin or unclassed action, or one the app's own grant does not
+cover, is not listed, and an app left with none has no line. Every call is
+judged by `skill::judge` as the
 action it is, with the outside agent as one more asker (`permission-spec.md`
 § App actions): a `read` or `edit` action runs under the app's own grant on
 its own folder; a `destructive` one is refused — "the person does this

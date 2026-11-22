@@ -47,13 +47,29 @@ pub fn open_to_host(skill: &Skill, opened: &[String]) -> Result<(), Refusal> {
     Ok(())
 }
 
-/// What `skill` offers an outside host: what it offers anywhere, none while
-/// it is closed to it.
+/// The judge's verdict on `def` for an outside host: the one asker, built
+/// here for the list and for the run.
+fn judged(skill: &Skill, def: &SkillToolDef, offer: Offer) -> Result<(), Refusal> {
+    let cwd = working_folder(skill);
+    let action = action_of(skill, def, &cwd);
+    let asker = Asker::OutsideHost {
+        offer,
+        granted: granted_on(skill, &cwd),
+    };
+    judge(asker, &action).allowed_or_refusal(&action)
+}
+
+/// What `skill` shows an outside host: the actions it offers anywhere that
+/// the judge lets it run — none while the app is closed to it, and not a
+/// destructive, admin or unclassed action, nor one its own grant does not
+/// cover. (A session's `AppTool` lists more; a call refuses these the same.)
 pub fn host_tools<'a>(skill: &'a Skill, opened: &[String]) -> Vec<&'a SkillToolDef> {
-    match open_to_host(skill, opened) {
-        Ok(()) => anywhere_tools(skill).collect(),
-        Err(_) => Vec::new(),
+    if open_to_host(skill, opened).is_err() {
+        return Vec::new();
     }
+    anywhere_tools(skill)
+        .filter(|def| judged(skill, def, Offer::to_caller(def, false)).is_ok())
+        .collect()
 }
 
 /// Run `tool_name` of `skill` for an outside host, as the judge says it
@@ -67,13 +83,7 @@ pub async fn run_for_host(
 ) -> Result<ToolResult, Refusal> {
     open_to_host(skill, opened)?;
     let (def, offer) = resolve_offered(skill, tool_name, false, |_| Ok(()))?;
-    let cwd = working_folder(skill);
-    let action = action_of(skill, def, &cwd);
-    let asker = Asker::OutsideHost {
-        offer,
-        granted: granted_on(skill, &cwd),
-    };
-    judge(asker, &action).allowed_or_refusal(&action)?;
+    judged(skill, def, offer)?;
     run(skill, tool_name, args, &SessionParams::new()).await
 }
 

@@ -311,8 +311,10 @@ async fn an_outside_host_runs_an_anywhere_action_by_its_class_and_the_apps_grant
             );
         }
     }
+    // Listed: only what it may run — a read and an edit action; not a
+    // destructive one, nor one above the app's grant.
     let names: Vec<&str> = host_tools(&s, &[]).iter().map(|t| t.name.as_str()).collect();
-    assert_eq!(names, WORDS.iter().map(|(n, _, _)| format!("A{n}")).collect::<Vec<_>>());
+    assert_eq!(names, ["ATRead", "ATEdit", "ATWrite"]);
 }
 
 /// Above the grant the app gives an outside host nothing, an admin grant

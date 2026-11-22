@@ -132,7 +132,11 @@ async fn app_list_names_the_apps_and_their_actions() {
         all.contains("jukebox") && all.contains("Plays music on this Mac."),
         "{all}"
     );
-    assert!(all.contains("List, Play, Delete"), "{all}");
+    assert!(
+        all.contains("Actions: List, Play."),
+        "only what it may run is named: {all}"
+    );
+    assert!(!all.contains("Delete"), "{all}");
     assert!(
         !all.contains("radio") && !all.contains("Tune"),
         "an app that offers nothing anywhere is not listed: {all}"
@@ -145,7 +149,11 @@ async fn app_list_names_the_apps_and_their_actions() {
         .map(|l| serde_json::from_str(l).expect(l))
         .collect();
     let tools: Vec<&str> = rows.iter().map(|r| r["tool"].as_str().unwrap()).collect();
-    assert_eq!(tools, ["List", "Play", "Delete"]);
+    assert_eq!(
+        tools,
+        ["List", "Play"],
+        "a destructive action is not listed"
+    );
     assert_eq!(rows[1]["class"], "edit");
     assert_eq!(rows[1]["description"], "The Play action.");
     assert_eq!(rows[1]["args"]["what"], "string?");
@@ -186,6 +194,12 @@ async fn a_destructive_admin_or_unclassed_action_is_refused_and_does_not_run() {
     .concat()
         + "  - name: Plain\n    description: No class.\n    cmd: \"touch plain\"\n    reach: anywhere\n";
     install_app(&w, "crate", "Holds things.", &tools).await;
+
+    // An app left with no action an outside agent may run has no line.
+    let (all, _) = list(&w, None).await;
+    assert!(all.contains("No app") && !all.contains("crate"), "{all}");
+    let (rows, _) = list(&w, Some("crate")).await;
+    assert!(rows.contains("offers an outside agent no action"), "{rows}");
 
     let (why, err) = call(&w, "crate", "Delete", json!({})).await;
     assert!(
