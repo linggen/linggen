@@ -3,7 +3,7 @@ name: linggen
 description: >-
   Linggen — durable cross-host memory plus agents and browser control,
   from one local program (`ling`, the Linggen engine) over one MCP server,
-  `linggen` (twelve tools: memory, agents, browser). Memory: three-tier
+  `linggen` (thirteen tools: memory, agents, browser, apps). Memory: three-tier
   model (core + long-term + episodic staging) of who the user is, not a
   log of what was done; one store shared by Claude Code, Codex and
   Linggen, and reachable over the LAN from a machine with only the plugin
@@ -57,7 +57,7 @@ on Claude Code, `${PLUGIN_ROOT}/skills/linggen/` on Codex.
 
 This skill has one required program: **`ling`** (Linggen, the engine). It
 hosts memory — the `ling mem` CLI every Bash-only channel shells out to —
-and serves all twelve tools (memory, `agent_*`, `browser_*`) on its one
+and serves all thirteen tools (memory, `agent_*`, `browser_*`, `app`) on its one
 MCP door, `127.0.0.1:9527/mcp`. The Claude Code / Codex plugin's session-start hook
 installs and starts it automatically (the install runs in the
 background, disclosed in the session context) — unless
@@ -550,3 +550,12 @@ Linggen browser extension) — one **visible** controlled tab:
   retry. If the `ling` binary is genuinely absent, run the install from the
   First-use section and tell the user (one-time, ~100MB). Memory is served
   by the same program, so it comes back with it.
+
+## The person's apps (via the same MCP server)
+
+The `app` tool does what the person's apps do on their Mac — "play some jazz"
+plays it. `op=list` names each app and its actions (with `app`, an action's
+arguments); `op=call` with `app`, `action` and `args` runs one. A destructive
+action is refused: tell the person to do it in the app. A private app answers
+only once the owner opens it in Linggen's Settings → Tools & MCP; say so, and
+do not retry.

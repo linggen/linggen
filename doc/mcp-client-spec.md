@@ -202,7 +202,7 @@ skippable on a host that only *reads* a remote store.
 ### One door for memory and the rest (2.5)
 
 Memory and Linggen's other capabilities are one MCP server, `linggen`, at
-`/mcp`: twelve tools, five of them memory (`mcp-spec.md`). A host adds one
+`/mcp`: thirteen tools, five of them memory (`mcp-spec.md`). A host adds one
 server; there is no second memory server and no second `memory_search`.
 
 The engine's own agents are a different caller. They reach memory through the
