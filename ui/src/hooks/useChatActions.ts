@@ -3,7 +3,8 @@
  * All state is read via getState() — only scrollToBottom and projectRoot are injected.
  */
 import { useCallback, useEffect, useRef } from 'react';
-import { useSessionStore, effectiveProjectRoot, pageSkillName } from '../stores/sessionStore';
+import { useSessionStore, effectiveProjectRoot, openSession, pageSkillName } from '../stores/sessionStore';
+import { messageLanding } from '../lib/messageLanding.mts';
 import { useServerStore } from '../stores/serverStore';
 import { useChatStore } from '../stores/chatStore';
 import { useUiStore } from '../stores/uiStore';
@@ -24,6 +25,12 @@ import { COMPANION_ID, isAgentPresent } from '../lib/agentsMet.mts';
 import { newClientId } from '../lib/sentMessage.mts';
 import { stillOn } from '../lib/sessionLoad.mts';
 import { clearCancelsRun } from '../lib/dayFold.mts';
+
+/** Only the main page moves between sessions; an app's own page, the pet and
+ *  a guest's page stay on theirs (the view is set in entries/main.tsx). */
+function onMainPage(): boolean {
+  return (window as { __LINGGEN_VIEW__?: string }).__LINGGEN_VIEW__ === 'main';
+}
 
 /** An answer that came back after an await writes only while its session is
  *  still the one on screen — never into a chat the person moved to. */
@@ -310,16 +317,31 @@ export function useChatActions(
         followups: true,
         client_id: clientId,
       });
-      if (data?.session_id && !sid) {
+      const landing = messageLanding(sid, data?.session_id, !onMainPage(), data?.status);
+      let asked = sid || data?.session_id || null;
+      if (landing === 'follow' && sid && data?.session_id) {
+        useServerStore.getState().setPendingSend(sid, false);
+        useServerStore.getState().setAgentStatusText((prev) => { const next = { ...prev }; delete next[sid]; return next; });
+        if (onSession(sid)) {
+          useChatStore.getState().removeLastUserMessage(userMessage, agentToUse);
+          const dest = data.session_id;
+          const store = useSessionStore.getState();
+          const found = [...store.allSessions, ...store.sessions].find((s) => s.id === dest);
+          // The row may not have been pushed yet: then it opens as a restored
+          // session does (eventHandlers/pageState.ts), by its id alone.
+          if (found) openSession(found);
+          else store.setActiveSessionId(dest);
+          asked = dest;
+        } else return;
+        useSessionStore.getState().fetchSessions();
+      } else if (landing === 'adopt' && data?.session_id && onSession(sid)) {
         if (data.status !== 'queued' && !turnlessReply(data.status)) useServerStore.getState().setPendingSend(data.session_id, true, data.agent_id || agentToUse);
         useSessionStore.getState().setActiveSessionId(data.session_id);
         useSessionStore.getState().fetchSessions();
         postToParent({ type: 'linggen-skill-event', event: 'session_created', payload: { sessionId: data.session_id } });
       }
-      // A new chat's session is the one the server just made.
-      const asked = sid || data?.session_id || null;
       if (data?.status === 'queued') {
-        if (onSession(asked)) useChatStore.getState().removeLastUserMessage(userMessage, agentToUse);
+        if (landing !== 'follow' && onSession(asked)) useChatStore.getState().removeLastUserMessage(userMessage, agentToUse);
         return;
       }
       // No turn ran and nothing was kept, so the typed bubble goes. The agent
@@ -328,7 +350,8 @@ export function useChatActions(
       // plain status line says so.
       if (data && turnlessReply(data.status)) {
         const at = data.session_id || sid;
-        if (at) useServerStore.getState().setPendingSend(at, false);
+        if (sid) useServerStore.getState().setPendingSend(sid, false);
+        if (at && at !== sid) useServerStore.getState().setPendingSend(at, false);
         const to = data.agent_id || agentToUse;
         if (onSession(asked)) useChatStore.getState().removeLastUserMessage(userMessage, to);
         if (data.status === 'absent') {
@@ -338,13 +361,14 @@ export function useChatActions(
         }
         return;
       }
-      if (sid) {
-        useServerStore.getState().setAgentStatusText((prev) => ({ ...prev, [sid]: 'Model Loading' }));
+      const runningSid = landing === 'follow' ? data?.session_id : sid;
+      if (runningSid) {
+        useServerStore.getState().setAgentStatusText((prev) => ({ ...prev, [runningSid]: 'Model Loading' }));
       }
       // The server says who took the turn: an `@name` it resolved may not be
       // the agent this surface sent to.
       const ranAs = typeof data?.agent_id === 'string' && data.agent_id ? data.agent_id : agentToUse;
-      if (sid && ranAs !== agentToUse) useServerStore.getState().setPendingSend(sid, true, ranAs);
+      if (runningSid && (landing === 'follow' || ranAs !== agentToUse)) useServerStore.getState().setPendingSend(runningSid, true, ranAs);
       if (onSession(asked)) useChatStore.getState().upsertGenerating(ranAs, 'Model loading...', 'Model loading...');
     } catch (e) {
       console.error('Error in chat:', e);
