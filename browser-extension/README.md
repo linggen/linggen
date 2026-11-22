@@ -72,7 +72,7 @@ Transport, protocol, on-demand tab, and response interception are complete.
   through CDP, behind the gate's always-confirm floor, and resolved only on
   x.com's own `CreateTweet` answer.
 - **control module** (v1): all ten ops implemented and verified end-to-end
-  against the daemon (`Browser_*` engine tools on the Linggen side).
+  against the daemon (the `browser_open`, `browser_read` and `browser_act` engine tools on the Linggen side).
 
 Distribution: Chrome Web Store listing pending; until then, load unpacked.
 

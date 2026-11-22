@@ -15,7 +15,9 @@ use std::collections::HashSet;
 /// Used by mission dispatch (`mission_allowed_tools`) and by skill
 /// activation when a skill declares `allowed-tools` for its child agent.
 ///
-/// A whole MCP server may be named instead of each of its tools — `mcp__memory`
+/// A built-in may be named by any name it answers to (an alias, or an old name
+/// since folded into other tools): the set holds its canonical names. A whole
+/// MCP server may be named instead of each of its tools — `mcp__memory`
 /// or `mcp__memory__*`, the shape the ecosystem's allow rules already use — and
 /// is expanded here into the tools that server actually advertises. The
 /// expansion happens at build time on purpose: these sets are **intersected**
@@ -44,17 +46,25 @@ pub fn compute_tool_scope(allowed_tools: &[String]) -> Option<HashSet<String>> {
 /// expanded `mcp__memory` while the model's tool list did not, so a skill that
 /// declared the server was offered a name no server answers to.
 pub fn expand_declaration(entry: &str) -> Vec<String> {
-    match server_wildcard(entry) {
-        Some(server) => expand_server(server),
-        None => vec![entry.to_string()],
+    if let Some(server) = server_wildcard(entry) {
+        return expand_server(server);
     }
+    // A built-in under any name it answers to is its canonical name — the
+    // one the call gate compares — and an old name whose ops now sit in
+    // several tools is all of them.
+    let built_in = crate::engine::tools::canonical_tool_names(entry);
+    if built_in.is_empty() {
+        return vec![entry.to_string()];
+    }
+    built_in.into_iter().map(String::from).collect()
 }
 
-/// Whether a declaration entry names `tool`: the tool itself, or the whole
-/// MCP server it comes from (`mcp__memory` covers `mcp__memory__memory_add`).
+/// Whether a declaration entry names `tool`: the tool itself (under any name
+/// it answers to — `tool` is canonical), or the whole MCP server it comes
+/// from (`mcp__memory` covers `mcp__memory__memory_add`).
 /// Read live, so a server that connects later is still covered.
 pub fn entry_covers(entry: &str, tool: &str) -> bool {
-    if entry == tool {
+    if entry == tool || crate::engine::tools::canonical_tool_names(entry).contains(&tool) {
         return true;
     }
     let Some(server) = server_wildcard(entry) else {
@@ -108,6 +118,27 @@ mod tests {
             "mcp__memory__memory_search"
         ));
         assert!(!entry_covers("mcp__memory", "Write"));
+    }
+
+    /// A built-in under an old or alternate name is its canonical name in
+    /// a scope set — the name the call gate compares; an old name whose ops
+    /// moved apart is every tool that holds them.
+    #[test]
+    fn a_built_in_declared_by_an_alias_is_its_canonical_name() {
+        let names = |entries: &[&str]| {
+            let entries: Vec<String> = entries.iter().map(|e| e.to_string()).collect();
+            let mut set: Vec<String> = compute_tool_scope(&entries).unwrap().into_iter().collect();
+            set.sort();
+            set
+        };
+        assert_eq!(names(&["Browser_click", "browser_scroll"]), ["browser_act"]);
+        assert_eq!(names(&["web_search"]), ["WebSearch"]);
+        assert_eq!(
+            names(&["Browser_tabs"]),
+            ["browser_act", "browser_open", "browser_read"]
+        );
+        // Not a built-in: as written.
+        assert_eq!(names(&["Story"]), ["Story"]);
     }
 
     #[test]

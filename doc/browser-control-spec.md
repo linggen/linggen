@@ -25,7 +25,7 @@ This is a deliberate scope expansion. The bridge was locked read-only by design 
 
 The daemon ↔ extension link is **not** an agent-to-tools boundary — it is Linggen's own two components talking. MCP exists to standardize the agent-to-tools interface *across vendors*; wrapping the existing WebSocket in it buys nothing. So:
 
-- **v1 — built-in engine tools over the existing WS bridge. No MCP.** Browser control is a set of native `Browser_*` tools that sit beside Read/Bash/Task and broker over the bridge. They inherit the permission system and session scoping for free.
+- **v1 — built-in engine tools over the existing WS bridge. No MCP.** Browser control is three native tools (`browser_open`, `browser_read`, `browser_act`, each with an `op`) that sit beside Read/Bash/Task and broker over the bridge. They inherit the permission system and session scoping for free.
 - **v2 — a daemon-hosted MCP front door** so other vendors' agents (Claude Code, Cursor…) can drive the same Chrome. See *MCP front door* below. The MV3 extension cannot host a server (no listening sockets; the worker suspends), so the MCP surface lives in the daemon and fronts the same bridge.
 
 ## Model
@@ -33,30 +33,34 @@ The daemon ↔ extension link is **not** an agent-to-tools boundary — it is Li
 A single **controlled tab** — visible, so the user watches what the agent does (unlike the read bridge's hidden throwaway tabs). The agent works a loop: read the page → decide an action → act → read again.
 
 ```
-agent ──tool call──> engine Browser_* tools ──WS req──> extension ──CDP──> controlled tab
-   Browser_readPage / Browser_click / Browser_type / Browser_screenshot / …
+agent ──tool call──> engine browser tools ──WS req──> extension ──CDP──> controlled tab
+   browser_read op=page / browser_act op=click / browser_act op=type / browser_read op=screenshot / …
 ```
 
-**Targeting is reference-first, pixels as fallback.** `Browser_readPage` returns an accessibility/DOM tree where each actionable node carries a stable `ref`. The agent clicks and types by `ref` — robust, cheap, and a good fit for a general model like gpt-5.5. `Browser_screenshot` plus pixel coordinates is the fallback for canvas/visual cases the tree can't express.
+**Targeting is reference-first, pixels as fallback.** `browser_read` `op=page` returns an accessibility/DOM tree where each actionable node carries a stable `ref`. The agent clicks and types by `ref` — robust, cheap, and a good fit for a general model like gpt-5.5. `browser_read` `op=screenshot` plus pixel coordinates is the fallback for canvas/visual cases the tree can't express.
 
 ## Engine tools
 
-Native tools, gated per the permission model (below). Each brokers one control op over the bridge.
+Three native tools, each with an `op`, gated per the permission model (below). Each op brokers one control op over the bridge. They are defined once (`engine/tools/browser_def.rs`) and a Linggen session and the MCP door are offered the same names, ops, arguments and texts; what differs is how an answer is worded to its caller (a session gets a sentence or the page, the door gets JSON).
 
-| Tool | Purpose | Mutating? |
-|:-----|:--------|:---------:|
-| `Browser_navigate` | Load a URL / go back or forward in the controlled tab | yes |
-| `Browser_readPage` | Return the accessibility/DOM tree with per-node `ref`s | no |
-| `Browser_screenshot` | Capture the controlled tab (or a region) | no |
-| `Browser_click` | Click a node by `ref` (or coordinate) | yes |
-| `Browser_type` | Type text into the focused / referenced field | yes |
-| `Browser_key` | Press a key or chord | yes |
-| `Browser_scroll` | Scroll the page or an element | no |
-| `Browser_wait` | Wait for load / a selector / a delay before the next read | no |
-| `Browser_readConsole` | Read console messages (debugging) | no |
-| `Browser_tabs` | List / open / switch the controlled tab set | `open` only |
+| Tool | Op | Purpose | Mutating? |
+|:-----|:---|:--------|:---------:|
+| `browser_open` | `navigate` | Load a URL / go back or forward in the controlled tab | yes |
+| `browser_open` | `tab_open` | Open a URL, creating the controlled tab if needed | yes |
+| `browser_read` | `page` | Return the accessibility/DOM tree with per-node `ref`s | no |
+| `browser_read` | `screenshot` | Capture the controlled tab (or a region) | no |
+| `browser_read` | `console` | Read console messages (debugging) | no |
+| `browser_read` | `tabs` | The controlled tab's state | no |
+| `browser_act` | `click` | Click a node by `ref` (or coordinate) | yes |
+| `browser_act` | `type` | Type text into the focused / referenced field | yes |
+| `browser_act` | `key` | Press a key or chord | yes |
+| `browser_act` | `scroll` | Scroll the page or an element | no |
+| `browser_act` | `wait` | Wait for load / a selector / a delay before the next read | no |
+| `browser_act` | `tab_switch`, `tab_close` | Bring the controlled tab to front / close it | no |
 
-Read-class tools (`readPage`, `screenshot`, `scroll`, `readConsole`) never mutate site state; mutating tools go through the safety gate.
+Read-class ops (`page`, `screenshot`, `console`, `tabs`, `scroll`, `tab_switch`, `tab_close`) never mutate site state; mutating ops go through the safety gate. A call is checked before the bridge is asked — an unknown field, a missing `url`, a click with neither `ref` nor `coordinate` is refused with the form that works.
+
+Before 2.7 a session was offered ten tools (`Browser_navigate`, `Browser_readPage`, `Browser_screenshot`, `Browser_click`, `Browser_type`, `Browser_key`, `Browser_scroll`, `Browser_wait`, `Browser_readConsole`, `Browser_tabs`). A skill, agent file or mission that still names one in `allowed-tools` / `tools:` / `place.*.tools` gets the tool that now holds it (`Browser_tabs`, whose ops moved into all three, gets all three); a model is never offered the old names.
 
 ## Control module
 
@@ -95,8 +99,8 @@ The extension drives the controlled tab through the **Chrome DevTools Protocol**
 
 The gate lives in the **extension** (v2, aligned with Claude in Chrome) so every caller — Linggen sessions and `/mcp` agents alike — passes the same floor:
 
-- **Read is free.** `readPage` / `screenshot` / `scroll` / `readConsole` run without a prompt.
-- **Mutating actions gate per origin.** `navigate`, `click`, `type`, `key`, `tabs open` on an untrusted origin pop a small extension window on the controlled tab: *Always allow this site* (persists in extension storage until revoked from the popup), *Allow once* (this browsing session), *Deny*. Trusted origins run without prompts; a closed or unanswered prompt (120s) is a deny (`not_permitted`).
+- **Read is free.** `page` / `screenshot` / `console` / `tabs` / `scroll` run without a prompt.
+- **Mutating actions gate per origin.** `navigate`, `click`, `type`, `key`, `tab_open` on an untrusted origin pop a small extension window on the controlled tab: *Always allow this site* (persists in extension storage until revoked from the popup), *Allow once* (this browsing session), *Deny*. Trusted origins run without prompts; a closed or unanswered prompt (120s) is a deny (`not_permitted`).
 - **A hard floor never auto-executes**, even on a trusted site — payment, passwords/security, deleting data, posting/sending on the user's behalf. Floor prompts never offer "Always" and persist nothing. Recognized from the target's accessible name, so it covers ref-targeted actions; a coordinate click has no name to inspect — another reason refs are the preferred targeting mode.
 - **The controlled tab is visible**, and the agent's actions are legible in it, so the user can interrupt.
 - The prompt is an extension window, not page DOM — the page can't render, click, or dismiss it.
@@ -104,7 +108,7 @@ The gate lives in the **extension** (v2, aligned with Claude in Chrome) so every
 
 ## MCP front door (v2)
 
-Browser control as a product for *any* agent, not just Linggen's. The daemon hosts an MCP server; the extension stays the hands. Two mouths, one brain: native `Browser_*` tools (Linggen sessions) and the MCP endpoint (third-party agents) front the same bridge broker.
+Browser control as a product for *any* agent, not just Linggen's. The daemon hosts an MCP server; the extension stays the hands. Two mouths, one brain: the native browser tools (Linggen sessions) and the MCP endpoint (third-party agents) are one definition and front the same bridge broker.
 
 - **Endpoint** — streamable-HTTP MCP server on the daemon (`http://127.0.0.1:9527/mcp`), localhost-only. Since 2.5 it is the one Linggen door, and the browser is three of its thirteen tools, each with an `op` for the control ops: `browser_open` (`navigate`, `tab_open`), `browser_read` (`page`, `screenshot`, `console`, `tabs`) and `browser_act` (`click`, `type`, `key`, `scroll`, `wait`, `tab_switch`, `tab_close`). Details in `mcp-spec.md`.
 - **Linggen agents stay on the native tools.** The tool name is already the switchable seam; the native path carries what MCP cannot — gate prompts in the calling chat, per-session `browser_origins`, screenshots attached to the conversation. (Claude Code makes the same call: Claude in Chrome is built into its CLI, not an MCP entry.)

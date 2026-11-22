@@ -6,6 +6,7 @@ pub(crate) use builtin::tool_max_duration;
 pub(crate) use builtin::unavailable as unavailable_builtins;
 pub(crate) use builtin::{AppCall, RightNow};
 
+pub mod browser_def;
 pub mod browser_tool;
 mod file_tools;
 pub(crate) use file_tools::glob_roots;
@@ -31,7 +32,7 @@ pub(crate) use search_exec::kill_process_group;
 pub use crate::project_root::find_git_root as search_exec_find_git_root;
 pub use crate::project_root::project_ancestors;
 pub(crate) use crate::project_root::project_ancestors_within;
-pub use tool_helpers::canonical_tool_name;
+pub use tool_helpers::{canonical_tool_name, canonical_tool_names};
 pub(crate) use tool_helpers::full_tool_schema_entries;
 pub(crate) use tool_helpers::{normalize_tool_args, summarize_tool_args};
 
@@ -415,7 +416,7 @@ pub struct Tools {
     /// flow the merge law prescribes. Arc-shared across clones so subagent
     /// asks count too.
     pub(crate) last_ask_user: Arc<std::sync::Mutex<Option<std::time::Instant>>>,
-    /// Browser bridge hub for the `Browser_*` tools. Wired by the server;
+    /// Browser bridge hub for the browser tools (`browser_open`, `browser_read`, `browser_act`). Wired by the server;
     /// `None` in CLI/eval contexts, where browser control is unavailable.
     pub(crate) browser_bridge: Option<Arc<dyn crate::engine::tools::browser_tool::BrowserBridge>>,
     /// The active skill's name and folder, set on activation. Tools that

@@ -24,16 +24,9 @@ const READ_TOOLS: &[&str] = &[
     "UpdatePlan",
     // Pictures, as in any chat; ChatGPT's lane when the caller asks for it.
     "GenerateImage",
-    "Browser_navigate",
-    "Browser_readPage",
-    "Browser_screenshot",
-    "Browser_click",
-    "Browser_type",
-    "Browser_key",
-    "Browser_scroll",
-    "Browser_wait",
-    "Browser_readConsole",
-    "Browser_tabs",
+    "browser_open",
+    "browser_read",
+    "browser_act",
 ];
 
 /// What a write run adds to the read-only toolset.

@@ -52,6 +52,9 @@ Built-in tools are the kernel API. Skills are userspace.
 | `Skill` | `skill, args?` | Invoke a skill by name |
 | `RunApp` | `skill, args?` | Launch an app-enabled skill |
 | `AppTool` | `app?, tool?, args?` | Do what an app offers from a session that is not the app's own. `app` alone lists that app's actions (tool, class, description, args); `app` + `tool` + `args` runs one. What is offered is what the app declares `reach: anywhere` (`skill-spec.md` § Reach), Yinyue's own `pet: true` reads besides. Judged as the action it names (`permission-spec.md` § App actions). Not offered to an `agent_run` delegate, a mission, or the lead of an app's own session |
+| `browser_open` | `op, url` | Load a page in the one visible Chrome tab Linggen controls: `op=navigate` or `op=tab_open` (§ Browser tools) |
+| `browser_read` | `op, filter?, region?, limit?` | Read that tab: `op=page` (tree with refs), `screenshot`, `console`, `tabs` |
+| `browser_act` | `op, ref?, coordinate?, text?, keys?, …` | Act in it: `click`, `type`, `key`, `scroll`, `wait`, `tab_switch`, `tab_close` |
 | `AskUser` | `questions` | Ask user structured questions mid-execution |
 | `sense` | — | The room: presence, how busy the day is, the hour, and this machine's world block |
 | `recent_activity` | `since?`, `until?`, `app?`, `verb?`, `text?`, `limit?`, `totals?` | This Mac's activity log (kept 400 days): what changed, who did it, stretches of use; `totals` sums counts and durations per app and verb for the span. JSON (perception-spec.md §3) |
@@ -163,6 +166,15 @@ Launches an app-enabled skill. The skill must have an `app` section in its front
 **From a skill script**: `POST /api/apps/launch {skill}` sends the same event (no session) for a script with no model turn to call `RunApp` from — e.g. DJ's play asked from the phone. The page itself is how the caller learns it came up.
 
 **Implementation**: `engine/tools/delegation.rs` (`run_app()`), `server/chat_api.rs` (direct dispatch), `server/mod.rs` (static serving at `/apps/`), `ui/src/lib/appHost.ts` `openApp` (UI: where it opens), `ui/src/apps/AppTabs.tsx` (the desktop app's tabs).
+
+## Browser tools
+
+A session is offered three browser tools, `browser_open`, `browser_read` and `browser_act`, each with an `op` — the same three, with the same ops, arguments and texts, the MCP door publishes (`mcp-spec.md`). They are defined once, in `engine/tools/browser_def.rs`; the door's catalogue and the session's tools both read it, and a lock fails when what a session is offered differs from what the door publishes. A plain session is sent three schemas where it was sent ten (`Browser_navigate` … `Browser_tabs`).
+
+- **Same behaviour behind the three.** Every op keeps what it did: the Read tier, the extension's own Allow prompt for an action that changes a page, the place rules (a browser call keeps what is said in its turn's place), no cache, the wall-clock ceiling, and the bridge's progress line under the running tool. An op's time limit is the definition's, the door's: the tab ops that never ask the person (`tabs`, `tab_switch`, `tab_close`) wait up to 150 s like the others of the tab (a session waited 20 s before).
+- **A call is checked as the door checks it**, before the bridge is asked: an unknown field, a missing `url`, a non-absolute URL, a click with neither `ref` nor `coordinate` is refused in the words the door uses. A model that calls an old name or leaves out `op` is told the form that works.
+- **Old names in a declaration.** The ten old names are never offered, but a skill's `allowed-tools`, an agent's `tools:`, a mission's list or `place.*.tools` that still names one selects the tool that now holds it, in the offered set and at the call gate (and a withheld old name withholds that tool). One function resolves it (`canonical_tool_names`): a name selects the tool of that name, or every tool that lists it as an alias; `Browser_tabs`, whose ops moved into all three tools, selects all three. The delegate's fixed list holds the three.
+- **Plan mode** does not offer them (its list is read-only research); they are not cacheable.
 
 ## Tool dispatch
 

@@ -382,7 +382,7 @@ impl BridgeHub {
         tx.send(frame.to_string()).is_ok()
     }
 
-    /// Broker one op for an in-process caller (the engine's `Browser_*`
+    /// Broker one op for an in-process caller (the engine's browser
     /// tools). Same envelope the HTTP `call` surface returns:
     /// `{ok:true, data}` or `{ok:false, code, message}`.
     pub async fn call_value(

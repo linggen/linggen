@@ -2010,6 +2010,73 @@ mod member_tests {
         assert!(ling.cfg.is_tool_allowed("Resolve") && ling.cfg.is_tool_allowed("AskUser"));
     }
 
+    /// The ten browser names a declaration may still carry, and the tools
+    /// that now hold what each did.
+    const OLD_BROWSER_NAMES: [(&str, &[&str]); 22] = [
+        ("Browser_navigate", &["browser_open"]),
+        ("browser_navigate", &["browser_open"]),
+        ("Browser_readPage", &["browser_read"]),
+        ("browser_read_page", &["browser_read"]),
+        ("Browser_read_page", &["browser_read"]),
+        ("Browser_screenshot", &["browser_read"]),
+        ("browser_screenshot", &["browser_read"]),
+        ("Browser_readConsole", &["browser_read"]),
+        ("browser_read_console", &["browser_read"]),
+        ("Browser_read_console", &["browser_read"]),
+        ("Browser_click", &["browser_act"]),
+        ("browser_click", &["browser_act"]),
+        ("Browser_type", &["browser_act"]),
+        ("browser_type", &["browser_act"]),
+        ("Browser_key", &["browser_act"]),
+        ("browser_key", &["browser_act"]),
+        ("Browser_scroll", &["browser_act"]),
+        ("browser_scroll", &["browser_act"]),
+        ("Browser_wait", &["browser_act"]),
+        ("browser_wait", &["browser_act"]),
+        ("Browser_tabs", &["browser_open", "browser_read", "browser_act"]),
+        ("browser_tabs", &["browser_open", "browser_read", "browser_act"]),
+    ];
+
+    /// A skill that names a browser tool as the ten were named in its
+    /// `allowed-tools` still gets the tool that now holds it, and nothing of
+    /// the other browser tools: offered in the prompt and let through the
+    /// call gate alike. (What a skill names for a member goes through the same
+    /// two steps; `tool_scope` holds the scope set's.)
+    #[tokio::test]
+    async fn a_declaration_naming_an_old_browser_tool_selects_the_tool_that_holds_it() {
+        const THREE: [&str; 3] = ["browser_open", "browser_read", "browser_act"];
+        for (old, holders) in OLD_BROWSER_NAMES {
+            let text = format!(
+                "---\nname: web\ndescription: d\nallowed-tools: [{old}]\n---\nRULES."
+            );
+            let skill = crate::extensions::skills::parse_skill_text(&text, crate::engine::skill::SkillSource::Global)
+                .unwrap();
+            let mut ling = spec_engine("ling", include_str!("../../../../agents/ling.md"));
+            ling.activate_skill(skill, crate::engine::ActivationMode::Export).await;
+            let offered = ling.allowed_tool_names().unwrap();
+            for tool in THREE {
+                let held = holders.contains(&tool);
+                assert_eq!(offered.contains(tool), held, "{old}: offered {tool}");
+                assert_eq!(ling.cfg.is_tool_allowed(tool), held, "{old}: gate {tool}");
+            }
+            assert!(!offered.contains(old), "{old}: the old name is no tool");
+        }
+    }
+
+    /// A session that withholds a browser tool by an old name still withholds
+    /// the tool that holds it (a deny is not lost in the fold).
+    #[test]
+    fn withholding_an_old_browser_name_withholds_the_tool_that_holds_it() {
+        for (old, holders) in OLD_BROWSER_NAMES {
+            let mut engine = spec_engine("ling", include_str!("../../../../agents/ling.md"));
+            engine.session_withheld = [old.to_string()].into_iter().collect();
+            for tool in ["browser_open", "browser_read", "browser_act"] {
+                assert_eq!(engine.is_withheld(tool), holders.contains(&tool), "{old} withheld {tool}");
+            }
+            assert!(!engine.is_withheld("Read"), "{old}");
+        }
+    }
+
     /// The export lists the tools each member's turn sends: the skill's own
     /// with them — hers what the skill names for her, his its whole set.
     #[tokio::test]

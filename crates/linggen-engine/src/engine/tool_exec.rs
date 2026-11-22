@@ -281,7 +281,7 @@ impl AgentEngine {
             return stop;
         }
 
-        // Browser_* mutating actions are gated by the extension itself
+        // The browser tools' mutating ops are gated by the extension itself
         // (browser-control-spec.md): the Allow prompt renders in the browser
         // and the trust list lives in extension storage — one gate for every
         // caller (engine sessions and /mcp alike). A user deny surfaces here

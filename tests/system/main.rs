@@ -13,6 +13,7 @@ mod app_door;
 mod app_index;
 mod assets;
 mod background;
+mod browser_tools;
 mod claude_rules;
 mod day_places;
 mod day_session;

@@ -62,6 +62,17 @@ around (`doc/plan-3.0.md`) is not started.
 - **A private app stays closed to outside agents until you open it.**
   Settings → Tools & MCP → Outside agents has one switch per private app that
   offers an action anywhere, set at this Mac only.
+- **Ling is offered three browser tools, not ten.** `browser_open`,
+  `browser_read` and `browser_act`, each with an `op` — the same names, ops and
+  arguments Claude Code and Codex are offered at the one MCP door, written
+  once. A plain chat is sent about a thousand fewer characters of tool schema.
+  What each op does, the Chrome prompt before a page changes and the place
+  rules are as they were; a call with a missing or wrong field is now refused
+  as the door refuses it, naming the form that works, and the tab ops that
+  never ask you wait as long as the others for a stuck browser.
+- **A skill, agent or mission that still lists `Browser_click` and the other
+  old browser tools** gets the tool that now holds it; `Browser_tabs` gets all
+  three. A run Claude Code starts gets the three.
 
 ### Turns
 

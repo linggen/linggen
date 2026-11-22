@@ -44,11 +44,6 @@ pub use send_message::*;
 pub use web::*;
 pub use write::*;
 
-use super::browser_tool::{
-    BrowserClickTool, BrowserKeyTool, BrowserNavigateTool, BrowserReadConsoleTool,
-    BrowserReadPageTool, BrowserScreenshotTool, BrowserScrollTool, BrowserTabsTool,
-    BrowserTypeTool, BrowserWaitTool,
-};
 use super::{ToolCall, ToolResult, Tools};
 use crate::engine::permission::PermissionMode;
 use anyhow::Result;
@@ -135,7 +130,7 @@ pub trait Tool: Send + Sync {
 /// Static registry of built-in tools. Constructed once on first access.
 pub(super) fn registry() -> &'static [Arc<dyn Tool>] {
     static REGISTRY: LazyLock<Vec<Arc<dyn Tool>>> = LazyLock::new(|| {
-        vec![
+        let mut all: Vec<Arc<dyn Tool>> = vec![
             Arc::new(GlobTool),
             Arc::new(ReadTool),
             Arc::new(GrepTool),
@@ -171,30 +166,30 @@ pub(super) fn registry() -> &'static [Arc<dyn Tool>] {
             // at runtime rather than compiled in — so there is one memory
             // surface for Linggen, Claude Code, and Codex alike instead of
             // this engine's private restatement of it.
-            // Browser_* — browser control over the bridge to the
-            // linggen-browser extension (browser-control-spec.md). Mutating
-            // actions are gated by the extension's own permission prompt.
-            Arc::new(BrowserNavigateTool),
-            Arc::new(BrowserReadPageTool),
-            Arc::new(BrowserScreenshotTool),
-            Arc::new(BrowserClickTool),
-            Arc::new(BrowserTypeTool),
-            Arc::new(BrowserKeyTool),
-            Arc::new(BrowserScrollTool),
-            Arc::new(BrowserWaitTool),
-            Arc::new(BrowserReadConsoleTool),
-            Arc::new(BrowserTabsTool),
-        ]
+        ];
+        // Browser control over the bridge to the linggen-browser extension
+        // (browser-control-spec.md): the three tools the one definition names.
+        // Mutating actions are gated by the extension's own permission prompt.
+        all.extend(super::browser_tool::tools());
+        all
     });
     &REGISTRY
 }
 
 /// Look up a tool by canonical name or alias. `None` if no built-in
-/// tool matches.
+/// tool matches. A name several tools list as an alias (an old name whose
+/// ops now sit in more than one tool) finds the first; [`lookup_all`] finds
+/// them all.
 pub(super) fn lookup(name: &str) -> Option<&'static Arc<dyn Tool>> {
+    lookup_all(name).next()
+}
+
+/// Every built-in tool `name` selects: the tool of that name, or each tool
+/// that lists it as an alias.
+pub(super) fn lookup_all(name: &str) -> impl Iterator<Item = &'static Arc<dyn Tool>> + '_ {
     registry()
         .iter()
-        .find(|t| t.name() == name || t.aliases().contains(&name))
+        .filter(move |t| t.name() == name || t.aliases().contains(&name))
 }
 
 /// Public tier lookup used by `engine::permission::tool_action_tier`.
@@ -291,6 +286,23 @@ mod max_duration_tests {
         assert_eq!(tool_max_duration("SomeSkillProvidedTool"), None);
     }
 
+    /// A name selects one tool, but for an old name whose ops moved into
+    /// several: `Browser_tabs` (list, open, switch, close) is each of the
+    /// three browser tools'. No other name, and no alias that is another
+    /// tool's own name, is shared.
+    #[test]
+    fn a_name_selects_one_tool_except_the_old_tabs_name() {
+        let mut selects: std::collections::BTreeMap<&str, Vec<&str>> = Default::default();
+        for tool in registry() {
+            for name in std::iter::once(tool.name()).chain(tool.aliases().iter().copied()) {
+                selects.entry(name).or_default().push(tool.name());
+            }
+        }
+        let shared: Vec<(&str, &Vec<&str>)> = selects.iter().filter(|(_, t)| t.len() > 1).map(|(n, t)| (*n, t)).collect();
+        let three = vec!["browser_open", "browser_read", "browser_act"];
+        assert_eq!(shared, [("Browser_tabs", &three), ("browser_tabs", &three)]);
+    }
+
     #[test]
     fn only_pure_workspace_reads_are_served_from_cache() {
         for name in ["Read", "Grep", "Glob"] {
@@ -318,8 +330,9 @@ mod max_duration_tests {
             "agent_chat",
             "lock_paths",
             "unlock_paths",
-            "Browser_navigate",
-            "Browser_readPage",
+            "browser_open",
+            "browser_read",
+            "browser_act",
         ] {
             assert!(!tool_cacheable(name), "{name} must run every time");
         }
