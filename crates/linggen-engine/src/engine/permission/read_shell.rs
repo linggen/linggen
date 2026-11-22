@@ -1,8 +1,10 @@
 //! Bounded shell read scopes. Classification and scope proof are separate:
 //! a read-class program does not necessarily name every input it can read.
 
-use super::classify::{classify_bash, dequote};
-use super::model::{command_run, command_tokens, file_name, is_odd_space, resolve_bash_arg, BashClass, Token};
+use super::classify::{classify_bash, dequote, literal_inspection_operands};
+use super::model::{
+    command_run, command_tokens, file_name, is_odd_space, resolve_bash_arg, BashClass, Token,
+};
 use super::sensitive;
 use std::path::{Path, PathBuf};
 
@@ -167,7 +169,7 @@ fn operands<'a>(words: &'a [&'a str]) -> Option<&'a [&'a str]> {
             (!program.starts_with('-') && dequote(program) != *program && !files.iter().any(|s| s.contains('='))).then_some(files)
         }
         "echo" | "pwd" | "sleep" | "true" | "false" if !args.iter().any(|s| s.contains(['*', '?', '[', '~'])) => Some(&[]),
-        _ => None,
+        _ => literal_inspection_operands(words),
     }
 }
 

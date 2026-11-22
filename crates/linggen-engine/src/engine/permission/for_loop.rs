@@ -61,6 +61,15 @@ fn rewrite(cmd: &str) -> Result<Option<String>, ()> {
         .map(|value| with_value(parsed.body, parsed.name, value))
         .collect::<Option<_>>()
         .ok_or(())?;
+    // The new literal inspection forms do not extend the loop allowance.
+    if bodies.iter().any(|body| {
+        use super::model::{command_tokens, Token};
+        command_tokens(body).split(|t| matches!(t, Token::Op(_))).any(|segment| {
+            matches!(segment.first(), Some(Token::Word(word)) if super::classify::is_file_inspection(word))
+        })
+    }) {
+        return Err(());
+    }
     Ok(Some(format!(
         "{}{}{}",
         &cmd[..items[at].start],

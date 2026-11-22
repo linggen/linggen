@@ -1553,7 +1553,11 @@ fn command_targets_and_roots(cmd: &str, session_cwd: &Path, recursive_roots: &mu
     let mut tail_input = None;
     let mut in_pipeline = false;
     let mut segment_end = 0;
+    let mut inspected_until = 0;
     for (index, (token, text)) in tokens.iter().zip(text).enumerate() {
+        if index < inspected_until {
+            continue;
+        }
         let w = match token {
             Token::Op(joint) => {
                 let joint = *joint;
@@ -1578,8 +1582,36 @@ fn command_targets_and_roots(cmd: &str, session_cwd: &Path, recursive_roots: &mu
         if at_command {
             sed_files_from = None;
             tail_input = None;
-            segment_end = index + tokens[index..].iter().position(|t| matches!(t, Token::Op(_))).unwrap_or(tokens.len() - index);
-            recursive_roots.extend(super::read_shell::segment_roots(&tokens[index..segment_end], &cwd));
+            segment_end = index
+                + tokens[index..]
+                    .iter()
+                    .position(|t| matches!(t, Token::Op(_)))
+                    .unwrap_or(tokens.len() - index);
+            let segment = &tokens[index..segment_end];
+            recursive_roots.extend(super::read_shell::segment_roots(segment, &cwd));
+            let words: Vec<_> = segment
+                .iter()
+                .map(|token| match token {
+                    Token::Word(word) => word.as_str(),
+                    Token::Op(_) => unreachable!(),
+                })
+                .collect();
+            // `known_program`'s option grammar identifies the input suffix.
+            if let Some(files) = super::classify::literal_inspection_operands(&words) {
+                for word in files {
+                    let plain = dequote(word);
+                    if plain != "-" && !is_device_stream(&plain) {
+                        let path = if plain != *word && plain.starts_with('~') {
+                            cwd.join(plain)
+                        } else {
+                            resolve_bash_arg(&plain, &cwd)
+                        };
+                        out.push((path, TargetKind::Full));
+                    }
+                }
+                inspected_until = segment_end;
+                continue;
+            }
             if w == "tail" {
                 let end = tokens[index..]
                     .iter()
