@@ -1,6 +1,6 @@
 {
   "name": "linggen",
-  "version": "2.6.0",
+  "version": "2.6.1",
   "description": "Linggen for Codex — one local program, one MCP server (/mcp), twelve tools: durable cross-host memory, agents that take delegated work, and browser control, all from the Linggen engine. Installs Linggen (background download) on first session start.",
   "author": {
     "name": "Linggen",
