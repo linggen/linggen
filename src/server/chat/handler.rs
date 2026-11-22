@@ -1007,12 +1007,11 @@ pub(crate) async fn say_in_session(
 /// chat, as one typed there — its turn and its row are the app's, never the
 /// day's.
 pub(crate) async fn say_in_app(state: Arc<ServerState>, app: &str, agent_id: &str, text: &str) {
-    let own = crate::server::day_session::own_chat(&state.manager, app, &crate::server::person::owner());
     let req = ChatRequest {
         project_root: crate::paths::ensure_default_workspace().to_string_lossy().to_string(),
         agent_id: agent_id.to_string(),
         message: text.to_string(),
-        session_id: own,
+        session_id: None,
         user_type: super::types::default_user_type(),
         mission_id: None,
         skill_name: Some(app.to_string()),
@@ -1121,64 +1120,100 @@ pub(crate) fn resend_chat(
     })
 }
 
-/// An app's chat sent with no session yet, with the daily session on: it
-/// is the day's session's (`server::day_session`). A mission's, a
-/// consumer's, a plain chat's (no app) or a private app's keeps its own.
-async fn into_the_day(state: &Arc<ServerState>, mut req: ChatRequest) -> ChatRequest {
+/// Choose the receiving session before keeping any words. A private app
+/// called by name goes to the person's own chat of that app, not the source
+/// chat. Otherwise an app's new chat may join the day (`day_session`).
+async fn route_chat_session(state: &Arc<ServerState>, mut req: ChatRequest) -> ChatRequest {
     use crate::server::day_session as day;
-    // A private app the message takes up by name, in the day: the turn is
-    // the app's, carried to its own chat below.
-    if let Some(name) = private_app_taken_up(state, &req).await {
-        req.skill_name = Some(name);
+    use crate::server::person::Person;
+
+    let person = Person::from_wire(req.user_id.as_deref());
+    let meta = req.session_id.as_deref().and_then(|sid| {
+        state
+            .manager
+            .global_sessions
+            .get_session_meta(sid)
+            .ok()
+            .flatten()
+    });
+    if meta.as_ref().is_some_and(|m| m.is_old_claude()) {
+        return req;
     }
-    let app = req.skill_name.as_deref().map(str::trim).filter(|s| !s.is_empty());
-    let named_day = req.session_id.as_deref().filter(|sid| day::is_day(sid));
-    // A day its app does not join: the app's own chat stands in for it.
-    if let (Some(name), Some(_)) = (app, named_day) {
-        if !day::takes(&state.manager, Some(name)).await {
-            req.session_id = day::own_chat(&state.manager, name, &crate::server::person::Person::from_wire(req.user_id.as_deref()));
-            return req;
+    let called = private_app_taken_up(state, &req, meta.as_ref()).await;
+    let app = called.as_deref().or_else(|| {
+        req.skill_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+    });
+    let named_day = req.session_id.as_deref().is_some_and(day::is_day);
+    let own_app = match app {
+        Some(name) if called.is_some() => Some(name),
+        Some(name) if named_day && !day::takes(&state.manager, Some(name)).await => Some(name),
+        Some(name)
+            if state.manager.daily_session()
+                && meta
+                    .as_ref()
+                    .is_some_and(|m| m.skill.as_deref() != Some(name)) =>
+        {
+            state
+                .manager
+                .skills
+                .get_skill(name)
+                .await
+                .filter(|skill| skill.private_talk)
+                .map(|_| name)
         }
+        _ => None,
+    };
+    if let Some(name) = own_app {
+        let already_there = !named_day
+            && meta.as_ref().is_some_and(|m| {
+                m.skill.as_deref() == Some(name)
+                    && Person::from_wire(m.user_id.as_deref()) == person
+            });
+        if !already_there {
+            req.session_id = day::own_chat(&state.manager, name, &person);
+            req.mission_id = None;
+        }
+        req.skill_name = Some(name.to_string());
+        return req;
     }
     // A day is its own person's: a request naming another's lands in its own.
     let someone_elses = req
         .session_id
         .as_deref()
-        .is_some_and(|sid| !day::may_enter(sid, &crate::server::person::Person::from_wire(req.user_id.as_deref())));
+        .is_some_and(|sid| !day::may_enter(sid, &person));
     if someone_elses {
-        req.session_id = day::day_for(&state.manager, &crate::server::person::Person::from_wire(req.user_id.as_deref()), app).await;
+        req.session_id = day::day_for(&state.manager, &person, app).await;
         return req;
     }
     let joins = day::takes_new_chat(app, false, false, req.user_type != "consumer");
-    if req.session_id.is_some() || req.mission_id.is_some() || !joins {
-        return req;
+    if req.session_id.is_none() && req.mission_id.is_none() && joins {
+        req.session_id = day::day_for(&state.manager, &person, app).await;
     }
-    req.session_id = day::day_for(&state.manager, &crate::server::person::Person::from_wire(req.user_id.as_deref()), app).await;
     req
 }
 
-/// The private app `req`'s words take up by name (`/app …`, after any
-/// `@name`), when the request would be a turn of a day's session.
-async fn private_app_taken_up(state: &Arc<ServerState>, req: &ChatRequest) -> Option<String> {
-    use crate::server::day_session as day;
-    if !day::enabled(&state.manager).await || !lands_in_day(state, req).await {
+/// The private app the words take up by slash command or trigger, after
+/// any leading `@name`, using the same names and voice commands as dispatch.
+async fn private_app_taken_up(
+    state: &Arc<ServerState>,
+    req: &ChatRequest,
+    meta: Option<&crate::state_fs::sessions::SessionMeta>,
+) -> Option<String> {
+    if !state.manager.daily_session() {
         return None;
     }
-    let names = state.manager.mention_names(Path::new(&req.project_root)).await;
+    let root = turn_root(meta, req, None);
+    let names = state.manager.mention_names(&root).await;
     let words = leading_mention(&req.message, &names).map_or(req.message.as_str(), |(_, w)| w);
-    day::private_app_named(&state.manager, words).await
-}
-
-/// Whether `req`, as sent, would be a turn of a day's session: it names a
-/// day, or it is an app's chat with no session yet, which the day takes.
-async fn lands_in_day(state: &Arc<ServerState>, req: &ChatRequest) -> bool {
-    use crate::server::day_session as day;
-    if let Some(sid) = req.session_id.as_deref() {
-        return day::is_day(sid);
+    if crate::server::api::yinyue::voice_command(words).is_some()
+        && state.manager.agent_present(crate::engine::agent::COMPANION_AGENT_ID)
+    {
+        return None;
     }
-    let app = req.skill_name.as_deref().map(str::trim).filter(|s| !s.is_empty());
-    let joins = day::takes_new_chat(app, false, false, req.user_type != "consumer");
-    joins && req.mission_id.is_none() && day::takes(&state.manager, app).await
+    crate::server::day_session::private_app_named(&state.manager, words).await
 }
 
 pub(crate) async fn start_turn(
@@ -1200,7 +1235,7 @@ pub(crate) async fn start_turn(
         // watching it arrive.
         state.manager.mark_user_turn_presence();
     }
-    let req = into_the_day(&state, req).await;
+    let req = route_chat_session(&state, req).await;
 
     let meta = req.session_id.as_deref().and_then(|sid| {
         state

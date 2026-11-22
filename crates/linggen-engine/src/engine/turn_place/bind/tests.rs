@@ -272,10 +272,10 @@ async fn leaving_puts_back_another_skills_tool_of_the_same_name() {
 
 /// In a day's session a private app (`private-talk: true`) never becomes a
 /// turn's place nor its active skill, whoever takes it up — a page, a
-/// slash command, a trigger, the Skill tool. A shared app still does, and
-/// outside a day a private one is taken up as before.
+/// slash command, a trigger, the Skill tool. A shared app still does;
+/// a private app can only be taken up in its own session.
 #[tokio::test]
-async fn a_private_app_is_never_taken_up_in_a_day() {
+async fn a_private_app_is_taken_up_only_in_its_own_session() {
     let dir = tempfile::tempdir().unwrap();
     let private = || {
         let mut s = x_app(&dir.path().join("x"));
@@ -301,8 +301,29 @@ async fn a_private_app_is_never_taken_up_in_a_day() {
     assert!(engine.active_skill.is_some(), "a shared app is taken up");
 
     let mut apart = engine_in(SID);
-    apart.activate_skill(private(), ActivationMode::SlashCommand).await;
-    assert!(apart.active_skill.is_some(), "outside a day it is taken up as before");
+    apart
+        .enter_place(TurnPlace::home(), None, ActivationMode::SessionBound)
+        .await;
+    for mode in [
+        ActivationMode::SlashCommand,
+        ActivationMode::Trigger,
+        ActivationMode::ToolInvocation,
+    ] {
+        let outcome = apart.activate_skill(private(), mode).await;
+        assert!(matches!(outcome, crate::engine::ActivationOutcome::Refused));
+        assert!(apart.active_skill.is_none(), "{mode:?} took it up");
+    }
+    apart
+        .enter_place(
+            place("zz-x", true),
+            Some(private()),
+            ActivationMode::SessionBound,
+        )
+        .await;
+    assert!(
+        apart.active_skill.is_some(),
+        "the private app is taken up at home"
+    );
 }
 
 fn engine_in(sid: &str) -> AgentEngine {
