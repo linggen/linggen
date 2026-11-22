@@ -64,8 +64,7 @@ pub(crate) async fn private_app_named(manager: &AgentManager, words: &str) -> Op
     skill.private_talk.then_some(skill.name)
 }
 
-/// The app's own chat to stand in when the person `user_id` names a day
-/// their app does not join: the newest of their sessions of it that is not
+/// The person's own chat of an app: the newest of their sessions of it that is not
 /// one of its one-off jobs, else none — a session is then made for it.
 pub(crate) fn own_chat(manager: &AgentManager, app: &str, asker: &Person) -> Option<String> {
     let mut sessions: Vec<SessionMeta> = manager.global_sessions.list_sessions().ok()?;
