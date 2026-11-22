@@ -141,7 +141,7 @@ pub(super) fn unwire_inbox(ctx: &ChatRunCtx, engine: &mut crate::engine::AgentEn
 }
 
 /// Wire server-backed bridges into the engine: the AskUser bridge (emit
-/// events, block on user response) and the browser bridge (Browser_* tools
+/// events, block on user response) and the browser bridge (the browser tools
 /// broker control ops to the linggen-browser extension).
 pub(super) fn wire_engine_bridges(
     state: &Arc<ServerState>,

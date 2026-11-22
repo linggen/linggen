@@ -126,7 +126,7 @@ list is the engine config's `outside_apps` (absent: none), set only through
   (`direction`, `amount`, `ref`), `wait` (`for`: load, selector or ms, and
   `value`), `tab_switch`, `tab_close`.
 
-The tools drive one visible Chrome tab through the extension; `page` gives refs
+A Linggen session is offered the same three tools, from one definition (`engine/tools/browser_def.rs`): the names, ops, arguments and texts are the door's. The tools drive one visible Chrome tab through the extension; `page` gives refs
 for `click` and `type`. A browser action can make Chrome ask the user to allow
 the site; they approve or decline there. `no_bridge` means the extension is
 disconnected. The X reads that were once MCP tools left the door in 2.5; the

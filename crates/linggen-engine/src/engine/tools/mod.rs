@@ -416,7 +416,7 @@ pub struct Tools {
     /// flow the merge law prescribes. Arc-shared across clones so subagent
     /// asks count too.
     pub(crate) last_ask_user: Arc<std::sync::Mutex<Option<std::time::Instant>>>,
-    /// Browser bridge hub for the `Browser_*` tools. Wired by the server;
+    /// Browser bridge hub for the browser tools (`browser_open`, `browser_read`, `browser_act`). Wired by the server;
     /// `None` in CLI/eval contexts, where browser control is unavailable.
     pub(crate) browser_bridge: Option<Arc<dyn crate::engine::tools::browser_tool::BrowserBridge>>,
     /// The active skill's name and folder, set on activation. Tools that
