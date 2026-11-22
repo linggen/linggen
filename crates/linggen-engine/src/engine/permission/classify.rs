@@ -184,7 +184,17 @@ fn classify_segment(raw: &[String], coding: bool) -> (BashClass, bool, Option<Ba
     };
     let (class, by_code, reason) = if coding && base == Admin {
         match coding_class(&words) {
-            Ok(Some(class)) => (class, true, None),
+            Ok(Some(class)) => {
+                let why = (class > Read).then(|| {
+                    let words: Vec<_> = words.iter().map(String::as_str).collect();
+                    command_run(&words)
+                        .first()
+                        .map_or(BashReason::UnclearSyntax, |program| {
+                            BashReason::NotReadOnly(file_name(program))
+                        })
+                });
+                (class, true, why)
+            }
             Ok(None) => (base, false, None),
             Err(reason) => (base, false, Some(reason)),
         }
