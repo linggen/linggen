@@ -25,6 +25,7 @@ mod drawing;
 mod fixtures;
 mod heralds;
 mod hearing;
+mod mac_tools;
 mod memory_ops;
 mod met;
 mod leftovers;

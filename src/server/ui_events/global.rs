@@ -12,7 +12,11 @@ use super::{
 };
 use crate::engine::events::{NotificationPayload, ServerEvent, UiEvent};
 
-pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
+pub(super) fn map(
+    event: ServerEvent,
+    ui: Ui,
+    receiver: &crate::server::person::Person,
+) -> Option<UiEvent> {
     let seq = ui.seq;
     match event {
         ServerEvent::SessionCreated {
@@ -127,7 +131,7 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
                 ))
                 .data(AllowanceSpentData { reason }),
         ),
-        // User-level: reaches every surface over the control channel.
+        // User-level: each surface gets its receiver view over the control channel.
         ServerEvent::DeviceTopic {
             topic,
             op,
@@ -136,12 +140,13 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
         } => Some(
             ui.event(format!("device-topic-{seq}"), UI_KIND_DEVICE_TOPIC)
                 .global()
-                .data(DeviceTopicData {
+                .data(DeviceTopicData::for_receiver(
                     topic,
                     op,
                     payload,
                     from_device,
-                }),
+                    receiver,
+                )),
         ),
         _ => None,
     }

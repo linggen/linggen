@@ -70,6 +70,7 @@ pub(crate) async fn list(
 /// PUT /api/people/{person} — set what the body names (`level`, `apps`,
 /// `models`, `daily_tokens`, `arrival`); a bad body changes nothing.
 pub(crate) async fn set_person(
+    State(state): State<std::sync::Arc<crate::server::ServerState>>,
     ConnectInfo(peer): ConnectInfo<std::net::SocketAddr>,
     headers: HeaderMap,
     Path(id): Path<String>,
@@ -87,12 +88,16 @@ pub(crate) async fn set_person(
         Ok(Err(why)) => return err(StatusCode::BAD_REQUEST, why),
         Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, &format!("persist: {e}")),
     }
+    if patch.contains_key("apps") {
+        state.mac_tools_refresh.notify_one();
+    }
     tracing::info!("[people] settings of {id} changed");
     Json(json!({ "status": "ok", "settings": crate::server::people::current().settings_of(&person) })).into_response()
 }
 
 /// PUT /api/people/owner — `{"mine_only": [apps]}`: the apps no one else uses.
 pub(crate) async fn set_owner_side(
+    State(state): State<std::sync::Arc<crate::server::ServerState>>,
     ConnectInfo(peer): ConnectInfo<std::net::SocketAddr>,
     headers: HeaderMap,
     Json(body): Json<Value>,
@@ -110,5 +115,6 @@ pub(crate) async fn set_owner_side(
         Ok(()) => {}
         Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, &format!("persist: {e}")),
     }
+    state.mac_tools_refresh.notify_one();
     Json(json!({ "status": "ok", "owner": crate::server::people::current().owner })).into_response()
 }

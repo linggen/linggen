@@ -15,7 +15,7 @@ use std::time::Duration;
 use crate::engine::skill::tools::remote_tools;
 use crate::engine::skill::Skill;
 use crate::engine::skill_tool::{SkillParamDef, SkillToolDef};
-use crate::server::{api, ServerState};
+use crate::server::{api, people, person::Person, ServerState};
 
 pub const TOPIC: &str = "mac";
 pub const OP: &str = "tools";
@@ -26,15 +26,18 @@ const TICK: Duration = Duration::from_secs(300);
 /// Keep `mac/tools` current for as long as the daemon runs.
 pub async fn publish_loop(state: Arc<ServerState>) {
     let mut last: Option<Vec<Value>> = None;
+    let mut sharing_changed = false;
     loop {
         let tools = catalog(&state.skills.list_skills().await);
-        if last.as_ref() != Some(&tools) {
+        if sharing_changed || last.as_ref() != Some(&tools) {
             publish(&state, &tools);
             last = Some(tools);
         }
-        // A load or reload, else the tick (a skill's files can change
-        // without either, and the next activation's reload rings late).
-        let _ = tokio::time::timeout(TICK, state.skills.changed()).await;
+        // A load or reload, the fallback tick, or a People page app edit.
+        sharing_changed = tokio::select! {
+            _ = tokio::time::timeout(TICK, state.skills.changed()) => false,
+            _ = state.mac_tools_refresh.notified() => true,
+        };
     }
 }
 
@@ -48,6 +51,28 @@ fn publish(state: &Arc<ServerState>, tools: &[Value]) {
     api::topic::retain(TOPIC, OP, &payload);
     api::topic::publish_topic(state, TOPIC, OP, payload);
     tracing::info!("[mac_tools] published {} remote tools", tools.len());
+}
+
+/// The catalog view registered at the topic delivery seam (`api::topic`).
+pub(super) fn for_person(mut payload: Value, person: &Person) -> Value {
+    if person.is_owner() {
+        return payload;
+    }
+    let Some(tools) = payload.get_mut("tools").and_then(Value::as_array_mut) else {
+        return payload;
+    };
+    // A peer that has not named a device is not a signed-out phone.
+    if person.is_no_one() {
+        tools.clear();
+        return payload;
+    }
+    let people = people::current();
+    tools.retain(|tool| {
+        tool["app"]
+            .as_str()
+            .is_some_and(|app| people.may_use_app(person, app))
+    });
+    payload
 }
 
 /// Every skill's remote tools, in a stable order (skill, then declaration).

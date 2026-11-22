@@ -1120,6 +1120,7 @@ mod tests {
                 ),
                 ("src/server/api/skills.rs", 1, "GET /api/skills"),
                 ("src/server/rtc/page_state.rs", 1, "the page state's apps"),
+                ("src/server/mac_tools.rs", 1, "the phone's tool catalog"),
             ],
         );
         only_here_and(

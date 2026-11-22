@@ -1,7 +1,9 @@
 //! The typed payloads must put on the wire exactly what the old `json!`
 //! objects did — the UI reads these keys by name.
 
-use super::map_server_event_to_ui_message as map;
+fn map(event: ServerEvent, seq: u64) -> Option<crate::engine::events::UiEvent> {
+    super::map_server_event_to_ui_message(event, seq, &crate::server::person::owner())
+}
 use crate::engine::events::ServerEvent;
 use serde_json::json;
 
@@ -255,7 +257,8 @@ fn room_chat_reaches_a_page_only_when_rooms_are_on() {
         avatar_url: None,
         text: "hi".into(),
     };
-    assert!(super::map_event(chat(), 1, false).is_none());
-    let on = super::map_event(chat(), 1, true).expect("on: mapped");
+    let owner = crate::server::person::owner();
+    assert!(super::map_event(chat(), 1, false, &owner).is_none());
+    let on = super::map_event(chat(), 1, true, &owner).expect("on: mapped");
     assert_eq!(on.kind, "room_chat");
 }
