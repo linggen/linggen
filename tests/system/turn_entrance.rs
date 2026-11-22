@@ -415,21 +415,28 @@ async fn a_continue_turn_on_a_rebuilt_engine_runs_on_the_members_kept_model() {
     assert_eq!(call(&w, Agent::Ling, 1).model(), "fake-eye-1");
 }
 
-/// On the live engine a task's end runs on the model the last turn left it
-/// on, which is the kept one — before and after the model is chosen for it.
+/// The owner's task end runs on the same kept model as the typed turn,
+/// including when the session engine was rebuilt for the notice.
 #[tokio::test]
-async fn a_task_end_turn_on_the_live_engine_runs_on_the_members_kept_model() {
-    let w = World::start(Setup::default().setting_off().script(
-        Agent::Ling,
-        vec![
-            tool("Bash", json!({"cmd": "sleep 2; echo finished", "run_in_background": true})),
-            text("Started it."),
-            text("Noted the end."),
-        ],
-    ))
-    .await;
-    let sid = keeps_the_eye_model(&w).await;
-    first_turn(&w, &sid).await;
-    until_calls(&w, Agent::Ling, 3).await;
-    assert_eq!(call(&w, Agent::Ling, 2).model(), "fake-eye-1");
+async fn an_owners_task_end_runs_on_the_members_kept_model() {
+    for cold in [false, true] {
+        let mut setup = Setup::default().setting_off().script(
+            Agent::Ling,
+            vec![
+                tool("Bash", json!({"cmd": "sleep 2; echo finished", "run_in_background": true})),
+                text("Started it."),
+                text("Noted the end."),
+            ],
+        );
+        if cold {
+            setup.env.push(("LINGGEN_TEST_COLD_TASK_END", "1".into()));
+        }
+        let w = World::start(setup).await;
+        let sid = keeps_the_eye_model(&w).await;
+        first_turn(&w, &sid).await;
+        until_calls(&w, Agent::Ling, 3).await;
+        let typed = call(&w, Agent::Ling, 0);
+        assert_eq!(typed.model(), "fake-eye-1");
+        assert_eq!(call(&w, Agent::Ling, 2).model(), typed.model(), "cold={cold}");
+    }
 }

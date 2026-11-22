@@ -157,8 +157,9 @@ async fn another_persons_question_reaches_neither_the_builders_thread_nor_her_vo
         .script(
             Agent::Ling,
             vec![
-                tool("Bash", json!({"cmd": "sleep 3; echo moved", "run_in_background": true})),
-                text("Started."),
+                // The local owner opens this person's day and starts the
+                // question directly. Task ends must use the person's own
+                // policy, regardless of who opened their day.
                 tool(
                     "AskUser",
                     json!({"questions": [{"question": "FRIEND-QUESTION: which box?", "header": "Box",
@@ -184,7 +185,6 @@ async fn another_persons_question_reaches_neither_the_builders_thread_nor_her_vo
     let sent = w.api.post("/api/chat", body).await;
     let theirs = sent["session_id"].as_str().unwrap_or_default().to_string();
     assert_ne!(theirs, mine, "{sent}");
-    crate::day_session::grant_until_as(&w, "porter", 2, Some("u-friend")).await;
     let away =
         json!({"surface": "user-turn", "focused": false, "typing": false, "idle_ms": 600_000});
     w.api.post("/api/presence", away).await;

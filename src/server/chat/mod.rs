@@ -54,7 +54,7 @@ pub(crate) use admin::{
 };
 pub(crate) use handler::{
     chat_handler, mark_steered, question_open_for_queued, queued_session, run_session_turn, ModelBy,
-    say_in_app, say_in_session,
+    say_in_app, say_in_session, typed_spec,
 };
 pub(crate) use light::{reply_in_session, reply_now};
 pub(crate) use plan_flow::{approve_plan_handler, edit_plan_handler, reject_plan_handler};

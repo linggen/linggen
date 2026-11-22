@@ -198,7 +198,7 @@ impl People {
     /// Why `person`'s next turn must not start, given the tokens `used` they
     /// have used today; `None` for the owner and for a turn that may.
     pub(crate) fn refusal_for(&self, person: &Person, used: u64) -> Option<Refusal> {
-        if !person.is_another() {
+        if person.is_owner() {
             return None;
         }
         let settings = self.settings_of(person);
@@ -551,14 +551,13 @@ pub(crate) fn person_changed(before: &Person, after: &Person) {
 
 // ---- turns -------------------------------------------------------------
 
-/// The household person a request is from, when it is one: not the owner's
-/// (`user_type` "owner", or a phone that is the owner's), not a room's
-/// consumer (the room's config holds it), and not no one.
+/// The person under the household policy at the typed door: not the owner
+/// or a room consumer. An unnamed peer has no models and cannot run.
 pub(crate) fn household_person(user_type: &str, user_id: Option<&str>) -> Option<Person> {
     if matches!(user_type, "owner" | "consumer") {
         return None;
     }
-    Some(crate::server::person::asking(user_id)).filter(Person::is_another)
+    Some(crate::server::person::asking(user_id)).filter(|person| !person.is_owner())
 }
 
 /// The household person a session is kept for, when it is one: whose
@@ -610,7 +609,15 @@ pub(crate) async fn turn_refusal(
     state: &crate::server::ServerState,
     person: &Person,
 ) -> Option<Refusal> {
-    let people = current();
+    turn_refusal_with(state, person, &current()).await
+}
+
+/// Check the budget against the same reading used to set the turn's ceiling.
+pub(crate) async fn turn_refusal_with(
+    state: &crate::server::ServerState,
+    person: &Person,
+    people: &People,
+) -> Option<Refusal> {
     let used = state.token_usage.lock().await.used_by(&person.wire());
     people.refusal_for(person, used.max(0) as u64)
 }
@@ -1132,9 +1139,10 @@ mod tests {
         );
         only_here_and(
             "people::installed(",
-            // (`chat::handler` asks too, for a turn's ceiling; its own test
-            // module comes first in the file, so this walk cannot count it.)
-            &[("src/server/api/people.rs", 1, "GET /api/people")],
+            &[
+                ("src/server/api/people.rs", 1, "GET /api/people"),
+                ("src/server/chat/policy.rs", 1, "the shared ceiling for a person's turn"),
+            ],
         );
         only_here_and(
             "commit_device(",
