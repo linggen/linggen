@@ -5,6 +5,7 @@
 //! (the words a skill writes as `tier:`) meets each grant the skill gives
 //! its folder and each level a caller stands at.
 
+use super::outside::{host_tools, run_for_host};
 use super::tools::{pet_tools, remote_tools, run_at, run_for_pet, Refusal};
 use super::params::SessionParams;
 use super::{Skill, SkillSource};
@@ -268,4 +269,92 @@ fn what_is_listed_to_the_companion_is_what_she_may_call_now() {
     let names = |asked: bool| -> Vec<String> { pet_tools(&s, asked).map(|t| t.name.clone()).collect() };
     assert_eq!(names(false), ["ATRead", "PTRead"]);
     assert_eq!(names(true), ["ATRead", "PTRead", "ATEdit", "ATWrite"]);
+}
+
+/// What an outside host (the MCP door's `app` tool) is to an action
+/// offered `anywhere`, by its class and the app's own grant: a read and an
+/// edit action run under the grant; a destructive one never, the person
+/// does it in the app; one above an edit needs, or with no class, never.
+/// What is hers alone or kept in the app is not offered to it at all.
+#[tokio::test]
+async fn an_outside_host_runs_an_anywhere_action_by_its_class_and_the_apps_grant() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = anywhere_skill(dir.path());
+    let run = |name: String| {
+        let s = s.clone();
+        async move { run_for_host(&s, &name, &args(), &[]).await }
+    };
+    for (name, word, needs) in WORDS {
+        let at = format!("A{name} ({word:?})");
+        let got = run(format!("A{name}")).await;
+        match word {
+            Some("read" | "edit" | "write") => assert!(got.is_ok(), "{at}: {got:?}"),
+            Some("destructive") => match got {
+                Err(Refusal::NotForHost(why)) => assert_eq!(
+                    why,
+                    format!("'A{name}' of 'zz-door' destroys what it acts on: the person does this themselves, in the app"),
+                    "{at}"
+                ),
+                other => panic!("{at}: {other:?}"),
+            },
+            // Above what the app's own grant covers: refused by the grant.
+            _ => assert!(
+                matches!(got, Err(Refusal::BeyondGrant(_))) && needs > PermissionMode::Edit,
+                "{at}: {got:?}"
+            ),
+        }
+        for kept in [format!("P{name}"), format!("H{name}")] {
+            let got = run(kept.clone()).await;
+            assert!(
+                matches!(&got, Err(Refusal::NotForPet(why)) if why.contains("does not offer")),
+                "{kept}: {got:?}"
+            );
+        }
+    }
+    let names: Vec<&str> = host_tools(&s, &[]).iter().map(|t| t.name.as_str()).collect();
+    assert_eq!(names, WORDS.iter().map(|(n, _, _)| format!("A{n}")).collect::<Vec<_>>());
+}
+
+/// Above the grant the app gives an outside host nothing, an admin grant
+/// included: the most it stands at is what an edit needs.
+#[tokio::test]
+async fn an_outside_host_never_runs_above_an_edit_even_where_the_app_grants_admin() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = {
+        let text = format!(
+            "---\nname: zz-door\ndescription: t\npermission:\n  paths:\n    - {{ path: \"{}\", mode: admin }}\ntools:\n  - name: Root\n    description: d\n    cmd: \"echo ok\"\n    tier: admin\n    reach: anywhere\n  - name: Plain\n    description: d\n    cmd: \"echo ok\"\n    reach: anywhere\n---\nbody\n",
+            dir.path().to_string_lossy()
+        );
+        let mut s = crate::extensions::skills::parse_skill_text(&text, SkillSource::Project).unwrap();
+        s.skill_dir = Some(dir.path().to_path_buf());
+        s
+    };
+    for name in ["Root", "Plain"] {
+        let got = run_for_host(&s, name, &args(), &[]).await;
+        assert!(
+            matches!(got, Err(Refusal::BeyondLevel { level: PermissionMode::Edit, needs: PermissionMode::Admin })),
+            "{name}: {got:?}"
+        );
+    }
+}
+
+/// An app kept private is closed to an outside host until it is opened:
+/// not listed, not run, and the reason names the setting.
+#[tokio::test]
+async fn a_private_app_is_closed_to_an_outside_host_until_opened() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = anywhere_skill(dir.path());
+    s.private_talk = true;
+    assert!(host_tools(&s, &[]).is_empty());
+    assert!(host_tools(&s, &["other".to_string()]).is_empty());
+    match run_for_host(&s, "ATRead", &args(), &[]).await {
+        Err(Refusal::NotYours(why)) => assert!(why.contains("Settings → Tools & MCP"), "{why}"),
+        other => panic!("{other:?}"),
+    }
+    let open = ["zz-door".to_string()];
+    assert!(!host_tools(&s, &open).is_empty());
+    assert!(run_for_host(&s, "ATRead", &args(), &open).await.is_ok());
+    // A user-only app is no app to a model, opened or not.
+    s.disable_model_invocation = true;
+    assert!(matches!(run_for_host(&s, "ATRead", &args(), &open).await, Err(Refusal::NotYours(_))));
 }

@@ -47,6 +47,8 @@ pub enum Refusal {
         needs: PermissionMode,
     },
     NotForPet(String),
+    /// What an outside host (the MCP door's `app` tool) may not run, and why.
+    NotForHost(String),
     /// The app is not one the asking session's person may use, or the
     /// session keeps it out.
     NotYours(String),
@@ -74,6 +76,7 @@ impl std::fmt::Display for Refusal {
             | Refusal::NotRunnable(m)
             | Refusal::BeyondGrant(m)
             | Refusal::NotForPet(m)
+            | Refusal::NotForHost(m)
             | Refusal::NotYours(m)
             | Refusal::ByGate(m)
             | Refusal::NeedsPerson(m)
@@ -552,7 +555,7 @@ fn within_grant(skill: &Skill, tool: &SkillToolDef, cwd: &Path) -> Result<(), Re
     judge(own, &action).allowed_or_refusal(&action)
 }
 
-fn action_of<'a>(skill: &'a Skill, tool: &'a SkillToolDef, cwd: &'a Path) -> Action<'a> {
+pub(super) fn action_of<'a>(skill: &'a Skill, tool: &'a SkillToolDef, cwd: &'a Path) -> Action<'a> {
     Action {
         app: &skill.name,
         tool: &tool.name,
@@ -562,7 +565,7 @@ fn action_of<'a>(skill: &'a Skill, tool: &'a SkillToolDef, cwd: &'a Path) -> Act
 }
 
 /// What the skill's own permission block grants the folder its tools run in.
-fn granted_on(skill: &Skill, cwd: &Path) -> PermissionMode {
+pub(super) fn granted_on(skill: &Skill, cwd: &Path) -> PermissionMode {
     let grants: Vec<PathMode> = skill
         .permission
         .iter()
