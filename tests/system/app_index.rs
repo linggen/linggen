@@ -12,10 +12,15 @@ use serde_json::json;
 /// Install a made-up app `name` whose tools are `tools` (SKILL.md `tools:`
 /// entries, already indented), with an edit grant on its own folder.
 pub(crate) async fn install_app(w: &World, name: &str, about: &str, tools: &str) {
+    install_app_with(w, name, about, "", tools).await
+}
+
+/// [`install_app`] with more frontmatter lines (`private-talk: true\n`, say).
+pub(crate) async fn install_app_with(w: &World, name: &str, about: &str, front: &str, tools: &str) {
     let dir = w.home.linggen_home().join(format!("skills/{name}"));
     std::fs::create_dir_all(&dir).expect("app dir");
     let text = format!(
-        "---\nname: {name}\ndescription: {about}\ncwd: {dir}\npermission:\n  paths:\n    - {{ path: {dir}, mode: edit }}\ntools:\n{tools}---\n\nYou run {name}.\n",
+        "---\nname: {name}\ndescription: {about}\ncwd: {dir}\n{front}permission:\n  paths:\n    - {{ path: {dir}, mode: edit }}\ntools:\n{tools}---\n\nYou run {name}.\n",
         dir = dir.display()
     );
     std::fs::write(dir.join("SKILL.md"), text).expect("SKILL.md");

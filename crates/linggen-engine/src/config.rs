@@ -38,6 +38,12 @@ pub struct Config {
     /// `doc/mcp-client-spec.md`.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub mcp_servers: std::collections::BTreeMap<String, crate::mcp_client::McpServerConfig>,
+    /// The private apps the owner opened to agents outside Linggen (Claude
+    /// Code, Codex) at the MCP door's `app` tool — Settings → Tools & MCP.
+    /// Absent: none. Changed only by `PUT /api/mcp/outside-apps` at this
+    /// Mac; a saved config keeps what it holds (`api::config`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub outside_apps: Vec<String>,
     /// What was wrong in the file and was set right on load rather than
     /// refusing the whole config (a bad model `price` is dropped, that
     /// model alone). Runtime-only — never read from or written to the file —
@@ -911,6 +917,7 @@ impl Default for Config {
             language: None,
             pet: PetConfig::default(),
             mcp_servers: Default::default(),
+            outside_apps: Vec::new(),
             problems: Vec::new(),
         }
     }

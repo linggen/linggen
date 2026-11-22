@@ -9,6 +9,7 @@
 //! (`support::guard`). A failed test keeps its world and prints where;
 //! `LINGGEN_SYSTEM_KEEP=1` keeps every one.
 
+mod app_door;
 mod app_index;
 mod assets;
 mod background;

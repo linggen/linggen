@@ -28,6 +28,9 @@ pub(crate) async fn update_config_api(
     State(state): State<Arc<ServerState>>,
     Json(mut new_config): Json<Config>,
 ) -> impl IntoResponse {
+    // Which private apps outside agents may use is set at this Mac alone
+    // (`outside_apps::set`): a saved config, from any page, keeps it.
+    new_config.outside_apps = state.manager.get_config_snapshot().await.outside_apps;
     if let Err(e) = take_credentials(&mut new_config, &credentials::credentials_file()) {
         return (StatusCode::BAD_REQUEST, e).into_response();
     }

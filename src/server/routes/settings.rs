@@ -48,6 +48,10 @@ pub(super) fn routes() -> Routes {
         // Session list / agents / agent-runs come via page_state only (no GET route).
         .route("/api/models", get(list_models_api))
         .route("/api/mcp", get(api::config::list_mcp_api))
+        .route(
+            "/api/mcp/outside-apps",
+            get(api::outside_apps::list).put(api::outside_apps::set),
+        )
         // Memory for off-machine callers — the phone, over the WebRTC tunnel.
         // One route for all of ling-mem's verbs; see `api::memory`.
         .route("/api/memory/{verb}", post(api::memory::passthrough))

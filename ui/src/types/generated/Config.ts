@@ -30,4 +30,11 @@ pet: PetConfig,
  * every other host writes, so an entry copies across unchanged. See
  * `doc/mcp-client-spec.md`.
  */
-mcp_servers?: { [key in string]: McpServerConfig }, };
+mcp_servers?: { [key in string]: McpServerConfig }, 
+/**
+ * The private apps the owner opened to agents outside Linggen (Claude
+ * Code, Codex) at the MCP door's `app` tool — Settings → Tools & MCP.
+ * Absent: none. Changed only by `PUT /api/mcp/outside-apps` at this
+ * Mac; a saved config keeps what it holds (`api::config`).
+ */
+outside_apps?: Array<string>, };

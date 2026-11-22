@@ -736,6 +736,39 @@
           "op"
         ]
       }
+    },
+    {
+      "name": "app",
+      "description": "Use what the person's apps do on this Mac, such as playing music: op=list shows each app with what it is for and its actions; with app, that app's actions with their arguments. op=call runs one (app, action, args) and returns its result. A destructive action is refused: the person does it in the app. A private app answers only once the owner opens it to outside agents in Linggen's Settings.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "list",
+              "call"
+            ],
+            "description": "list: app? · call: app, action, args?"
+          },
+          "app": {
+            "type": "string",
+            "description": "op=list: An app's name; omit to list every app that offers an action · op=call: The app's name"
+          },
+          "action": {
+            "type": "string",
+            "description": "The action to run, as op=list names it"
+          },
+          "args": {
+            "type": "object",
+            "description": "The action's arguments, as op=list shows them"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "op"
+        ]
+      }
     }
   ]
 }

@@ -5,8 +5,8 @@
 //! (`ling_mem::catalog`); the door's handlers read this table and keep no
 //! list of names of their own.
 //!
-//! `/mcp` publishes it as twelve tools — memory 5, agents 4, browser 3 —
-//! with a view per caller: this machine sees all twelve, an approved
+//! `/mcp` publishes it as thirteen tools — memory 5, agents 4, browser 3,
+//! apps 1 — with a view per caller: this machine sees all thirteen, an approved
 //! computer the five memory tools without `dream_run`. The names published
 //! before the tools were folded are [`RETIRED`] (memory's are memory's):
 //! a call by one is told to update the plugin.
@@ -38,6 +38,8 @@ pub(crate) enum Dispatch {
     DreamRun,
     /// A memory verb, through the memory this process hosts.
     Memory(&'static str),
+    /// An app's actions, for an agent outside Linggen (`mcp::app`).
+    App(AppOp),
 }
 
 /// How a bridge answer reaches the caller.
@@ -60,6 +62,15 @@ pub(crate) enum AgentOp {
     Permit,
     Stop,
     Close,
+}
+
+/// The `app` tool's two ops.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum AppOp {
+    /// The apps with actions an outside agent may use, or one app's.
+    List,
+    /// One of an app's actions, run.
+    Call,
 }
 
 /// A host's permission modes as `agent_run`'s description names them, made
@@ -150,6 +161,11 @@ const TOOLS: &[ToolDoc] = &[
     ToolDoc {
         name: "browser_act",
         description: "Act in the controlled tab: click (ref or coordinate), type, key, scroll, wait (load, selector, or ms), tab_switch, tab_close. Read the page again after it changes. Chrome may ask the user to allow this site; they approve or decline there.",
+        implicit_op: None,
+    },
+    ToolDoc {
+        name: "app",
+        description: "Use what the person's apps do on this Mac, such as playing music: op=list shows each app with what it is for and its actions; with app, that app's actions with their arguments. op=call runs one (app, action, args) and returns its result. A destructive action is refused: the person does it in the app. A private app answers only once the owner opens it to outside agents in Linggen's Settings.",
         implicit_op: None,
     },
 ];
@@ -645,6 +661,47 @@ const BRANCHES: &[Branch<Dispatch>] = &[
         timeout_ms: 0,
         views: Views::LOCAL,
         dispatch: Dispatch::Agent(AgentOp::Close),
+    },
+    Branch {
+        tool: "app",
+        op: "list",
+        note: "",
+        schema: || json!({
+            "type": "object",
+            "properties": {
+                "app": {"type": "string", "description": "An app's name; omit to list every app that offers an action"}
+            }
+        }),
+        extra: None,
+        hidden: &[],
+        stamps: &[],
+        fixed: &[],
+        check: None,
+        timeout_ms: 0,
+        views: Views::LOCAL,
+        dispatch: Dispatch::App(AppOp::List),
+    },
+    Branch {
+        tool: "app",
+        op: "call",
+        note: "",
+        schema: || json!({
+            "type": "object",
+            "properties": {
+                "app": {"type": "string", "description": "The app's name"},
+                "action": {"type": "string", "description": "The action to run, as op=list names it"},
+                "args": {"type": "object", "description": "The action's arguments, as op=list shows them"}
+            },
+            "required": ["app", "action"]
+        }),
+        extra: None,
+        hidden: &[],
+        stamps: &[],
+        fixed: &[],
+        check: None,
+        timeout_ms: 0,
+        views: Views::LOCAL,
+        dispatch: Dispatch::App(AppOp::Call),
     },];
 
 /// One side's part of the catalogue: its tools, branches and retired names.
@@ -791,9 +848,9 @@ mod tests {
             .collect()
     }
 
-    /// The door, from the one table: memory 5, agents 4, browser 3.
+    /// The door, from the one table: memory 5, agents 4, browser 3, apps 1.
     #[test]
-    fn the_door_is_twelve_tools() {
+    fn the_door_is_thirteen_tools() {
         assert_eq!(
             names(View::Local),
             [
@@ -809,6 +866,7 @@ mod tests {
                 "browser_open",
                 "browser_read",
                 "browser_act",
+                "app",
             ]
         );
     }

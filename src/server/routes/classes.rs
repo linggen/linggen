@@ -151,6 +151,8 @@ pub(crate) const CLASSES: &[(&str, &str, RouteClass)] = &[
     ("POST", "/api/agent-file", At(Admin)),
     ("DELETE", "/api/agent-file", At(Admin)),
     ("GET", "/api/mcp", At(Admin)),
+    ("GET", "/api/mcp/outside-apps", At(Admin)),
+    ("PUT", "/api/mcp/outside-apps", At(Admin)),
     ("GET", "/api/config", At(Admin)),
     ("POST", "/api/config", At(Admin)),
     ("GET", "/api/credentials", At(Admin)),
