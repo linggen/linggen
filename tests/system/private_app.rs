@@ -320,6 +320,107 @@ async fn a_private_apps_slash_command_in_the_day_is_carried_to_its_own_chat() {
     );
 }
 
+async fn private_call_from_plain_chat(invocation: &str) {
+    let setup = Setup::default().script(
+        Agent::Ling,
+        vec![
+            tool("agent_chat", json!({"to": "yinyue", "message": "LEDGER-ONLY news"})),
+            text("LEDGER-REPLY kept here."),
+        ],
+    );
+    let (w, _) = day_world_at(12, setup).await;
+    let dir = w.home.linggen_home().join("skills/ledger");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("SKILL.md"),
+        "---\nname: ledger\ndescription: Keeps a ledger.\nallowed-tools: [agent_chat]\n\
+         private-talk: true\ntrigger: 'ledger:'\n---\n\nYou keep the ledger.\n",
+    )
+    .unwrap();
+    w.api.post("/api/skills/reload", json!({})).await;
+    let plain = w.api.create_session(json!({"title": "Plain chat"})).await;
+    let before = w.raw_rows(&plain);
+    let mark = w.mark();
+    let sent = say(&w, &plain, None, invocation).await;
+    let at = sent["session_id"].as_str().expect("turn session");
+    assert_ne!(at, plain, "private call stayed in the plain chat: {sent}");
+    w.finish_run(at, Agent::Ling, mark).await;
+
+    assert_eq!(w.raw_rows(&plain), before, "the source chat gained rows");
+    assert!(ids(&w.api.get("/api/skill-sessions?skill=ledger").await).contains(&at.to_string()));
+    let rows = day_text(&w, at);
+    assert!(rows.contains(invocation) && rows.contains("LEDGER-REPLY kept here."), "{rows}");
+    let calls = w.model.calls_of(Agent::Ling);
+    assert!(calls[0].text().contains(LEDGER_RULES));
+    let after = calls[1].text();
+    // This refusal names the private mark and comes from the outbound gate.
+    assert!(after.contains("refused: ledger keeps what is said in it to itself"), "{after}");
+}
+
+#[tokio::test]
+async fn a_private_apps_slash_command_from_plain_chat_runs_in_its_own_chat() {
+    private_call_from_plain_chat("/ledger LEDGER-ONLY count the shares").await;
+}
+
+#[tokio::test]
+async fn a_private_apps_trigger_from_plain_chat_runs_in_its_own_chat() {
+    private_call_from_plain_chat("ledger: LEDGER-ONLY count the shares").await;
+}
+
+#[tokio::test]
+async fn an_ordinary_apps_slash_command_from_plain_chat_runs_in_place() {
+    let setup = Setup::default().script(Agent::Ling, vec![text("ORDINARY-REPLY")]);
+    let (w, _) = day_world_at(12, setup).await;
+    crate::day_session::install_app(&w, "porter", "Read", false).await;
+    let plain = w.api.create_session(json!({"title": "Plain chat"})).await;
+    let mark = w.mark();
+    let sent = say(&w, &plain, None, "/porter move the box").await;
+    assert_eq!(sent["session_id"], json!(plain));
+    w.finish_run(&plain, Agent::Ling, mark).await;
+    assert!(day_text(&w, &plain).contains("ORDINARY-REPLY"));
+    assert!(w.model.calls_of(Agent::Ling)[0].text().contains("Do what you are asked."));
+}
+
+#[test]
+fn only_the_chat_entrance_chooses_the_session_for_a_named_private_app() {
+    use std::path::Path;
+
+    fn check(dir: &Path, root: &Path) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                check(&path, root);
+                continue;
+            }
+            if path.extension().and_then(|ext| ext.to_str()) != Some("rs") {
+                continue;
+            }
+            let rel = path.strip_prefix(root).unwrap().to_str().unwrap();
+            let text = std::fs::read_to_string(&path).unwrap();
+            let code = text.as_str();
+            let (route, choose, recognize, flag) = match rel {
+                "chat/handler.rs" => (2, 1, 1, 1),
+                "day_session.rs" => (0, 1, 1, 1),
+                // The avatar recognizes a name for its voice rule, but sends
+                // typed lines through the chat entrance without a session.
+                "api/yinyue.rs" => (0, 0, 1, 0),
+                _ => (0, 0, 0, 0),
+            };
+            for (pattern, count) in [
+                ("route_chat_session(", route),
+                ("own_chat(", choose),
+                ("private_app_named(", recognize),
+                (".private_talk", flag),
+            ] {
+                assert_eq!(code.matches(pattern).count(), count, "{rel}: {pattern}");
+            }
+        }
+    }
+
+    let server = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/server");
+    check(&server, &server);
+}
+
 /// In the day, Ling's `Skill` tool is refused a private app with a reason
 /// she reads: its SKILL.md never reaches the day, nor its rows.
 #[tokio::test]

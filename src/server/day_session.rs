@@ -50,7 +50,8 @@ pub(crate) async fn takes(manager: &AgentManager, app: Option<&str>) -> bool {
 /// The private app a person's words take up by name — `/name …`, or a
 /// trigger prefix the app claims — with the setting on; `None` otherwise.
 /// `words`: the message without the `@name` that addressed it, read as the
-/// turn's dispatch reads it. In a day it is carried to that app's own chat.
+/// turn's dispatch reads it. The chat entrance chooses the app's session;
+/// the avatar's door only checks whether it can carry the line there.
 pub(crate) async fn private_app_named(manager: &AgentManager, words: &str) -> Option<String> {
     if !enabled(manager).await {
         return None;
@@ -59,8 +60,8 @@ pub(crate) async fn private_app_named(manager: &AgentManager, words: &str) -> Op
         true => crate::server::chat::slash_command(words).0.to_string(),
         false => manager.skills.match_trigger(words).await?.0,
     };
-    let skill = manager.skills.get_skill(&name).await?;
-    skill.private_talk.then_some(name)
+    let skill = manager.skills.reload_one(&name).await?;
+    skill.private_talk.then_some(skill.name)
 }
 
 /// The app's own chat to stand in when the person `user_id` names a day

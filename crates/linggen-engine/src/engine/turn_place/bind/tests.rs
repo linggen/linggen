@@ -301,8 +301,16 @@ async fn a_private_app_is_never_taken_up_in_a_day() {
     assert!(engine.active_skill.is_some(), "a shared app is taken up");
 
     let mut apart = engine_in(SID);
-    apart.activate_skill(private(), ActivationMode::SlashCommand).await;
-    assert!(apart.active_skill.is_some(), "outside a day it is taken up as before");
+    apart
+        .enter_place(TurnPlace::home(), None, ActivationMode::SessionBound)
+        .await;
+    let refused = apart.activate_skill(private(), ActivationMode::SlashCommand).await;
+    assert!(matches!(refused, crate::engine::ActivationOutcome::Refused));
+    assert!(apart.active_skill.is_none());
+    apart
+        .enter_place(place("zz-x", true), Some(private()), ActivationMode::SessionBound)
+        .await;
+    assert!(apart.active_skill.is_some(), "the private app is taken up at home");
 }
 
 fn engine_in(sid: &str) -> AgentEngine {

@@ -1092,7 +1092,7 @@ mod tests {
                 continue;
             }
             let text = std::fs::read_to_string(&file).unwrap();
-            let code = text.split("#[cfg(test)]").next().unwrap_or(&text);
+            let code = crate::server::lock_scan::without_tests(&text);
             let want = listed.iter().find(|(f, _, _)| *f == rel).map_or(0, |e| e.1);
             assert_eq!(
                 code.matches(pattern).count(),
@@ -1125,6 +1125,7 @@ mod tests {
                     1,
                     "the seam: every request that names an app (`judge_app`)",
                 ),
+                ("src/server/chat/handler.rs", 1, "private app named by the chat"),
                 ("src/server/api/skills.rs", 1, "GET /api/skills"),
                 ("src/server/rtc/page_state.rs", 1, "the page state's apps"),
                 ("src/server/mac_tools.rs", 1, "the phone's tool catalog"),
