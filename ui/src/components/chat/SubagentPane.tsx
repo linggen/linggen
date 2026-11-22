@@ -98,8 +98,11 @@ export const SubagentPane: React.FC<Props> = ({
 
   if (!visible || items.length === 0) return null;
 
+  // A pane of the shell: its background is the shared surface token, so the
+  // day's picture shows through here as it does behind the chat (index.css,
+  // "Shell surfaces").
   return (
-    <div className="flex flex-col h-full min-h-0 border-l border-slate-200 dark:border-white/10 bg-slate-50/60 dark:bg-[#0b0b0b]">
+    <div className="flex flex-col h-full min-h-0 border-l border-slate-200 dark:border-white/10 bg-(--surface-pane)">
       <div className="flex items-center gap-1 px-2 py-1.5 border-b border-slate-200 dark:border-white/10 shrink-0">
         {open ? (
           <DetailHeader
