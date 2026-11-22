@@ -673,18 +673,27 @@ async fn app_is_refused_away_from_this_mac_and_without_a_daemon() {
 }
 
 /// No file or shell tool is at the door: no tool, and no op of one, is
-/// named as a built-in tool of Linggen's sessions.
+/// named as a built-in tool of Linggen's sessions — but the browser's three,
+/// which a session and the door are both offered from one definition
+/// (`browser_def`; `a_session_is_offered_the_doors_browser_tools_word_for_word`).
 #[test]
 fn no_built_in_tool_of_a_session_is_a_name_at_the_door() {
-    use crate::engine::tools::builtin_tier;
+    use crate::engine::tools::{browser_def, builtin_tier};
+    let shared: Vec<&str> = browser_def::TOOLS.iter().map(|t| t.name).collect();
+    for name in &shared {
+        assert!(builtin_tier(name).is_some(), "{name}: shared, so a session offers it");
+    }
     for tool in catalog().tools_list(View::Local) {
         let name = tool["name"].as_str().unwrap();
-        assert!(builtin_tier(name).is_none(), "{name} is a built-in tool's name");
+        assert!(shared.contains(&name) || builtin_tier(name).is_none(), "{name} is a built-in tool's name");
     }
     for branch in catalog().branches() {
-        for name in [branch.tool, branch.op] {
-            assert!(builtin_tier(name).is_none(), "{name} is a built-in tool's name");
-        }
+        assert!(
+            shared.contains(&branch.tool) || builtin_tier(branch.tool).is_none(),
+            "{} is a built-in tool's name",
+            branch.tool
+        );
+        assert!(builtin_tier(branch.op).is_none(), "{} is a built-in tool's name", branch.op);
     }
     for file_or_shell in ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "Skill", "Task", "RunApp", "AppTool"] {
         assert!(builtin_tier(file_or_shell).is_some(), "{file_or_shell}: the lock reads built-in names");

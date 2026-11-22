@@ -147,6 +147,37 @@ pub fn tool_call_status(failed: bool) -> &'static str {
     }
 }
 
+/// The start / done / failed words of a browser op, by its `op`.
+fn browser_op_labels(op: &str) -> (&'static str, &'static str, &'static str) {
+    match op {
+        "navigate" => ("Browsing to", "Browsed to", "Navigation failed"),
+        "page" => ("Reading page", "Read page", "Page read failed"),
+        "screenshot" => ("Capturing page", "Captured page", "Capture failed"),
+        "click" => ("Clicking", "Clicked", "Click failed"),
+        "type" => ("Typing", "Typed", "Typing failed"),
+        "key" => ("Pressing", "Pressed", "Key press failed"),
+        "scroll" => ("Scrolling", "Scrolled", "Scroll failed"),
+        "wait" => ("Waiting for page", "Waited for page", "Wait failed"),
+        "console" => ("Reading console", "Read console", "Console read failed"),
+        "tabs" | "tab_open" | "tab_switch" | "tab_close" => {
+            ("Browser tab", "Browser tab", "Browser tab action failed")
+        }
+        _ => ("Browser action", "Browser action", "Browser action failed"),
+    }
+}
+
+/// What a tab op does, in the word the status line ends with when the call
+/// names nothing more ("Browser tab: list").
+fn tab_word(op: &str) -> Option<&'static str> {
+    match op {
+        "tabs" => Some("list"),
+        "tab_open" => Some("open"),
+        "tab_switch" => Some("switch"),
+        "tab_close" => Some("close"),
+        _ => None,
+    }
+}
+
 pub(crate) fn tool_status_line(
     tool: &str,
     args: Option<&serde_json::Value>,
@@ -295,25 +326,15 @@ pub(crate) fn tool_status_line(
                 .map(|target| format!("Delegation failed: {target}"))
                 .unwrap_or_else(|| "Delegation failed".to_string()),
         },
-        n if n.starts_with("browser_") => {
+        n if crate::engine::tools::browser_def::TOOLS.iter().any(|t| t.name == n) => {
+            let op = first_string_arg(args, &["op"]).unwrap_or_default();
             let detail = first_string_arg(
                 args,
-                &["url", "keys", "text", "ref", "direction", "action", "for"],
+                &["url", "keys", "text", "ref", "direction", "for"],
             )
+            .or_else(|| tab_word(&op).map(String::from))
             .map(|v| preview_value(&v, 100));
-            let (start, done, failed) = match n {
-                "browser_navigate" => ("Browsing to", "Browsed to", "Navigation failed"),
-                "browser_readpage" => ("Reading page", "Read page", "Page read failed"),
-                "browser_screenshot" => ("Capturing page", "Captured page", "Capture failed"),
-                "browser_click" => ("Clicking", "Clicked", "Click failed"),
-                "browser_type" => ("Typing", "Typed", "Typing failed"),
-                "browser_key" => ("Pressing", "Pressed", "Key press failed"),
-                "browser_scroll" => ("Scrolling", "Scrolled", "Scroll failed"),
-                "browser_wait" => ("Waiting for page", "Waited for page", "Wait failed"),
-                "browser_readconsole" => ("Reading console", "Read console", "Console read failed"),
-                "browser_tabs" => ("Browser tab", "Browser tab", "Browser tab action failed"),
-                _ => ("Browser action", "Browser action", "Browser action failed"),
-            };
+            let (start, done, failed) = browser_op_labels(&op);
             let verb = match phase {
                 ToolStatusPhase::Start => start,
                 ToolStatusPhase::Done => done,

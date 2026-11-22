@@ -587,6 +587,44 @@ mod tests {
         }
     }
 
+    /// The browser tools are defined once (`engine::tools::browser_def`): a
+    /// Linggen session is offered the same three the door publishes, name,
+    /// text and schema word for word — and no other browser tool. A second
+    /// copy of any of them, here or in the session, fails this.
+    #[test]
+    fn a_session_is_offered_the_doors_browser_tools_word_for_word() {
+        use crate::engine::tool_registry::ToolRegistry;
+        use crate::engine::tools::Tools;
+        let session = ToolRegistry::new(Tools::new(std::path::PathBuf::from(".")).unwrap())
+            .oai_tool_definitions(None);
+        let offered: Vec<(String, String, serde_json::Value)> = session
+            .iter()
+            .filter(|d| d["function"]["name"].as_str().is_some_and(|n| n.to_lowercase().starts_with("browser_")))
+            .map(|d| {
+                let f = &d["function"];
+                (
+                    f["name"].as_str().unwrap().to_string(),
+                    f["description"].as_str().unwrap().to_string(),
+                    f["parameters"].clone(),
+                )
+            })
+            .collect();
+        let door: Vec<(String, String, serde_json::Value)> = catalog()
+            .tools_list(ling_mem::catalog::View::Local)
+            .iter()
+            .filter(|t| t["name"].as_str().is_some_and(|n| n.starts_with("browser_")))
+            .map(|t| {
+                (
+                    t["name"].as_str().unwrap().to_string(),
+                    t["description"].as_str().unwrap().to_string(),
+                    t["inputSchema"].clone(),
+                )
+            })
+            .collect();
+        assert_eq!(door.len(), 3, "the door's browser tools");
+        assert_eq!(offered, door);
+    }
+
     /// `agent_run` publishes `HostMode`'s words, and its description names
     /// each of them, none left as a placeholder.
     #[test]

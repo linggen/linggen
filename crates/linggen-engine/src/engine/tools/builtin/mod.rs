@@ -44,11 +44,6 @@ pub use send_message::*;
 pub use web::*;
 pub use write::*;
 
-use super::browser_tool::{
-    BrowserClickTool, BrowserKeyTool, BrowserNavigateTool, BrowserReadConsoleTool,
-    BrowserReadPageTool, BrowserScreenshotTool, BrowserScrollTool, BrowserTabsTool,
-    BrowserTypeTool, BrowserWaitTool,
-};
 use super::{ToolCall, ToolResult, Tools};
 use crate::engine::permission::PermissionMode;
 use anyhow::Result;
@@ -135,7 +130,7 @@ pub trait Tool: Send + Sync {
 /// Static registry of built-in tools. Constructed once on first access.
 pub(super) fn registry() -> &'static [Arc<dyn Tool>] {
     static REGISTRY: LazyLock<Vec<Arc<dyn Tool>>> = LazyLock::new(|| {
-        vec![
+        let mut all: Vec<Arc<dyn Tool>> = vec![
             Arc::new(GlobTool),
             Arc::new(ReadTool),
             Arc::new(GrepTool),
@@ -171,20 +166,12 @@ pub(super) fn registry() -> &'static [Arc<dyn Tool>] {
             // at runtime rather than compiled in — so there is one memory
             // surface for Linggen, Claude Code, and Codex alike instead of
             // this engine's private restatement of it.
-            // Browser_* — browser control over the bridge to the
-            // linggen-browser extension (browser-control-spec.md). Mutating
-            // actions are gated by the extension's own permission prompt.
-            Arc::new(BrowserNavigateTool),
-            Arc::new(BrowserReadPageTool),
-            Arc::new(BrowserScreenshotTool),
-            Arc::new(BrowserClickTool),
-            Arc::new(BrowserTypeTool),
-            Arc::new(BrowserKeyTool),
-            Arc::new(BrowserScrollTool),
-            Arc::new(BrowserWaitTool),
-            Arc::new(BrowserReadConsoleTool),
-            Arc::new(BrowserTabsTool),
-        ]
+        ];
+        // Browser control over the bridge to the linggen-browser extension
+        // (browser-control-spec.md): the three tools the one definition names.
+        // Mutating actions are gated by the extension's own permission prompt.
+        all.extend(super::browser_tool::tools());
+        all
     });
     &REGISTRY
 }
@@ -318,8 +305,9 @@ mod max_duration_tests {
             "agent_chat",
             "lock_paths",
             "unlock_paths",
-            "Browser_navigate",
-            "Browser_readPage",
+            "browser_open",
+            "browser_read",
+            "browser_act",
         ] {
             assert!(!tool_cacheable(name), "{name} must run every time");
         }
