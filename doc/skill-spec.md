@@ -243,7 +243,23 @@ A skill's page runs the skill's declared shell tools through `POST /api/skills/{
 
 ### Pet tools
 
-`pet: true` offers a tool to the companion (Yinyue), who calls it through her `AppTool` — `AppTool` with no `tool` lists what the installed apps offer her. The engine runs it through the same door as a page (lock, grant, cloud gate) and refuses any tool not marked `pet: true` or whose `tier` is above `read`: she reads an app's state, never changes it. A pet tool is hers alone: no other member's model is offered it (the skill's lead included); at a shared table she has it where `place.yinyue.tools` names it.
+`pet: true` offers a read tool to the companion (Yinyue), who calls it through her `AppTool` — `AppTool` with an `app` and no `tool` lists what that app offers her. The engine runs it through the same door as a page (lock, grant, cloud gate) and refuses a `pet` tool whose `tier` is above `read`: `pet` alone is a read, never a change. A pet tool is hers alone: no other member's model is offered it (the skill's lead included, `AppTool` included); at a shared table she has it where `place.yinyue.tools` names it.
+
+### Reach: offered anywhere
+
+`reach: here | anywhere` on a tool says where it is offered. `here` (the default, and what a tool with no `reach` is) is the app's own session only. `anywhere` also offers it from any other session of the owner's — through `AppTool`, which a plain chat, the daily session and Yinyue have — and to Yinyue:
+
+```yaml
+  - name: Play
+    description: Play a song on this Mac.
+    cmd: "bash $SKILL_DIR/scripts/play.sh {{what}}"
+    tier: edit
+    reach: anywhere
+```
+
+The prompt carries a short index of such apps (`## Apps you can reach`: one line each — name, its description cut to one line, the names of its `anywhere` actions), so a model knows that "play" is in this app and asks `AppTool{app}` for the actions' arguments only when it needs them. An app with no `anywhere` action adds no line and nothing to any tool schema. What a caller may then run is the tool's class (`tier:`), judged in one place (`permission-spec.md` § App actions), where the app runs — its own folder, under the grants its own `permission` block declares there, as its own session holds them (the caller's session table is not changed): a read passes; a change needs edit there; a destructive action always asks the person. A turn a ceiling holds (another device's, a person's) reaches nothing in Linggen's own folder, which holds every installed app: from such a turn no app is reached through `AppTool`. For Yinyue: a read; a change only in a turn the person started by asking her, never in one she started herself; a destructive action never — the person does that in the app.
+
+What does not reach through `AppTool`, whatever `reach` says: a person's turn is held to the apps the owner gave them; a private app (`private-talk: true`) from the day's session, which keeps it out; a user-only app (`disable-model-invocation: true`); an app that keeps the caller away (`place.<agent>.absent_until`); a mission and an `agent_run` delegate (they have no `AppTool`). A tool that is `page_only` cannot be `anywhere` — the skill is refused at load.
 
 ### Remote tools
 

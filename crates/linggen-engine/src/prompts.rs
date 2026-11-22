@@ -20,6 +20,8 @@ pub mod keys {
     // -- system-prompt.* --------------------------------------------------
     pub const SYSTEM_FALLBACK_IDENTITY: &str = "system-prompt.fallback_identity";
     pub const SYSTEM_SKILLS_HEADER: &str = "system-prompt.skills_header";
+    pub const SYSTEM_APPS_HEADER: &str = "system-prompt.apps_header";
+    pub const SYSTEM_APP_ENTRY: &str = "system-prompt.app_entry";
     pub const SYSTEM_SKILL_ENTRY: &str = "system-prompt.skill_entry";
     pub const SYSTEM_ACTIVE_SKILL_FRAME: &str = "system-prompt.active_skill_frame";
     pub const SYSTEM_APP_SKILL_DASHBOARD_HINT: &str = "system-prompt.app_skill_dashboard_hint";
@@ -446,6 +448,8 @@ mod tests {
             keys::SYSTEM_FALLBACK_IDENTITY,
             keys::SYSTEM_SKILLS_HEADER,
             keys::SYSTEM_SKILL_ENTRY,
+            keys::SYSTEM_APPS_HEADER,
+            keys::SYSTEM_APP_ENTRY,
             keys::SYSTEM_ACTIVE_SKILL_FRAME,
             keys::SYSTEM_APP_SKILL_DASHBOARD_HINT,
             keys::SYSTEM_PROJECT_INSTRUCTIONS_HEADER,

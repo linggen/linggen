@@ -632,6 +632,36 @@ impl AgentEngine {
         permission::ReadStart::TaskChild(self.read_origin()).standing()
     }
 
+    /// The app action a call is judged as: a skill tool the session
+    /// holds, or what an `AppTool` call names. `Err`: the caller may not
+    /// run it at all — it may not reach the app, or the companion's own
+    /// rules (`skill::judge`) refuse it — and the reason, said before
+    /// anyone is asked anything.
+    async fn app_action_of(&self, t: &ToolTurn<'_>) -> Result<Option<AppActionCall>, String> {
+        if t.canonical != "AppTool" {
+            return Ok(self.tools.skill_tools.get(t.canonical).map(|def| AppActionCall {
+                app: def.skill_name.clone().unwrap_or_default(),
+                tool: t.canonical.to_string(),
+                class: def.class,
+                skill: None,
+            }));
+        }
+        let action = match self.tools.builtins.app_call(t.args).await {
+            tools::AppCall::Listing => return Ok(None),
+            tools::AppCall::Refused(why) => return Err(why),
+            tools::AppCall::Action(a) => a,
+        };
+        let called = AppActionCall { app: action.app, tool: action.tool, class: action.class, skill: Some(action.skill) };
+        if self.tools.builtins.is_companion() {
+            let cwd = self.tools.builtins.cwd();
+            let asker = judge::Asker::Companion { offer: action.offer, person_asked: self.tools.builtins.person_spoke };
+            if let judge::Verdict::Refuse(why) = judge::judge(asker, &called.action(&cwd)) {
+                return Err(why.to_string());
+            }
+        }
+        Ok(Some(called))
+    }
+
     /// The path/tier permission gate (permission-spec.md), asking the user
     /// when the call exceeds the session's grant.
     async fn gate_permission(
@@ -670,12 +700,24 @@ impl AgentEngine {
         };
 
         // An app's declared action is judged by `skill::judge` — its class
-        // wins over the built-in table — never by the gate alone.
-        let skill_action = self
-            .tools
-            .skill_tools
-            .get(t.canonical)
-            .map(|def| (def.skill_name.clone().unwrap_or_default(), def.class));
+        // wins over the built-in table — never by the gate alone. A call of
+        // `AppTool` is judged as the action it names, not as "AppTool".
+        let skill_action = match self.app_action_of(t).await {
+            Ok(action) => action,
+            Err(why) => return self.refuse_saved(t, messages, why).await,
+        };
+
+        // A call into an app from outside runs where the app runs — its
+        // folder — under the grants its own block declares there, as its
+        // own session would hold them; the session's table is not changed.
+        let app_folder = skill_action
+            .as_ref()
+            .and_then(|a| a.skill.as_ref())
+            .map(crate::engine::skill::tools::working_folder);
+        let file_path_arg = match &app_folder {
+            Some(folder) => Some(folder.to_string_lossy().to_string()),
+            None => file_path_arg,
+        };
 
         let mut last_grant: Option<(String, permission::PermissionMode)> = None;
         loop {
@@ -685,20 +727,25 @@ impl AgentEngine {
             let coding = self.is_coding_session();
             let origin = self.read_origin();
             let cwd = self.tools.builtins.cwd();
+            let call_cwd = app_folder.clone().unwrap_or_else(|| cwd.clone());
+            let grants = match skill_action.as_ref().and_then(|a| a.skill.as_ref()) {
+                Some(skill) => std::borrow::Cow::Owned(crate::engine::session_spec::with_skill_grants(&self.session_permissions, skill)),
+                None => std::borrow::Cow::Borrowed(&self.session_permissions),
+            };
             let url = t.args.get("url").and_then(JsonValue::as_str).filter(|_| t.canonical == "WebFetch");
             let check = |path: Option<&str>| {
                 let gate = |needs: Option<permission::PermissionMode>| {
                     permission::check_permission_under_rules(
-                        t.canonical, bash_command.as_deref(), path, &cwd,
-                        &self.session_permissions, needs, coding,
+                        t.canonical, bash_command.as_deref(), path, &call_cwd,
+                        &grants, needs, coding,
                         self.session_spec.ceiling, origin, Some(&self.declined_scopes), approved_reads,
                         self.claude_rules.for_call(url),
                     )
                 };
-                let Some((app, class)) = &skill_action else {
+                let Some(app_action) = &skill_action else {
                     return gate(None);
                 };
-                let action = judge::Action { app, tool: t.canonical, class: *class, cwd: &cwd };
+                let action = app_action.action(&call_cwd);
                 judge::judge(judge::Asker::Model { session: &|needs| gate(Some(needs)) }, &action).into()
             };
             let check_result = if t.canonical == "Glob" {
@@ -1719,6 +1766,22 @@ struct ToolTurn<'a> {
     tool_call_id: &'a Option<String>,
 }
 
+/// The app action a call is judged as (`skill::judge`): the app, the
+/// action's name and class.
+struct AppActionCall {
+    app: String,
+    tool: String,
+    class: permission::ActionClass,
+    /// For a call through `AppTool`: the app it runs in.
+    skill: Option<crate::engine::skill::Skill>,
+}
+
+impl AppActionCall {
+    fn action<'a>(&'a self, cwd: &'a Path) -> judge::Action<'a> {
+        judge::Action { app: &self.app, tool: &self.tool, class: self.class, cwd }
+    }
+}
+
 /// A Bash call's command, under either of its argument names.
 /// The error a user cancel hands back to an in-flight call — the run's own
 /// status says it, so it is no tool's failure.
@@ -1792,6 +1855,9 @@ mod tests {
 #[cfg(test)]
 #[path = "tool_exec_app_action_tests.rs"]
 mod app_action_gate_tests;
+
+#[cfg(test)]
+mod app_gate_tests;
 
 #[cfg(test)]
 mod declined_gate_tests {

@@ -96,7 +96,7 @@ impl AgentEngine {
         self.leave_place();
         // A day keeps a private app out: the place is entered without it.
         let skill = match skill {
-            Some(s) if self.tools.builtins.kept_out_of_day(&s).await => None,
+            Some(s) if self.tools.builtins.kept_out_of_day(&s) => None,
             other => other,
         };
         let mut entered = Entered {

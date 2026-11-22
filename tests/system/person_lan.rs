@@ -950,3 +950,50 @@ async fn a_phone_is_the_account_the_relay_vouched_for_and_nothing_more() {
     }
     assert!(wrong.is_empty(), "{wrong:#?}");
 }
+
+/// Another person's turn reaches an app's action through `AppTool` only
+/// when the owner gave them the app: one off their list is refused with the
+/// reason. One on it is still refused under their turn's ceiling — an app
+/// lives in Linggen's own folder, which is the owner's alone to any turn a
+/// ceiling holds, whatever the app's own grant (`permission::owners_alone`);
+/// the rule that was there first wins, and nothing runs.
+#[tokio::test]
+async fn a_persons_turn_reaches_an_app_through_apptool_only_as_given_and_under_their_ceiling() {
+    use reqwest::Method;
+    let call = |tool_name: &str| tool("AppTool", json!({"app": "jukebox", "tool": tool_name, "args": {"what": "jazz"}}));
+    let setup = Setup { lan: true, ..Setup::default() }.script(
+        Agent::Ling,
+        vec![call("List"), text("Closed."), call("List"), call("Play"), text("Done.")],
+    );
+    let w = World::start(setup).await;
+    crate::app_index::install_jukebox(&w, "jukebox").await;
+    pair_friends_phone_with(&w, json!({"contract": 1}));
+    let lan = Lan::new(&w);
+    wait_for_the_phone(&lan).await;
+    let turn = |apps: Value| {
+        let (w, lan) = (&w, &lan);
+        async move {
+            let people = json!({"people": {"u-friend": {"apps": apps, "models": ["fake-ling"]}}});
+            set_people(w, people).await;
+            let own = lan.send(Method::POST, "/api/sessions", Some(json!({"title": "Friend's"}))).await;
+            let sid = own.1["id"].as_str().unwrap_or_default().to_string();
+            let mark = w.mark();
+            let chat = json!({"session_id": sid, "project_root": w.work(), "message": "Play some jazz."});
+            let sent = lan.send(Method::POST, "/api/chat", Some(chat)).await;
+            assert_eq!(sent.0, 200, "{sent:?}");
+            if let RunEnd::Asked(ask) = w.wait_run(&sid, Agent::Ling, mark).await {
+                panic!("a person's turn asked: {ask}");
+            }
+            serde_json::to_string(&w.raw_rows(&sid)).unwrap()
+        }
+    };
+    let closed = turn(json!(["abacus"])).await;
+    assert!(closed.contains("is not one of the apps you may use"), "{closed}");
+    let given = turn(json!(["jukebox"])).await;
+    assert!(!given.contains("is not one of the apps you may use"), "the app was given: {given}");
+    assert_eq!(given.matches("Beyond this turn's level").count(), 2, "both calls stop at the ceiling: {given}");
+    for ran in ["listing", "playing"] {
+        assert!(!closed.contains(ran) && !given.contains(ran), "an action ran: {ran}");
+    }
+    w.assert_all_scripted();
+}

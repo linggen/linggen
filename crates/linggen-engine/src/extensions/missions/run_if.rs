@@ -107,6 +107,7 @@ fn check_tool(
         others_read: Vec::new(),
         pet: false,
         remote: false,
+        reach: Default::default(),
         skill_name: skill.map(|s| s.name.clone()),
         skill_dir,
         senses: skill.map(|s| s.senses.clone()).unwrap_or_default(),

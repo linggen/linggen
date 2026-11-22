@@ -45,7 +45,7 @@ impl crate::engine::AgentEngine {
     /// resolve against when `with_tools` — unless a day keeps it out. The
     /// one setter of both (`activate_skill` calls it).
     pub(crate) async fn take_up(&mut self, skill: crate::engine::skill::Skill, with_tools: bool) -> bool {
-        if self.tools.builtins.kept_out_of_day(&skill).await {
+        if self.tools.builtins.kept_out_of_day(&skill) {
             return false;
         }
         if with_tools {
@@ -60,7 +60,7 @@ impl crate::engine::AgentEngine {
     /// the skill ships): only the dir its tools resolve against — no
     /// SKILL.md — unless a day keeps it out.
     pub(crate) async fn lend_tools_dir(&mut self, skill: &crate::engine::skill::Skill) -> bool {
-        if self.tools.builtins.kept_out_of_day(skill).await {
+        if self.tools.builtins.kept_out_of_day(skill) {
             return false;
         }
         let dir = skill.skill_dir.clone().map(|d| (skill.name.clone(), d));

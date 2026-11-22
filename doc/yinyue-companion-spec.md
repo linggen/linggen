@@ -412,6 +412,16 @@ ends the skill agent's run, question or spinner. The bridge hands `onStreamToken
 the other members', each call naming `info.agent`. A page's hidden
 reports always go to its own agent.
 
+## Doing what an app offers — `AppTool`
+
+She reaches an app's action through the one `AppTool` — her own reads (`pet: true`) and what the app declares `reach: anywhere` (`skill-spec.md` § Reach), named in the prompt's index of apps. "放首轻音乐" is then two model calls: her call that emits `AppTool`, and her answer after the result, which she has — not a message to Ling, who opens the app, calls the tool and answers a third time (four calls, her never told).
+
+What she may run is judged in one function (`skill::judge`) by the action's class and who started the turn:
+
+- **A read** — always.
+- **A change** (`tier: edit`) — only in a turn the person started by asking her (what the turn's start already says: they spoke, or said it aloud — `TurnStart::person_spoke`); in a turn she started herself (a glance, a woken note, an app moment) the answer is a reason she can word. Then, like any model's call, where the app runs — its folder, under the grants its own block declares — and under the turn's ceiling: a turn another device sent, held to a level, reaches no app (Linggen's own folder is the owner's alone). Her turns act for the owner.
+- **A destructive action** — never. She cannot put a question to the person from a tool today; the reason she is given is that the person does this themselves, in the app.
+
 ## Notes — her own, in front of her next time
 
 Without notes every "come back to this later" would need a coded condition.

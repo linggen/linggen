@@ -12,8 +12,8 @@
 //! - a skill that keeps a cloud refuses while signed out (`AUTH_REQUIRED:`),
 //!   like its turns, and a tool that may write pushes the save afterwards.
 //!
-//! The companion only reaches tools the skill marks `pet: true` whose own
-//! tier is read ([`run_for_pet`]). Another device's agent reaches the tools
+//! The companion only reaches tools the skill offers her — `pet: true` to read,
+//! `reach: anywhere` by its class ([`run_for_pet`]). Another device's agent reaches the tools
 //! marked `remote: true` through the page's door ([`remote_tools`]).
 
 use serde_json::Value;
@@ -23,6 +23,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::engine::permission::{effective_mode_for_path, ActionClass, PathMode, PermissionMode};
 use crate::engine::skill::judge::{judge, Action, Asker};
+use crate::engine::skill::reach::{Offer, Reach};
 use crate::engine::skill::params::SessionParams;
 use crate::engine::skill::Skill;
 use crate::engine::skill_tool::{SkillToolDef, SkillToolKind};
@@ -46,6 +47,9 @@ pub enum Refusal {
         needs: PermissionMode,
     },
     NotForPet(String),
+    /// The app is not one the asking session's person may use, or the
+    /// session keeps it out.
+    NotYours(String),
     /// A model's call the session's own gate refused (`judge`'s model
     /// asker), in the gate's words.
     ByGate(String),
@@ -70,6 +74,7 @@ impl std::fmt::Display for Refusal {
             | Refusal::NotRunnable(m)
             | Refusal::BeyondGrant(m)
             | Refusal::NotForPet(m)
+            | Refusal::NotYours(m)
             | Refusal::ByGate(m)
             | Refusal::NeedsPerson(m)
             | Refusal::BadCall(m)
@@ -194,6 +199,7 @@ pub async fn notice_facts(skill: &Skill, cmd: &str) -> Result<String, Refusal> {
         others_read: Vec::new(),
         pet: false,
         remote: false,
+        reach: Default::default(),
         skill_name: Some(skill.name.clone()),
         skill_dir: skill.skill_dir.clone(),
         senses: skill.senses.clone(),
@@ -277,6 +283,7 @@ fn on_list_tool(skill: &Skill, cmd: String) -> SkillToolDef {
         others_read: Vec::new(),
         pet: false,
         remote: false,
+        reach: Default::default(),
         skill_name: Some(skill.name.clone()),
         skill_dir: skill.skill_dir.clone(),
         senses: skill.senses.clone(),
@@ -325,6 +332,7 @@ fn stamp_tool(skill: &Skill, id: &str, at: &str) -> Result<SkillToolDef, Refusal
         others_read: Vec::new(),
         pet: false,
         remote: false,
+        reach: Default::default(),
         skill_name: Some(skill.name.clone()),
         skill_dir: skill.skill_dir.clone(),
         senses: skill.senses.clone(),
@@ -346,31 +354,50 @@ pub fn valid_stamp_time(at: &str) -> bool {
     at.len() == 20 && chrono::NaiveDateTime::parse_from_str(at, "%Y-%m-%dT%H:%M:%SZ").is_ok()
 }
 
-/// The companion's door: only a tool the skill offers her (`pet: true`)
-/// whose own tier is read — checked here, not left to the prompt.
+/// The companion's door: what the skill offers her, judged by what it is
+/// (`judge`'s companion), checked here, not left to the prompt.
+/// `person_asked`: the turn is one the person started by asking her.
 pub async fn run_for_pet(
     skill: &Skill,
     tool_name: &str,
     args: &Value,
     params: &SessionParams,
+    person_asked: bool,
 ) -> Result<ToolResult, Refusal> {
-    pet_gate(skill, tool_name)?;
+    pet_gate(skill, tool_name, person_asked)?;
     run(skill, tool_name, args, params).await
 }
 
-fn pet_gate(skill: &Skill, tool_name: &str) -> Result<(), Refusal> {
+fn pet_gate(skill: &Skill, tool_name: &str, person_asked: bool) -> Result<(), Refusal> {
     let tool = declared(skill, tool_name)?;
     let cwd = working_folder(skill);
     let action = action_of(skill, tool, &cwd);
-    judge(Asker::Companion { offered: tool.pet }, &action).allowed_or_refusal(&action)
+    judge(companion_of(tool, person_asked), &action).allowed_or_refusal(&action)
 }
 
-/// The tools a skill offers the companion that she may actually call.
-pub fn pet_tools(skill: &Skill) -> impl Iterator<Item = &SkillToolDef> {
+/// The companion as asker of `tool`: what it is offered as, and whether the
+/// person asked in this turn.
+fn companion_of(tool: &SkillToolDef, person_asked: bool) -> Asker<'static> {
+    Asker::Companion { offer: Offer::of(tool), person_asked }
+}
+
+/// The tools a skill offers the companion that she may actually call in a
+/// turn the person did (`person_asked`) or did not start by asking her.
+pub fn pet_tools(skill: &Skill, person_asked: bool) -> impl Iterator<Item = &SkillToolDef> {
     let cwd = working_folder(skill);
     skill.tool_defs.iter().filter(move |t| {
         t.kind() == SkillToolKind::Shell
-            && judge(Asker::Companion { offered: t.pet }, &action_of(skill, t, &cwd)).is_allow()
+            && judge(companion_of(t, person_asked), &action_of(skill, t, &cwd)).is_allow()
+    })
+}
+
+/// The tools a skill offers any session's model outside its own
+/// (`reach: anywhere`): shell tools of a skill a model may start.
+pub fn anywhere_tools(skill: &Skill) -> impl Iterator<Item = &SkillToolDef> {
+    skill.tool_defs.iter().filter(|t| {
+        !skill.disable_model_invocation
+            && t.reach == Reach::Anywhere
+            && t.kind() == SkillToolKind::Shell
     })
 }
 
@@ -388,7 +415,7 @@ pub fn remote_tools(skill: &Skill) -> impl Iterator<Item = &SkillToolDef> {
     })
 }
 
-fn declared<'a>(skill: &'a Skill, name: &str) -> Result<&'a SkillToolDef, Refusal> {
+pub(crate) fn declared<'a>(skill: &'a Skill, name: &str) -> Result<&'a SkillToolDef, Refusal> {
     skill
         .tool_defs
         .iter()
@@ -411,7 +438,7 @@ fn shell_tool(skill: &Skill, name: &str) -> Result<SkillToolDef, Refusal> {
 }
 
 /// Where the tool runs: the skill's declared `cwd`, else its own folder.
-fn working_folder(skill: &Skill) -> PathBuf {
+pub(crate) fn working_folder(skill: &Skill) -> PathBuf {
     let declared = skill
         .cwd
         .as_deref()
@@ -610,7 +637,7 @@ body
     async fn a_pet_tool_runs() {
         let dir = tempfile::tempdir().unwrap();
         let s = skill(dir.path());
-        let result = run_for_pet(&s, "Progress", &args(), &SessionParams::new())
+        let result = run_for_pet(&s, "Progress", &args(), &SessionParams::new(), false)
             .await
             .expect("runs");
         let out = output(result);
@@ -622,7 +649,7 @@ body
     async fn a_tool_not_offered_to_the_pet_is_refused() {
         let dir = tempfile::tempdir().unwrap();
         let s = skill(dir.path());
-        let err = run_for_pet(&s, "Hidden", &args(), &SessionParams::new())
+        let err = run_for_pet(&s, "Hidden", &args(), &SessionParams::new(), false)
             .await
             .unwrap_err();
         assert!(matches!(err, Refusal::NotForPet(_)), "{err}");
@@ -637,7 +664,7 @@ body
         let dir = tempfile::tempdir().unwrap();
         let s = skill(dir.path());
         for name in ["Write", "Untiered"] {
-            let err = run_for_pet(&s, name, &args(), &SessionParams::new())
+            let err = run_for_pet(&s, name, &args(), &SessionParams::new(), false)
                 .await
                 .unwrap_err();
             assert!(matches!(err, Refusal::NotForPet(_)), "{name}: {err}");
@@ -648,7 +675,7 @@ body
     async fn an_unknown_tool_is_refused() {
         let dir = tempfile::tempdir().unwrap();
         let s = skill(dir.path());
-        let err = run_for_pet(&s, "Nope", &args(), &SessionParams::new())
+        let err = run_for_pet(&s, "Nope", &args(), &SessionParams::new(), false)
             .await
             .unwrap_err();
         assert!(matches!(err, Refusal::NoTool(_)), "{err}");
@@ -715,7 +742,7 @@ body
     fn only_runnable_read_pet_tools_are_listed() {
         let dir = tempfile::tempdir().unwrap();
         let s = skill(dir.path());
-        let names: Vec<_> = pet_tools(&s).map(|t| t.name.as_str()).collect();
+        let names: Vec<_> = pet_tools(&s, false).map(|t| t.name.as_str()).collect();
         assert_eq!(names, vec!["Progress"]);
     }
 

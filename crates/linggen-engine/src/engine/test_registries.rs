@@ -52,3 +52,25 @@ impl MissionRegistry for Empty {
         PathBuf::from(id)
     }
 }
+
+/// A registry holding the given skills only.
+pub struct Installed(pub Vec<Skill>);
+
+#[async_trait]
+impl SkillRegistry for Installed {
+    async fn get_skill(&self, name: &str) -> Option<Skill> {
+        self.0.iter().find(|s| s.name == name).cloned()
+    }
+    async fn reload_one(&self, name: &str) -> Option<Skill> {
+        self.get_skill(name).await
+    }
+    async fn list_skills(&self) -> Vec<Skill> {
+        self.0.clone()
+    }
+    async fn match_trigger(&self, _: &str) -> Option<(String, String)> {
+        None
+    }
+    async fn list_metadata(&self) -> Vec<(String, String, bool)> {
+        self.0.iter().map(|s| (s.name.clone(), s.description.clone(), s.app.is_some())).collect()
+    }
+}

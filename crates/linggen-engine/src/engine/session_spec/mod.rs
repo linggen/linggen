@@ -13,6 +13,7 @@ mod grants;
 mod preset;
 
 pub use grants::{Covered, PresetGrants};
+pub(crate) use grants::with_skill_grants;
 
 pub use preset::{is_companion_thread, is_kept_apart, preset_of, Preset, HANDOFF_PREFIX};
 

@@ -9,6 +9,7 @@
 //! internal engine concern, not an extension-type contract like
 //! `engine::skill` / `engine::agent` / `engine::mission`.
 
+mod app_index;
 pub mod core_block;
 mod notes;
 pub mod place;
@@ -956,6 +957,11 @@ impl AgentEngine {
             }
         }
 
+        // The apps whose actions `AppTool` reaches from here.
+        if has_tools {
+            system.push_str(&self.app_index(allowed_tools));
+        }
+
         // If executing an approved plan, inject the plan into the prompt.
         if let Some(plan) = &self.plan {
             if plan.status == PlanStatus::Approved || plan.status == PlanStatus::Executing {
@@ -1352,7 +1358,10 @@ impl AgentEngine {
     /// server's (`mcp__memory`) — is withheld from this turn.
     pub fn is_withheld(&self, tool: &str) -> bool {
         let name = crate::engine::tools::canonical_tool_name(tool).unwrap_or(tool);
-        self.turn_tool_allowlist.as_ref().is_some_and(|allowed| !allowed.contains(name))
+        // A mission, and the lead of an app's own session, reach no app
+        // from outside the one they stand in.
+        (name == "AppTool" && (self.active_mission.is_some() || self.is_app_session()))
+            || self.turn_tool_allowlist.as_ref().is_some_and(|allowed| !allowed.contains(name))
             || self
                 .withheld_tools
                 .iter()

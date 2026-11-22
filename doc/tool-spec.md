@@ -51,6 +51,7 @@ Built-in tools are the kernel API. Skills are userspace.
 | `WebFetch` | `url, max_bytes?` | Fetch URL content as text; the page and its pictures (`<figure>`/`<img>` with their own captions, then the `og:image` cover with a declared product's name and price; never the page title as a caption) come numbered (`[turn2image1]`) — the route to showing what something looks like |
 | `Skill` | `skill, args?` | Invoke a skill by name |
 | `RunApp` | `skill, args?` | Launch an app-enabled skill |
+| `AppTool` | `app?, tool?, args?` | Do what an app offers from a session that is not the app's own. `app` alone lists that app's actions (tool, class, description, args); `app` + `tool` + `args` runs one. What is offered is what the app declares `reach: anywhere` (`skill-spec.md` § Reach), Yinyue's own `pet: true` reads besides. Judged as the action it names (`permission-spec.md` § App actions). Not offered to an `agent_run` delegate, a mission, or the lead of an app's own session |
 | `AskUser` | `questions` | Ask user structured questions mid-execution |
 | `sense` | — | The room: presence, how busy the day is, the hour, and this machine's world block |
 | `recent_activity` | `since?`, `until?`, `app?`, `verb?`, `text?`, `limit?`, `totals?` | This Mac's activity log (kept 400 days): what changed, who did it, stretches of use; `totals` sums counts and durations per app and verb for the span. JSON (perception-spec.md §3) |
@@ -120,6 +121,12 @@ the skill) keeps its pose and shape. Read tier: it writes no workspace file.
 **Aliases**: `Read`/`Write`/`Edit` accept `file`/`filepath` for `path`. `Edit` accepts `old`/`search`/`from` for `old_string`, `new`/`replace`/`to` for `new_string`.
 
 Tool names follow Claude Code convention (capitalized).
+
+## AppTool
+
+A session that is not an app's own does not carry the app's tools. Where `AppTool` is offered, the prompt carries a short index instead — `## Apps you can reach`, one line per installed app that has an action declared `reach: anywhere`: its name, its description cut to one line, its actions' names; nothing per action beyond the name. With no such app the section is absent. The index is built in one place beside the skills listing (`engine/prompt/app_index.rs`) and shown only where `AppTool` is offered (not in an app's own session, a mission, a delegate, a quiet turn of Yinyue's), for the apps this session's person may use and the session does not keep out.
+
+So the tool schemas a session is sent do not grow when an app is installed: a plain Ling session is sent the same tools with six apps as with seven (a system test holds it), and only the index grows by a line. `AppTool` with no `tool` and no `app` lists every reachable app's actions; the index is what spares the model that call.
 
 ## AskUser
 

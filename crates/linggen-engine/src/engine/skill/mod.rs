@@ -16,6 +16,7 @@
 
 pub mod judge;
 pub mod params;
+pub mod reach;
 pub mod record;
 pub mod registry;
 pub mod tools;
