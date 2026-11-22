@@ -10,8 +10,8 @@
 //     cloudy as a few faint clouds along the top edge. Fog and clouds blend
 //     with the page (multiply on light, screen on dark) so they show on
 //     white and keep text dark; on light, a second pass lifts thin white
-//     streaks over the grey. Clear shows a sun (or a moon and a few stars)
-//     in the top-right corner; no lightning unless
+//     streaks over the grey. Clear shows a sun (or the night's moon, in the
+//     phase it really has, and a few stars) in the top-right corner; no lightning unless
 //     `lightning: true` (then a short, faint flash, never a white-out).
 //     A still overlay (reduced motion, slow machine) keeps the fog and
 //     clouds as one frozen frame and drops what falls.
@@ -37,6 +37,24 @@
 // lights them — full weather shows only in the uncovered space.
 
 export const KINDS = ['clear', 'cloudy', 'fog', 'rain', 'snow', 'storm'];
+
+/* The moon's phase at a moment — the one place that decides it (the sky draws
+   what this answers; tests call it). The MEAN phase: a new moon at the
+   reference below, then one synodic month per cycle; the real moon runs up to
+   some hours ahead or behind it, which a picture cannot show. `when` is a
+   Date or milliseconds; none given, now. Answers `lit` (0 new … 1 full: the
+   share of the disc that is lit) and `waxing` (growing: lit on the right in
+   the northern sky). */
+const NEW_MOON_MS = Date.UTC(2000, 0, 6, 18, 14);
+const SYNODIC_DAYS = 29.530588853;
+export function moonPhase(when = Date.now()) {
+  const ms = when instanceof Date ? when.getTime() : when;
+  const turn = ((((ms - NEW_MOON_MS) / 86400000) / SYNODIC_DAYS) % 1 + 1) % 1;
+  return { lit: (1 - Math.cos(turn * 2 * Math.PI)) / 2, waxing: turn < 0.5 };
+}
+/* Below NO_MOON of the disc lit the sky draws no moon; from WHOLE_MOON up, a whole disc. */
+const NO_MOON = 0.03;
+const WHOLE_MOON = 0.97;
 /* `none`: no weather read — only the season's or a festival's things draw (overlay). */
 const ALL_KINDS = [...KINDS, 'none'];
 
@@ -197,7 +215,7 @@ export function mountSky(host, opts = {}) {
   const darkMq = matchMedia('(prefers-color-scheme: dark)');
   const calmMq = matchMedia('(prefers-reduced-motion: reduce)');
 
-  const st = { kind: o.kind ?? 'clear', day: o.is_day !== false, dark: o.dark ?? darkMq.matches, wind: windOf(o.wind), season: o.season ?? null, festival: o.festival ?? null, blow: 1 };
+  const st = { kind: o.kind ?? 'clear', day: o.is_day !== false, dark: o.dark ?? darkMq.matches, wind: windOf(o.wind), season: o.season ?? null, festival: o.festival ?? null, blow: 1, moonKey: '' };
   let W = 0, H = 0, bg = null, front = [], back = [], clouds = [], cumuli = [], fog = null, orb = null, covers = [], coversAt = 0;
   let things = [], gusts = [], deco = null, burst = { at: -1e9, next: 0 };
   let raf = 0, timer = 0, last = 0, flash = 0, nextFlash = 0, slow = false, alive = true;
@@ -235,7 +253,7 @@ export function mountSky(host, opts = {}) {
     const flake = (d) => ({ x: rnd(0, W), y: rnd(-H, H), v: rnd(26, 60) * d, r: rnd(1.6, 3.4) * (0.6 + d * 0.4), ph: rnd(0, 6.3) });
     const star = () => ({ x: rnd(0, W), y: rnd(0, H * 0.6), r: rnd(0.6, 1.4), ph: rnd(0, 6.3) });
     const cloud = () => ({ x: rnd(-0.3, 1) * W, y: rnd(0, 0.45) * H, s: rnd(0.7, 1.4), v: rnd(4, 9) });
-    front = []; back = []; clouds = []; cumuli = []; fog = null; orb = null;
+    front = []; back = []; clouds = []; cumuli = []; fog = null; orb = null; st.moonKey = '';
     if (o.overlay) return seedOverlay(p);
     if (p.drops) { front = make(n(p.drops, 0), drop, 1); back = make(n(p.drops, 1), drop, 0.6); }
     if (p.flakes) { front = make(n(p.flakes, 0), flake, 1); back = make(n(p.flakes, 1), flake, 0.6); }
@@ -360,44 +378,59 @@ export function mountSky(host, opts = {}) {
     return { ...orbAt(R), body: orbSprite(k, r, R), rays: rays(k, r, R), stars: [] };
   }
 
-  /* A waxing crescent (~35% lit: the disc minus one offset by 0.55 r),
-     tilted, lit on the right; a wide faint halo around it. */
-  function crescentSprite(k, r, R) {
+  /* The moon as tonight's phase draws it: the lit part is bounded by the disc's
+     edge (the limb) and the terminator, a half-ellipse as wide as |1 - 2·lit|
+     of the radius — bulging toward the lit side for a crescent, away from it
+     for a gibbous moon. Waxing is lit on the right, waning on the left, tilted
+     as it always was; a wide faint halo around it. */
+  function moonSprite(k, r, R, { lit, waxing }) {
     const size = Math.ceil(R * 2), c = size / 2, sprite = document.createElement('canvas');
     sprite.width = sprite.height = size;
     const g = sprite.getContext('2d');
     const halo = g.createRadialGradient(c, c, r * 0.6, c, c, R);
     halo.addColorStop(0, `${k.halo}${k.haloA})`); halo.addColorStop(0.4, `${k.halo}${k.haloA * 0.3})`); halo.addColorStop(1, `${k.halo}0)`);
     g.fillStyle = halo; g.fillRect(0, 0, size, size);
-    const d = r * 0.55, h = Math.sqrt(r * r - (d * d) / 4), a = Math.atan2(h, d / 2);
-    g.translate(c, c); g.rotate(-0.45); g.scale(-1, 1);
+    const whole = lit >= WHOLE_MOON, inner = whole ? -r : r * (1 - 2 * lit); // the terminator's farthest point, lit side positive
+    g.translate(c, c); g.scale(waxing ? 1 : -1, 1); g.rotate(-0.45);
     g.beginPath();
-    g.arc(0, 0, r, a, 2 * Math.PI - a);
-    g.arc(d, 0, r, Math.atan2(-h, -d / 2), Math.atan2(h, -d / 2), true);
+    if (whole) g.arc(0, 0, r, 0, 2 * Math.PI);
+    else {
+      g.arc(0, 0, r, -Math.PI / 2, Math.PI / 2);
+      g.ellipse(0, 0, Math.abs(inner), r, 0, Math.PI / 2, inner > 0 ? -Math.PI / 2 : (3 * Math.PI) / 2, inner > 0);
+    }
     g.closePath();
     if (k.glow) { g.shadowColor = k.glow; g.shadowBlur = r * 0.8; }
-    g.fillStyle = moonFill(g, k.fill, r, d);
+    g.fillStyle = moonFill(g, k.fill, r, inner);
     g.fill();
     g.shadowBlur = 0;
     return sprite;
   }
 
-  // A plain colour, or [lit edge, inner] as a gradient across the crescent.
-  function moonFill(g, fill, r, d) {
+  // A plain colour, or [lit edge, inner] as a gradient from the limb to the terminator.
+  function moonFill(g, fill, r, inner) {
     if (typeof fill === 'string') return fill;
-    const grad = g.createLinearGradient(-r, 0, d - r, 0);
+    const grad = g.createLinearGradient(r, 0, inner, 0);
     grad.addColorStop(0, fill[0]); grad.addColorStop(1, fill[1]);
     return grad;
   }
 
+  const phaseNow = () => moonPhase(o.now ?? Date.now());
+  /* The phase to the percent, as a word: set() repaints when it changes, so a
+     page left open overnight follows the moon. */
+  const phaseKey = ({ lit, waxing }) => `${Math.round(lit * 100)}${waxing ? '+' : '-'}`;
+
+  const moonMoved = () => !!st.moonKey && st.moonKey !== phaseKey(phaseNow());
+
   function moon() {
     if (W < ORB_MIN_W) return null;
-    const k = ink().moon, R = orbR(40), at = orbAt(R);
+    const k = ink().moon, R = orbR(40), at = orbAt(R), phase = phaseNow();
+    st.moonKey = phaseKey(phase);
     // Stars stay in the same empty span of the header as the moon.
     const near = () => ({ x: at.x + rnd(-R * 2.2, R * 2.2), y: rnd(8, 44), r: rnd(1.6, 2.6), ph: rnd(0, 6.3) });
     const edge = () => ({ x: at.x + rnd(-R * 2.2, R * 2.2), y: rnd(6, 46), r: rnd(0.7, 1.3), ph: rnd(0, 6.3) });
     const stars = k.sparkle ? Array.from({ length: 4 }, near) : Array.from({ length: 12 }, edge);
-    return { ...at, body: crescentSprite(k, 14, R), rays: null, stars, star: k.star, sparkle: k.sparkle };
+    const body = phase.lit < NO_MOON ? null : moonSprite(k, 14, R, phase); // a new moon: the stars alone
+    return { ...at, body, rays: null, stars, star: k.star, sparkle: k.sparkle };
   }
 
   // A tiny four-point sparkle: two thin crossed diamonds.
@@ -414,7 +447,7 @@ export function mountSky(host, opts = {}) {
       ctx.drawImage(orb.rays, -orb.R, -orb.R, orb.R * 2, orb.R * 2);
       ctx.restore();
     }
-    ctx.drawImage(orb.body, orb.x - orb.R, orb.y - orb.R, orb.R * 2, orb.R * 2);
+    if (orb.body) ctx.drawImage(orb.body, orb.x - orb.R, orb.y - orb.R, orb.R * 2, orb.R * 2);
     for (const s of orb.stars) {
       ctx.fillStyle = `${orb.star}${0.2 + 0.55 * Math.sin(t / 1600 + s.ph) ** 2})`;
       if (orb.sparkle) { sparkle(s.x, s.y, s.r); continue; }
@@ -824,7 +857,7 @@ export function mountSky(host, opts = {}) {
       const day = next?.is_day !== false;
       const wind = windOf(next?.wind), season = next?.season ?? null, festival = next?.festival ?? null;
       const same = kind === st.kind && day === st.day && season === st.season && festival === st.festival && wind.force === st.wind.force && wind.sign === st.wind.sign;
-      if (same && W) return;
+      if (same && W && !moonMoved()) return;
       Object.assign(st, { kind, day, wind, season, festival }); nextFlash = 0;
       paintBackground(); seed(); start();
     },

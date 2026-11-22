@@ -22,8 +22,12 @@ declare module '@linggen/sky' {
     auto?: boolean;
     cover?: () => DOMRect[];
     overlay?: boolean;
+    /** The moment the moon's phase is read at (tests, pictures); none: now. */
+    now?: number | Date;
     onMode?: (mode: 'motion' | 'still') => void;
   }
   export const KINDS: string[];
+  /** The moon's mean phase: `lit` 0 (new) … 1 (full), `waxing` (lit on the right in the northern sky). */
+  export function moonPhase(when?: number | Date): { lit: number; waxing: boolean };
   export function mountSky(host: HTMLElement, opts?: SkyOptions): SkyHandle;
 }

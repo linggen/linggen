@@ -110,6 +110,10 @@ around (`doc/plan-3.0.md`) is not started.
   `{"wav_b64"}`) for the owner and answers `{text, language, ms}`;
   `GET /api/stt` says whether this Mac can hear and why not.
 
+## [2.6.1] - unreleased
+
+- The moon in the page's sky shows tonight's real phase.
+
 ## [2.6.0] - 2026-11-21 — the Mac app shows the web UI; rule files can import
 
 ### One UI
