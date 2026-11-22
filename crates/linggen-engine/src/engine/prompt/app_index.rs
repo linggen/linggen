@@ -13,11 +13,8 @@
 
 use super::AgentEngine;
 use crate::engine::skill::reach::Offer;
-use crate::engine::skill::tools::anywhere_tools;
+use crate::engine::skill::tools::{anywhere_tools, app_line};
 use std::collections::HashSet;
-
-/// How much of an app's description the index keeps.
-const ABOUT_CHARS: usize = 90;
 
 impl AgentEngine {
     /// The section, or nothing. `allowed`: the tool set this turn is sent.
@@ -33,14 +30,14 @@ impl AgentEngine {
             .iter()
             .filter(|skill| Some(skill.name.as_str()) != own)
             .filter(|skill| self.tools.builtins.app_reachable(skill, Offer::Anywhere).is_ok())
-            .map(|skill| {
-                let actions: Vec<&str> = anywhere_tools(skill).map(|t| t.name.as_str()).collect();
+            .filter_map(|skill| app_line(skill, anywhere_tools(skill)))
+            .map(|line| {
                 self.prompt_store.render_or_fallback(
                     keys::SYSTEM_APP_ENTRY,
                     &[
-                        ("name", skill.name.as_str()),
-                        ("about", &one_line(&skill.description)),
-                        ("actions", &actions.join(", ")),
+                        ("name", line.name.as_str()),
+                        ("about", line.about.as_str()),
+                        ("actions", &line.actions.join(", ")),
                     ],
                 )
             })
@@ -54,33 +51,12 @@ impl AgentEngine {
     }
 }
 
-/// `text`'s first line, whitespace squeezed, cut to [`ABOUT_CHARS`].
-fn one_line(text: &str) -> String {
-    let first = text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("");
-    let squeezed = first.split_whitespace().collect::<Vec<_>>().join(" ");
-    match squeezed.chars().count() > ABOUT_CHARS {
-        true => format!("{}…", squeezed.chars().take(ABOUT_CHARS).collect::<String>().trim_end()),
-        false => squeezed,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::engine::skill::{Skill, SkillSource};
     use crate::engine::{AgentEngine, AgentRole, EngineConfig, InterfaceMode};
     use std::sync::Arc;
-
-    #[test]
-    fn a_description_is_one_short_line() {
-        assert_eq!(one_line("  Plays   music\non this Mac. "), "Plays music");
-        assert_eq!(one_line(""), "");
-        let long = "x".repeat(200);
-        let cut = one_line(&long);
-        assert_eq!(cut.chars().count(), ABOUT_CHARS + 1, "{cut}");
-        assert!(cut.ends_with('…'));
-        assert_eq!(one_line("日本語".repeat(40).as_str()).chars().count(), ABOUT_CHARS + 1);
-    }
 
     fn app(name: &str, extra: &str) -> Skill {
         let text = format!(

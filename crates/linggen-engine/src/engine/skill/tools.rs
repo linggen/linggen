@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use crate::engine::permission::{effective_mode_for_path, ActionClass, PathMode, PermissionMode};
-use crate::engine::skill::judge::{judge, Action, Asker};
+use crate::engine::skill::judge::{judge, not_offered, Action, Asker};
 use crate::engine::skill::reach::{Offer, Reach};
 use crate::engine::skill::params::SessionParams;
 use crate::engine::skill::Skill;
@@ -401,6 +401,90 @@ pub fn anywhere_tools(skill: &Skill) -> impl Iterator<Item = &SkillToolDef> {
     })
 }
 
+/// An action of an app as a caller who asked for the app's listing reads
+/// it: the same row wherever an app's actions are listed (`AppTool`, the
+/// MCP door's `app`).
+pub fn action_row(skill: &Skill, tool: &SkillToolDef) -> Value {
+    let entry = tool.to_schema_json();
+    serde_json::json!({
+        "app": skill.name,
+        "tool": tool.name,
+        "class": tool.class.word(),
+        "description": tool.description,
+        "args": entry["args"],
+    })
+}
+
+/// How much of an app's description its index line keeps.
+const ABOUT_CHARS: usize = 90;
+
+/// An app as an index lists it: its name, what it is for in one short
+/// line, and the names of the actions it is shown with. Made here for the
+/// prompt's index of apps (`prompt::app_index`) and the MCP door's `app`
+/// listing alike.
+pub struct AppLine {
+    pub name: String,
+    pub about: String,
+    pub actions: Vec<String>,
+}
+
+/// `skill`'s index line, naming the actions in `shown`; none when it
+/// shows none.
+pub fn app_line<'a>(skill: &Skill, shown: impl Iterator<Item = &'a SkillToolDef>) -> Option<AppLine> {
+    let actions: Vec<String> = shown.map(|t| t.name.clone()).collect();
+    (!actions.is_empty()).then(|| AppLine {
+        name: skill.name.clone(),
+        about: one_line(&skill.description),
+        actions,
+    })
+}
+
+/// `text`'s first line, whitespace squeezed, cut to [`ABOUT_CHARS`].
+fn one_line(text: &str) -> String {
+    let first = text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("");
+    let squeezed = first.split_whitespace().collect::<Vec<_>>().join(" ");
+    match squeezed.chars().count() > ABOUT_CHARS {
+        true => format!("{}…", squeezed.chars().take(ABOUT_CHARS).collect::<String>().trim_end()),
+        false => squeezed,
+    }
+}
+
+/// Whether a model may start `skill` at all: not an app only the person
+/// starts (`disable-model-invocation: true`).
+pub fn model_may_start(skill: &Skill) -> Result<(), Refusal> {
+    match skill.disable_model_invocation {
+        true => Err(Refusal::NotYours(format!(
+            "'{}' is user-only: only the person starts it",
+            skill.name
+        ))),
+        false => Ok(()),
+    }
+}
+
+/// `skill`'s action `tool`, as a model outside the app's own session is
+/// offered it, or why it is not: the one place such a call is resolved,
+/// for a session's `AppTool` and the MCP door's `app` alike. `reachable`
+/// is what the asker's own way in adds — a session's policy, what a day
+/// keeps out, what the owner opened — asked after the action is found and
+/// before it is judged offered.
+pub fn resolve_offered<'a>(
+    skill: &'a Skill,
+    tool: &str,
+    companion: bool,
+    reachable: impl FnOnce(Offer) -> Result<(), Refusal>,
+) -> Result<(&'a SkillToolDef, Offer), Refusal> {
+    let def = declared(skill, tool)?;
+    let offer = Offer::to_caller(def, companion);
+    reachable(offer)?;
+    if offer == Offer::Nobody {
+        return Err(not_offered(&skill.name, tool));
+    }
+    if def.kind() != SkillToolKind::Shell {
+        return Err(Refusal::NotRunnable(format!("'{tool}' runs no command")));
+    }
+    Ok((def, offer))
+}
+
 /// The tools a skill offers another device's agent (`remote: true`) that
 /// would actually run when called: a shell tool (the door runs nothing
 /// else), never `page_only` (the caller is a model), and within the skill's
@@ -524,6 +608,17 @@ pub fn output(result: ToolResult) -> Value {
 mod tests {
     use super::*;
     use crate::engine::skill::SkillSource;
+
+    #[test]
+    fn a_description_is_one_short_line() {
+        assert_eq!(one_line("  Plays   music\non this Mac. "), "Plays music");
+        assert_eq!(one_line(""), "");
+        let long = "x".repeat(200);
+        let cut = one_line(&long);
+        assert_eq!(cut.chars().count(), ABOUT_CHARS + 1, "{cut}");
+        assert!(cut.ends_with('…'));
+        assert_eq!(one_line("日本語".repeat(40).as_str()).chars().count(), ABOUT_CHARS + 1);
+    }
 
     const SKILL: &str = r#"---
 name: zz-pet-test

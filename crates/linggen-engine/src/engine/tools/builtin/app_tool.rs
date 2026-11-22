@@ -8,11 +8,12 @@
 use super::super::{ToolCall, ToolResult, Tools};
 use super::Tool;
 use crate::engine::permission::{ActionClass, PermissionMode};
-use crate::engine::skill::judge::not_offered;
 use crate::engine::skill::reach::Offer;
-use crate::engine::skill::tools::{anywhere_tools, declared, pet_tools, run, run_for_pet, Refusal};
+use crate::engine::skill::tools::{
+    action_row, anywhere_tools, model_may_start, pet_tools, resolve_offered, run, run_for_pet, Refusal,
+};
 use crate::engine::skill::Skill;
-use crate::engine::skill_tool::{SkillToolDef, SkillToolKind};
+use crate::engine::skill_tool::SkillToolDef;
 use anyhow::Result;
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -136,15 +137,10 @@ impl Tools {
             .get_manager()
             .ok_or_else(|| Refusal::NoSkill("no apps to reach here".into()))?;
         let skill = manager.skills.get_skill(app).await.ok_or_else(|| Refusal::no_skill(app))?;
-        let def = declared(&skill, tool)?.clone();
-        let offer = Offer::to_caller(&def, self.is_companion());
-        self.app_reachable(&skill, offer)?;
-        if offer == Offer::Nobody {
-            return Err(not_offered(app, tool));
-        }
-        if def.kind() != SkillToolKind::Shell {
-            return Err(Refusal::NotRunnable(format!("'{tool}' runs no command")));
-        }
+        let (def, offer) = resolve_offered(&skill, tool, self.is_companion(), |offer| {
+            self.app_reachable(&skill, offer)
+        })?;
+        let def = def.clone();
         Ok((skill, def, offer))
     }
 
@@ -174,9 +170,7 @@ impl Tools {
         if self.session_policy.as_ref().is_some_and(|p| !p.is_skill_allowed(app)) {
             return Err(Refusal::NotYours(format!("'{app}' is not one of the apps you may use")));
         }
-        if skill.disable_model_invocation {
-            return Err(Refusal::NotYours(format!("'{app}' is user-only: only the person starts it")));
-        }
+        model_may_start(skill)?;
         if self.kept_out_of_day(skill) {
             return Err(Refusal::NotYours(format!(
                 "refused: {app} keeps a session of its own; it is not reached from the day's session."
@@ -235,17 +229,7 @@ fn listing(tools: &Tools, skills: &[Skill]) -> Vec<String> {
             offered
                 .into_iter()
                 .filter(|t| tools.app_reachable(s, Offer::to_caller(t, companion)).is_ok())
-                .map(|t| {
-                    let entry = t.to_schema_json();
-                    json!({
-                        "app": s.name,
-                        "tool": t.name,
-                        "class": t.class.word(),
-                        "description": t.description,
-                        "args": entry["args"],
-                    })
-                    .to_string()
-                })
+                .map(|t| action_row(s, t).to_string())
                 .collect::<Vec<_>>()
         })
         .collect()
