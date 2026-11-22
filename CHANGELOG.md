@@ -1,9 +1,42 @@
 # Changelog
 
-## [2.7.0] - unreleased — share your Mac with your household
+## [2.8.0] - unreleased — share your Mac with your household
 
 Built and tested with fakes; not yet seen live with a second person's phone.
 The phone's part ships with the phone app.
+
+### People
+
+- **Settings → People: say what each person of your household may use.** A
+  person is a paired phone signed in to another account, or a signed-out
+  phone. For each: a level (chat, read or edit), which apps, which of this
+  Mac's models, and a daily limit of tokens on them.
+- **Nothing is given until you give it.** A person nobody set anything for is
+  at read, with your apps except those you keep, and none of this Mac's
+  models — before 2.8 their turns ran on yours.
+- **Keep an app to yourself.** An app you mark as yours alone is in no
+  person's list, however their list is set.
+- **One rule holds on every way in**: an app's page, its tools, its saves and
+  a turn started in it all ask the same question; a turn with no model given,
+  or past the day's limit, does not start, and the phone is told which.
+- **People are set at this Mac only.** The page opened from another computer
+  or a phone shows who can use this Mac and offers no control.
+- **Your own row has no limit**; nothing here changes what you can do.
+
+### Whose phone it is
+
+- **A phone is the account the relay vouches for.** Until then it is its own
+  device at read and takes nothing set for an account. A phone of another
+  account that was paired before this release is at read until it is vouched
+  for (linggen.dev and the phone app carry the other half).
+- **A phone that signs in keeps what you set for it** when its account has no
+  settings yet; when the account has its own, those stand.
+
+## [2.7.0] - unreleased — one way to an app's actions; hold Yinyue and talk to her
+
+Built and tested with fakes; not yet tried on a real Mac (no microphone, no
+hearing model and no sound has run). The live talk this release is planned
+around (`doc/plan-3.0.md`) is not started.
 
 ### Tools
 
@@ -30,43 +63,6 @@ The phone's part ships with the phone app.
   Settings → Tools & MCP → Outside agents has one switch per private app that
   offers an action anywhere, set at this Mac only.
 
-### People
-
-- **Settings → People: say what each person of your household may use.** A
-  person is a paired phone signed in to another account, or a signed-out
-  phone. For each: a level (chat, read or edit), which apps, which of this
-  Mac's models, and a daily limit of tokens on them.
-- **Nothing is given until you give it.** A person nobody set anything for is
-  at read, with your apps except those you keep, and none of this Mac's
-  models — before 2.7 their turns ran on yours.
-- **Keep an app to yourself.** An app you mark as yours alone is in no
-  person's list, however their list is set.
-- **One rule holds on every way in**: an app's page, its tools, its saves and
-  a turn started in it all ask the same question; a turn with no model given,
-  or past the day's limit, does not start, and the phone is told which.
-- **People are set at this Mac only.** The page opened from another computer
-  or a phone shows who can use this Mac and offers no control.
-- **Your own row has no limit**; nothing here changes what you can do.
-
-### Whose phone it is
-
-- **A phone is the account the relay vouches for.** Until then it is its own
-  device at read and takes nothing set for an account. A phone of another
-  account that was paired before this release is at read until it is vouched
-  for (linggen.dev and the phone app carry the other half).
-- **A phone that signs in keeps what you set for it** when its account has no
-  settings yet; when the account has its own, those stand.
-
-### Which model a turn runs on
-
-- **A session's summary, the prompt preview and Yinyue's pushed line run on
-  the model the turn itself runs on.** For a person given models, the summary
-  and its window now follow the models they were given, as their turn does:
-  their first given model, not the agent's default when both are given.
-  Nothing outside what a person was given is named.
-- **A model a failed call moves a member to is kept as a picked one is.** A
-  member the session had not seated yet now joins with the lead first.
-
 ### Turns
 
 - **A plan approved after a restart keeps the session's withheld tools, its
@@ -79,12 +75,15 @@ The phone's part ships with the phone app.
   follows a finished task or a message from another agent runs on the model
   the session keeps for that agent.
 
-## [2.6.0] - unreleased — hold Yinyue and talk to her
+### Which model a turn runs on
 
-Built and tested with fakes; not yet tried on a real Mac (no microphone, no
-hearing model and no sound has run). 2.6 is not complete with this: the tool
-redesign and the live talk it is planned around (`doc/plan-3.0.md`) are not
-started.
+- **A session's summary, the prompt preview and Yinyue's pushed line run on
+  the model the turn itself runs on.** For a person given models, the summary
+  and its window now follow the models they were given, as their turn does:
+  their first given model, not the agent's default when both are given.
+  Nothing outside what a person was given is named.
+- **A model a failed call moves a member to is kept as a picked one is.** A
+  member the session had not seated yet now joins with the lead first.
 
 ### Talk to Yinyue
 
@@ -111,7 +110,7 @@ started.
   `{"wav_b64"}`) for the owner and answers `{text, language, ms}`;
   `GET /api/stt` says whether this Mac can hear and why not.
 
-## [2.5.2] - unreleased — the Mac app shows the web UI; rule files can import
+## [2.6.0] - 2026-11-21 — the Mac app shows the web UI; rule files can import
 
 ### One UI
 
