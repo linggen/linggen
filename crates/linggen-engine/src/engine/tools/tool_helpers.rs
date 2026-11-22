@@ -186,17 +186,28 @@ pub(crate) fn normalize_tool_args(tool: &str, args: Value) -> Value {
 /// adding a tool there auto-registers its name and aliases here. Plan-mode
 /// tools (`EnterPlanMode`, `ExitPlanMode`, `UpdatePlan`) aren't real
 /// `Tool` impls (they're parsed as `ModelAction`s in `actions.rs`) so
-/// they keep an explicit branch.
+/// they keep an explicit branch. A name that selects several tools (the
+/// old `Browser_tabs`) resolves to the first; a declaration takes all of them
+/// ([`canonical_tool_names`]).
 pub fn canonical_tool_name(tool: &str) -> Option<&'static str> {
-    if let Some(t) = super::builtin::lookup(tool) {
-        return Some(t.name());
+    canonical_tool_names(tool).first().copied()
+}
+
+/// Every canonical tool name `tool` selects — one for a tool's own name or
+/// alias, several for an old name whose ops now sit in more than one tool,
+/// none for a name that is no built-in. The one place a declared or
+/// stale name is resolved to what the engine compares.
+pub fn canonical_tool_names(tool: &str) -> Vec<&'static str> {
+    let built_in: Vec<&'static str> = super::builtin::lookup_all(tool).map(|t| t.name()).collect();
+    if !built_in.is_empty() {
+        return built_in;
     }
-    Some(match tool {
-        "ExitPlanMode" | "exit_plan_mode" => "ExitPlanMode",
-        "EnterPlanMode" | "enter_plan_mode" => "EnterPlanMode",
-        "UpdatePlan" | "update_plan" => "UpdatePlan",
-        _ => return None,
-    })
+    match tool {
+        "ExitPlanMode" | "exit_plan_mode" => vec!["ExitPlanMode"],
+        "EnterPlanMode" | "enter_plan_mode" => vec!["EnterPlanMode"],
+        "UpdatePlan" | "update_plan" => vec!["UpdatePlan"],
+        _ => Vec::new(),
+    }
 }
 
 /// Full short-form schema list for the system-prompt JSON-action embedding.

@@ -1409,8 +1409,9 @@ impl AgentEngine {
     /// `mcp__memory…` entry in either list was silently discarded, and a
     /// narrowed agent lost memory without a word about it.
     fn resolve_declared_tool(&self, tool: &str) -> Vec<String> {
-        if let Some(name) = tools::canonical_tool_name(tool) {
-            return vec![name.to_string()];
+        let built_in = tools::canonical_tool_names(tool);
+        if !built_in.is_empty() {
+            return built_in.into_iter().map(String::from).collect();
         }
         if self.tools.has_skill_tool(tool) {
             return vec![tool.to_string()];

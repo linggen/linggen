@@ -177,11 +177,19 @@ pub(super) fn registry() -> &'static [Arc<dyn Tool>] {
 }
 
 /// Look up a tool by canonical name or alias. `None` if no built-in
-/// tool matches.
+/// tool matches. A name several tools list as an alias (an old name whose
+/// ops now sit in more than one tool) finds the first; [`lookup_all`] finds
+/// them all.
 pub(super) fn lookup(name: &str) -> Option<&'static Arc<dyn Tool>> {
+    lookup_all(name).next()
+}
+
+/// Every built-in tool `name` selects: the tool of that name, or each tool
+/// that lists it as an alias.
+pub(super) fn lookup_all(name: &str) -> impl Iterator<Item = &'static Arc<dyn Tool>> + '_ {
     registry()
         .iter()
-        .find(|t| t.name() == name || t.aliases().contains(&name))
+        .filter(move |t| t.name() == name || t.aliases().contains(&name))
 }
 
 /// Public tier lookup used by `engine::permission::tool_action_tier`.
@@ -276,6 +284,23 @@ mod max_duration_tests {
     fn unknown_tools_are_unbounded() {
         // Skill-provided tools declare their own work; the engine cannot guess.
         assert_eq!(tool_max_duration("SomeSkillProvidedTool"), None);
+    }
+
+    /// A name selects one tool, but for an old name whose ops moved into
+    /// several: `Browser_tabs` (list, open, switch, close) is each of the
+    /// three browser tools'. No other name, and no alias that is another
+    /// tool's own name, is shared.
+    #[test]
+    fn a_name_selects_one_tool_except_the_old_tabs_name() {
+        let mut selects: std::collections::BTreeMap<&str, Vec<&str>> = Default::default();
+        for tool in registry() {
+            for name in std::iter::once(tool.name()).chain(tool.aliases().iter().copied()) {
+                selects.entry(name).or_default().push(tool.name());
+            }
+        }
+        let shared: Vec<(&str, &Vec<&str>)> = selects.iter().filter(|(_, t)| t.len() > 1).map(|(n, t)| (*n, t)).collect();
+        let three = vec!["browser_open", "browser_read", "browser_act"];
+        assert_eq!(shared, [("Browser_tabs", &three), ("browser_tabs", &three)]);
     }
 
     #[test]

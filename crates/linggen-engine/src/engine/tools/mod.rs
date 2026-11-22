@@ -32,7 +32,7 @@ pub(crate) use search_exec::kill_process_group;
 pub use crate::project_root::find_git_root as search_exec_find_git_root;
 pub use crate::project_root::project_ancestors;
 pub(crate) use crate::project_root::project_ancestors_within;
-pub use tool_helpers::canonical_tool_name;
+pub use tool_helpers::{canonical_tool_name, canonical_tool_names};
 pub(crate) use tool_helpers::full_tool_schema_entries;
 pub(crate) use tool_helpers::{normalize_tool_args, summarize_tool_args};
 
