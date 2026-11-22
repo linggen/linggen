@@ -360,20 +360,25 @@ fn best_route(method: &str, path: &str) -> Option<&'static (&'static str, &'stat
 /// The placeholders of a route's path that name an app (a skill).
 const APP_PLACEHOLDERS: &[&str] = &["{skill}", "{skill_name}", "{app}"];
 
-/// Routes that name their app in the query, not the path: `(method, path,
-/// the query's key)`.
+/// Routes that name their app in the query: `(method, path, key)`.
+/// Keep the examples in `every_route_that_names_an_app_is_found` in step.
 const APP_IN_QUERY: &[(&str, &str, &str)] = &[
+    ("GET", "/api/sessions/day", "skill"),
     ("GET", "/api/skill-sessions", "skill"),
     ("GET", "/api/skill-sessions/state", "skill"),
-    ("DELETE", "/api/skill-sessions", "skill"),
+    ("GET", "/api/activity", "app"),
 ];
 
-/// Routes that name their app at the top of the body: `(method, path, the
-/// body's key)`. A chat names the app it is said in; a launch the app it
-/// brings up.
+/// Routes that name their app at the top of the body: `(method, path, key)`.
+/// Keep the examples in `every_route_that_names_an_app_is_found` in step.
 const APP_IN_BODY: &[(&str, &str, &str)] = &[
+    ("POST", "/api/sessions", "skill"),
+    ("DELETE", "/api/skill-sessions", "skill"),
     ("POST", "/api/chat", "skill_name"),
+    ("POST", "/api/chat/clear", "skill_name"),
     ("POST", "/api/apps/launch", "skill"),
+    ("POST", "/api/activity", "app"),
+    ("POST", "/api/yinyue/event", "app"),
 ];
 
 /// The app a request is for, when its route names one — in its path (a
@@ -396,18 +401,30 @@ pub(crate) fn app_named(method: &str, url: &str, body: &serde_json::Value) -> Op
             return named;
         }
     }
-    let in_query = APP_IN_QUERY.iter().find(|(m, p, _)| *m == method && *p == path).and_then(|(_, _, key)| {
-        query
-            .split('&')
-            .filter_map(|pair| pair.split_once('='))
-            .find(|(k, _)| decode(k).as_deref() == Some(*key))
-            .and_then(|(_, v)| decode(v))
-    });
+    let in_query = APP_IN_QUERY
+        .iter()
+        .find(|(m, p, _)| *m == method && *p == path)
+        .and_then(|(_, _, key)| {
+            // Axum's Query reads form encoding, including '+' for spaces.
+            url::form_urlencoded::parse(query.as_bytes())
+                .find(|(k, _)| k == *key)
+                .map(|(_, v)| match *key {
+                    "app" => v.trim().to_owned(), // activity's filter
+                    _ => v.into_owned(),
+                })
+                .filter(|name| !name.is_empty())
+        });
     in_query.or_else(|| {
         APP_IN_BODY
             .iter()
             .find(|(m, p, _)| *m == method && *p == path)
-            .and_then(|(_, _, key)| body.get(*key)?.as_str().map(str::to_string))
+            .and_then(|(_, _, key)| body.get(*key)?.as_str())
+            .map(|name| match (method, path) {
+                // These handlers trim the name before using it.
+                ("POST", "/api/sessions" | "/api/apps/launch") => name,
+                _ => name.trim(),
+            })
+            .map(str::to_owned)
             .filter(|name| !name.is_empty())
     })
 }
@@ -729,7 +746,9 @@ mod tests {
     fn every_route_that_names_an_app_is_found() {
         let body = serde_json::Value::Null;
         for (method, pattern, _) in CLASSES {
-            let named = pattern.split('/').any(|seg| APP_PLACEHOLDERS.contains(&seg));
+            let named = pattern
+                .split('/')
+                .any(|seg| APP_PLACEHOLDERS.contains(&seg));
             let url = pattern
                 .replace("{skill_name}", "x-app")
                 .replace("{skill}", "x-app")
@@ -746,16 +765,38 @@ mod tests {
                 .replace("{verb}", "v");
             let method = if *method == "*" { "GET" } else { method };
             if best_route(method, &url).is_some_and(|(_, p, _)| p == pattern) {
-                assert_eq!(app_named(method, &url, &body).is_some(), named, "{method} {pattern}");
+                assert_eq!(
+                    app_named(method, &url, &body).is_some(),
+                    named,
+                    "{method} {pattern}"
+                );
             }
         }
-        let by_name: Vec<&str> = CLASSES
-            .iter()
-            .filter(|(_, p, _)| p.split('/').any(|seg| APP_PLACEHOLDERS.contains(&seg)))
-            .map(|(_, p, _)| *p)
-            .collect();
-        assert!(by_name.len() >= 8, "the routes that name an app: {by_name:?}");
-        assert_eq!(APP_IN_QUERY.len(), 3);
-        assert_eq!(APP_IN_BODY.len(), 2);
+        // Serde extractors and handler logic don't expose app names in the
+        // route declarations. Keep one independent example per such route.
+        use serde_json::json;
+        for (method, url, body) in [
+            ("POST", "/api/sessions", json!({"skill": "x-app"})),
+            ("GET", "/api/sessions/day?skill=x-app", json!(null)),
+            ("GET", "/api/skill-sessions?skill=x-app", json!(null)),
+            ("GET", "/api/skill-sessions/state?skill=x-app", json!(null)),
+            ("DELETE", "/api/skill-sessions", json!({"skill": " x-app "})),
+            ("POST", "/api/chat", json!({"skill_name": " x-app "})),
+            ("POST", "/api/chat/clear", json!({"skill_name": " x-app "})),
+            ("POST", "/api/apps/launch", json!({"skill": "x-app"})),
+            ("GET", "/api/activity?app=+x-app+", json!(null)),
+            ("POST", "/api/activity", json!({"app": " x-app "})),
+            ("POST", "/api/yinyue/event", json!({"app": " x-app "})),
+        ] {
+            assert!(
+                best_route(method, url.split('?').next().unwrap()).is_some(),
+                "{method} {url} is not a route"
+            );
+            assert_eq!(
+                app_named(method, url, &body).as_deref(),
+                Some("x-app"),
+                "{method} {url}"
+            );
+        }
     }
 }

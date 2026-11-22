@@ -731,6 +731,69 @@ async fn wait_for_the_phone(lan: &Lan) {
     }
 }
 
+/// The same app rule applies when creating a session, without changing what
+/// a person with every app or the Mac's own UI can create.
+#[tokio::test]
+async fn creating_a_session_checks_the_named_app() {
+    use reqwest::Method;
+    let w = World::start(Setup {
+        lan: true,
+        ..Setup::default()
+    })
+    .await;
+    pair_friends_phone_with(&w, json!({"contract": 1}));
+    let lan = Lan::new(&w);
+    wait_for_the_phone(&lan).await;
+    let body = json!({"title": "A game", "skill": "dice"});
+    let create = || lan.send(Method::POST, "/api/sessions", Some(body.clone()));
+    assert_eq!(create().await.0, 200, "a person with every app");
+
+    set_people(&w, json!({"people": {"u-friend": {"apps": []}}})).await;
+    assert_eq!(
+        create().await,
+        (403, json!({"error": "not_your_app", "app": "dice"}))
+    );
+    assert_eq!(w.api.post_status("/api/sessions", body).await, 200);
+}
+
+#[tokio::test]
+async fn pair_me_lists_the_persons_models() {
+    let w = World::start(Setup {
+        lan: true,
+        ..Setup::default()
+    })
+    .await;
+    pair_friends_phone_with(&w, json!({"settings": {"models": ["gpt-6.2-sol"]}}));
+    set_people(
+        &w,
+        json!({"people": {"u-friend": {"models": ["deepseek-flash"]}}}),
+    )
+    .await;
+    let lan = Lan::new(&w);
+    wait_for_the_phone(&lan).await;
+    let body = lan.get("/api/pair/me").await;
+    assert_eq!(
+        body["models"],
+        json!([{"id": "deepseek-flash", "kind": "cloud"}])
+    );
+    assert_eq!(body["settings"]["models"], json!(["gpt-6.2-sol"]));
+
+    // With no account, the same phone has its own person settings.
+    pair_friends_phone_with(
+        &w,
+        json!({"account": null, "verified_account": null, "settings": {"models": ["gpt-6.2-sol"]}}),
+    );
+    set_people(
+        &w,
+        json!({"people": {"device:phone-friend": {"models": ["gpt-6-luna"]}}}),
+    )
+    .await;
+    assert_eq!(
+        lan.get("/api/pair/me").await["models"],
+        json!([{"id": "gpt-6-luna", "kind": "oauth"}])
+    );
+}
+
 /// A paired phone of another person is held to what the owner chose for
 /// them (doc/permission-spec.md § People): with no model of this Mac shared,
 /// its turn does not start — a fact, nothing kept — and shared, it runs; a

@@ -160,7 +160,16 @@ pub(crate) async fn get_pair_me(
     let config = state.manager.get_config_snapshot().await;
     let mac = crate::server::person::mac_account();
     let owner = crate::server::person::is_owners_device(&d, mac.as_deref());
-    let mut body = me_body(&d, &config, owner);
+    let person = crate::server::person::of_device(&d, mac.as_deref());
+    let allow = if person.is_owner() {
+        device_models(&d)
+    } else {
+        // Use the same model list (including successors) as a person's turn.
+        crate::server::people::current()
+            .ceiling_of(&person, &[])
+            .models
+    };
+    let mut body = me_body(&d, &config, owner, &allow);
     // Where to reach this Mac when the phone is off the LAN: the relay
     // signals per instance. Not a secret — an address. Absent while
     // signed out, since the relay leg needs the account credential.
@@ -170,18 +179,9 @@ pub(crate) async fn get_pair_me(
     Json(body).into_response()
 }
 
-/// A paired device's own row as `/api/pair/me` answers it: its name and
-/// settings, and the models it may run — every allow-listed one for the
-/// owner's device (`owner`), a provider's key riding along; for any other
-/// device only those it reaches with its own credentials (Linggen Cloud, a
-/// ChatGPT sign-in), never a key of this Mac's.
-fn me_body(
-    d: &crate::state_fs::devices::PairedDevice,
-    config: &crate::config::Config,
-    owner: bool,
-) -> serde_json::Value {
-    let allow: Vec<String> = d
-        .settings
+/// The owner's device keeps its own catalog selection, not a people row.
+fn device_models(d: &crate::state_fs::devices::PairedDevice) -> Vec<String> {
+    d.settings
         .get("models")
         .and_then(|v| v.as_array())
         .map(|a| {
@@ -189,8 +189,17 @@ fn me_body(
                 .filter_map(|x| x.as_str().map(String::from))
                 .collect()
         })
-        .unwrap_or_default();
-    let mut models = resolve_model_catalog(&allow, config);
+        .unwrap_or_default()
+}
+
+/// Keep the phone's response shape and only send Mac credentials to the owner.
+fn me_body(
+    d: &crate::state_fs::devices::PairedDevice,
+    config: &crate::config::Config,
+    owner: bool,
+    allow: &[String],
+) -> serde_json::Value {
+    let mut models = resolve_model_catalog(allow, config);
     if !owner {
         models.retain(|m| matches!(m["kind"].as_str(), Some("cloud" | "oauth")));
     }
@@ -373,7 +382,7 @@ mod tests {
     fn the_phone_is_told_the_chatgpt_version_and_what_old_ids_mean() {
         let cfg = crate::config::Config::default();
         let d = crate::state_fs::devices::PairedDevice::default();
-        let body = me_body(&d, &cfg, false);
+        let body = me_body(&d, &cfg, false, &[]);
         let catalog = crate::provider::models::chatgpt_catalog::current();
         assert_eq!(body["chatgpt"]["client_version"], catalog.client_version());
         assert_eq!(body["chatgpt"]["successors"]["gpt-6.1-sol"], "gpt-6.2-sol");
@@ -394,23 +403,40 @@ mod tests {
         let mut d = crate::state_fs::devices::PairedDevice::default();
         d.settings.insert(
             "models".into(),
-            serde_json::json!(["my-claude", "my-sol", crate::provider::models::LINGGEN_CLOUD_MODEL_ID]),
+            serde_json::json!([
+                "my-claude",
+                "my-sol",
+                crate::provider::models::LINGGEN_CLOUD_MODEL_ID
+            ]),
         );
-        let owners = me_body(&d, &cfg, true);
+        let owners = me_body(&d, &cfg, true, &device_models(&d));
         assert!(owners.to_string().contains("sk-THE-MACS-KEY"));
         assert_eq!(owners["models"].as_array().map(Vec::len), Some(3));
-        let other = me_body(&d, &cfg, false);
+        let other = me_body(&d, &cfg, false, &device_models(&d));
         assert!(!other.to_string().contains("sk-THE-MACS-KEY"), "{other}");
-        let kinds: Vec<_> = other["models"].as_array().unwrap().iter().map(|m| m["kind"].clone()).collect();
-        assert_eq!(kinds, vec![serde_json::json!("oauth"), serde_json::json!("cloud")]);
+        let kinds: Vec<_> = other["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["kind"].clone())
+            .collect();
+        assert_eq!(
+            kinds,
+            vec![serde_json::json!("oauth"), serde_json::json!("cloud")]
+        );
 
         // The same phone row: claimed, then verified at its next sync, then
         // signed in to another account.
         let mac = Some("u-owner");
         let keyed = |d: &crate::state_fs::devices::PairedDevice| {
-            me_body(d, &cfg, crate::server::person::is_owners_device(d, mac))
-                .to_string()
-                .contains("sk-THE-MACS-KEY")
+            me_body(
+                d,
+                &cfg,
+                crate::server::person::is_owners_device(d, mac),
+                &device_models(d),
+            )
+            .to_string()
+            .contains("sk-THE-MACS-KEY")
         };
         let claim = |id: &str| crate::state_fs::devices::AccountRef { id: id.into(), email: None, name: None, at: None };
         d.kind = Some(crate::state_fs::devices::DeviceKind::Phone);
