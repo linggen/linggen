@@ -92,15 +92,16 @@ phone_lingjing_tests() { # ref
   if (cd "$mob" && tool/lingjing_assets.sh "$sk") >"$RUN/phone-assets.log" 2>&1; then record PASS "phone: 灵境 assets" "built from skills ${ref:0:12}"
   else record FAIL "phone: 灵境 assets" "tool/lingjing_assets.sh failed (see $RUN/phone-assets.log)"; fi
   json="$RUN/phone-lingjing-tests.json"
-  # The tests that read the skills themselves (LINGJING_SKILLS, else ../skills — absent beside a scratch worktree) get this ref.
-  (cd "$mob" && "$flutter" pub get >/dev/null 2>&1 && LINGJING_SKILLS="$sk" "$flutter" test --reporter json --concurrency="${GATE_FLUTTER_CONCURRENCY:-2}" $(cd "$mob" && ls test/lingjing_*_test.dart)) >"$json" 2>"$RUN/phone-lingjing-tests.err"
+  # The tests that read the skills themselves (LINGJING_SKILLS, else ../skills — absent beside a scratch worktree) get this ref;
+  # those that compare with the engine get this checkout (LINGGEN_DIR), or they skip.
+  (cd "$mob" && "$flutter" pub get >/dev/null 2>&1 && LINGJING_SKILLS="$sk" LINGGEN_DIR="$REPO" "$flutter" test --reporter json --concurrency="${GATE_FLUTTER_CONCURRENCY:-2}" $(cd "$mob" && ls test/lingjing_*_test.dart)) >"$json" 2>"$RUN/phone-lingjing-tests.err"
   skipped="$(grep '"type":"testDone"' "$json" | grep -c '"skipped":true')"
   failed="$(grep '"type":"testDone"' "$json" | grep -c '"result":"\(failure\|error\)"')"
   passed="$(grep '"type":"testDone"' "$json" | grep '"hidden":false' | grep '"skipped":false' | grep -c '"result":"success"')"
   if [ "$failed" != 0 ]; then record FAIL "phone: 灵境 tests" "$failed failed, $passed passed (see $json)"
   elif [ "$passed" = 0 ]; then record FAIL "phone: 灵境 tests" "none ran (see $RUN/phone-lingjing-tests.err)"
   else record PASS "phone: 灵境 tests" "$passed passed"; fi
-  [ "$skipped" = 0 ] || record GAP "phone: 灵境 tests skipped" "$skipped skipped — the generated kit did not reach them (see $json)"
+  [ "$skipped" = 0 ] || record GAP "phone: 灵境 tests skipped" "$skipped skipped — the 灵境 kit or a sibling checkout did not reach them (see $json)"
   git -C "$MOBILE_REPO" worktree remove --force "$mob" >/dev/null 2>&1
   git -C "$SKILLS_REPO" worktree remove --force "$sk" >/dev/null 2>&1
 }
