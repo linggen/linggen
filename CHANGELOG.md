@@ -1,6 +1,6 @@
 # Changelog
 
-## [2.6.1] - unreleased
+## [2.6.1] - 2026-11-22 — a private app answers in its own session; the moon's real phase
 
 - The moon in the page's sky shows tonight's real phase.
 - A private app called by name from any chat answers in its own session.
