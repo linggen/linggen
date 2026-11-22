@@ -107,6 +107,64 @@ fn inspection_needs_only_a_read_grant() {
     }
 }
 
+fn delegated_inspection(cmd: &str) -> PermissionCheckResult {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut perms = folder_session(PermissionMode::Read);
+    perms.path_modes.push(PathMode {
+        path: root.to_str().unwrap().into(),
+        mode: PermissionMode::Read,
+    });
+    check_permission_for(
+        "Bash",
+        Some(&cmd.replace('@', root.to_str().unwrap())),
+        None,
+        Path::new(WD),
+        &perms,
+        None,
+        true,
+        None,
+    )
+}
+
+#[test]
+fn numbering_and_recursive_search_after_cd_need_only_read() {
+    let result = delegated_inspection("cd @; nl -ba lib/a.dart; grep -RnE 'x|y' lib");
+    assert!(allowed(&result), "{result:?}");
+}
+
+#[test]
+fn numbering_in_a_pipeline_needs_only_read() {
+    let result = delegated_inspection("nl -ba @/src/a.rs | sed -n '1,60p'");
+    assert!(allowed(&result), "{result:?}");
+}
+
+#[test]
+fn comparison_across_read_grants_needs_only_read() {
+    let result = delegated_inspection("cmp -s ./a @/b");
+    assert!(allowed(&result), "{result:?}");
+}
+
+#[test]
+fn inspection_grants_do_not_cover_writes_ungranted_inputs_or_code() {
+    for cmd in [
+        "nl -ba ./a > ./out",
+        "nl -ba ../ungranted/a",
+        "./nl -ba ./a",
+        "cmp -s ./a ../ungranted/b",
+        "cmp -s ../ungranted/a ./b",
+        "cmp --unknown ./a ./b",
+        "grep -f ../ungranted/pattern ./a",
+        "for f in ./a ./b; do nl -ba \"$f\"; done",
+        "nl -ba \"$var\"",
+        "set -- ./a",
+        "python3 -c 'print(1)'",
+        "sandbox-exec -p '(version 1)' nl -ba ./a",
+    ] {
+        let result = delegated_inspection(cmd);
+        assert!(!allowed(&result), "{cmd}: {result:?}");
+    }
+}
+
 #[test]
 fn sed_prints_only_numeric_selections_at_read_level() {
     let reads = [

@@ -1,5 +1,5 @@
 use super::foreground_shell::Ran;
-use super::tool_helpers::{build_globset, to_rel_string};
+use super::tool_helpers::{build_globset, expand_file_tool_path, to_rel_string};
 use super::{SearchMatch, ToolResult, Tools};
 use anyhow::Result;
 use grep::regex::RegexMatcher;
@@ -15,6 +15,7 @@ use std::time::Duration;
 #[derive(Debug, Deserialize)]
 pub(super) struct SearchArgs {
     pub(super) query: String,
+    pub(super) path: Option<String>,
     pub(super) globs: Option<Vec<String>>,
     pub(super) max_results: Option<usize>,
 }
@@ -100,7 +101,21 @@ impl Tools {
         let mut matches = Vec::new();
         let mut searcher = Searcher::new();
         let cwd = self.cwd();
-        let mut walker = WalkBuilder::new(&cwd);
+        let root = args.path.as_ref().map_or_else(
+            || cwd.clone(),
+            |path| cwd.join(expand_file_tool_path(path, dirs::home_dir().as_deref())),
+        );
+        // The engine gate checks the requested root as it checks Read. Check
+        // again here before walking: the walk filter need not visit its root.
+        if args.path.is_some() && !self.permits_read(&root) {
+            anyhow::bail!("This path was not approved for reading.");
+        }
+        let glob_root = if root.is_file() {
+            root.parent().unwrap_or(&root)
+        } else {
+            &root
+        };
+        let mut walker = WalkBuilder::new(&root);
         walker.standard_filters(true).hidden(true);
         self.filter_read_walk(&mut walker);
 
@@ -114,12 +129,17 @@ impl Tools {
             }
 
             let path = entry.path();
-            let rel_path = to_rel_string(&cwd, path)?;
+            let rel_path = to_rel_string(glob_root, path)?;
             if let Some(gs) = &globset {
                 if !gs.is_match(Path::new(&rel_path)) {
                     continue;
                 }
             }
+            let result_path = if args.path.is_some() {
+                path.to_string_lossy().into_owned()
+            } else {
+                rel_path
+            };
             let mut file_matches = Vec::new();
 
             let _ = searcher.search_path(
@@ -127,7 +147,7 @@ impl Tools {
                 path,
                 UTF8(|line_num, line_content| {
                     file_matches.push(SearchMatch {
-                        path: rel_path.clone(),
+                        path: result_path.clone(),
                         line: line_num as usize,
                         snippet: line_content.trim_end().to_string(),
                     });

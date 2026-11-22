@@ -172,10 +172,29 @@ fn classify_segment(raw: &[String], coding: bool) -> (BashClass, bool, Option<Ba
         return (Admin, false, Some(BashReason::ProcessSubstitution));
     }
     let (words, redirect) = split_redirects(raw);
-    let base = classify_words(&words);
+    let base = if words.first().is_some_and(|word| is_file_inspection(word)) {
+        let raw_words: Vec<_> = raw.iter().map(String::as_str).collect();
+        if literal_inspection_operands(&raw_words).is_some() {
+            classify_words(&words)
+        } else {
+            Admin
+        }
+    } else {
+        classify_words(&words)
+    };
     let (class, by_code, reason) = if coding && base == Admin {
         match coding_class(&words) {
-            Ok(Some(class)) => (class, true, None),
+            Ok(Some(class)) => {
+                let why = (class > Read).then(|| {
+                    let words: Vec<_> = words.iter().map(String::as_str).collect();
+                    command_run(&words)
+                        .first()
+                        .map_or(BashReason::UnclearSyntax, |program| {
+                            BashReason::NotReadOnly(file_name(program))
+                        })
+                });
+                (class, true, why)
+            }
             Ok(None) => (base, false, None),
             Err(reason) => (base, false, Some(reason)),
         }
@@ -250,6 +269,10 @@ fn coding_class(words: &[String]) -> Result<Option<BashClass>, BashReason> {
     }
     if runs_given_text(program, &args) {
         return Err(BashReason::GivenText(program.to_string()));
+    }
+    // The new inspection forms apply to direct, bare invocations only.
+    if is_file_inspection(program) {
+        return Ok(Some(Write));
     }
     // The command past its wrappers, judged by the tables under its plain
     // name: `time cargo test` is `cargo test`.
@@ -462,7 +485,10 @@ enum EnvRun<'a> {
 fn classify_env(args: &[String]) -> BashClass {
     match env_command(args) {
         EnvRun::Prints => Read,
-        EnvRun::Runs(command) => classify_words(command),
+        EnvRun::Runs(command) if !command.first().is_some_and(|word| is_file_inspection(word)) => {
+            classify_words(command)
+        }
+        EnvRun::Runs(_) => Admin,
         EnvRun::Opaque => Admin,
     }
 }
@@ -747,6 +773,95 @@ fn short_flags_safe(arg: &str, plain: &str, valued: &str) -> bool {
 // Program tables
 // ---------------------------------------------------------------------------
 
+pub(super) fn is_file_inspection(program: &str) -> bool {
+    matches!(program, "nl" | "cmp")
+}
+
+/// The literal file operands of the numbered-line and byte-comparison forms
+/// in `known_program`. Both shell target checks use this same option grammar.
+pub(super) fn inspection_operands<'a>(program: &str, args: &'a [&'a str]) -> Option<&'a [&'a str]> {
+    if !matches!(program, "nl" | "cmp") {
+        return None;
+    }
+    let digits = |value: &str| !value.is_empty() && value.bytes().all(|b| b.is_ascii_digit());
+    let mut at = 0;
+    while let Some(flag) = args.get(at).copied() {
+        if flag == "--" {
+            at += 1;
+            break;
+        }
+        let Some(short) = flag.strip_prefix('-').filter(|s| !s.is_empty()) else {
+            break;
+        };
+        at += 1;
+        if program == "cmp" {
+            match short {
+                "s" | "l" | "b" => continue,
+                "i" | "n" if args.get(at).is_some_and(|value| digits(value)) => at += 1,
+                _ => return None,
+            }
+        } else if short != "p" {
+            let (option, attached) =
+                short.split_at(short.char_indices().nth(1).map_or(short.len(), |(i, _)| i));
+            let value = if attached.is_empty() {
+                let value = *args.get(at)?;
+                at += 1;
+                value
+            } else {
+                attached
+            };
+            let valid = match option {
+                "b" | "f" | "h" => {
+                    matches!(value, "a" | "t" | "n")
+                        || value.strip_prefix('p').is_some_and(|re| !re.is_empty())
+                }
+                "i" | "l" | "v" | "w" => digits(value),
+                "n" => matches!(value, "ln" | "rn" | "rz"),
+                "d" | "s" => true,
+                _ => false,
+            };
+            if !valid {
+                return None;
+            }
+        }
+    }
+    let files = &args[at..];
+    (if program == "cmp" {
+        files.len() == 2
+    } else {
+        !files.is_empty()
+    } && files
+        .iter()
+        .all(|file| !file.is_empty() && (*file == "-" || !file.starts_with('-'))))
+    .then_some(files)
+}
+
+/// Reject shell syntax that cannot be treated as a literal inspection argument.
+/// Keep the raw operands for the shell target checks (notably quoted `~`).
+pub(super) fn literal_inspection_operands<'a>(words: &'a [&'a str]) -> Option<&'a [&'a str]> {
+    let (program, args) = words.split_first()?;
+    if !is_file_inspection(program) {
+        return None;
+    }
+    if words.iter().any(|word| {
+        let plain = dequote(word);
+        word.contains(['\n', '\\', '$', '`'])
+            || word.chars().any(is_odd_space)
+            || if plain == *word {
+                word.contains(['<', '>', '{', '}', '(', ')', '#', '*', '?', '['])
+                    || (word.starts_with('~') && *word != "~" && !word.starts_with("~/"))
+            } else {
+                *word != format!("'{plain}'") && *word != format!("\"{plain}\"")
+            }
+    }) {
+        return None;
+    }
+    let plain: Vec<_> = args.iter().map(|word| dequote(word)).collect();
+    let values: Vec<_> = plain.iter().map(String::as_str).collect();
+    let files = inspection_operands(program, &values)?;
+    Some(&args[args.len() - files.len()..])
+}
+
 fn classify_program(program: &str, args: &[String]) -> BashClass {
     known_program(program, args).unwrap_or(Admin)
 }
@@ -969,6 +1084,14 @@ fn known_program(program: &str, args: &[String]) -> Option<BashClass> {
         }
     };
     Some(match program {
+        "nl" | "cmp" => {
+            let args: Vec<_> = args.iter().map(String::as_str).collect();
+            if inspection_operands(program, &args).is_some() {
+                Read
+            } else {
+                Admin
+            }
+        }
         "git" => by_sub(GIT_READ, GIT_WRITE),
         "cargo" => by_sub(CARGO_READ, CARGO_WRITE),
         "npm" | "yarn" | "pnpm" => by_sub(NPM_READ, NPM_WRITE),

@@ -99,6 +99,7 @@ pub(super) enum BashReason {
     ProcessSubstitution,
     BeyondFolder(String),
     GivenText(String),
+    NotReadOnly(String),
     Target,
     Level,
     Outward,
@@ -108,11 +109,12 @@ pub(super) enum BashReason {
 impl BashReason {
     fn sentence(&self, mode: PermissionMode, path: &str) -> String {
         match self {
-            Self::Expansion => "Its words are decided at run time (`$` or backticks): write the values out or use a script in your folder.".into(),
-            Self::UnclearSyntax => "Its shell syntax is unclear to the gate: use a simpler command or a script in your folder.".into(),
+            Self::Expansion => "Its words are decided at run time (`$` or backticks): write the values out or use Read/Grep/Glob.".into(),
+            Self::UnclearSyntax => "Its shell syntax is unclear to the gate: use a simpler command or Read/Grep/Glob.".into(),
             Self::ProcessSubstitution => "It uses process substitution: pass a file in your folder instead.".into(),
             Self::BeyondFolder(program) => format!("{program} acts beyond your folder: this form needs {mode}."),
             Self::GivenText(program) => format!("{program} runs commands supplied as text: this form needs {mode}."),
+            Self::NotReadOnly(program) => format!("`{program}` is not known to only read in this form. Use Read, Grep, or Glob on a granted path."),
             Self::Target => {
                 let verb = if mode == PermissionMode::Read { "reads" } else { "acts on" };
                 format!("It {verb} {path}, outside your folder: use an equivalent path already granted at {mode}.")
@@ -1158,7 +1160,16 @@ fn check_grants(
                             session_cwd,
                             tier,
                             format!("{} {}", tool, cmd),
-                            coding.then(|| bash_grant_reason(arg_path, session_cwd, bash_reason.as_ref())),
+                            coding.then(|| {
+                                bash_grant_reason(
+                                    arg_path,
+                                    session_cwd,
+                                    bash_reason.as_ref(),
+                                    session_perms,
+                                    origin,
+                                    ceiling,
+                                )
+                            }),
                         );
                     }
                 }
@@ -1212,7 +1223,16 @@ fn check_grants(
         session_cwd,
         action_tier,
         format!("{} {}", tool, summary),
-        (coding && tool == "Bash").then(|| bash_grant_reason(&target_path, session_cwd, bash_reason.as_ref())),
+        (coding && tool == "Bash").then(|| {
+            bash_grant_reason(
+                &target_path,
+                session_cwd,
+                bash_reason.as_ref(),
+                session_perms,
+                origin,
+                ceiling,
+            )
+        }),
     )
 }
 
@@ -1275,7 +1295,32 @@ fn check_read_target(
     }
 }
 
-fn bash_grant_reason(target: &Path, cwd: &Path, class: Option<&BashReason>) -> BashReason {
+fn bash_grant_reason(
+    target: &Path,
+    cwd: &Path,
+    class: Option<&BashReason>,
+    perms: &SessionPermissions,
+    origin: ReadOrigin,
+    ceiling: Option<PermissionMode>,
+) -> BashReason {
+    if let Some(class) = class.filter(|_| {
+        matches!(
+            check_read_target(
+                target,
+                cwd,
+                perms,
+                "Bash",
+                false,
+                ceiling,
+                origin,
+                None,
+                &[]
+            ),
+            PermissionCheckResult::Allowed
+        )
+    }) {
+        return class.clone();
+    }
     let target = normalize_path(&target.to_string_lossy());
     let cwd = normalize_path(&cwd.to_string_lossy());
     if !Path::new(&target).starts_with(Path::new(&cwd)) {
@@ -1553,7 +1598,11 @@ fn command_targets_and_roots(cmd: &str, session_cwd: &Path, recursive_roots: &mu
     let mut tail_input = None;
     let mut in_pipeline = false;
     let mut segment_end = 0;
+    let mut inspected_until = 0;
     for (index, (token, text)) in tokens.iter().zip(text).enumerate() {
+        if index < inspected_until {
+            continue;
+        }
         let w = match token {
             Token::Op(joint) => {
                 let joint = *joint;
@@ -1578,8 +1627,36 @@ fn command_targets_and_roots(cmd: &str, session_cwd: &Path, recursive_roots: &mu
         if at_command {
             sed_files_from = None;
             tail_input = None;
-            segment_end = index + tokens[index..].iter().position(|t| matches!(t, Token::Op(_))).unwrap_or(tokens.len() - index);
-            recursive_roots.extend(super::read_shell::segment_roots(&tokens[index..segment_end], &cwd));
+            segment_end = index
+                + tokens[index..]
+                    .iter()
+                    .position(|t| matches!(t, Token::Op(_)))
+                    .unwrap_or(tokens.len() - index);
+            let segment = &tokens[index..segment_end];
+            recursive_roots.extend(super::read_shell::segment_roots(segment, &cwd));
+            let words: Vec<_> = segment
+                .iter()
+                .map(|token| match token {
+                    Token::Word(word) => word.as_str(),
+                    Token::Op(_) => unreachable!(),
+                })
+                .collect();
+            // `known_program`'s option grammar identifies the input suffix.
+            if let Some(files) = super::classify::literal_inspection_operands(&words) {
+                for word in files {
+                    let plain = dequote(word);
+                    if plain != "-" && !is_device_stream(&plain) {
+                        let path = if plain != *word && plain.starts_with('~') {
+                            cwd.join(plain)
+                        } else {
+                            resolve_bash_arg(&plain, &cwd)
+                        };
+                        out.push((path, TargetKind::Full));
+                    }
+                }
+                inspected_until = segment_end;
+                continue;
+            }
             if w == "tail" {
                 let end = tokens[index..]
                     .iter()

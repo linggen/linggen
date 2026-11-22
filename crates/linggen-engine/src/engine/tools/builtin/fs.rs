@@ -142,7 +142,7 @@ impl Tool for GrepTool {
         Some(Duration::from_secs(60))
     }
     fn description(&self) -> &'static str {
-        "Search file contents using regex. Returns matching lines with file path, line number, and snippet."
+        "Search a file or folder by regex (default: session folder). Returns matching paths, line numbers, and snippets."
     }
     fn tier(&self) -> PermissionMode {
         PermissionMode::Read
@@ -154,6 +154,10 @@ impl Tool for GrepTool {
                 "query": {
                     "type": "string",
                     "description": "Regex pattern to search for"
+                },
+                "path": {
+                    "type": "string",
+                    "description": "File or folder, absolute or relative to the session folder"
                 },
                 "globs": {
                     "type": "array",
@@ -171,9 +175,8 @@ impl Tool for GrepTool {
     fn legacy_schema_entry(&self) -> Value {
         json!({
             "name": "Grep",
-            "args": {"query": "string", "globs": "string[]?", "max_results": "number?"},
-            "returns": "{matches:[{path,line,snippet}]}",
-            "notes": "Query aliases accepted: query, path, file, filepath."
+            "args": {"query": "string", "path": "string?", "globs": "string[]?", "max_results": "number?"},
+            "returns": "{matches:[{path,line,snippet}]}"
         })
     }
     async fn execute(&self, tools: &Tools, call: ToolCall) -> Result<ToolResult> {

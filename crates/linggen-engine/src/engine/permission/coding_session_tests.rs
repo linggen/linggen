@@ -59,7 +59,52 @@ fn a_coding_shell_ask_explains_the_rule_that_triggered_it() {
             PermissionCheckResult::Blocked(reason) => Some(reason.as_str()),
             _ => None,
         };
-        assert!(reason.is_some_and(|reason| reason.contains(text)), "{cmd}: {decision:?}");
+        assert!(
+            reason.is_some_and(|reason| reason.contains(text)),
+            "{cmd}: {decision:?}"
+        );
+    }
+}
+
+#[test]
+fn a_read_granted_target_gets_the_command_reason() {
+    let perms = SessionPermissions {
+        path_modes: vec![
+            PathMode {
+                path: WD.into(),
+                mode: PermissionMode::Edit,
+            },
+            PathMode {
+                path: "/granted".into(),
+                mode: PermissionMode::Read,
+            },
+        ],
+        ..Default::default()
+    };
+    for (cmd, text) in [
+        (
+            "cmp --unknown ./a /granted/b",
+            "`cmp` is not known to only read",
+        ),
+        (
+            "nl -ba /granted/a \"$var\"",
+            "words are decided at run time",
+        ),
+        (
+            "cmp --unknown ./a /ungranted/b",
+            "acts on /ungranted/b, outside your folder",
+        ),
+    ] {
+        let result = check(cmd, &perms, true);
+        let PermissionCheckResult::NeedsPrompt(PromptKind::ExceedsCeiling {
+            reason: Some(reason),
+            ..
+        }) = result
+        else {
+            panic!("{cmd}: {result:?}");
+        };
+        assert!(reason.contains(text), "{cmd}: {reason}");
+        assert!(reason.split_whitespace().count() <= 20, "{reason}");
     }
 }
 
