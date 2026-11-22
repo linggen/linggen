@@ -423,6 +423,10 @@ export const ZH: Record<string, string> = {
   'Use {to}': '改用 {to}',
   'Remove from defaults': '从默认中移除',
   'Add to defaults': '加入默认',
+  // ── Outside agents ──
+  'Outside agents': '外部智能体',
+  'Private apps stay closed to them until you open one.': '私密应用对它们保持关闭，直到你打开。',
+  'Outside agents may use it': '允许外部智能体使用',
   // ── People ──
   '{name} · Phone': '{name} · 手机',
   '{name} · Computer': '{name} · 电脑',

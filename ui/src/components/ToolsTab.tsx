@@ -1,5 +1,6 @@
 import React from 'react';
 import { McpTab } from './McpTab';
+import { OutsideAppsCard } from './OutsideAppsCard';
 
 const sectionCls = 'bg-white dark:bg-[#141414] rounded-xl border border-slate-200 dark:border-white/5 shadow-sm p-5';
 
@@ -65,6 +66,8 @@ export const ToolsTab: React.FC = () => {
         </h2>
         <McpTab />
       </section>
+
+      <OutsideAppsCard />
     </div>
   );
 };
