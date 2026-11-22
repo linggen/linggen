@@ -261,6 +261,8 @@ The prompt carries a short index of such apps (`## Apps you can reach`: one line
 
 What does not reach through `AppTool`, whatever `reach` says: a person's turn is held to the apps the owner gave them; a private app (`private-talk: true`) from the day's session, which keeps it out; a user-only app (`disable-model-invocation: true`); an app that keeps the caller away (`place.<agent>.absent_until`); a mission and an `agent_run` delegate (they have no `AppTool`). A tool that is `page_only` cannot be `anywhere` — the skill is refused at load.
 
+An agent outside Linggen reaches the same `anywhere` actions through the MCP door's `app` tool (`mcp-spec.md` § The app tool), for the owner at this Mac only: a destructive action is refused there, and a private app (`private-talk: true`) answers only once the owner has opened it in Settings → Tools & MCP.
+
 ### Remote tools
 
 `remote: true` offers a tool to another device's agent: the Mac lists it on the retained `mac/tools` topic as `<app>_<verb>` (`ListLibrary` → `dj_list_library`), and the caller runs it through the page door above. Only a shell tool that is not `page_only` and sits within the skill's grant is listed; any tier — the caller gates writes.

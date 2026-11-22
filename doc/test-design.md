@@ -232,7 +232,7 @@ tunnels, so nothing on the host listens beyond loopback.
    its verdict is a GAP.
 3. Pass when: 9527 health; the UI loads (Chromium from `tests/e2e`'s
    Playwright over an SSH tunnel); memory answers through the engine —
-   `/mem/api/health`, `/mcp` initialize + tools/list (twelve tools; `/mcp/memory` answers 410), `ling mem
+   `/mem/api/health`, `/mcp` initialize + tools/list (thirteen tools; `/mcp/memory` answers 410), `ling mem
    session-start` and `stats` — with `~/.local/bin/ling-mem` the stand-in
    (`install.sh` lays down no ling-mem, so there is no `ling-mem.prev`), no
    ling-mem process, nothing listening on 9528, `/mem/mcp` answering on 9527
@@ -307,10 +307,11 @@ points every installer and updater at the gate's mirror of the drafts
 Before a release that touched `/mcp` or the plugin, on a scratch store and a
 scratch home (never the real store), with fake embeddings and a fake model:
 
-1. **The list.** `tools/list` on this machine is exactly twelve tools, in
+1. **The list.** `tools/list` on this machine is exactly thirteen tools, in
    order: `memory_search`, `memory_add`, `memory_update`, `memory_delete`,
    `memory_upkeep`, `agent_run`, `agent_status`, `agent_permit`, `agent_end`,
-   `browser_open`, `browser_read`, `browser_act`. The test builds the expected
+   `browser_open`, `browser_read`, `browser_act`, `app`. No file or shell tool
+   of a session is among them. The test builds the expected
    list from the one catalogue, not from a second hand-written list. An
    approved computer's list is the five memory tools; a phone and an unpaired
    off-machine caller are refused; a direct `tools/call` of a tool or op
@@ -350,6 +351,14 @@ scratch home (never the real store), with fake embeddings and a fake model:
    refused with the update message; where the host shows only a generic
    disconnect, or the old per-turn hook hides the error, that row is a GAP,
    not a pass.
+9. **The app tool.** On fixture apps (`tests/system/app_door.rs`): `app list`
+   names each app with an action offered anywhere and its actions; `app call`
+   runs a read and an edit action and returns the result; a destructive, an
+   admin and an unclassed action are refused and do not run; a private app is
+   absent and refused until the owner opens it in Settings (and again after
+   closing); a tunnelled owner is refused before an app is looked up; an
+   approved computer never sees the tool; a saved config does not move the
+   setting. `tests/e2e/specs/outside-apps.spec.ts` flips the switch on the page.
 
 ## 5. Smoke on real data
 

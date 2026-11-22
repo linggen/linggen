@@ -4,7 +4,7 @@ reader: Coding agent and users
 guide: |
   Product specification — describe what the system should do and why.
   Keep it brief. Aim to guide design and implementation, not document code.
-status: 2.5 — one door, twelve tools (memory 5, agents 4, browser 3) at /mcp; the two-server layout (24 + 17 tools) is retired
+status: 2.6 — one door, thirteen tools (memory 5, agents 4, browser 3, apps 1) at /mcp; the two-server layout (24 + 17 tools) is retired
 ---
 
 # Linggen MCP — the one door
@@ -16,13 +16,14 @@ from one catalogue (`src/server/mcp/catalog.rs`, composed with memory's
 `crates/linggen-memory/src/catalog/`). The server is named `linggen`; in Claude
 Code a tool is `mcp__plugin_linggen_linggen__<tool>`.
 
-Twelve tools, in list order:
+Thirteen tools, in list order:
 
 | Group | Tools | Fronts |
 |:------|:------|:-------|
 | Memory (5) | `memory_search`, `memory_add`, `memory_update`, `memory_delete`, `memory_upkeep` | the store the engine hosts |
 | Agents (4) | `agent_run`, `agent_status`, `agent_permit`, `agent_end` | Linggen's agents (delegate a task) |
 | Browser (3) | `browser_open`, `browser_read`, `browser_act` | the linggen-browser extension (control module) |
+| Apps (1) | `app` | what the person's apps do on this Mac (last, so every other tool keeps its place) |
 
 A tool with several operations takes `op`. Every schema is strict
 (`additionalProperties: false`): an unknown field, a field of another op, a
@@ -37,7 +38,7 @@ share one door.
 
 | Caller | Sees |
 |:-------|:-----|
-| this machine (loopback) | all twelve tools |
+| this machine (loopback) | all thirteen tools; `app` answers the owner at this Mac itself, not a tunnelled device |
 | an approved computer (token in `x-linggen-device`) | the five memory tools only; `memory_upkeep` without `dream_run` (twelve ops). Delegation and browser control are this machine's alone |
 | a phone, or a caller with no token off this machine | refused (403 / 401 `PAIRING_REQUIRED`). Phones use `/api/memory/<verb>`, not MCP |
 
@@ -79,6 +80,41 @@ The memory protocol (three tiers, voice law, `replace_ids` / `user_directed`
 guard, the status-replaces-status rule) lives in the server text and in the
 plugin's memory skill; the memory part of the text needs no account.
 
+## The app tool
+
+`app` lets an outside agent do what the person's apps do on this Mac — "play
+some jazz" in Claude Code plays it. It has two ops: `list` (no `app`: one line
+per app that has an action an outside agent may use — its name, what it is
+for, its actions' names; with `app`: that app's actions, each with its
+class, description and arguments) and `call` (`app`, `action`, `args`: runs it
+and returns its result; a command that exits non-zero is a tool error).
+
+It is not a second list or a second judge. What it lists is the actions a
+skill declares `reach: anywhere` (`skill-spec.md` § reach), as a session's
+`AppTool` finds them, kept to the ones an outside agent may run: a
+destructive, admin or unclassed action, or one the app's own grant does not
+cover, is not listed, and an app left with none has no line. Every call is
+judged by `skill::judge` as the
+action it is, with the outside agent as one more asker (`permission-spec.md`
+§ App actions): a `read` or `edit` action runs under the app's own grant on
+its own folder; a `destructive` one is refused — "the person does this
+themselves, in the app" — since an outside agent has no way to ask the person
+here; an `admin` or unclassed one is refused. An action the app keeps to its
+own session, or offers to Yinyue alone, is not offered.
+
+For the owner at this Mac alone. A caller that is anything else — a tunnelled
+device, a request carrying a token — is refused before an app is looked up,
+and the answer does not say whether the app exists. An approved computer does
+not see the tool. No file, shell or other built-in tool of Linggen's sessions
+is at the door (a test holds the names).
+
+An app that keeps its talk private (`private-talk: true`) is closed to outside
+agents until the owner opens it: not listed, and a call is refused with a
+reason that names the setting. The owner opens it in Settings → Tools & MCP →
+Outside agents, one switch per private app that offers an action anywhere. The
+list is the engine config's `outside_apps` (absent: none), set only through
+`PUT /api/mcp/outside-apps` at this Mac; a saved config keeps what it holds.
+
 ## Browser tools
 
 - **`browser_open`** — `op: navigate` + `url` (absolute, or back / forward);
@@ -101,7 +137,7 @@ extension's X module and `/api/bridge/*` stay for Linggen's own apps.
 `initialize.instructions` is at or under 2,048 characters (Claude Code cuts it
 there; a test holds it) and there is one text per view. The local view carries
 the memory rules, the watcher rule for every `agent_run`, how to answer
-`agent_permit`, the browser sentence, and upkeep through the dream / scan /
+`agent_permit`, the browser sentence, one line on what `app` is for, and upkeep through the dream / scan /
 solve runbook with `memory_upkeep op=dream_status`. The remote view carries the
 memory part only, and upkeep with the host's own model (no `agent_run`, browser
 or `dream_run`).
@@ -279,6 +315,9 @@ Kept so the decisions are not lost. Everything in this section is retired.
   door and cut 41 tools to twelve. The reason: memory needs the engine (dream,
   scan, review), and one install should show the other tools, such as
   `agent_run`, beside it.
+- **2.6** (2026-11-21, the owner's call) added a thirteenth tool, `app`: an
+  outside agent reaches the person's apps the way a session does, never the
+  file and shell tools.
 
 ### Retired in 2.5 — what replaced each
 
@@ -308,3 +347,4 @@ tool namespace is gone with the second server.
 1. Memory on `/mcp` (2026-07), taken out for its own server (2026-07-30),
    served by the engine from 2.3. History.
 2. **2.5: one door, twelve tools.** Done.
+3. **2.6: the thirteenth tool, `app`.** Done.

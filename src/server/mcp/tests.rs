@@ -1,4 +1,4 @@
-//! The door's published surface and RPC: the twelve tools and their
+//! The door's published surface and RPC: the thirteen tools and their
 //! definitions, the server text per view, the answers to an old plugin,
 //! and the door's own posture (origin, keep-alive, who comes in).
 
@@ -15,6 +15,7 @@ fn deps(hub: &BridgeHub) -> McpDeps<'_> {
         bridge: hub,
         state: None,
         read_origin: Default::default(),
+        at_this_mac: true,
     }
 }
 
@@ -211,7 +212,8 @@ async fn tools_list_is_the_views_catalogue() {
     };
     let list = json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" });
     let local = names(rpc(View::Local, list.clone()).await);
-    assert_eq!(local.len(), 12);
+    assert_eq!(local.len(), 13);
+    assert_eq!(local.last().map(String::as_str), Some("app"));
     assert_eq!(
         &local[..5],
         [
@@ -315,7 +317,7 @@ fn fingerprint(v: &Value) -> String {
     digest.iter().take(8).map(|b| format!("{b:02x}")).collect()
 }
 
-/// The twelve tools this door publishes to this machine and the five to an
+/// The thirteen tools this door publishes to this machine and the five to an
 /// approved computer, each with its whole definition (name, description,
 /// input schema) fingerprinted, and both server texts: a change here is a
 /// change every connected host sees.
@@ -355,6 +357,7 @@ async fn the_published_surface_is_locked() {
         ("browser_open", "97f5d840f195a315"),
         ("browser_read", "f9802d55ffbe79be"),
         ("browser_act", "258452acd0f37bb6"),
+        ("app", "f58f64ed75697d7a"),
     ];
     assert_eq!(local, want(expected_local), "local:\n{}", print(&local));
     let remote = shown(View::Remote);
@@ -373,7 +376,7 @@ async fn the_published_surface_is_locked() {
     assert_eq!(
         texts,
         (
-            "c1363a248e1c4d6f".to_string(),
+            "2fd3b890e69e4630".to_string(),
             "c018af3021faaa2a".to_string()
         ),
         "server texts changed: {texts:?}"
@@ -645,4 +648,45 @@ fn web_origins_must_be_loopback() {
     assert!(!origin_allowed(&headers));
     headers.insert(ORIGIN, "http://localhost.evil.example".parse().unwrap());
     assert!(!origin_allowed(&headers));
+}
+
+/// The `app` tool answers only the owner at this Mac, and says so before
+/// it looks at any app; without a daemon it is a tool error, not a panic.
+#[tokio::test]
+async fn app_is_refused_away_from_this_mac_and_without_a_daemon() {
+    let hub = hub();
+    let mut away = deps(&hub);
+    away.at_this_mac = false;
+    for args in [
+        json!({"op": "list"}),
+        json!({"op": "list", "app": "jukebox"}),
+        json!({"op": "call", "app": "jukebox", "action": "Play"}),
+        json!({"op": "call", "app": "nothing", "action": "Play"}),
+    ] {
+        let res = call_tool(&away, View::Local, "app", args.clone()).await.unwrap();
+        assert_eq!(res["isError"], true, "{args}");
+        assert_eq!(res["content"][0]["text"], "the app tool answers only the owner, at this Mac", "{args}");
+    }
+    let res = call(View::Local, "app", json!({"op": "list"})).await;
+    assert_eq!(res["result"]["isError"], true);
+    assert!(text(&res).contains("unavailable"), "{res}");
+}
+
+/// No file or shell tool is at the door: no tool, and no op of one, is
+/// named as a built-in tool of Linggen's sessions.
+#[test]
+fn no_built_in_tool_of_a_session_is_a_name_at_the_door() {
+    use crate::engine::tools::builtin_tier;
+    for tool in catalog().tools_list(View::Local) {
+        let name = tool["name"].as_str().unwrap();
+        assert!(builtin_tier(name).is_none(), "{name} is a built-in tool's name");
+    }
+    for branch in catalog().branches() {
+        for name in [branch.tool, branch.op] {
+            assert!(builtin_tier(name).is_none(), "{name} is a built-in tool's name");
+        }
+    }
+    for file_or_shell in ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "Skill", "Task", "RunApp", "AppTool"] {
+        assert!(builtin_tier(file_or_shell).is_some(), "{file_or_shell}: the lock reads built-in names");
+    }
 }

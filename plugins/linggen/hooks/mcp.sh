@@ -11,7 +11,7 @@
 # One address: where Linggen lives (host + port), and, for another machine,
 # that machine's token. Linggen's one MCP door hangs off it:
 #
-#   $LINGGEN_MCP_URL = $LINGGEN_URL/mcp   memory, agents and browser (twelve
+#   $LINGGEN_MCP_URL = $LINGGEN_URL/mcp   memory, agents, browser and apps (thirteen
 #                                         tools; another machine sees the five
 #                                         memory tools)
 #

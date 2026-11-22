@@ -333,6 +333,8 @@ async fn an_approved_computer_sees_memory_only() {
     );
     let (_, ran) = post("tok-mac-two", rpc("agent_run", json!({"prompt": "hi"}))).await;
     assert_eq!(ran["error"]["message"], "unknown tool: agent_run", "{ran}");
+    let (_, ran) = post("tok-mac-two", rpc("app", json!({"op": "list"}))).await;
+    assert_eq!(ran["error"]["message"], "unknown tool: app", "an approved computer has no app tool: {ran}");
     let (_, days) = post("tok-mac-two", rpc("memory_upkeep", json!({"op": "days"}))).await;
     assert_eq!(days["result"]["isError"], false, "{days}");
     let (status, _) = post(

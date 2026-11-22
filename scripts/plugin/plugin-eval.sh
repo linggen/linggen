@@ -27,7 +27,7 @@
 #     memory_upkeep op=dream_status) overrides that tool's file in its own
 #     mocks/ and a grader checks the op in the call's input.
 #     mocks/linggen/_tools.json is the door's tools/list (this machine's view,
-#     twelve tools), so the mocked tools carry the real schemas.
+#     thirteen tools), so the mocked tools carry the real schemas.
 #   - Hooks: each case's scaffold.sh writes the run's ~/.linggen/client.json
 #     pointing at the scratch Linggen this script starts on 29548 (a `ling`
 #     binary, LINGGEN_BIN), seeded with invented rows. The host is written

@@ -22,7 +22,7 @@ Read files under `doc/` and follow them. If you find wrong content in any doc fi
 - `doc/insight.md` — vision, roadmap, competitive positioning
 - `doc/webrtc-spec.md` — WebRTC transport: P2P remote access, signaling, data channels
 - `doc/browser-bridge-spec.md` — browser bridge: linggen-browser extension ↔ daemon, logged-in session reads (X), on-demand WS
-- `doc/mcp-spec.md` — MCP front door: `/mcp`, one door, twelve tools (memory/agent/browser), Claude Code / Codex plugin distribution, retired-name history
+- `doc/mcp-spec.md` — MCP front door: `/mcp`, one door, thirteen tools (memory/agent/browser/app), Claude Code / Codex plugin distribution, retired-name history
 - `doc/network-spec.md` — who talks to whom: the engine (since 2.3 it hosts memory on its one port; the old two-daemon edges are marked), every edge and its transport, where each address comes from
 - `doc/mcp-client-spec.md` — ling as an MCP *client*: user-added servers, and memory as the built-in one (the engine's own `/mem/mcp`)
 - `doc/room-spec.md` — rooms: community model sharing, credits, auto-dispatch

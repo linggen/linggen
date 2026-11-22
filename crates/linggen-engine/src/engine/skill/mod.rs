@@ -5,6 +5,8 @@
 //! - `params` — session parameters: values a skill session is bound to.
 //! - `tools` — running a declared shell tool outside a turn (the page
 //!   door and the companion's `AppTool`).
+//! - `outside` — what an agent outside Linggen, at the MCP door, is
+//!   offered of an app and may run.
 //! - `registry` — `SkillRegistry` trait, the engine's spec lookup
 //!   contract for skills.
 //!
@@ -15,6 +17,7 @@
 //! `SkillRegistry`.
 
 pub mod judge;
+pub mod outside;
 pub mod params;
 pub mod reach;
 pub mod record;

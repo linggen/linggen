@@ -178,8 +178,8 @@ your machine; no VPN, no port forwarding.
 
 ## Hand work to Linggen from Claude Code or Codex (MCP)
 
-The daemon is one MCP server at `http://127.0.0.1:9527/mcp`, with twelve
-tools: memory (5), agents (4) and browser (3). Its `agent_run`
+The daemon is one MCP server at `http://127.0.0.1:9527/mcp`, with thirteen
+tools: memory (5), agents (4), browser (3) and apps (1). Its `agent_run`
 tool lets another agent hand a task to a local Linggen agent:
 
 - **A different model does the work.** The Linggen agent runs on whatever you

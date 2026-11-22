@@ -112,8 +112,8 @@ mcp_retired() { # url
   [ "$code" = 410 ] && jq -e '.code == "UPGRADE_PLUGIN"' >/dev/null 2>&1 <<<"$body"
 }
 
-# The one door's tool count (doc/mcp-spec.md: memory 5, agents 4, browser 3).
-DOOR_TOOLS=12
+# The one door's tool count (doc/mcp-spec.md: memory 5, agents 4, browser 3, apps 1).
+DOOR_TOOLS=13
 
 is_standin() { head -c 300 "$1" 2>/dev/null | grep -qF "$STANDIN_MARK"; }
 

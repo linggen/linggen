@@ -454,6 +454,20 @@ impl AgentManager {
         Ok(())
     }
 
+    /// Set the private apps the owner opened to agents outside Linggen
+    /// (`Config::outside_apps`): the one writer. Saved with the config,
+    /// without rebuilding any engine — the MCP door reads it at each call.
+    pub async fn set_outside_apps(&self, apps: Vec<String>) -> Result<()> {
+        let mut cfg = self.config.write().await;
+        if cfg.outside_apps != apps {
+            let mut next = cfg.clone();
+            next.outside_apps = apps;
+            next.save_runtime(self.config_dir.as_deref())?;
+            *cfg = next;
+        }
+        Ok(())
+    }
+
     pub fn register_tool_cancel_flag(&self, block_id: &str) -> Arc<AtomicBool> {
         let flag = Arc::new(AtomicBool::new(false));
         self.tool_cancel_flags

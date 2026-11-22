@@ -3,7 +3,7 @@
 > One plugin, one local program, three capabilities: durable cross-session
 > **memory**, **agents** that take delegated work, and agent **browser
 > control** in your own Chrome — all served by Linggen (`ling`) through one
-> MCP server, twelve tools, at one address.
+> MCP server, thirteen tools, at one address.
 
 Replaces the `shared-memory` plugin — same memory store, same recall hook,
 plus everything else Linggen offers. Never run both.

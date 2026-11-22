@@ -21,6 +21,14 @@ The phone's part ships with the phone app.
   calls instead of four; never in a turn she started herself, and never
   anything that deletes — that you do in the app. A destructive action a
   model asks for always asks you first, by its own name.
+- **Claude Code and Codex can use your apps.** The one MCP door has a
+  thirteenth tool, `app`: "play some jazz on my Mac" plays it. It lists and
+  runs the same actions Ling's `AppTool` does, judged the same way, for you at
+  this Mac only; an action that deletes is refused — you do that in the app.
+  No file or shell tool is at the door.
+- **A private app stays closed to outside agents until you open it.**
+  Settings → Tools & MCP → Outside agents has one switch per private app that
+  offers an action anywhere, set at this Mac only.
 
 ### People
 

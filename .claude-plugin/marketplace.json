@@ -8,7 +8,7 @@
   "plugins": [
     {
       "name": "linggen",
-      "description": "Linggen for Claude Code — durable cross-host memory, delegated agents and browser control in your own Chrome, all from one local program (Linggen, `ling`) through one MCP server at /mcp, twelve tools. Installs Linggen (background download) on first session start.",
+      "description": "Linggen for Claude Code — durable cross-host memory, delegated agents, browser control in your own Chrome and the apps on your Mac, all from one local program (Linggen, `ling`) through one MCP server at /mcp, thirteen tools. Installs Linggen (background download) on first session start.",
       "category": "productivity",
       "homepage": "https://linggen.dev",
       "source": "./plugins/linggen"

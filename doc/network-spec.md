@@ -49,8 +49,8 @@ flowchart LR
   third["third-party MCP servers<br/>github · playwright · sentry"]
   providers["LLM providers<br/>chatgpt · anthropic · openai<br/>gemini · deepseek"]
 
-  cc -->|"mcp — /mcp, twelve tools"| ling
-  codex -->|"mcp — /mcp, twelve tools"| ling
+  cc -->|"mcp — /mcp, thirteen tools"| ling
+  codex -->|"mcp — /mcp, thirteen tools"| ling
   hooks -->|"curl · mcp tools/call"| ling
   cli -->|http| lingmem
 
@@ -111,7 +111,7 @@ The phone's Ling tab needs none of it: it drives a session on the Mac, and that
 agent reaches memory on its own loopback like every local caller.
 
 Each tool is served in exactly one place: since 2.5, `/mcp` on the engine's
-port (memory, agents, browser — twelve tools, `mcp-spec.md`).
+port (memory, agents, browser, apps — thirteen tools, `mcp-spec.md`).
 
 ## The two daemons
 
@@ -163,7 +163,7 @@ cannot point it elsewhere.
 | Caller | Route | Needs the engine? |
 |:--|:--|:--|
 | Linggen's own agents | `mcp__memory__memory_*` → hosted `/mem/mcp` | yes |
-| Outside agent via the plugin | engine `/mcp` (the five memory tools among twelve) | yes |
+| Outside agent via the plugin | engine `/mcp` (the five memory tools among thirteen) | yes |
 | Plugin hooks, any agent with Bash | `ling mem` CLI → hosted store, or direct under lock | no |
 | A second machine's agents | engine `/mcp` + `x-linggen-device` (the five memory tools only) | yes |
 
@@ -192,7 +192,7 @@ failed silently because the phone reads a missing `result` as "no Mac". Fixed
 
 ## Memory over MCP — one door (2.5)
 
-Memory is served on the engine's `/mcp` with the engine's other tools: twelve
+Memory is served on the engine's `/mcp` with the engine's other tools: thirteen
 tools, five of them memory. The engine's own agents use the built-in memory
 server (`/mem/mcp`, this machine only), the plugin's Claude Code / Codex
 sessions use the one `linggen` server entry, the plugin's hooks use curl, and a

@@ -1,7 +1,7 @@
 //! May this caller run this app's action? — asked here, by every way in:
 //! a model's call in a session, the page's door (a page's own call, a
-//! tap on an offer, a device's call through the door), and the
-//! companion's `AppTool`. One function, [`judge`], and one answer,
+//! tap on an offer, a device's call through the door), the companion's
+//! `AppTool`, and an agent outside Linggen at the MCP door. One function, [`judge`], and one answer,
 //! [`Verdict`]: run it, ask the person first, or refuse with the reason.
 //!
 //! What it is handed is what each way in knows: who asks ([`Asker`]), and
@@ -50,7 +50,18 @@ pub enum Asker<'a> {
     /// (`person_asked`) and only of what is offered anywhere; a destructive
     /// action never — the person does that themselves, in the app.
     Companion { offer: Offer, person_asked: bool },
+    /// An agent outside Linggen — Claude Code, Codex — through the MCP
+    /// door's `app` tool, for the owner at this Mac: what the app offers
+    /// it (`offer`), for an app whose own grant on its folder is `granted`.
+    /// It reads and changes under that grant; a destructive action never —
+    /// it has no way to put the question to the person here — and nothing
+    /// above what a change needs.
+    OutsideHost { offer: Offer, granted: PermissionMode },
 }
+
+/// The most an outside host may do in an app: change what the person
+/// keeps in it, as `edit` does.
+const OUTSIDE_HOST_LEVEL: PermissionMode = PermissionMode::Edit;
 
 /// The answer.
 pub enum Verdict {
@@ -107,6 +118,7 @@ pub fn judge(asker: Asker<'_>, action: &Action<'_>) -> Verdict {
         }
         Asker::Person { level, granted } => within(action, needs, level, granted),
         Asker::Companion { offer, person_asked } => companion(offer, person_asked, action),
+        Asker::OutsideHost { offer, granted } => outside_host(offer, granted, action),
     }
 }
 
@@ -143,6 +155,22 @@ fn companion(offer: Offer, person_asked: bool, action: &Action<'_>) -> Verdict {
             "'{tool}' changes '{app}', and this turn is yours, not something the person asked for; do it only when they ask"
         )),
     }
+}
+
+/// What an outside host may run: the offer first, then the class — a
+/// destructive action is the person's own to do, in the app — then the
+/// grant and the level an outside host stands at.
+fn outside_host(offer: Offer, granted: PermissionMode, action: &Action<'_>) -> Verdict {
+    if offer != Offer::Anywhere {
+        return Verdict::Refuse(not_offered(action.app, action.tool));
+    }
+    if action.class.destroys() {
+        return Verdict::Refuse(Refusal::NotForHost(format!(
+            "'{}' of '{}' destroys what it acts on: the person does this themselves, in the app",
+            action.tool, action.app
+        )));
+    }
+    within(action, action.class.level_needed(), OUTSIDE_HOST_LEVEL, granted)
 }
 
 /// The action's level within what the app's own grant covers on its

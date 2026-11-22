@@ -6,6 +6,7 @@
 import type { StatusResponse } from '../types/generated/StatusResponse';
 import type { AgentFileInfo, AppConfig, BuiltInSkillInfo, ModelHealthInfo, OllamaPsResponse, SkillInfoFull } from '../types';
 import type { PeopleReply, PersonPatch, PersonSettings } from './people.mts';
+import type { OutsideAppsReply } from './outsideApps.mts';
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from './api';
 
 const q = (params: Record<string, string | undefined>) => {
@@ -227,6 +228,13 @@ export const peopleApi = {
     apiPut<{ settings: PersonSettings }>(`/api/people/${encodeURIComponent(person)}`, patch),
   /** The apps no one else uses. */
   keepForOwner: (apps: string[]) => apiPut<{ owner: PeopleReply['owner'] }>('/api/people/owner', { mine_only: apps }),
+};
+
+/** The private apps agents outside Linggen may use (server/api/outside_apps.rs). */
+export const outsideAppsApi = {
+  list: () => apiGet<OutsideAppsReply>('/api/mcp/outside-apps'),
+  /** Exactly these apps are open now. */
+  set: (apps: string[]) => apiPut<{ apps: string[] }>('/api/mcp/outside-apps', { apps }),
 };
 
 // ── Storage browser ─────────────────────────────────────────────────────

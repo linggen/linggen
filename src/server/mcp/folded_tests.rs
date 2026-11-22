@@ -1,4 +1,4 @@
-//! The twelve-tool door's branches: its views, every browser, agent and
+//! The thirteen-tool door's branches: its views, every browser, agent and
 //! engine-upkeep branch resolved to its dispatcher, bridge op, arguments
 //! and timeout, the refusals, and memory reached through the engine's own
 //! path with no account and no model.
@@ -18,6 +18,7 @@ fn deps(hub: &BridgeHub) -> McpDeps<'_> {
         bridge: hub,
         state: None,
         read_origin: Default::default(),
+        at_this_mac: true,
     }
 }
 
@@ -51,13 +52,13 @@ fn text(result: &Value) -> &str {
     result["content"][0]["text"].as_str().unwrap()
 }
 
-/// This machine sees twelve tools; an approved computer the five memory
+/// This machine sees thirteen tools; an approved computer the five memory
 /// tools, and of memory_upkeep everything but dream_run. A phone or an
 /// unknown caller gets no view at all.
 #[test]
 fn each_caller_sees_its_view() {
     use crate::memory_host::caller::Caller;
-    assert_eq!(names(View::Local).len(), 12);
+    assert_eq!(names(View::Local).len(), 13);
     assert_eq!(
         names(View::Remote),
         [
@@ -102,6 +103,7 @@ async fn a_hidden_tool_or_op_cannot_be_called() {
         ("agent_status", json!({"op": "models"})),
         ("browser_read", json!({"op": "page"})),
         ("browser_act", json!({"op": "click", "ref": "n1"})),
+        ("app", json!({"op": "list"})),
     ] {
         let err = call_tool(&deps(&hub), View::Remote, tool, args)
             .await
