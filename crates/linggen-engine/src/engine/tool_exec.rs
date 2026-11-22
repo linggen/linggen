@@ -688,12 +688,21 @@ impl AgentEngine {
             None
         };
         let file_path_arg = if t.canonical == "Read" {
-            t.args.get("path").or_else(|| t.args.get("file")).or_else(|| t.args.get("filepath"))
-                .and_then(JsonValue::as_str).map(str::to_owned)
+            t.args
+                .get("path")
+                .or_else(|| t.args.get("file"))
+                .or_else(|| t.args.get("filepath"))
+                .and_then(JsonValue::as_str)
+                .map(str::to_owned)
+        } else if t.canonical == "Grep" {
+            Some(t.args.get("path").and_then(JsonValue::as_str).map_or_else(
+                || self.tools.builtins.cwd().to_string_lossy().into_owned(),
+                str::to_owned,
+            ))
         } else if matches!(t.canonical, "Write" | "Edit") {
             normalize_tool_path_arg(&self.tools.builtins.cwd(), t.args)
         } else {
-            // For tools without an explicit file path (Glob, Grep, Task, etc.),
+            // For tools without an explicit file path (Task, etc.),
             // use the agent's cwd so permission checks resolve against the
             // session's path_mode grants for the workspace.
             Some(self.tools.builtins.cwd().to_string_lossy().to_string())
@@ -2083,6 +2092,109 @@ mod declined_gate_tests {
         let result = crate::engine::render::render_tool_result(&engine.tools_for_call(&exec).execute(call).await.unwrap());
         assert!(result.contains("public.txt"), "{result}");
         assert!(!result.contains("private.txt"), "{result}");
+    }
+
+    #[tokio::test]
+    async fn grep_searches_a_read_grant_outside_the_session_folder() {
+        let world = tempfile::tempdir_in(dirs::home_dir().unwrap()).unwrap();
+        let work = world.path().join("work");
+        let granted = world.path().join("granted");
+        std::fs::create_dir(&work).unwrap();
+        std::fs::create_dir(&granted).unwrap();
+        std::fs::write(granted.join("public.txt"), "fixture-public").unwrap();
+        std::fs::write(granted.join("private.keychain"), "fixture-protected").unwrap();
+        let pending = Pending::default();
+        let mut engine = engine(&work, &pending, true);
+        let asked = deny_all(&pending);
+        engine
+            .session_permissions
+            .path_modes
+            .push(permission::PathMode {
+                path: granted.to_str().unwrap().into(),
+                mode: PermissionMode::Read,
+            });
+        for path in [granted, "../granted/public.txt".into()] {
+            let args = serde_json::json!({"query": "fixture-", "path": path});
+            let id = None;
+            let t = ToolTurn {
+                tool: "Grep",
+                canonical: "Grep",
+                args: &args,
+                session_id: None,
+                tool_call_id: &id,
+            };
+            let mut approved_reads = Vec::new();
+            assert!(engine
+                .gate_permission(&t, &mut Vec::new(), &mut approved_reads)
+                .await
+                .is_none());
+            let exec = ReadyExec {
+                canonical_tool: "Grep".into(),
+                sig: String::new(),
+                original_args: args.clone(),
+                approved_reads,
+                tool_done_status: String::new(),
+                tool_failed_status: String::new(),
+                block_id: String::new(),
+                tool_call_id: None,
+            };
+            let call = tools::ToolCall {
+                tool: "Grep".into(),
+                args,
+                block_id: None,
+            };
+            let output = engine.tools_for_call(&exec).execute(call).await.unwrap();
+            let rendered = crate::engine::render::render_tool_result(&output);
+            assert!(
+                rendered.contains("public.txt") && rendered.contains("fixture-public"),
+                "{rendered}"
+            );
+            assert!(!rendered.contains("fixture-protected"), "{rendered}");
+        }
+        assert_eq!(asked.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn grep_path_has_the_same_read_boundary_as_read() {
+        let world = tempfile::tempdir_in(dirs::home_dir().unwrap()).unwrap();
+        let work = world.path().join("work");
+        let granted = world.path().join("granted");
+        let ungranted = world.path().join("ungranted");
+        for dir in [&work, &granted, &ungranted] {
+            std::fs::create_dir(dir).unwrap();
+        }
+        std::fs::write(granted.join(".env"), "fixture-protected").unwrap();
+        let mut paths = vec![
+            ungranted.clone(),
+            "../ungranted".into(),
+            granted.join(".env"),
+            crate::paths::linggen_home().join("account.toml"),
+        ];
+        #[cfg(unix)]
+        {
+            let link = granted.join("link");
+            std::os::unix::fs::symlink(&ungranted, &link).unwrap();
+            paths.push(link);
+        }
+        let pending = Pending::default();
+        deny_all(&pending);
+        let mut engine = engine(&work, &pending, true);
+        engine
+            .session_permissions
+            .path_modes
+            .push(permission::PathMode {
+                path: granted.to_str().unwrap().into(),
+                mode: PermissionMode::Read,
+            });
+        for path in paths {
+            engine.declined_scopes.clear();
+            gate(
+                &mut engine,
+                "Grep",
+                serde_json::json!({"query": "fixture-", "path": path}),
+            )
+            .await;
+        }
     }
 
     #[tokio::test]
