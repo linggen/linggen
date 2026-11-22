@@ -28,7 +28,7 @@ import { roomsShown } from '../lib/roomsShown.mts';
 import { recordSkillUsage } from '../lib/skillUsage';
 import { buildAgentWorkInfo } from '../lib/messageUtils';
 import { setPresenceCovered, startPresenceBeat } from '../lib/presence';
-import { useSessionStore } from '../stores/sessionStore';
+import { openSession, useSessionStore } from '../stores/sessionStore';
 import { useServerStore } from '../stores/serverStore';
 import { useChatStore } from '../stores/chatStore';
 import { useUiStore } from '../stores/uiStore';
@@ -303,22 +303,7 @@ export const MainApp: React.FC<{ covered: boolean }> = ({ covered }) => {
   }
 
   const selectSession = (session: SessionInfo, closeMenu?: () => void) => {
-    // A session bound to a mission is a mission session regardless of who
-    // opened it — an attended dream session has creator 'user' and still
-    // lives in the mission's world (its transcript is served by the mission
-    // state endpoint, its chat turns carry the mission body).
-    const isMission = session.creator === 'mission' || !!session.mission_id;
-    const isSkill = session.creator === 'skill' || (!session.project && session.skill);
-    projectStore.setActiveSessionId(session.id);
-    projectStore.setIsMissionSession(isMission);
-    projectStore.setIsSkillSession(!!isSkill);
-    projectStore.setActiveSkillName(isSkill && session.skill ? session.skill : null);
-    projectStore.setActiveMissionId(isMission && session.mission_id ? session.mission_id : null);
-    const sessionRoot = session.project || session.cwd || session.repo_path || '~';
-    if (sessionRoot !== selectedProjectRoot) {
-      projectStore.setSelectedProjectRoot(sessionRoot);
-    }
-    window.localStorage.setItem('linggen:active-session', session.id);
+    openSession(session);
     closeMenu?.();
   };
 

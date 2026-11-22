@@ -81,6 +81,21 @@ test("a private app's reply reaches its own page alone; another app's stretch fo
   await expect(seen(main, ROLLED)).toHaveCount(1);
 });
 
+test('a private app called from a plain chat carries the page with its message', async ({ page, world, request, httpRequests }) => {
+  await installLedger(request, world.url, world.linggenHome);
+  const source = (await (await request.post(`${world.url}/api/sessions`, { data: { title: 'Plain chat' } })).json()).id;
+  await page.goto(`${world.url}/?session=${source}`);
+  await expectWebRtc(page, httpRequests);
+  await send(page, '/ledger How many shares?');
+  await expect(shown(page, SECRET)).toHaveCount(1, { timeout: 20_000 });
+  await expect(shown(page, /How many shares\?/)).toHaveCount(1);
+  await expectTurnOver(page);
+  await page.locator(`[data-testid="session-row"][data-session-id="${source}"]`).click();
+  await expect(shown(page, /How many shares\?/)).toHaveCount(0);
+  await expect(shown(page, SECRET)).toHaveCount(0);
+  await expectTurnOver(page);
+});
+
 // The fixes of the daily session's last day, seen on real pages (setting on).
 
 /** An app's page with its toolbar (its "Running" mark, its session list). */

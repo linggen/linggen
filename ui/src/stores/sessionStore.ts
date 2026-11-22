@@ -203,6 +203,20 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
 }));
 
+/** Open a listed session identically whether selected in the sidebar or followed after a send. */
+export function openSession(session: SessionInfo): void {
+  const store = useSessionStore.getState();
+  const isMission = session.creator === 'mission' || !!session.mission_id;
+  const isSkill = session.creator === 'skill' || (!session.project && session.skill);
+  store.setIsMissionSession(isMission);
+  store.setIsSkillSession(!!isSkill);
+  store.setActiveSkillName(isSkill && session.skill ? session.skill : null);
+  store.setActiveMissionId(isMission && session.mission_id ? session.mission_id : null);
+  const root = session.project || session.cwd || session.repo_path || '~';
+  if (root !== store.selectedProjectRoot) store.setSelectedProjectRoot(root);
+  store.setActiveSessionId(session.id);
+}
+
 /**
  * The project root a call about the open session works in: `override` >
  * the open session's folder as mirrored (`selectedProjectRoot`) > its own
