@@ -1,24 +1,130 @@
-/**
- * Hold to talk: the one control that turns a press on Yinyue into a line said
- * to her (design § 3). Press and hold → "Listening…" → let go → "Thinking…" →
- * her answer. This module owns press → record → hear → send → the words shown;
- * the page avatar and the pet window both bind it (components/yinyue/
- * YinyueAvatar.tsx, through lib/yinyueTalk.ts) and neither records.
- *
- * Whether she can hear is asked of the engine (`GET /api/stt`) at the hold,
- * before the microphone opens: on a Mac that cannot, the press shows the reason
- * and records nothing. The microphone is opened here and nowhere else (a test
- * fails on a second `getUserMedia` in src/), and only while held: release, cancel, the window
- * hidden or blurred, the page unloaded, the 60 s cap — each stops the tracks.
- * What is sent to hear is one WAV clip (lib/speechWav.mts) to `POST /api/stt`
- * on this machine's own engine; what was heard goes to her door as a typed
- * line would, marked `asked_aloud`.
- *
- * Pure of the page: everything it touches (microphone, audio context, fetch,
- * timers, the window) is handed in, so node tests drive it with fakes.
- */
-import { BUDGET_HEADER } from './requestBudget.mts';
-import { encodeWav, MAX_SPEECH_SECONDS, SPEECH_RATE, toBase64, toSpeechSamples } from './speechWav.mts';
+// hold-to-talk.js — hold to talk: the one control that turns a press into a
+// line said aloud and heard. Press and hold → "Listening…" → let go →
+// "Thinking…" → the words heard go to the page's `sendLine`. Served by the
+// engine at /shared/hold-to-talk.js for any app page that holds the
+// microphone, and bundled by the main UI through the `@linggen/hold-to-talk`
+// alias (ui/vite.config.ts) for Yinyue's avatar: one copy, no second.
+//
+//   import { createHoldToTalk, newSpeechContext } from '/shared/hold-to-talk.js';
+//   const talk = createHoldToTalk({
+//     mediaDevices: () => navigator.mediaDevices,
+//     newAudioContext: newSpeechContext,
+//     offered: () => true,
+//     fetch: (url, init) => window.fetch(url, init),
+//     sendLine: async (text) => { chat.send(text, { heard: true }); return { sent: true }; },
+//     cutOff: () => {},
+//     now: () => Date.now(),
+//     setTimer: (fn, ms) => window.setTimeout(fn, ms),
+//     clearTimer: (id) => window.clearTimeout(id),
+//     win: window,
+//     doc: document,
+//   });
+//
+// Whether the engine can hear is asked of it (`GET /api/stt`) at the hold,
+// before the microphone opens: on a Mac that cannot, the press shows the
+// reason and records nothing. The microphone is opened here and nowhere else
+// (a test fails on a second `getUserMedia` in this folder or in ui/src), and
+// only while held: release, cancel, the window hidden or blurred, the page
+// unloaded, the 60 s cap — each stops the tracks. What is sent to hear is one
+// WAV clip (16 kHz mono, below) to `POST /api/stt` on this machine's own
+// engine; what was heard goes to `sendLine` as a typed line would.
+//
+// Pure of the page: everything it touches (microphone, audio context, fetch,
+// timers, the window) is handed in, so node tests drive it with fakes
+// (tests/shared/hold-to-talk.test.mjs). One file by design — the control, the
+// WAV encoder and the recorder are never loaded apart.
+
+/** The fetch header a call names its wait in, in milliseconds. The same
+ *  literal is the channel's (shared/channel.js) and the UI's policy
+ *  (ui/src/lib/requestBudget.mts); a test holds the three equal
+ *  (tests/shared/hold-to-talk.test.mjs). */
+const BUDGET_HEADER = 'X-Linggen-Budget-Ms';
+
+// ── The clip ──
+
+// ── The clip: what the microphone heard, in the one form `POST /api/stt`
+// takes — WAV, 16 kHz, mono, 16-bit PCM, at most 60 seconds ──
+
+/** The one rate she hears at. */
+export const SPEECH_RATE = 16_000;
+/** The longest clip, seconds. */
+export const MAX_SPEECH_SECONDS = 60;
+
+/** Mono samples at `fromRate` as mono samples at 16 kHz, cut at 60 s. Going
+ *  down, each output sample is the average of the input it covers (a plain
+ *  low-pass, so voice above 8 kHz does not fold back into the band). */
+export function toSpeechSamples(input, fromRate) {
+  const ratio = fromRate / SPEECH_RATE;
+  const longest = SPEECH_RATE * MAX_SPEECH_SECONDS;
+  const length = Math.min(Math.floor(input.length / ratio), longest);
+  const out = new Float32Array(length);
+  for (let i = 0; i < length; i++) {
+    out[i] = ratio <= 1 ? interpolated(input, i * ratio) : averaged(input, i * ratio, (i + 1) * ratio);
+  }
+  return out;
+}
+
+function interpolated(input, at) {
+  const lo = Math.floor(at);
+  const hi = Math.min(lo + 1, input.length - 1);
+  return input[lo] + (input[hi] - input[lo]) * (at - lo);
+}
+
+/** The mean of `input` over [from, to), the two edges weighted by how much of
+ *  their sample the span covers. */
+function averaged(input, from, to) {
+  const first = Math.floor(from);
+  const last = Math.min(Math.ceil(to), input.length);
+  let sum = 0;
+  let weight = 0;
+  for (let k = first; k < last; k++) {
+    const w = Math.min(k + 1, to) - Math.max(k, from);
+    sum += input[k] * w;
+    weight += w;
+  }
+  return weight > 0 ? sum / weight : 0;
+}
+
+/** 16 kHz mono samples (-1..1) as one WAV file: a 44-byte header, then
+ *  16-bit little-endian PCM. */
+export function encodeWav(samples) {
+  const bytes = samples.length * 2;
+  const wav = new Uint8Array(44 + bytes);
+  const view = new DataView(wav.buffer);
+  const tag = (at, text) => {
+    for (let i = 0; i < text.length; i++) view.setUint8(at + i, text.charCodeAt(i));
+  };
+  tag(0, 'RIFF');
+  view.setUint32(4, 36 + bytes, true);
+  tag(8, 'WAVE');
+  tag(12, 'fmt ');
+  view.setUint32(16, 16, true); // fmt chunk size
+  view.setUint16(20, 1, true); // PCM
+  view.setUint16(22, 1, true); // mono
+  view.setUint32(24, SPEECH_RATE, true);
+  view.setUint32(28, SPEECH_RATE * 2, true); // bytes per second
+  view.setUint16(32, 2, true); // bytes per frame
+  view.setUint16(34, 16, true); // bits per sample
+  tag(36, 'data');
+  view.setUint32(40, bytes, true);
+  for (let i = 0; i < samples.length; i++) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(44 + i * 2, Math.round(s < 0 ? s * 0x8000 : s * 0x7fff), true);
+  }
+  return wav;
+}
+
+/** Base64 of bytes, in slices (a spread of a clip-sized array overflows the stack). */
+export function toBase64(bytes) {
+  const SLICE = 0x8000;
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += SLICE) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + SLICE));
+  }
+  return btoa(binary);
+}
+
+// ── The control: press → record → hear → send → the words shown ──
 
 /** A press shorter than this is a tap — the avatar's own click, unchanged.
  *  The one place this is set: 350 ms so a slow click is still a click; tune it
@@ -51,28 +157,27 @@ export const WORDS = {
   micAllowed: 'Microphone allowed. Hold again to talk.',
   noMic: "This page can't use the microphone.",
   failed: "Couldn't reach her. Try again.",
-} as const;
+};
 
-export type TalkPhase =
-  | 'idle'
-  | 'pressed' // down, not yet a hold
-  | 'opening' // a hold; the microphone is being asked for
-  | 'listening' // the microphone is open
-  | 'refused' // a hold that cannot record (she cannot hear on this Mac, no microphone); waits for the release
-  | 'hearing' // let go; the clip is being heard, then sent
-  | 'replying'; // sent; her answer is on its way
+/**
+ * @typedef {'idle'
+ *   | 'pressed'    down, not yet a hold
+ *   | 'opening'    a hold; the microphone is being asked for
+ *   | 'listening'  the microphone is open
+ *   | 'refused'    a hold that cannot record (she cannot hear on this Mac, no microphone); waits for the release
+ *   | 'hearing'    let go; the clip is being heard, then sent
+ *   | 'replying'   sent; her answer is on its way} TalkPhase
+ */
 
-/** What the surface draws: the phase, the words heard, one quiet line. */
-export interface TalkView {
-  phase: TalkPhase;
-  heard: string | null;
-  note: string | null;
-}
+/**
+ * What the surface draws: the phase, the words heard, one quiet line.
+ * @typedef {{ phase: TalkPhase, heard: string | null, note: string | null }} TalkView
+ */
 
 /** "Listening…" / "Thinking…" / nothing — told once each (the third state,
  *  speaking, is her voice and bubble). `petThinking` is the store's flag that a
  *  reply is in flight, so "Thinking…" ends when her line arrives. */
-export function talkLabel(view: TalkView, petThinking: boolean): string | null {
+export function talkLabel(view, petThinking) {
   switch (view.phase) {
     case 'listening': return WORDS.listening;
     case 'hearing': return WORDS.thinking;
@@ -83,117 +188,83 @@ export function talkLabel(view: TalkView, petThinking: boolean): string | null {
 
 /** A key that starts a talk: the space bar alone, never inside a field or a
  *  button (where it types or presses), never as key repeat. */
-export function isTalkKey(e: { code: string; repeat: boolean; metaKey: boolean; ctrlKey: boolean; altKey: boolean; target: unknown }): boolean {
+export function isTalkKey(e) {
   if (e.code !== 'Space' || e.repeat || e.metaKey || e.ctrlKey || e.altKey) return false;
-  const t = e.target as { tagName?: string; isContentEditable?: boolean } | null;
+  const t = e.target;
   if (t?.isContentEditable) return false;
   return !['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON', 'A'].includes(t?.tagName?.toUpperCase() ?? '');
 }
 
 // ── What is handed in ──────────────────────────────────────────────────
+//
+// `deps` (the shapes are in ui/src/types/hold-to-talk.d.ts, which the UI's
+// compiler reads; this file is plain JavaScript):
+//   mediaDevices()      `navigator.mediaDevices`, or undefined where the page has none.
+//   newAudioContext()   made inside the press, where the page allows a sound context
+//                       to run; `newSpeechContext` below is the page's real one. Its
+//                       recorder (`createTap`) posts the microphone's samples in
+//                       blocks, off the page's render thread.
+//   offered()           whether holding can ever be granted a microphone here (a stage
+//                       frame in the app cannot); when not, a press stays a tap.
+//   fetch(url, init)    the page's own `fetch` (data channel); read at call time.
+//   sendLine(text)      the line as a typed one would go. Resolves `{ sent: true }`,
+//                       or `{ sent: false, reason }` — its own one line of reason when
+//                       it refused (a spoken line cannot go to an app's chat).
+//   cutOff()            the one stop the page's mute uses: pressing stops what is said.
+//   now, setTimer, clearTimer, win, doc   the clock and the window, handed in.
+// A "take" below is the microphone, open: `stop()` ends its tracks and hands
+// back what it heard.
 
-interface TrackLike { stop(): void }
-interface StreamLike { getTracks(): TrackLike[] }
-interface NodeLike { connect(to: unknown): unknown; disconnect(): void }
-/** The recorder inside the audio context: it posts the microphone's samples in
- *  blocks (lib/speechTap.ts), off the page's render thread. */
-interface TapLike extends NodeLike {
-  port: { onmessage: ((e: { data: Float32Array }) => void) | null };
-}
-export interface AudioContextLike {
-  sampleRate: number;
-  destination: unknown;
-  resume(): Promise<void>;
-  suspend(): Promise<void>;
-  /** The recorder is loaded into the context (once). */
-  ready(): Promise<void>;
-  createMediaStreamSource(stream: StreamLike): NodeLike;
-  createTap(): TapLike;
-}
-interface Listenable {
-  addEventListener(type: string, fn: () => void): void;
-  removeEventListener(type: string, fn: () => void): void;
-}
-
-/** What her door did with a line: took it, or refused — with its own one line
- *  of reason when it gave one (a spoken line cannot go to an app's chat). */
-export type LineSent = { sent: true } | { sent: false; reason: string | null };
-
-export interface TalkDeps {
-  /** `navigator.mediaDevices`, or undefined where the page has none. */
-  mediaDevices: () => { getUserMedia(c: unknown): Promise<StreamLike> } | undefined;
-  /** Made inside the press, where the page allows a sound context to run. */
-  newAudioContext: () => AudioContextLike;
-  /** Whether holding her can ever be granted a microphone here (a stage frame
-   *  in the app cannot); when not, a press stays a tap. */
-  offered: () => boolean;
-  /** The page's own `fetch` (data channel); read at call time. */
-  fetch: (url: string, init: { method: string; headers: Record<string, string>; body?: string }) => Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>;
-  /** Her door: the line as a typed one would go, marked asked aloud. */
-  sendLine: (text: string) => Promise<LineSent>;
-  /** The one stop her mute uses. */
-  cutOff: () => void;
-  now: () => number;
-  setTimer: (fn: () => void, ms: number) => unknown;
-  clearTimer: (id: unknown) => void;
-  win: Listenable;
-  doc: Listenable & { hidden: boolean };
-}
-
-type Source = 'pointer' | 'key';
-
-/** The microphone, open: stops its tracks, hands back what it heard. */
-interface Take { stop(): { samples: Float32Array; rate: number } }
-
-export interface HoldToTalk {
-  view(): TalkView;
-  subscribe(fn: () => void): () => void;
-  /** Pointer down or key down. */
-  press(source: Source): void;
-  /** Pointer up or key up: 'tap' if it never became a hold (let the avatar's
-   *  click proceed), 'talk' if it did (swallow that click). */
-  release(source: Source): 'tap' | 'talk';
-  /** Drop a press that has not been heard yet: microphone off, nothing sent. */
-  cancel(): void;
-  /** Whether a press here can become a talk at all. */
-  offered(): boolean;
-}
-
-export function createHoldToTalk(deps: TalkDeps): HoldToTalk {
+/**
+ * One hold to talk, bound to a page by what it is handed.
+ * @param {object} deps  see above
+ * @returns {{
+ *   view(): TalkView,
+ *   subscribe(fn: () => void): () => void,
+ *   press(source: 'pointer' | 'key'): void,
+ *   release(source: 'pointer' | 'key'): 'tap' | 'talk',
+ *   cancel(): void,
+ *   offered(): boolean,
+ * }}  `press`: pointer down or key down. `release`: pointer up or key up — 'tap' if
+ *   it never became a hold (let the avatar's click proceed), 'talk' if it did (swallow
+ *   that click). `cancel`: drop a press that has not been heard yet — microphone off,
+ *   nothing sent. `offered`: whether a press here can become a talk at all.
+ */
+export function createHoldToTalk(deps) {
   // A press and what follows it are two things: a new press can begin while the
   // last clip is still being heard, and a tap leaves that hearing alone.
-  let held: 'none' | 'pressed' | 'opening' | 'listening' | 'refused' = 'none';
-  let after: 'none' | 'hearing' | 'replying' = 'none';
-  let heard: string | null = null;
-  let note: string | null = null;
-  let source: Source | null = null;
+  let held = 'none';
+  let after = 'none';
+  let heard = null;
+  let note = null;
+  let source = null;
   // The 60 s cap sent the clip while the press was still down: its release is
   // still a talk's (the avatar swallows the click), and does nothing more.
-  let lingering: Source | null = null;
+  let lingering = null;
   let generation = 0; // bumped when a hold starts or ends: older answers are dropped
-  let take: Take | null = null;
+  let take = null;
   // The generation the window's leaving ended while the microphone was being
   // asked for: the system's permission dialog takes focus from the page.
-  let windowTook: number | null = null;
+  let windowTook = null;
   let toldAllowed = false; // "Microphone allowed. Hold again" is said once
   // The page's one audio context, made inside a press (the page lets sound run
   // only from a gesture) and idled between talks.
-  let audio: { ctx: AudioContextLike; ready: Promise<void> } | null = null;
+  let audio = null;
   let hearsUntil = 0; // she could hear when last asked, until this time
-  const phaseNow = (): TalkPhase => (held !== 'none' ? held : after === 'none' ? 'idle' : after);
-  let snapshot: TalkView = { phase: 'idle', heard, note };
-  const listeners = new Set<() => void>();
-  const timers: { hold?: unknown; cap?: unknown; note?: unknown; heard?: unknown } = {};
+  const phaseNow = () => (held !== 'none' ? held : after === 'none' ? 'idle' : after);
+  let snapshot = { phase: 'idle', heard, note };
+  const listeners = new Set ();
+  const timers = {};
 
   const emit = () => {
     snapshot = { phase: phaseNow(), heard, note };
     for (const fn of [...listeners]) fn();
   };
-  const stopTimer = (key: keyof typeof timers) => {
+  const stopTimer = (key) => {
     if (timers[key] !== undefined) deps.clearTimer(timers[key]);
     timers[key] = undefined;
   };
-  const startTimer = (key: keyof typeof timers, ms: number, fn: () => void) => {
+  const startTimer = (key, ms, fn) => {
     stopTimer(key);
     timers[key] = deps.setTimer(() => { timers[key] = undefined; fn(); }, ms);
   };
@@ -202,7 +273,7 @@ export function createHoldToTalk(deps: TalkDeps): HoldToTalk {
   const leave = () => cancel('window');
   const leaveIfHidden = () => { if (deps.doc.hidden) cancel('window'); };
   let watching = false;
-  const watch = (on: boolean) => {
+  const watch = (on) => {
     if (on === watching) return;
     watching = on;
     const [win, doc] = [deps.win, deps.doc];
@@ -220,12 +291,12 @@ export function createHoldToTalk(deps: TalkDeps): HoldToTalk {
   /** The press is over (whatever way): no key or pointer holds it, the window is not watched. */
   const unpress = () => { source = null; held = 'none'; stopTimer('hold'); stopTimer('cap'); watch(false); };
 
-  const say = (line: string) => {
+  const say = (line) => {
     note = line;
     startTimer('note', NOTE_MS, () => { note = null; emit(); });
   };
   /** One quiet line, and nothing half-open: the phase is idle. */
-  const fail = (line: string) => {
+  const fail = (line) => {
     heard = null;
     after = 'none';
     say(line);
@@ -234,7 +305,7 @@ export function createHoldToTalk(deps: TalkDeps): HoldToTalk {
 
   /** Wake the audio context — inside the press, the one moment the page lets
    *  it run. Made once, resumed at every press. */
-  function wakeAudio(): void {
+  function wakeAudio() {
     try {
       if (!audio) {
         const ctx = deps.newAudioContext();
@@ -249,7 +320,7 @@ export function createHoldToTalk(deps: TalkDeps): HoldToTalk {
   }
   const idleAudio = () => { void audio?.ctx.suspend().catch(() => undefined); };
 
-  async function openTake(): Promise<Take> {
+  async function openTake() {
     const devices = deps.mediaDevices();
     if (!devices?.getUserMedia) throw new Error('no microphone api');
     const wake = audio;
@@ -263,7 +334,7 @@ export function createHoldToTalk(deps: TalkDeps): HoldToTalk {
       // An AudioWorklet taps the samples off the page's render thread, which
       // the avatar's renderer shares: a stall there would chop the speech.
       const tap = ctx.createTap();
-      const chunks: Float32Array[] = [];
+      const chunks = [];
       tap.port.onmessage = (e) => { chunks.push(e.data); };
       source.connect(tap);
       tap.connect(ctx.destination);
@@ -287,23 +358,23 @@ export function createHoldToTalk(deps: TalkDeps): HoldToTalk {
   }
 
   /** One request to `/api/stt`; null when the channel failed. */
-  async function request(method: 'GET' | 'POST', init: { headers: Record<string, string>; body?: string }) {
+  async function request(method, init) {
     try {
       const reply = await deps.fetch('/api/stt', { method, ...init });
-      const body = (await reply.json().catch(() => ({}))) as Record<string, unknown>;
+      const body = await reply.json().catch(() => ({}));
       return { ok: reply.ok, status: reply.status, body };
     } catch {
       return null;
     }
   }
 
-  const reasonOf = (body: Record<string, unknown>) => (typeof body.reason === 'string' && body.reason ? body.reason : null);
+  const reasonOf = (body) => (typeof body.reason === 'string' && body.reason ? body.reason : null);
 
   /** Can she hear on this Mac: asked once at a hold, kept a minute when yes.
    *  A no that is not a fetch on its way sends one knock — a request with no
    *  clip — because the first real press is what starts the model's fetch (the
    *  question itself starts nothing); what the knock answers is the reason. */
-  async function canHear(): Promise<{ hears: true } | { hears: false; reason: string }> {
+  async function canHear() {
     if (deps.now() < hearsUntil) return { hears: true };
     const asked = await request('GET', { headers: {} });
     if (!asked?.ok) return { hears: false, reason: WORDS.failed };
@@ -317,7 +388,7 @@ export function createHoldToTalk(deps: TalkDeps): HoldToTalk {
     return { hears: false, reason: (knocked?.status === 503 ? reasonOf(knocked.body) : null) ?? reason };
   }
 
-  async function beginHold(): Promise<void> {
+  async function beginHold() {
     timers.hold = undefined;
     const mine = ++generation; // an earlier hearing's answer is dropped
     stopTimer('note');
@@ -336,7 +407,7 @@ export function createHoldToTalk(deps: TalkDeps): HoldToTalk {
       emit();
       return;
     }
-    let opened: Take;
+    let opened;
     try {
       opened = await openTake();
     } catch (e) {
@@ -367,7 +438,7 @@ export function createHoldToTalk(deps: TalkDeps): HoldToTalk {
     emit();
   }
 
-  function finishHold(): void {
+  function finishHold() {
     const t = take;
     take = null;
     unpress();
@@ -384,7 +455,7 @@ export function createHoldToTalk(deps: TalkDeps): HoldToTalk {
     void hear(mine, encodeWav(clip));
   }
 
-  async function hear(mine: number, wav: Uint8Array): Promise<void> {
+  async function hear(mine, wav) {
     let reply;
     try {
       // The data channel carries JSON, so the clip rides as base64 (`wav_b64`).
@@ -398,7 +469,7 @@ export function createHoldToTalk(deps: TalkDeps): HoldToTalk {
       return;
     }
     if (mine !== generation) return;
-    const body = (await reply.json().catch(() => ({}))) as { text?: unknown; reason?: unknown };
+    const body = await reply.json().catch(() => ({}));
     if (mine !== generation) return;
     if (reply.status === 503) {
       hearsUntil = 0;
@@ -419,7 +490,7 @@ export function createHoldToTalk(deps: TalkDeps): HoldToTalk {
     emit();
   }
 
-  function press(by: Source): void {
+  function press(by) {
     if (source !== null || !deps.offered()) return; // one press at a time
     lingering = null;
     source = by;
@@ -430,7 +501,7 @@ export function createHoldToTalk(deps: TalkDeps): HoldToTalk {
     emit();
   }
 
-  function release(by: Source): 'tap' | 'talk' {
+  function release(by) {
     if (lingering === by) {
       lingering = null;
       return 'talk';
@@ -454,7 +525,7 @@ export function createHoldToTalk(deps: TalkDeps): HoldToTalk {
     return 'talk';
   }
 
-  function cancel(by: 'window' | 'other' = 'other'): void {
+  function cancel(by = 'other') {
     if (source === null) return;
     if (by === 'window' && held === 'opening') windowTook = generation;
     if (held !== 'pressed') generation++; // a press that never became a hold leaves a hearing alone
@@ -479,7 +550,66 @@ export function createHoldToTalk(deps: TalkDeps): HoldToTalk {
   };
 }
 
-function isBlocked(e: unknown): boolean {
-  const name = (e as { name?: string } | null)?.name;
+function isBlocked(e) {
+  const name = (e)?.name;
   return name === 'NotAllowedError' || name === 'SecurityError';
+}
+
+// ── The microphone's recorder ──
+//
+// The page's audio context for hearing: an AudioWorklet taps the microphone's
+// samples in blocks and posts them to the page, so capture never runs on the
+// thread that draws her. The worklet's code is a string made into a Blob URL —
+// no second file to serve, and nothing fetched over the network.
+//
+// Why a worklet and not MediaRecorder: the recorder yields a compressed
+// container (webm or mp4 by webview) that must be decoded again before it can
+// be a 16 kHz WAV, which is another async step that can fail per webview; the
+// worklet hands over the raw samples the WAV needs, and stopping it is
+// synchronous, as the microphone-off paths require.
+
+/** Samples per posted block: ~21 ms at 48 kHz, the most a release can clip. */
+const BLOCK = 1024;
+
+const WORKLET = `
+class SpeechTap extends AudioWorkletProcessor {
+  constructor() { super(); this.block = new Float32Array(${BLOCK}); this.at = 0; }
+  process(inputs) {
+    const channel = inputs[0] && inputs[0][0];
+    if (channel) {
+      for (let i = 0; i < channel.length; i++) {
+        this.block[this.at++] = channel[i];
+        if (this.at === ${BLOCK}) {
+          this.port.postMessage(this.block, [this.block.buffer]);
+          this.block = new Float32Array(${BLOCK});
+          this.at = 0;
+        }
+      }
+    }
+    return true;
+  }
+}
+registerProcessor('speech-tap', SpeechTap);
+`;
+
+/** A fresh audio context with the recorder ready to load. */
+export function newSpeechContext() {
+  const Ctor = window.AudioContext ?? window.webkitAudioContext;
+  const ctx = new Ctor();
+  return {
+    get sampleRate() { return ctx.sampleRate; },
+    destination: ctx.destination,
+    resume: () => ctx.resume(),
+    suspend: () => ctx.suspend(),
+    async ready() {
+      const url = URL.createObjectURL(new Blob([WORKLET], { type: 'text/javascript' }));
+      try {
+        await ctx.audioWorklet.addModule(url);
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+    },
+    createMediaStreamSource: (stream) => ctx.createMediaStreamSource(stream),
+    createTap: () => new AudioWorkletNode(ctx, 'speech-tap', { numberOfInputs: 1, numberOfOutputs: 1, channelCount: 1 }),
+  };
 }

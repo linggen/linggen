@@ -1,5 +1,5 @@
 /**
- * Hold to talk, bound to this page: the one `HoldToTalk` (lib/holdToTalk.mts)
+ * Hold to talk, bound to this page: the one `HoldToTalk` (shared/hold-to-talk.js)
  * with the page's real microphone, fetch, timers and window, her door
  * (askYinyue) and her one stop (hush). The page avatar and the pet window both
  * draw from it (components/yinyue/YinyueAvatar.tsx).
@@ -8,8 +8,7 @@ import { useSyncExternalStore } from 'react';
 import { useUiStore } from '../stores/uiStore';
 import { askYinyue } from './askYinyue';
 import { hush, setPersonTalking } from './eventHandlers/yinyue';
-import { createHoldToTalk, talkLabel, type TalkView } from './holdToTalk.mts';
-import { newSpeechContext } from './speechTap';
+import { createHoldToTalk, newSpeechContext, talkLabel, type TalkView } from '@linggen/hold-to-talk';
 
 /** A stage frame (`?pet=1&stage=1`, a scene that stands her in a place) is never
  *  granted the microphone — the app's gate and the frame's own policy deny it —

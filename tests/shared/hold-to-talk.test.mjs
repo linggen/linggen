@@ -1,29 +1,29 @@
-// Hold to talk (lib/holdToTalk.mts): the microphone is open only while held,
-// what is sent is one 16 kHz mono WAV to /api/stt, and each state is told once.
-// Everything the control touches is a fake: no microphone, no sound.
+// /shared/hold-to-talk.js — the control the main UI and any app page share:
+// the microphone is open only while held, what is sent is one 16 kHz mono WAV
+// to /api/stt, and each state is told once. Everything the control touches is
+// a fake: no microphone, no sound. Run: node --test tests/shared/*.test.mjs
+// (the page wiring of Yinyue's avatar is ui/tests/holdToTalkWiring.test.mts).
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { voicedHere } from '../src/lib/petCue.mts';
 import {
   createHoldToTalk, HEARD_MS, HOLD_MS, HEARS_MS, isTalkKey, NOTE_MS, talkLabel, WORDS,
-  type TalkDeps, type TalkView,
-} from '../src/lib/holdToTalk.mts';
+} from '../../shared/hold-to-talk.js';
 
-const flush = () => new Promise<void>((r) => setImmediate(r));
+const flush = () => new Promise((r) => setImmediate(r));
 
 /** A manual clock: timers run only when the test says time has passed. */
 function clock() {
   let now = 1_000_000;
   let next = 1;
-  const timers = new Map<number, { at: number; fn: () => void }>();
+  const timers = new Map();
   return {
     now: () => now,
-    setTimer: (fn: () => void, ms: number) => { timers.set(next, { at: now + ms, fn }); return next++; },
-    clearTimer: (id: unknown) => { timers.delete(id as number); },
-    async advance(ms: number) {
+    setTimer: (fn, ms) => { timers.set(next, { at: now + ms, fn }); return next++; },
+    clearTimer: (id) => { timers.delete(id); },
+    async advance(ms) {
       const end = now + ms;
       for (;;) {
         const due = [...timers.entries()].filter(([, t]) => t.at <= end).sort((a, b) => a[1].at - b[1].at)[0];
@@ -39,53 +39,37 @@ function clock() {
   };
 }
 
-interface Rig {
-  talk: ReturnType<typeof createHoldToTalk>;
-  clk: ReturnType<typeof clock>;
-  win: EventTarget;
-  doc: EventTarget & { hidden: boolean };
-  fetched: { url: string; init: { method: string; headers: Record<string, string>; body?: string } }[];
-  sent: string[];
-  cuts: number;
-  streams: { tracks: { stopped: number }[] }[];
-  asked: number; // getUserMedia calls
-  contexts: number; // audio contexts made
-  gestureWhenMade: boolean[]; // was each made inside a press
-  inPress: boolean;
-  audio: string[]; // resume / suspend, in order
-  workletFails: boolean;
-  offered: boolean;
-  open(): number; // microphone tracks not yet stopped
-  heardAs: { value: { status: number; body: unknown } | 'throw' };
-  /** What `GET /api/stt` answers: can she hear. */
-  hearsAs: { value: { status: number; body: unknown } | 'throw' | 'wait' };
-  /** Answer a GET held by `hearsAs = 'wait'`. */
-  answerHears(a: { status: number; body: unknown }): void;
-  sendOk: { value: boolean };
-  /** What her door said when it refused the line (null: nothing). */
-  sendReason: { value: string | null };
-  /** Hold the microphone request until `release()` is called. */
-  gate(): { release(): void; fail(name: string): void };
-  speak(ms: number, rate?: number): void;
-  views: TalkView[];
-}
-
-function rig(): Rig {
+/**
+ * The control with every dependency faked. What the rig holds, for the tests:
+ *   talk, clk, win, doc    the control, a manual clock, the window and document
+ *   fetched, sent, views   every fetch (url, init), every line sent on, every view told
+ *   cuts                   how often the page's one stop was asked
+ *   streams, asked, open() microphone requests, and the tracks not yet stopped
+ *   contexts, gestureWhenMade, inPress, audio   audio contexts made (and whether
+ *                          inside a press), and resume / suspend in order
+ *   workletFails, offered  switches for the recorder and for holding being offered
+ *   heardAs, hearsAs       what POST / GET /api/stt answer ('throw', or 'wait' for a GET
+ *                          held until answerHears(a))
+ *   sendOk, sendReason     what the page's door said to the line (and why it refused)
+ *   gate()                 holds the microphone request until release() / fail(name)
+ *   speak(ms, rate)        the recorder posts a block of sound
+ */
+function rig() {
   const clk = clock();
   const win = new EventTarget();
   const doc = Object.assign(new EventTarget(), { hidden: false });
   const r = {
-    fetched: [] as Rig['fetched'], sent: [] as string[], cuts: 0, streams: [] as Rig['streams'], asked: 0,
-    heardAs: { value: { status: 200, body: { text: 'what is on today' } } } as Rig['heardAs'],
-    contexts: 0, gestureWhenMade: [] as boolean[], inPress: false, audio: [] as string[], workletFails: false, offered: true,
-    sendOk: { value: true }, sendReason: { value: null as string | null }, views: [] as TalkView[],
-    hearsAs: { value: { status: 200, body: { hears: true } } } as Rig['hearsAs'],
+    fetched: [], sent: [], cuts: 0, streams: [], asked: 0,
+    heardAs: { value: { status: 200, body: { text: 'what is on today' } } },
+    contexts: 0, gestureWhenMade: [], inPress: false, audio: [], workletFails: false, offered: true,
+    sendOk: { value: true }, sendReason: { value: null }, views: [],
+    hearsAs: { value: { status: 200, body: { hears: true } } },
   };
-  let heldGet: ((a: { status: number; body: unknown }) => void) | null = null;
-  let gated: { resolve(): void; reject(e: Error): void; promise: Promise<void> } | null = null;
-  let processor: { port: { onmessage: ((e: { data: Float32Array }) => void) | null } } | null = null;
+  let heldGet = null;
+  let gated = null;
+  let processor = null;
   let rate = 48_000;
-  const deps: TalkDeps = {
+  const deps = {
     mediaDevices: () => ({
       async getUserMedia() {
         r.asked++;
@@ -119,7 +103,7 @@ function rig(): Rig {
       const answer = asking ? r.hearsAs.value : r.heardAs.value;
       if (answer === 'throw') throw new Error('channel down');
       if (answer === 'wait') {
-        const a = await new Promise<{ status: number; body: unknown }>((res) => { heldGet = res; });
+        const a = await new Promise((res) => { heldGet = res; });
         return { ok: a.status >= 200 && a.status < 300, status: a.status, json: async () => a.body };
       }
       const { status, body } = answer;
@@ -129,48 +113,48 @@ function rig(): Rig {
     cutOff: () => { r.cuts++; },
     now: clk.now, setTimer: clk.setTimer, clearTimer: clk.clearTimer, win, doc,
   };
-  const answerHears = (a: { status: number; body: unknown }) => { heldGet?.(a); heldGet = null; };
+  const answerHears = (a) => { heldGet?.(a); heldGet = null; };
   const talk = createHoldToTalk(deps);
   talk.subscribe(() => r.views.push(talk.view()));
   return Object.assign(r, {
     talk, clk, win, doc, answerHears,
     open: () => r.streams.flatMap((s) => s.tracks).filter((t) => t.stopped === 0).length,
     gate() {
-      let resolve!: () => void;
-      let reject!: (e: Error) => void;
-      const promise = new Promise<void>((res, rej) => { resolve = res; reject = rej; });
+      let resolve;
+      let reject;
+      const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
       gated = { resolve, reject, promise };
       return {
         release: () => { gated = null; resolve(); },
-        fail: (name: string) => { gated = null; reject(Object.assign(new Error(name), { name })); },
+        fail: (name) => { gated = null; reject(Object.assign(new Error(name), { name })); },
       };
     },
-    speak(ms: number, sampleRate = 48_000) {
+    speak(ms, sampleRate = 48_000) {
       rate = sampleRate;
       const frames = Math.round((ms / 1000) * sampleRate);
       const chunk = Float32Array.from({ length: frames }, (_, i) => 0.3 * Math.sin(i / 20));
       processor?.port.onmessage?.({ data: chunk });
     },
-  }) as Rig;
+  });
 }
 
 /** Press, wait out the hold, and be listening. */
-async function hold(r: Rig, by: 'pointer' | 'key' = 'pointer') {
+async function hold(r, by = 'pointer') {
   press(r, by);
   await r.clk.advance(HOLD_MS);
 }
 
 /** A press, the way the page gives it: the audio context is made only inside it. */
-function press(r: Rig, by: 'pointer' | 'key' = 'pointer') {
+function press(r, by = 'pointer') {
   r.inPress = true;
   r.talk.press(by);
   r.inPress = false;
 }
 
-const phase = (r: Rig) => r.talk.view().phase;
+const phase = (r) => r.talk.view().phase;
 /** The requests that carry a clip, or knock for one: not the question whether she hears. */
-const posts = (r: Rig) => r.fetched.filter((f) => f.init.method === 'POST');
-const asks = (r: Rig) => r.fetched.filter((f) => f.init.method === 'GET');
+const posts = (r) => r.fetched.filter((f) => f.init.method === 'POST');
+const asks = (r) => r.fetched.filter((f) => f.init.method === 'GET');
 
 // ── Rule 6: a tap is a tap ─────────────────────────────────────────────
 
@@ -295,10 +279,10 @@ test('cancel stops the tracks and sends nothing', async () => {
 });
 
 for (const [name, end] of [
-  ['the window loses focus', (r: Rig) => r.win.dispatchEvent(new Event('blur'))],
-  ['the page is unloaded', (r: Rig) => r.win.dispatchEvent(new Event('pagehide'))],
-  ['the window is hidden', (r: Rig) => { r.doc.hidden = true; r.doc.dispatchEvent(new Event('visibilitychange')); }],
-] as const) {
+  ['the window loses focus', (r) => r.win.dispatchEvent(new Event('blur'))],
+  ['the page is unloaded', (r) => r.win.dispatchEvent(new Event('pagehide'))],
+  ['the window is hidden', (r) => { r.doc.hidden = true; r.doc.dispatchEvent(new Event('visibilitychange')); }],
+]) {
   test(`${name}: the tracks stop, nothing is sent`, async () => {
     const r = rig();
     await hold(r);
@@ -596,7 +580,7 @@ test('a hold while hearing drops the old answer: only the new line goes', async 
 // ── Keys ───────────────────────────────────────────────────────────────
 
 test('the space bar starts a talk, except inside a field, a button, or as repeat', () => {
-  const key = (over: Record<string, unknown>) => ({ code: 'Space', repeat: false, metaKey: false, ctrlKey: false, altKey: false, target: { tagName: 'DIV' }, ...over });
+  const key = (over) => ({ code: 'Space', repeat: false, metaKey: false, ctrlKey: false, altKey: false, target: { tagName: 'DIV' }, ...over });
   assert.equal(isTalkKey(key({})), true);
   assert.equal(isTalkKey(key({ target: { tagName: 'INPUT' } })), false);
   assert.equal(isTalkKey(key({ target: { tagName: 'textarea' } })), false);
@@ -619,34 +603,52 @@ test('a key hold works as a pointer hold', async () => {
 
 // ── The locks ──────────────────────────────────────────────────────────
 
-const src = fileURLToPath(new URL('../src', import.meta.url));
-function* files(dir: string): Generator<string> {
+const repo = fileURLToPath(new URL('../..', import.meta.url));
+function* files(dir) {
   for (const name of readdirSync(dir)) {
     const p = join(dir, name);
     if (statSync(p).isDirectory()) yield* files(p);
-    else if (/\.(ts|tsx|mts|js|jsx)$/.test(name)) yield p;
+    // A `.d.ts` only describes shapes (ui/src/types/hold-to-talk.d.ts); it opens nothing.
+    else if (/\.(ts|tsx|mts|js|jsx)$/.test(name) && !name.endsWith('.d.ts')) yield p;
   }
 }
-const withText = (needle: string) => [...files(src)].filter((f) => readFileSync(f, 'utf8').includes(needle)).map((f) => relative(src, f));
+/** The files of the engine's shared folder and the UI's source holding `needle`, from the repo root. */
+const withText = (needle) => ['shared', 'ui/src']
+  .flatMap((dir) => [...files(join(repo, dir))])
+  .filter((f) => readFileSync(f, 'utf8').includes(needle))
+  .map((f) => relative(repo, f));
+const shared = readFileSync(join(repo, 'shared/hold-to-talk.js'), 'utf8');
 
-test('lock: one file opens the microphone, and it is holdToTalk.mts', () => {
-  assert.deepEqual(withText('getUserMedia'), ['lib/holdToTalk.mts']);
+test('lock: one file opens the microphone, and it is shared/hold-to-talk.js', () => {
+  assert.deepEqual(withText('getUserMedia'), ['shared/hold-to-talk.js']);
 });
 
 test('lock: one file carries a clip to the engine, and the one that records', () => {
-  assert.deepEqual(withText('wav_b64'), ['lib/holdToTalk.mts']);
-  assert.deepEqual(withText("'/api/stt'"), ['lib/holdToTalk.mts']);
+  assert.deepEqual(withText('wav_b64'), ['shared/hold-to-talk.js']);
+  assert.deepEqual(withText("'/api/stt'"), ['shared/hold-to-talk.js']);
 });
 
-test('lock: her mute and her cut-off by a press are the same stop', () => {
-  const wiring = readFileSync(join(src, 'lib/yinyueTalk.ts'), 'utf8');
-  assert.match(wiring, /cutOff: hush\b/);
-  const handlers = readFileSync(join(src, 'lib/eventHandlers/yinyue.ts'), 'utf8');
-  assert.equal((handlers.match(/function hush\(/g) ?? []).length, 1, 'one stop function');
-  assert.match(handlers, /export function hush\(/);
+test('lock: the control, the encoder and the recorder are one file that imports nothing', () => {
+  assert.doesNotMatch(shared, /^\s*import[\s{'"]/m, 'a page loads this one file, alone');
+  for (const gone of ['holdToTalk.mts', 'speechWav.mts', 'speechTap.ts']) {
+    assert.deepEqual(readdirSync(join(repo, 'ui/src/lib')).filter((f) => f === gone), [], `${gone} is a second copy`);
+  }
 });
 
-// ── V1c review fixes ───────────────────────────────────────────────────
+test('lock: the header a call names its wait in is the channel\'s and the UI policy\'s, word for word', () => {
+  const literal = (file) => readFileSync(join(repo, file), 'utf8').match(/BUDGET_HEADER = '([^']+)'/)?.[1];
+  const header = literal('shared/hold-to-talk.js');
+  assert.equal(header, 'X-Linggen-Budget-Ms');
+  assert.equal(literal('shared/channel.js'), header);
+  assert.equal(literal('ui/src/lib/requestBudget.mts'), header);
+});
+
+test('lock: the one wait a hearing is given is a plain number the engine reads', () => {
+  // src/server/api/stt_mlx.rs reads this line to hold its own waits inside it.
+  assert.match(shared, /^export const HEAR_BUDGET_MS = [\d_]+;$/m);
+});
+
+// ── Review fixes ───────────────────────────────────────────────────────
 
 test('rule 9: a press must last 350 ms to be a talk, so a slow click is still a click', async () => {
   assert.equal(HOLD_MS, 350);
@@ -740,26 +742,9 @@ test('rule 8: where the microphone can never be granted, a press stays a tap', a
   assert.equal(phase(r), 'idle');
 });
 
-test('rule 5: her line is voiced unless it is muted or the person is speaking to her', () => {
-  assert.equal(voicedHere(true, false), true);
-  assert.equal(voicedHere(undefined, false), true);
-  assert.equal(voicedHere(false, false), false, 'muted, or seen where it shows');
-  assert.equal(voicedHere(true, true), false, 'a hold is on: shown, not voiced');
-  assert.equal(voicedHere(undefined, true), false);
-});
-
-test('lock rule 5: the page decides her sound in handlePetSpeak, and a hold sets the flag', () => {
-  const handlers = readFileSync(join(src, 'lib/eventHandlers/yinyue.ts'), 'utf8');
-  assert.equal((handlers.match(/voicedHere\(/g) ?? []).length, 1, 'one call decides sound');
-  assert.match(handlers, /if \(!voicedHere\(item\.data\?\.voice, personTalking\)\)/);
-  const wiring = readFileSync(join(src, 'lib/yinyueTalk.ts'), 'utf8');
-  assert.match(wiring, /setPersonTalking\(holding\)/);
-  assert.deepEqual(withText('setPersonTalking('), ['lib/eventHandlers/yinyue.ts', 'lib/yinyueTalk.ts']);
-});
-
 test('lock rule 4: no deprecated script processor, and the recorder is made from a blob, not fetched', () => {
   assert.deepEqual(withText('createScriptProcessor'), []);
-  const tap = readFileSync(join(src, 'lib/speechTap.ts'), 'utf8');
+  const tap = shared.slice(shared.indexOf("// ── The microphone's recorder"));
   assert.match(tap, /URL\.createObjectURL\(new Blob\(/);
   assert.doesNotMatch(tap, /fetch\(|XMLHttpRequest/);
 });

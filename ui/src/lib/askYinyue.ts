@@ -1,11 +1,11 @@
 /**
  * A line said to Yinyue through her avatar door (`POST /api/yinyue/chat`): the
  * one place it is sent, for the line typed into her box and the line heard
- * from a held press (`asked_aloud`, lib/holdToTalk.mts). She ponders until her
+ * from a held press (`asked_aloud`, shared/hold-to-talk.js). She ponders until her
  * reply arrives over the event spine (handlePetSpeak clears it), or 30 s pass.
  */
 import { useUiStore } from '../stores/uiStore';
-import type { LineSent } from './holdToTalk.mts';
+import type { LineSent } from '@linggen/hold-to-talk';
 
 const PONDER_LIMIT_MS = 30_000;
 let ponderTimer = 0;

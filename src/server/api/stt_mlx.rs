@@ -414,10 +414,10 @@ done
     }
 
     /// The wait for one hearing — the slot, then the model — fits the page's
-    /// budget for it (`HEAR_BUDGET_MS` in the page's control), whatever the clip's length.
+    /// budget for it (`HEAR_BUDGET_MS` in shared/hold-to-talk.js), whatever the clip's length.
     #[test]
     fn the_waits_of_one_hearing_fit_the_pages_budget() {
-        let page = include_str!("../../../ui/src/lib/holdToTalk.mts");
+        let page = include_str!("../../../shared/hold-to-talk.js");
         let at = page.find("export const HEAR_BUDGET_MS = ").expect("the page names its budget");
         let digits: String = page[at + "export const HEAR_BUDGET_MS = ".len()..].chars().take_while(|c| *c != ';').filter(|c| c.is_ascii_digit()).collect();
         let budget = Duration::from_millis(digits.parse().unwrap());

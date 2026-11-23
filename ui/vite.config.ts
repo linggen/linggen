@@ -24,9 +24,12 @@ export default defineConfig({
     tailwindcss(),
   ],
   resolve: {
-    // The engine's shared sky painter: one file, served at /shared/sky.js
-    // for skill pages and bundled here for the shell.
-    alias: { '@linggen/sky': path.resolve(__dirname, '../shared/sky.js') },
+    // The engine's shared page helpers: one file each, served at /shared/…
+    // for skill pages and bundled here for the shell (types: src/types/).
+    alias: {
+      '@linggen/sky': path.resolve(__dirname, '../shared/sky.js'),
+      '@linggen/hold-to-talk': path.resolve(__dirname, '../shared/hold-to-talk.js'),
+    },
   },
   server: {
     host: '0.0.0.0',

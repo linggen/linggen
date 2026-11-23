@@ -8,7 +8,7 @@
  * Click her to type: a small input opens and the message is sent to the Yinyue
  * agent (`lib/askYinyue.ts`); her reply comes back over the event spine
  * (she speaks + the bubble). Hold her (or the space bar) to speak instead:
- * lib/holdToTalk.mts hears the line and sends it the same way, asked aloud. While a stage on an app page with a chat holds
+ * shared/hold-to-talk.js hears the line and sends it the same way, asked aloud. While a stage on an app page with a chat holds
  * her, the engine says it in that chat instead — as the user's `@银月 …` line,
  * answered there. The click also satisfies browser autoplay so her
  * voice can play.
@@ -25,7 +25,7 @@ import { useUiStore } from '../../stores/uiStore';
 import { postToParent } from '../../lib/parentFrame';
 import { askYinyue } from '../../lib/askYinyue';
 import { talk, useTalk } from '../../lib/yinyueTalk';
-import { DRAG_PX, isTalkKey } from '../../lib/holdToTalk.mts';
+import { DRAG_PX, isTalkKey } from '@linggen/hold-to-talk';
 
 // Validate the wire strings against the renderer's vocabularies.
 const EMOTION_NAMES: EmotionName[] = ['neutral', 'happy', 'angry', 'sad', 'relaxed'];
@@ -167,7 +167,7 @@ export const YinyueAvatar: React.FC = () => {
     return () => window.removeEventListener('blur', close);
   }, []);
 
-  // Hold to talk (lib/holdToTalk.mts is the one control; this only binds it):
+  // Hold to talk (shared/hold-to-talk.js is the one control; this only binds it):
   // the space bar while she has focus (anywhere in the pet window), and the
   // press on her body below. Leaving ends a hold, so the microphone never stays.
   useEffect(() => {

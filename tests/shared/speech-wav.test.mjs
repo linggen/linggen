@@ -1,13 +1,15 @@
+// The clip Yinyue (and any app page) is spoken to with, in /shared/hold-to-talk.js: WAV, 16 kHz, mono, 16-bit PCM.
+// Run: node --test tests/shared/*.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { encodeWav, MAX_SPEECH_SECONDS, SPEECH_RATE, toBase64, toSpeechSamples } from '../src/lib/speechWav.mts';
+import { encodeWav, MAX_SPEECH_SECONDS, SPEECH_RATE, toBase64, toSpeechSamples } from '../../shared/hold-to-talk.js';
 
-const ramp = (n: number) => Float32Array.from({ length: n }, (_, i) => (i / n) * 2 - 1);
+const ramp = (n) => Float32Array.from({ length: n }, (_, i) => (i / n) * 2 - 1);
 
 test('the clip is a 16 kHz mono 16-bit PCM WAV: header and length', () => {
   const wav = encodeWav(Float32Array.from([0, 1, -1, 0.5]));
   const view = new DataView(wav.buffer);
-  const text = (at: number, n: number) => String.fromCharCode(...wav.subarray(at, at + n));
+  const text = (at, n) => String.fromCharCode(...wav.subarray(at, at + n));
   assert.equal(wav.length, 44 + 4 * 2);
   assert.equal(text(0, 4), 'RIFF');
   assert.equal(view.getUint32(4, true), wav.length - 8);
