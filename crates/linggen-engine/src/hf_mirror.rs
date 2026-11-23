@@ -98,26 +98,78 @@ pub async fn endpoint() -> String {
     resolved().await.endpoint
 }
 
-/// Where to fetch `path` (e.g. `hexgrad/Kokoro-82M/resolve/main/x.pt`),
-/// in order.
-fn sources_for(r: &Resolved, path: &str) -> Vec<String> {
-    let path = path.trim_start_matches('/');
-    let bases: Vec<&str> = if r.user_set || r.endpoint != HF {
-        vec![&r.endpoint]
+/// The Hub addresses to try, in order: the user's endpoint alone, the
+/// mirror alone when huggingface.co is unreachable, else huggingface.co with
+/// the mirror behind it.
+fn bases_of(r: &Resolved) -> Vec<String> {
+    if r.user_set || r.endpoint != HF {
+        vec![r.endpoint.clone()]
     } else {
-        vec![HF, HF_MIRROR]
-    };
+        vec![HF.to_string(), HF_MIRROR.to_string()]
+    }
+}
+
+/// Where to fetch `path` (e.g. `hexgrad/Kokoro-82M/resolve/main/x.pt`)
+/// from `bases`, in order.
+fn urls_at(bases: &[String], path: &str) -> Vec<String> {
+    let path = path.trim_start_matches('/');
     bases.iter().map(|base| format!("{base}/{path}")).collect()
+}
+
+/// The Hub addresses a fetch may go to now, in order. A caller that makes
+/// several GETs asks once and passes the list to [`get_bytes_at`] and
+/// [`download_at`], so every file of one model comes from one decision.
+pub async fn bases() -> Vec<String> {
+    bases_of(&resolved().await)
+}
+
+/// Did the user name the endpoint (`HF_ENDPOINT`)? Then there is no mirror
+/// behind it, and what it refuses is its owner's word, not the Hub's weather.
+pub async fn endpoint_is_users() -> bool {
+    resolved().await.user_set
 }
 
 /// GET a Hub file by its path, huggingface.co first and hf-mirror.com
 /// second (or the user's endpoint alone).
 pub async fn get_bytes(path: &str) -> Result<Vec<u8>> {
-    let urls = sources_for(&resolved().await, path);
+    get_bytes_at(&bases().await, path).await
+}
+
+/// [`get_bytes`] against `bases` (from [`bases`]).
+pub async fn get_bytes_at(bases: &[String], path: &str) -> Result<Vec<u8>> {
     let client = reqwest::Client::builder()
         .connect_timeout(crate::mirror::CONNECT_TIMEOUT)
         .build()?;
-    crate::mirror::get_bytes_any(&client, &urls).await
+    crate::mirror::get_bytes_any(&client, &urls_at(bases, path)).await
+}
+
+/// GET a Hub file into `part`, resuming what is already there (a file too
+/// big to hold in memory), with the same rule as [`get_bytes`]: a source that
+/// is unreachable or unwell hands over to the next, a definite refusal (a
+/// 4xx other than 408/429) is final. `part` holds a whole file only when
+/// this returns Ok; the caller verifies it before it is used.
+pub async fn download_at(bases: &[String], path: &str, part: &std::path::Path) -> Result<()> {
+    let mut last = None;
+    for url in urls_at(bases, path) {
+        match crate::runtime::download_resumable(&url, part).await {
+            Ok(()) => return Ok(()),
+            Err(e) if is_final(&e) => return Err(e),
+            Err(e) => {
+                tracing::warn!("[hf] {url}: {e:#}");
+                last = Some(e);
+            }
+        }
+    }
+    Err(last.unwrap_or_else(|| anyhow::anyhow!("no source to fetch")))
+}
+
+fn is_final(e: &anyhow::Error) -> bool {
+    let Some(status) = e.downcast_ref::<reqwest::Error>().and_then(|r| r.status()) else {
+        return false;
+    };
+    status.is_client_error()
+        && status != reqwest::StatusCode::TOO_MANY_REQUESTS
+        && status != reqwest::StatusCode::REQUEST_TIMEOUT
 }
 
 #[cfg(test)]
@@ -128,14 +180,14 @@ mod tests {
     fn a_user_endpoint_wins_and_stands_alone() {
         let r = choose(Some("https://my.hub".into()), false);
         assert!(r.user_set);
-        assert_eq!(sources_for(&r, "a/b"), vec!["https://my.hub/a/b"]);
+        assert_eq!(urls_at(&bases_of(&r), "a/b"), vec!["https://my.hub/a/b"]);
     }
 
     #[test]
     fn reachable_hub_keeps_the_mirror_as_fallback() {
         let r = choose(None, true);
         assert_eq!(
-            sources_for(&r, "/o/r/resolve/main/v.pt"),
+            urls_at(&bases_of(&r), "/o/r/resolve/main/v.pt"),
             vec![
                 "https://huggingface.co/o/r/resolve/main/v.pt",
                 "https://hf-mirror.com/o/r/resolve/main/v.pt",
@@ -156,7 +208,7 @@ mod tests {
         let r = choose(None, false);
         assert_eq!(r.endpoint, HF_MIRROR);
         assert_eq!(
-            sources_for(&r, "o/r/resolve/main/v.pt"),
+            urls_at(&bases_of(&r), "o/r/resolve/main/v.pt"),
             vec!["https://hf-mirror.com/o/r/resolve/main/v.pt"]
         );
     }

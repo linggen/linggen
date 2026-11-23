@@ -124,6 +124,17 @@ install, never on first use: a person never waits on one.
   the pictures lane (`pictures` venv + FLUX.2 klein 4B, ~4.3 GB); Kokoro's
   weights (~300 MB, the fallback voice, every platform). Voice and pictures
   run where the lane gate admits them, pet on or off.
+- **A model fetch is one function.** The voice, hearing and picture models
+  are fetched from the Hub by `hf_fetch::fetch` (rows of `runtime::HUB_MODELS`,
+  started only by `ensure_hub_model`). The library's own fetch is tried again
+  after growing pauses (5, 15, 45, 120 s) when the trouble is transient (Hub
+  answered oddly, connection, 429/5xx); no disk, 401/403/404 and a user's own
+  `HF_ENDPOINT` refusing stop at once. Nothing already in the cache is
+  deleted. After the third failure the engine lists the model's files from the
+  Hub (at revision `main`) and GETs the missing ones itself into the cache
+  layout, then the library's offline lookup confirms (a workaround for the
+  library's metadata step, seen failing 2026-11-22). What failed, and whether
+  trying again helps, is told in one line (`hf_fetch::Note`).
 - **Loading stays with use.** A download never loads a model: the voice
   sidecar and Kokoro load only when the pet is on, a picture per render.
   Until a model is on disk its user falls back (Kokoro, then `say`; a picture

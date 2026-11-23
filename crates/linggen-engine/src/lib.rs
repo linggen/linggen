@@ -10,6 +10,7 @@ pub mod credentials;
 pub mod engine;
 pub mod extensions;
 mod front;
+pub mod hf_fetch;
 pub mod hf_mirror;
 pub mod js_runtime;
 pub mod language;

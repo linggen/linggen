@@ -63,11 +63,23 @@ fn local_lane_not_ready() -> Result<Option<String>> {
     if crate::runtime::pictures_ready() {
         return Ok(None);
     }
+    // What the last try said of itself (why it gave up, or that it is trying
+    // again) comes before the generic line.
+    let said = crate::runtime::pictures_note();
     crate::runtime::ensure_pictures_in_background();
-    Ok(Some(
-        "The picture model is being installed on this Mac (about 5 GB). Try again in a few minutes."
-            .to_string(),
-    ))
+    Ok(Some(picture_line(said.as_ref())))
+}
+
+/// What the first call tells: the install is starting; or why the last try
+/// gave up (a call starts another try, so the advice is to ask again), or that
+/// one is retrying. At most 20 words (`hf_fetch_tests`).
+const PICTURE_AGAIN: &str = "Trying once more; ask again in a few minutes.";
+
+fn picture_line(said: Option<&crate::hf_fetch::Note>) -> String {
+    match said {
+        Some(note) => note.told(crate::runtime::what_is_fetched(crate::runtime::PICTURE_MODEL), PICTURE_AGAIN),
+        None => "The picture model is being installed on this Mac (about 5 GB). Try again in a few minutes.".to_string(),
+    }
 }
 
 /// A reference picture is a file inside the active skill; outside a skill
