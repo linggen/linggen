@@ -1,7 +1,7 @@
 //! How a model signs in and what its provider makes the engine do — the one
 //! place a model's `auth_mode` and `provider` strings are read.
 //!
-//! The provider's *name* is an open set (`KNOWN_PROVIDERS`, plus any
+//! The provider's *name* is an open set (`providers::known_names`, plus any
 //! OpenAI-compatible host); only a few names change what the engine does,
 //! and those are [`ProviderKind`]. The sign-in is a closed set,
 //! [`AuthMode`], and what the two say together is [`SignIn`]. Every other

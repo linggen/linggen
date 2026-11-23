@@ -98,6 +98,14 @@ pub struct Provider {
     socket_with: fn(&Provider, &Secret) -> String,
 }
 
+impl Provider {
+    /// The host this provider's account is at: the one a preset's address
+    /// must be at (`config::providers`, a lock there).
+    pub fn key_host(&self) -> &'static str {
+        self.key_host
+    }
+}
+
 /// The live providers this engine knows. An open set: a new one is one entry.
 ///
 /// **The order is the order of preference**: `GET /api/live` lists them in

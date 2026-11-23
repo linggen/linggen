@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+pub mod providers;
 mod sign_in;
 pub use sign_in::{AuthMode, ProviderKind, SignIn};
 
@@ -784,12 +785,13 @@ impl Config {
                 );
             }
             // Validate provider is known.
-            if !KNOWN_PROVIDERS.contains(&model.provider_name()) {
+            let known = providers::known_names();
+            if !known.contains(&model.provider_name()) {
                 anyhow::bail!(
                     "Model '{}' has unknown provider '{}'. Known providers: {}",
                     model.id,
                     model.provider,
-                    KNOWN_PROVIDERS.join(", ")
+                    known.join(", ")
                 );
             }
             // Validate model URL scheme to prevent SSRF.
@@ -992,26 +994,8 @@ fn is_valid_go_duration(s: &str) -> bool {
     true
 }
 
-/// Providers a model may name. Everything but ollama, anthropic and the
-/// ChatGPT subscription speaks the OpenAI-compatible API, so a new one is a
-/// name here plus its preset in the UI (ModelsTab `PROVIDER_PRESETS`).
-/// qwen (DashScope), moonshot (Kimi), zhipu (GLM) and siliconflow are the
-/// mainland-China providers; each takes its own key like deepseek.
-pub const KNOWN_PROVIDERS: &[&str] = &[
-    "ollama",
-    "openai",
-    "chatgpt",
-    "anthropic",
-    "gemini",
-    "groq",
-    "deepseek",
-    "openrouter",
-    "github",
-    "qwen",
-    "moonshot",
-    "zhipu",
-    "siliconflow",
-];
+// The provider names a model may carry are `providers::known_names()`,
+// derived from the one list of presets (`config/providers.rs`).
 
 #[cfg(test)]
 mod tests {
@@ -1389,30 +1373,6 @@ mod tests {
         let lines = Config::health_lines(&[path]);
         assert!(lines.iter().any(|l| l.contains(".unreadable-")), "{lines:?}");
         assert!(!lines.iter().any(|l| l.contains("could not be read")), "{lines:?}");
-    }
-
-    #[test]
-    fn the_china_providers_validate() {
-        for (provider, url, model) in [
-            (
-                "qwen",
-                "https://dashscope.aliyuncs.com/compatible-mode/v1",
-                "qwen-plus",
-            ),
-            ("moonshot", "https://api.moonshot.cn/v1", "kimi-k2.6"),
-            ("zhipu", "https://open.bigmodel.cn/api/paas/v4", "glm-5.3"),
-            (
-                "siliconflow",
-                "https://api.siliconflow.cn/v1",
-                "Pro/deepseek-ai/DeepSeek-R1",
-            ),
-        ] {
-            let mut cfg = valid_config();
-            cfg.models[0].provider = provider.to_string();
-            cfg.models[0].url = url.to_string();
-            cfg.models[0].model = model.to_string();
-            cfg.validate().unwrap_or_else(|e| panic!("{provider}: {e}"));
-        }
     }
 
     #[test]
