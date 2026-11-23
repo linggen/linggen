@@ -353,6 +353,7 @@ impl AgentManager {
         mpsc::UnboundedReceiver<(AgentEvent, Option<String>)>,
     ) {
         let (tx, rx) = mpsc::unbounded_channel();
+        crate::provider::models::family_catalog::start();
         let models = Arc::new(ModelManager::new(config.models.clone()));
         let pet_muted = AtomicBool::new(config.pet.muted);
         let daily_session = AtomicBool::new(config.agent.daily_session_enabled());

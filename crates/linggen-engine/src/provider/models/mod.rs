@@ -15,6 +15,7 @@ use tokio::sync::Semaphore;
 
 mod catalog;
 pub mod chatgpt_catalog;
+pub(crate) mod family_catalog;
 mod health;
 #[cfg(test)]
 mod kind_tests;

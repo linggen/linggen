@@ -40,6 +40,14 @@ impl Way {
     }
 }
 
+/// Public data approved for this preset. The preset URL, not the public
+/// catalog's API field, is the address the engine speaks to.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct CatalogBinding {
+    pub source_id: &'static str,
+    pub starter_families: &'static [&'static str],
+}
+
 /// One provider a person can add: a name the config knows, at an address.
 #[derive(Debug, Clone, Copy)]
 pub struct Preset {
@@ -48,6 +56,9 @@ pub struct Preset {
     pub label: &'static str,
     pub url: &'static str,
     pub way: Way,
+    pub(crate) key: &'static str,
+    pub(crate) catalog: Option<CatalogBinding>,
+    /// Legacy route suggestion; family starters are declared separately.
     /// A first model to suggest; empty when there is no good default.
     pub default_model: &'static str,
     pub placeholder: &'static str,
@@ -74,6 +85,8 @@ pub const PRESETS: &[Preset] = &[
         label: "Ollama",
         url: "http://127.0.0.1:11434",
         way: Way::Local,
+        key: "ollama",
+        catalog: None,
         default_model: "",
         placeholder: "e.g. qwen3:32b",
     },
@@ -84,6 +97,8 @@ pub const PRESETS: &[Preset] = &[
         label: "ChatGPT 订阅",
         url: crate::provider::codex_auth::CHATGPT_API_BASE,
         way: Way::Subscription,
+        key: "chatgpt",
+        catalog: None,
         default_model: "",
         placeholder: "",
     },
@@ -92,6 +107,8 @@ pub const PRESETS: &[Preset] = &[
         label: "Anthropic",
         url: "https://api.anthropic.com",
         way: Way::Key,
+        key: "anthropic",
+        catalog: Some(CatalogBinding { source_id: "anthropic", starter_families: &["claude-sonnet"] }),
         default_model: "claude-sonnet-5-5",
         placeholder: "e.g. claude-sonnet-5-5, claude-haiku-5-5, claude-opus-5-5",
     },
@@ -100,6 +117,8 @@ pub const PRESETS: &[Preset] = &[
         label: "OpenAI",
         url: "https://api.openai.com/v1",
         way: Way::Key,
+        key: "openai",
+        catalog: Some(CatalogBinding { source_id: "openai", starter_families: &["gpt"] }),
         default_model: "",
         placeholder: "",
     },
@@ -108,6 +127,8 @@ pub const PRESETS: &[Preset] = &[
         label: "Google Gemini",
         url: "https://generativelanguage.googleapis.com/v1beta/openai",
         way: Way::Key,
+        key: "gemini",
+        catalog: Some(CatalogBinding { source_id: "google", starter_families: &["gemini-flash"] }),
         default_model: "gemini-2.5-flash",
         placeholder: "e.g. gemini-2.5-flash, gemini-3-flash-preview",
     },
@@ -116,6 +137,8 @@ pub const PRESETS: &[Preset] = &[
         label: "Groq",
         url: "https://api.groq.com/openai/v1",
         way: Way::Key,
+        key: "groq",
+        catalog: Some(CatalogBinding { source_id: "groq", starter_families: &[] }),
         default_model: "llama-3.3-70b-versatile",
         placeholder: "e.g. llama-3.3-70b-versatile",
     },
@@ -124,6 +147,8 @@ pub const PRESETS: &[Preset] = &[
         label: "DeepSeek",
         url: "https://api.deepseek.com/v1",
         way: Way::Key,
+        key: "deepseek",
+        catalog: Some(CatalogBinding { source_id: "deepseek", starter_families: &["deepseek-flash"] }),
         default_model: "deepseek-chat",
         placeholder: "e.g. deepseek-chat",
     },
@@ -132,6 +157,11 @@ pub const PRESETS: &[Preset] = &[
         label: "OpenRouter",
         url: "https://openrouter.ai/api/v1",
         way: Way::Key,
+        key: "openrouter",
+        catalog: Some(CatalogBinding {
+            source_id: "openrouter",
+            starter_families: &[],
+        }),
         default_model: "",
         placeholder: "e.g. google/gemini-2.5-pro",
     },
@@ -140,6 +170,9 @@ pub const PRESETS: &[Preset] = &[
         label: "GitHub Models",
         url: "https://models.inference.ai.azure.com",
         way: Way::Key,
+        key: "github-models",
+        // The source lists Copilot, not this endpoint.
+        catalog: None,
         default_model: "",
         placeholder: "",
     },
@@ -149,6 +182,8 @@ pub const PRESETS: &[Preset] = &[
         label: "通义千问 (DashScope)",
         url: "https://dashscope.aliyuncs.com/compatible-mode/v1",
         way: Way::Key,
+        key: "dashscope-cn",
+        catalog: Some(CatalogBinding { source_id: "alibaba-cn", starter_families: &[] }),
         default_model: "qwen-plus",
         placeholder: "e.g. qwen-plus, qwen3.8-max",
     },
@@ -159,6 +194,9 @@ pub const PRESETS: &[Preset] = &[
         label: "Qwen Cloud",
         url: "https://ap-southeast-1.maas.qwencloudapi.com/compatible-mode/v1",
         way: Way::Key,
+        key: "qwen-cloud",
+        // No regional access/rates contract yet.
+        catalog: None,
         default_model: "",
         placeholder: "e.g. qwen-plus",
     },
@@ -167,6 +205,8 @@ pub const PRESETS: &[Preset] = &[
         label: "Moonshot (Kimi)",
         url: "https://api.moonshot.cn/v1",
         way: Way::Key,
+        key: "moonshot-cn",
+        catalog: Some(CatalogBinding { source_id: "moonshotai-cn", starter_families: &[] }),
         default_model: "kimi-k2.6",
         placeholder: "e.g. kimi-k2.6, kimi-k3",
     },
@@ -175,6 +215,8 @@ pub const PRESETS: &[Preset] = &[
         label: "智谱 (GLM)",
         url: "https://open.bigmodel.cn/api/paas/v4",
         way: Way::Key,
+        key: "zhipu-cn",
+        catalog: Some(CatalogBinding { source_id: "zhipuai", starter_families: &[] }),
         default_model: "glm-5.3",
         placeholder: "e.g. glm-5.3, glm-5.3-flash",
     },
@@ -183,6 +225,8 @@ pub const PRESETS: &[Preset] = &[
         label: "SiliconFlow",
         url: "https://api.siliconflow.cn/v1",
         way: Way::Key,
+        key: "siliconflow-cn",
+        catalog: Some(CatalogBinding { source_id: "siliconflow-cn", starter_families: &[] }),
         default_model: "Pro/deepseek-ai/DeepSeek-R1",
         placeholder: "e.g. Pro/deepseek-ai/DeepSeek-R1",
     },

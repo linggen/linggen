@@ -69,6 +69,16 @@ fn a_reports_cache_counts_are_read_only_through_tokens_of() {
     );
 }
 
+#[test]
+fn only_the_public_catalog_reader_owns_its_wire_file_and_fetch_address() {
+    let found = lines_with(
+        &["/model-catalog/v1.json", "model-catalog-v1.json"],
+        |rel| rel.ends_with("/family_catalog.rs") || rel.ends_with("/family_catalog/refresh.rs"),
+        "crates/linggen-engine/src/provider/models/family_catalog/refresh.rs",
+    );
+    assert!(found.is_empty(), "use typed public catalog results: {found:?}");
+}
+
 /// A model's kind is decided by `provider::kinds::kind_of`, and the one
 /// walk of the config's rows for a list of chat models is
 /// `Config::chat_models`. A production file outside the config, the keys,
