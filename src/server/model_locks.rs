@@ -79,6 +79,13 @@ fn only_the_public_catalog_reader_owns_its_wire_file_and_fetch_address() {
     assert!(found.is_empty(), "use typed public catalog results: {found:?}");
 }
 
+#[test]
+fn public_family_ranking_has_one_entry_point() {
+    let selector = "crates/linggen-engine/src/provider/models/family_catalog/selection.rs";
+    let found = lines_with(&["fn family_current(" , "fn family_current<"], |rel| rel == selector, selector);
+    assert!(found.is_empty(), "use the typed family selector: {found:?}");
+}
+
 /// A model's kind is decided by `provider::kinds::kind_of`, and the one
 /// walk of the config's rows for a list of chat models is
 /// `Config::chat_models`. A production file outside the config, the keys,

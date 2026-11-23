@@ -8,6 +8,9 @@ use serde::Deserialize;
 use std::{collections::{BTreeMap, BTreeSet}, sync::OnceLock};
 
 mod refresh;
+// The family binding writer is a later slice.
+#[allow(dead_code)]
+mod selection;
 #[cfg(test)]
 mod tests;
 pub(crate) use refresh::start;
@@ -211,6 +214,13 @@ fn valid_rates(rates: Rates) -> bool {
 }
 
 impl ModelFacts {
+    pub(crate) fn id(&self) -> &str { &self.id }
+
+    pub(crate) fn text_chat(&self) -> bool {
+        self.modalities.input.iter().any(|m| m == "text")
+            && self.modalities.output.len() == 1 && self.modalities.output[0] == "text"
+    }
+
     fn validate(&self, observed: NaiveDate) -> Result<()> {
         ensure!(word(&self.id) && word(&self.name), "empty model id or label");
         ensure!([&self.family, &self.status, &self.task].into_iter().flatten().all(|s| word(s)), "empty optional model field");
