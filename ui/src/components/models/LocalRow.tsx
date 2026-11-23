@@ -28,7 +28,7 @@ export const LocalRow: React.FC<{ providers: Provider[] }> = ({ providers }) => 
       testId="this-mac"
       name={W.thisMac}
       tag={<Tag>{W.kindLocal}</Tag>}
-      subtitle={kinds.map((k) => KIND_WORD[k]).join(' · ')}
+      subtitle={kinds.map((k, i) => <React.Fragment key={k}>{i > 0 && <span aria-hidden> · </span>}<span>{KIND_WORD[k]}</span></React.Fragment>)}
       open={open}
       onToggle={() => setOpen(!open)}
     >
