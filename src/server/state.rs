@@ -86,6 +86,8 @@ pub struct ServerState {
     /// Hearing backend for `/api/stt` (what the person says to her). Shares
     /// her voice's one sidecar process.
     pub stt: Arc<dyn crate::server::api::stt::SttProvider>,
+    /// How often a live-voice token may be made (`/api/live/token`).
+    pub live_rate: crate::live::TokenRate,
     /// Browser bridge hub — the connected `linggen-browser` extension (if any)
     /// plus in-flight request correlation. See `server/bridge.rs`.
     pub bridge: Arc<BridgeHub>,

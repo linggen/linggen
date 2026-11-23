@@ -361,6 +361,7 @@ These flags can be used with any command:
 |:-----|:-----------|
 | `LINGGEN_CONFIG` | Config file to load first (see `doc/storage-spec.md`) |
 | `LINGGEN_PORT` | Server port, as `--port` |
+| `LINGGEN_LIVE_GOOGLE_KEY` | For scratch engines, which hold no credentials: the Google key `POST /api/live/token` uses. Read by that route alone (`live::find_key`), before the key stored for the `gemini` provider |
 
 Memory has no address of its own: the engine serves it on its port (`/mem`, and the memory tools on the one MCP door, `/mcp`). `LING_MEM_URL` and `[agent].ling_mem_url` are gone; an old config's key is ignored.
 

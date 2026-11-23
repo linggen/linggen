@@ -112,6 +112,7 @@ async fn prepare_server(
         codex_login_task: Arc::new(tokio::sync::Mutex::new(None)),
         tts: api::tts::default_provider(voice_sidecar.clone()),
         stt: api::stt::default_provider(voice_sidecar),
+        live_rate: Default::default(),
         bridge: Arc::new(bridge::BridgeHub::new()),
         current_view: Arc::new(std::sync::Mutex::new(None)),
         yinyue_presenters: Arc::new(std::sync::Mutex::new(Vec::new())),
