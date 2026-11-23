@@ -93,6 +93,8 @@ fn no_file_builds_a_model_list_from_the_raw_config_rows() {
                 || rel.starts_with("crates/linggen-engine/src/provider/models/")
                 // Saving the config strips and files the keys of every row.
                 || rel == "src/server/api/config.rs"
+                // Provider edits locate and rewrite filed rows of either kind.
+                || rel == "src/server/api/providers.rs"
         },
         "src/cli/status.rs",
     );

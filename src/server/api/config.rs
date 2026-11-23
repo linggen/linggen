@@ -28,6 +28,7 @@ pub(crate) async fn update_config_api(
     State(state): State<Arc<ServerState>>,
     Json(mut new_config): Json<Config>,
 ) -> impl IntoResponse {
+    let _write = state.settings_write.lock().await;
     // Which private apps outside agents may use is set at this Mac alone
     // (`outside_apps::set`): a saved config, from any page, keeps it.
     new_config.outside_apps = state.manager.get_config_snapshot().await.outside_apps;
@@ -188,6 +189,7 @@ pub(crate) async fn update_credentials_api(
     State(state): State<std::sync::Arc<crate::server::ServerState>>,
     Json(body): Json<UpdateCredentialsRequest>,
 ) -> impl IntoResponse {
+    let _write = state.settings_write.lock().await;
     let creds_file = credentials::credentials_file();
     let config = state.manager.get_config_snapshot().await;
     let mut creds = Credentials::load_for(&creds_file, &config.models);

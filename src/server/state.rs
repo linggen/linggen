@@ -88,6 +88,10 @@ pub struct ServerState {
     pub stt: Arc<dyn crate::server::api::stt::SttProvider>,
     /// How often a live-voice token may be made (`/api/live/token`).
     pub live_rate: crate::live::TokenRate,
+    /// Serialize provider edits with the old config and credentials routes.
+    pub settings_write: tokio::sync::Mutex<()>,
+    /// Providers proposed by the page but not yet filed with a key or model.
+    pub(super) provider_drafts: tokio::sync::Mutex<std::collections::BTreeMap<String, (String, String)>>,
     /// Browser bridge hub — the connected `linggen-browser` extension (if any)
     /// plus in-flight request correlation. See `server/bridge.rs`.
     pub bridge: Arc<BridgeHub>,

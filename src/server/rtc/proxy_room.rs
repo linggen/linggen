@@ -124,18 +124,18 @@ pub async fn reapply_proxy_models(state: &ServerState) {
     rebuild_model_manager(state).await;
 }
 
+fn without_proxy_models(models: &crate::provider::models::ModelManager) -> crate::provider::models::ModelManager {
+    // The chat list intentionally omits configured live-voice rows.
+    let configs = models.list_models().into_iter().chain(models.live_rows())
+        .filter(|c| c.provider_kind() != crate::config::ProviderKind::Proxy)
+        .cloned()
+        .collect();
+    crate::provider::models::ModelManager::new(configs)
+}
+
 async fn rebuild_model_manager(state: &ServerState) {
     let mut model_lock = state.manager.models.write().await;
-    let old_mm = Arc::clone(&model_lock);
-
-    // Start with only local (non-proxy) models
-    let local_configs: Vec<_> = old_mm
-        .list_models()
-        .iter()
-        .filter(|c| c.provider_kind() != crate::config::ProviderKind::Proxy)
-        .map(|c| (*c).clone())
-        .collect();
-    let mut new_mm = crate::provider::models::ModelManager::new(local_configs);
+    let mut new_mm = without_proxy_models(&model_lock);
 
     // Re-register proxy models for all connected rooms
     let rooms = state.proxy_connections.rooms.read().await;
@@ -227,15 +227,7 @@ pub async fn connect_proxy_room(
 
     // Register proxy models via full rebuild
     let mut model_lock = state.manager.models.write().await;
-    let old_mm = Arc::clone(&model_lock);
-
-    let local_configs: Vec<_> = old_mm
-        .list_models()
-        .iter()
-        .filter(|c| c.provider_kind() != crate::config::ProviderKind::Proxy)
-        .map(|c| (*c).clone())
-        .collect();
-    let mut new_mm = crate::provider::models::ModelManager::new(local_configs);
+    let mut new_mm = without_proxy_models(&model_lock);
 
     // Re-register existing proxy rooms
     {
@@ -315,17 +307,7 @@ pub async fn disconnect_all_proxy_rooms(state: Arc<ServerState>) {
     let _model_ids = state.proxy_connections.remove_all().await;
 
     let mut model_lock = state.manager.models.write().await;
-    let old_mm = Arc::clone(&model_lock);
-
-    // Rebuild ModelManager with only non-proxy models
-    let configs: Vec<_> = old_mm
-        .list_models()
-        .iter()
-        .filter(|c| c.provider_kind() != crate::config::ProviderKind::Proxy)
-        .map(|c| (*c).clone())
-        .collect();
-    let new_mm = crate::provider::models::ModelManager::new(configs);
-    *model_lock = Arc::new(new_mm);
+    *model_lock = Arc::new(without_proxy_models(&model_lock));
 
     info!("All proxy room models removed");
 }

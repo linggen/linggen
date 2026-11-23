@@ -141,7 +141,8 @@ impl Credentials {
         creds
     }
 
-    fn load_with(file: &Path, configured: &[ModelConfig]) -> Self {
+    /// Read against the current rows without writing a migrated file.
+    pub fn load_with(file: &Path, configured: &[ModelConfig]) -> Self {
         Self::load_inner(file, configured).0
     }
 
@@ -246,11 +247,8 @@ impl Credentials {
 
     /// Save to disk. Creates parent directories if needed.
     pub fn save(&self, file: &Path) -> anyhow::Result<()> {
-        if let Some(parent) = file.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
         let json = serde_json::to_string_pretty(self)?;
-        std::fs::write(file, json)?;
+        crate::state_fs::devices::write_atomic(file, json.as_bytes())?;
         Ok(())
     }
 

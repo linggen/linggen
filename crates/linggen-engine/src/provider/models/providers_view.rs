@@ -71,6 +71,15 @@ fn shown_url(url: &str) -> String {
 }
 
 impl ProviderView {
+    /// An editable endpoint proposed by the owner, not yet filed on disk.
+    pub fn draft(provider: &str, url: &str) -> Self {
+        let mut group = Self::new(SignIn::Key, provider, url);
+        if group.key.is_some() {
+            group.fix = Some("add_key");
+        }
+        group
+    }
+
     fn new(sign_in: SignIn, provider: &str, url: &str) -> Self {
         let (label, way) = match sign_in {
             SignIn::LinggenAccount => ("Linggen Cloud".into(), Way::Account),

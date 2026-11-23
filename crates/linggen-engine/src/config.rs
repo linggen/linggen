@@ -8,6 +8,17 @@ pub mod providers;
 mod sign_in;
 pub use sign_in::{AuthMode, ProviderKind, SignIn};
 
+#[derive(Debug)]
+pub struct DuplicateModelId;
+
+impl std::fmt::Display for DuplicateModelId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Duplicate model ID")
+    }
+}
+
+impl std::error::Error for DuplicateModelId {}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[cfg_attr(any(test, feature = "test-support"), derive(ts_rs::TS), ts(export))]
 pub struct Config {
@@ -776,7 +787,7 @@ impl Config {
                 anyhow::bail!("Model ID cannot be empty");
             }
             if !seen_ids.insert(&model.id) {
-                anyhow::bail!("Duplicate model ID: {}", model.id);
+                return Err(DuplicateModelId.into());
             }
             if model.model.trim().is_empty() {
                 anyhow::bail!(
