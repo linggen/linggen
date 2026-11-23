@@ -2,7 +2,7 @@ use crate::config::{ModelConfig, ProviderKind, SignIn};
 use crate::credentials::{self, Credentials};
 use crate::message::ChatMessage;
 use crate::provider::anthropic::AnthropicClient;
-use crate::provider::kinds::{kind_of, Kind};
+use crate::provider::kinds::{kind_in, Kind};
 use crate::provider::codex_auth;
 use crate::provider::ollama::OllamaClient;
 use crate::provider::openai::OpenAiClient;
@@ -199,11 +199,21 @@ impl ModelManager {
 
         // The one chokepoint of kinds (`provider::kinds`): only a chat row
         // gets a client and a place in any list. A live-voice row is kept
-        // apart, read by `live_rows` alone.
+        // apart, read by `live_rows` alone; a row the engine has no lane for
+        // stays in the config and goes nowhere. One catalog capture decides
+        // every row.
         let all_configs = configs.clone();
-        let (configs, live_rows): (Vec<_>, Vec<_>) = configs
-            .into_iter()
-            .partition(|c| kind_of(c) == Kind::Chat);
+        let facts = family_catalog::current();
+        let (mut chat, mut live_rows) = (Vec::new(), Vec::new());
+        for c in configs {
+            match kind_in(&c, &facts) {
+                Kind::Chat => chat.push(c),
+                Kind::LiveVoice => live_rows.push(c),
+                Kind::NoLane => {}
+                Kind::Speak | Kind::Hear | Kind::Draw => unreachable!("not configured rows"),
+            }
+        }
+        let configs = chat;
         for mut cfg in configs {
             // Check if this model uses ChatGPT OAuth
             let sign_in = cfg.sign_in();
@@ -377,7 +387,7 @@ impl ModelManager {
         match kind {
             Kind::Chat => self.list_models(),
             Kind::LiveVoice => self.live_rows.iter().collect(),
-            Kind::Speak | Kind::Hear | Kind::Draw => Vec::new(),
+            Kind::Speak | Kind::Hear | Kind::Draw | Kind::NoLane => Vec::new(),
         }
     }
 

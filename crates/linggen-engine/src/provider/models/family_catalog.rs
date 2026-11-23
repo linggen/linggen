@@ -101,9 +101,22 @@ pub(crate) struct Cost {
 }
 
 impl Cost {
-    fn base(&self) -> Rates {
+    pub(crate) fn base(&self) -> Rates {
         Rates { input: self.input, output: self.output, cache_read: self.cache_read, cache_write: self.cache_write }
     }
+
+    /// Context tiers, lowest threshold first: a call whose prompt is over
+    /// the threshold is priced at that tier's rates, each on its own.
+    pub(crate) fn tiers(&self) -> impl Iterator<Item = (u32, Rates)> + '_ {
+        self.tiers.iter().map(|t| (t.over, t.rates()))
+    }
+
+    /// The date a supplied price was true, when the file says so.
+    pub(crate) fn as_of(&self) -> Option<NaiveDate> { self.as_of.as_deref().and_then(date) }
+
+    /// Whether the file names a rate (audio, reasoning, an odd tier) this
+    /// engine cannot estimate: a dollar figure would then be too low.
+    pub(crate) fn has_unestimated_rates(&self) -> bool { !self.unestimated.is_empty() }
 }
 
 #[derive(Deserialize)]
@@ -130,15 +143,37 @@ pub(crate) struct Snapshot {
 }
 
 impl Snapshot {
+    /// The day the public data was observed: the date of a price that names none.
+    pub(crate) fn observed_on(&self) -> NaiveDate { self.observed }
+
     pub(crate) fn age_days(&self, today: NaiveDate) -> u64 {
         today.signed_duration_since(self.observed).num_days().max(0) as u64
     }
 
     pub(crate) fn is_stale(&self, today: NaiveDate) -> bool { self.age_days(today) > AUTOMATIC_MOVE_TRUST_DAYS }
 
+    /// Every entry of the provider a preset is bound to.
+    #[cfg(test)]
+    pub(crate) fn entries_of(&self, preset: &Preset) -> impl Iterator<Item = &ModelFacts> {
+        let source = preset.catalog.map(|b| b.source_id).unwrap_or_default();
+        self.providers.get(source).into_iter().flat_map(|models| models.values())
+    }
+
     pub(crate) fn exact(&self, cfg: &ModelConfig) -> Option<&ModelFacts> {
         let binding = preset_for(cfg)?.catalog?;
         self.providers.get(binding.source_id)?.get(&cfg.model)
+    }
+
+    /// A snapshot of a few entries of one provider, for the tests of the
+    /// readers of facts (`kinds`, `pricing`): small, and independent of the
+    /// shipped copy, which is replaced every release. `models` is a JSON array.
+    #[cfg(test)]
+    pub(crate) fn for_tests(observed: &str, source_id: &str, models: serde_json::Value) -> Self {
+        let file = serde_json::json!({
+            "schema": 1, "source": "models.dev", "observed_at": observed,
+            "providers": [{ "source_id": source_id, "name": source_id, "models": models }],
+        });
+        Self::parse(&serde_json::to_vec(&file).unwrap()).expect("test catalog")
     }
 
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -219,10 +254,17 @@ fn valid_rates(rates: Rates) -> bool {
 impl ModelFacts {
     pub(crate) fn id(&self) -> &str { &self.id }
 
+    /// Whether a plain text conversation runs on this entry: text in, text
+    /// only out (image or audio in is fine), and no other declared task. An
+    /// embedding entry also says "text out", so the task decides first. This
+    /// is the one such fact: `kinds` and the family selector both ask it.
     pub(crate) fn text_chat(&self) -> bool {
-        self.modalities.input.iter().any(|m| m == "text")
+        matches!(self.task.as_deref(), None | Some("chat"))
+            && self.modalities.input.iter().any(|m| m == "text")
             && self.modalities.output.len() == 1 && self.modalities.output[0] == "text"
     }
+
+    pub(crate) fn cost(&self) -> Option<&Cost> { self.cost.as_ref() }
 
     fn validate(&self, observed: NaiveDate) -> Result<()> {
         ensure!(word(&self.id) && word(&self.name), "empty model id or label");

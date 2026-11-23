@@ -651,8 +651,9 @@ impl Config {
     /// config's own rows starts here, never from `self.models` (a lock in
     /// `src/server/model_locks.rs` counts the readers of the raw rows).
     pub fn chat_models(&self) -> impl Iterator<Item = &ModelConfig> {
-        use crate::provider::kinds::{kind_of, Kind};
-        self.models.iter().filter(|m| kind_of(m) == Kind::Chat)
+        use crate::provider::kinds::{kind_in, Kind};
+        let facts = crate::provider::models::family_catalog::current();
+        self.models.iter().filter(move |m| kind_in(m, &facts) == Kind::Chat)
     }
 
     /// Whether `id` names a configured live-voice row.

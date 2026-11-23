@@ -86,6 +86,38 @@ fn public_family_ranking_has_one_entry_point() {
     assert!(found.is_empty(), "use the typed family selector: {found:?}");
 }
 
+const CATALOG_DIR: &str = "crates/linggen-engine/src/provider/models/family_catalog";
+
+/// What the public catalog says about a row (`text_chat`: a plain text
+/// conversation runs on it) reaches a row's kind through `provider::kinds`
+/// alone; the family selector asks the same fact. A second reader would be a
+/// second answer to "is this a chat model".
+#[test]
+fn the_catalogs_chat_fact_is_read_only_by_kinds_and_the_family_selector() {
+    let kinds = "crates/linggen-engine/src/provider/kinds.rs";
+    let found = lines_with(
+        &[".text_chat("],
+        |rel| rel == kinds || rel.starts_with(CATALOG_DIR),
+        kinds,
+    );
+    assert!(found.is_empty(), "ask provider::kinds::kind_of instead: {found:?}");
+}
+
+/// A price comes from `provider/models/pricing.rs` alone: the catalog's rates
+/// and tiers are read there, and no model name is priced by a hand table.
+#[test]
+fn the_catalogs_price_facts_are_read_only_by_pricing_and_no_table_prices_a_name() {
+    let pricing = "crates/linggen-engine/src/provider/models/pricing.rs";
+    let found = lines_with(
+        &[".has_unestimated_rates(", ".tiers()", ".base()"],
+        |rel| rel == pricing || rel.starts_with(CATALOG_DIR),
+        pricing,
+    );
+    assert!(found.is_empty(), "ask pricing::price_of instead: {found:?}");
+    let found = lines_with(&["\"claude-", "\"gpt-", "\"gemini-"], |rel| rel != pricing, pricing);
+    assert!(found.is_empty(), "no hand-kept price table: {found:?}");
+}
+
 /// A model's kind is decided by `provider::kinds::kind_of`, and the one
 /// walk of the config's rows for a list of chat models is
 /// `Config::chat_models`. A production file outside the config, the keys,

@@ -2,13 +2,18 @@
 //!
 //! The engine records what each call used (`usage.rs`, the session ledger);
 //! a dollar figure is derived here, at read time, and only for a model with
-//! a price: the built-in table below (dated, Anthropic's own API only) or the
-//! model's own `price` in the config, which wins. No price, no figure — the
-//! tokens are shown and nothing is guessed. A model that bills an account
-//! (the ChatGPT sign-in, Linggen Cloud, a room, a Claude subscription) or
-//! runs on this machine has no per-token price: it is `Billing::Account` or
-//! `Billing::Local`, and a session's spend leaves it out.
+//! a price: the model's own `price` in the config, which wins, else the
+//! public catalog's price for that exact model at that exact provider
+//! address (`family_catalog`; dated, never copied into a table here). No
+//! price, a zero or missing base rate, or a rate the engine cannot estimate:
+//! no figure — the tokens are shown and nothing is guessed. A model that
+//! bills an account (the ChatGPT sign-in, Linggen Cloud, a room, a Claude
+//! subscription) or runs on this machine has no per-token price: it is
+//! `Billing::Account` or `Billing::Local`, and a session's spend leaves it
+//! out. A call's charge is fixed when it is made and kept in the ledger; no
+//! later price or catalog change reaches it.
 
+use super::family_catalog::{self, Rates, Snapshot};
 use super::{ModelManager, TokenUsage, Tokens};
 use crate::config::{ModelConfig, ModelPrice, ProviderKind, SignIn};
 use crate::state_fs::session_usage::SessionUsage;
@@ -46,90 +51,39 @@ impl From<&ModelPrice> for Price {
     }
 }
 
-/// One row of the built-in table: a model of Anthropic's own API, its price,
-/// and the day that price was checked against the public pricing page.
-struct Listed {
-    model: &'static str,
-    price: Price,
-    /// Haiku 5.5 only: the price of a request whose prompt is over
-    /// [`super::LONG_PROMPT_TOKENS`].
-    long: Option<Price>,
-    as_of: &'static str,
-}
-
-const fn price(input: f64, output: f64, cache_read: f64, cache_write: f64) -> Price {
-    Price {
-        input,
-        output,
-        cache_read,
-        cache_write,
-    }
-}
-
-/// Anthropic's first-party API, USD per million tokens. The cache-write
-/// price is the 5-minute write, 1.25x input: the engine sends plain
-/// `cache_control: ephemeral`, which is 5 minutes (no 1-hour ttl is set
-/// anywhere). Checked against platform.claude.com/docs/en/about-claude/pricing
-/// (the rows' prices were true on 2026-11-03 and read again on 2026-11-19).
-/// Haiku 5.5's long-prompt input (0.50) and output (2.50) are on that page;
-/// its long-prompt cache rates (0.05 read, 0.625 write) are DERIVED from them
-/// by the same ratios as everywhere else (0.1x read, 1.25x write), not listed.
-const TABLE: &[Listed] = &[
-    Listed {
-        model: "claude-opus-5-5",
-        price: price(4.0, 20.0, 0.20, 5.0),
-        long: None,
-        as_of: "2026-11-03",
-    },
-    Listed {
-        model: "claude-sonnet-5-5",
-        price: price(2.0, 10.0, 0.10, 2.5),
-        long: None,
-        as_of: "2026-11-03",
-    },
-    Listed {
-        model: "claude-haiku-5-5",
-        price: price(0.10, 0.50, 0.01, 0.125),
-        long: Some(price(0.50, 2.50, 0.05, 0.625)),
-        as_of: "2026-11-03",
-    },
-    Listed {
-        model: "claude-fable-5-2",
-        price: price(8.0, 40.0, 0.20, 10.0),
-        long: None,
-        as_of: "2026-11-03",
-    },
-];
-
-/// A model's price, where it came from, and (built-in only) the day it was
-/// true.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// A model's price: the rates for a call, and the context tiers that replace
+/// them for a long prompt, each at the threshold the provider names.
+#[derive(Debug, Clone, PartialEq)]
 pub struct Priced {
-    pub price: Price,
-    /// Over-[`super::LONG_PROMPT_TOKENS`] calls; the same as `price` when a
-    /// model has no long-prompt tier.
-    pub long: Price,
+    base: Price,
+    /// Ascending by threshold: a call whose prompt is over `.0` tokens is
+    /// priced at `.1`. `None`: that tier's input or output rate is missing or
+    /// zero — a call in it has no figure, and no other tier's rate stands in.
+    tiers: Vec<(u32, Option<Price>)>,
     pub source: PriceSource,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "source", content = "as_of", rename_all = "kebab-case")]
 pub enum PriceSource {
-    BuiltIn(&'static str),
+    /// The public catalog's price, and the day it was true: the price's own
+    /// date when the catalog gives one, else the day the catalog was observed.
+    Catalog(String),
     Config,
 }
 
 impl Priced {
-    /// What one call cost at this price: a prompt over
-    /// [`super::LONG_PROMPT_TOKENS`] at the long-prompt rates, each request on
-    /// its own.
-    pub fn cost_of_call(&self, used: &Tokens) -> f64 {
-        let rates = if used.prompt() > super::LONG_PROMPT_TOKENS as u64 {
-            &self.long
-        } else {
-            &self.price
-        };
-        rates.cost(used)
+    /// What one call cost at this price, each request on its own; `None`
+    /// when the tier its prompt falls in has no usable rate.
+    pub fn cost_of_call(&self, used: &Tokens) -> Option<f64> {
+        let prompt = used.prompt();
+        let rates = self
+            .tiers
+            .iter()
+            .rev()
+            .find(|(over, _)| prompt > u64::from(*over))
+            .map_or(Some(self.base), |(_, rates)| *rates);
+        rates.map(|rates| rates.cost(used))
     }
 }
 
@@ -148,13 +102,22 @@ pub struct CallRecord {
 
 impl CallRecord {
     pub fn of(config: Option<&ModelConfig>, usage: Option<&TokenUsage>) -> CallRecord {
+        Self::of_in(config, usage, &family_catalog::current())
+    }
+
+    /// [`of`](Self::of) against one captured catalog snapshot.
+    pub(crate) fn of_in(
+        config: Option<&ModelConfig>,
+        usage: Option<&TokenUsage>,
+        facts: &Snapshot,
+    ) -> CallRecord {
         let Some(config) = config else {
             return CallRecord::default();
         };
         let billing = billing_of(config);
         let priced = Some(billing)
             .filter(|b| *b == Billing::Metered)
-            .and_then(|_| price_of(config));
+            .and_then(|_| price_in(config, facts));
         let Some(priced) = priced else {
             return CallRecord {
                 billing: Some(billing),
@@ -162,11 +125,20 @@ impl CallRecord {
             };
         };
         // A call that reported no usage had a price and cost nothing we know.
-        let cost = usage
+        let Some(cost) = usage
             .and_then(Tokens::of)
-            .map_or(0.0, |used| priced.cost_of_call(&used));
+            .map_or(Some(0.0), |used| priced.cost_of_call(&used))
+        else {
+            // The call fell in a tier with no usable rate: tokens only.
+            return CallRecord {
+                billing: Some(billing),
+                ..Default::default()
+            };
+        };
+        // The words a stored ledger and the page already know: the catalog
+        // the engine ships (and refreshes) is its "built-in" price.
         let (source, as_of) = match priced.source {
-            PriceSource::BuiltIn(day) => ("built-in", Some(day.to_string())),
+            PriceSource::Catalog(day) => ("built-in", Some(day)),
             PriceSource::Config => ("config", None),
         };
         CallRecord {
@@ -179,45 +151,48 @@ impl CallRecord {
     }
 }
 
-/// `name` is `model` itself or `model` with a date stamp (`-20261103`).
-fn names(name: &str, model: &str) -> bool {
-    match name.strip_prefix(model) {
-        Some("") => true,
-        Some(rest) => rest
-            .strip_prefix('-')
-            .is_some_and(|d| d.len() == 8 && d.bytes().all(|b| b.is_ascii_digit())),
-        None => false,
-    }
-}
-
-/// Anthropic's own API, by key: the one place the built-in table is true.
-/// A gateway or a cloud reseller sets its own prices.
-fn on_anthropic_api(cfg: &ModelConfig) -> bool {
-    cfg.provider_kind() == ProviderKind::Anthropic
-        && cfg.sign_in() != SignIn::Claude
-        && (cfg.url.trim().is_empty()
-            || crate::provider::anthropic::takes_top_level_cache_control(&cfg.url))
-}
-
-/// The model's price, if one is known: its own `price`, else the built-in
-/// row for it.
+/// The model's price, if one is known: its own `price`, else the catalog in
+/// force.
 pub fn price_of(cfg: &ModelConfig) -> Option<Priced> {
+    price_in(cfg, &family_catalog::current())
+}
+
+/// [`price_of`] against one captured catalog snapshot.
+pub(crate) fn price_in(cfg: &ModelConfig, facts: &Snapshot) -> Option<Priced> {
     if let Some(configured) = cfg.price.as_ref() {
         let price = Price::from(configured);
         return Some(Priced {
-            price,
-            long: price,
+            base: price,
+            tiers: Vec::new(),
             source: PriceSource::Config,
         });
     }
-    if !on_anthropic_api(cfg) {
+    // Exact provider address and exact model: another host with the same
+    // provider name, or a similar model name, inherits nothing.
+    let cost = facts.exact(cfg)?.cost()?;
+    if cost.has_unestimated_rates() {
         return None;
     }
-    let row = TABLE.iter().find(|row| names(&cfg.model, row.model))?;
+    let base = usable(cost.base())?;
+    let day = cost.as_of().unwrap_or_else(|| facts.observed_on());
     Some(Priced {
-        price: row.price,
-        long: row.long.unwrap_or(row.price),
-        source: PriceSource::BuiltIn(row.as_of),
+        base,
+        tiers: cost.tiers().map(|(over, rates)| (over, usable(rates))).collect(),
+        source: PriceSource::Catalog(day.to_string()),
+    })
+}
+
+/// A catalog rate set as a price. A missing or zero input or output rate is
+/// no price; a missing cache rate costs what plain input costs, as it does
+/// for a price the person typed.
+fn usable(rates: Rates) -> Option<Price> {
+    let input = rates.input.filter(|n| *n > 0.0)?;
+    let output = rates.output.filter(|n| *n > 0.0)?;
+    Some(Price {
+        input,
+        output,
+        cache_read: rates.cache_read.unwrap_or(input),
+        cache_write: rates.cache_write.unwrap_or(input),
     })
 }
 
@@ -393,6 +368,10 @@ mod tests {
         .unwrap()
     }
 
+    fn price(input: f64, output: f64, cache_read: f64, cache_write: f64) -> Price {
+        Price { input, output, cache_read, cache_write }
+    }
+
     fn call(prompt: usize, read: usize, write: usize, out: usize) -> TokenUsage {
         TokenUsage {
             prompt_tokens: Some(prompt),
@@ -407,37 +386,80 @@ mod tests {
     fn cost(p: &Priced, calls: &[TokenUsage]) -> f64 {
         calls
             .iter()
-            .map(|c| p.cost_of_call(&Tokens::of(c).unwrap()))
+            .map(|c| p.cost_of_call(&Tokens::of(c).unwrap()).unwrap())
             .sum()
     }
 
     const API: &str = "https://api.anthropic.com";
 
+    /// One catalog entry: text in and out, with `cost`.
+    fn facts_entry(id: &str, cost: serde_json::Value) -> serde_json::Value {
+        serde_json::json!({
+            "id": id, "name": id, "stability": "stable",
+            "modalities": {"input": ["text"], "output": ["text"]}, "cost": cost,
+        })
+    }
+
+    /// Anthropic's address, observed on 2026-11-23, with these entries.
+    fn anthropic(models: Vec<serde_json::Value>) -> Snapshot {
+        Snapshot::for_tests("2026-11-23", "anthropic", models.into())
+    }
+
+    /// The four models the retired hand table listed, at its rates.
+    fn four() -> Snapshot {
+        let flat = |i: f64, o: f64, r: f64, w: f64| {
+            serde_json::json!({"input": i, "output": o, "cache_read": r, "cache_write": w})
+        };
+        anthropic(vec![
+            facts_entry("claude-opus-5-5", flat(4.0, 20.0, 0.20, 5.0)),
+            facts_entry("claude-sonnet-5-5", flat(2.0, 10.0, 0.10, 2.5)),
+            facts_entry("claude-fable-5-2", flat(8.0, 40.0, 0.20, 10.0)),
+            facts_entry(
+                "claude-haiku-5-5",
+                serde_json::json!({"input": 0.10, "output": 0.50, "cache_read": 0.01,
+                    "cache_write": 0.125, "tiers": [{"over": 100000, "input": 0.50,
+                    "output": 2.50, "cache_read": 0.05, "cache_write": 0.625}]}),
+            ),
+        ])
+    }
+
+    fn priced(facts: &Snapshot, url: &str, name: &str) -> Option<Priced> {
+        price_in(&model("anthropic", url, name), facts)
+    }
+
     #[test]
-    fn the_four_listed_models_cost_their_public_price() {
+    fn the_four_models_the_hand_table_listed_cost_the_same_from_the_catalog() {
+        let facts = four();
         // 1,000,000 fresh input, 200,000 cache read, 400,000 cache write,
         // 100,000 output on Sonnet 5.5 (2 / 10 / 0.10 / 2.50):
         // 2.00 + 0.02 + 1.00 + 1.00 = 4.02.
         let t = [call(1_600_000, 200_000, 400_000, 100_000)];
-        // One call over 100K prompt tokens: Sonnet has no long tier.
-        let sonnet = price_of(&model("anthropic", API, "claude-sonnet-5-5")).unwrap();
-        assert!(
-            (cost(&sonnet, &t) - 4.02).abs() < 1e-9,
-            "{}",
-            cost(&sonnet, &t)
-        );
-        assert_eq!(sonnet.source, PriceSource::BuiltIn("2026-11-03"));
+        let sonnet = priced(&facts, API, "claude-sonnet-5-5").unwrap();
+        assert!((cost(&sonnet, &t) - 4.02).abs() < 1e-9, "{}", cost(&sonnet, &t));
+        // The catalog gave no price date: the day it was observed stands.
+        assert_eq!(sonnet.source, PriceSource::Catalog("2026-11-23".into()));
         // Opus 5.5 (4 / 20 / 0.20 / 5): 4 + 0.04 + 2 + 2 = 8.04.
-        let opus = price_of(&model("anthropic", API, "claude-opus-5-5")).unwrap();
+        let opus = priced(&facts, API, "claude-opus-5-5").unwrap();
         assert!((cost(&opus, &t) - 8.04).abs() < 1e-9);
         // Fable 5.2 (8 / 40 / 0.20 / 10): 8 + 0.04 + 4 + 4 = 16.04.
-        let fable = price_of(&model("anthropic", API, "claude-fable-5-2")).unwrap();
+        let fable = priced(&facts, API, "claude-fable-5-2").unwrap();
         assert!((cost(&fable, &t) - 16.04).abs() < 1e-9);
+    }
+
+    /// The hand table could go because the copy the engine ships prices the
+    /// same four models at the same address.
+    #[test]
+    fn the_shipped_catalog_prices_the_four_models_the_hand_table_listed() {
+        let shipped = family_catalog::current();
+        for name in ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-2"] {
+            assert!(priced(&shipped, API, name).is_some(), "{name}");
+            assert!(priced(&shipped, "", name).is_some(), "{name} at the default base");
+        }
     }
 
     #[test]
     fn haiku_prices_a_long_prompt_call_by_itself() {
-        let haiku = price_of(&model("anthropic", API, "claude-haiku-5-5")).unwrap();
+        let haiku = priced(&four(), API, "claude-haiku-5-5").unwrap();
         // A short call: 50,000 in, 1,000 out → 0.005 + 0.0005.
         let short = call(50_000, 0, 0, 1_000);
         // A long call: 150,000 prompt (100,000 read) + 2,000 out at the
@@ -446,39 +468,98 @@ mod tests {
         let long = call(150_000, 100_000, 0, 2_000);
         let both = [short, long];
         let expected = 0.0055 + 0.035;
-        assert!(
-            (cost(&haiku, &both) - expected).abs() < 1e-9,
-            "{}",
-            cost(&haiku, &both)
-        );
+        assert!((cost(&haiku, &both) - expected).abs() < 1e-9, "{}", cost(&haiku, &both));
         // The same two calls with the long one priced short would be cheaper.
         let all = both.iter().fold(Tokens::default(), |mut a, c| {
             a.add(&Tokens::of(c).unwrap());
             a
         });
-        assert!(cost(&haiku, &both) > haiku.price.cost(&all));
+        assert!(cost(&haiku, &both) > haiku.base.cost(&all));
+    }
+
+    /// A tier starts where the provider says, not at one threshold for all.
+    #[test]
+    fn each_context_tier_starts_at_its_own_threshold() {
+        let facts = anthropic(vec![facts_entry(
+            "tiered",
+            serde_json::json!({"input": 1.0, "output": 1.0, "tiers": [
+                {"over": 50000, "input": 2.0, "output": 2.0},
+                {"over": 200000, "input": 4.0, "output": 4.0}]}),
+        )]);
+        let p = priced(&facts, API, "tiered").unwrap();
+        let per_token = |prompt: usize| {
+            let t = Tokens::of(&call(prompt, 0, 0, 0)).unwrap();
+            p.cost_of_call(&t).unwrap() * 1_000_000.0 / prompt as f64
+        };
+        // "Over" is strictly over: the threshold itself is the lower tier.
+        for (prompt, rate) in [(50_000, 1.0), (50_001, 2.0), (200_000, 2.0), (200_001, 4.0)] {
+            assert!((per_token(prompt) - rate).abs() < 1e-9, "{prompt}");
+        }
     }
 
     #[test]
-    fn only_anthropics_own_api_has_built_in_prices() {
+    fn a_call_in_a_tier_with_no_usable_rate_has_no_figure() {
+        let facts = anthropic(vec![facts_entry(
+            "gap",
+            serde_json::json!({"input": 1.0, "output": 2.0,
+                "tiers": [{"over": 100000, "input": 3.0}]}),
+        )]);
+        let p = priced(&facts, API, "gap").unwrap();
+        let of = |prompt| p.cost_of_call(&Tokens::of(&call(prompt, 0, 0, 10)).unwrap());
+        assert!(of(100_000).is_some());
+        assert_eq!(of(100_001), None, "no borrowed base rate, no guessed tier");
+        // The ledger holds tokens and no amount for such a call.
+        let cfg = model("anthropic", API, "gap");
+        let rec = CallRecord::of_in(Some(&cfg), Some(&call(150_000, 0, 0, 10)), &facts);
+        assert_eq!((rec.billing, rec.priced, rec.cost_usd), (Some(Billing::Metered), false, None));
+        let rec = CallRecord::of_in(Some(&cfg), Some(&call(1_000, 0, 0, 10)), &facts);
+        assert!(rec.priced && rec.cost_usd.is_some());
+    }
+
+    /// A dated estimate versus tokens only.
+    #[test]
+    fn a_price_is_dated_or_there_is_none() {
+        let facts = anthropic(vec![
+            facts_entry("own-date", serde_json::json!({"input": 1.0, "output": 2.0, "as_of": "2026-11-01"})),
+            facts_entry("observed", serde_json::json!({"input": 1.0, "output": 2.0})),
+            // Cache rates the file omits cost what plain input costs.
+            facts_entry("no-cache", serde_json::json!({"input": 3.0, "output": 6.0})),
+            facts_entry("zero-input", serde_json::json!({"input": 0, "output": 2.0})),
+            facts_entry("no-output", serde_json::json!({"input": 1.0})),
+            facts_entry("audio", serde_json::json!({"input": 1.0, "output": 2.0, "unestimated": ["input_audio"]})),
+            serde_json::json!({"id": "no-price", "name": "n", "stability": "stable",
+                "modalities": {"input": ["text"], "output": ["text"]}}),
+        ]);
+        let source = |name: &str| priced(&facts, API, name).map(|p| p.source);
+        assert_eq!(source("own-date"), Some(PriceSource::Catalog("2026-11-01".into())));
+        assert_eq!(source("observed"), Some(PriceSource::Catalog("2026-11-23".into())));
+        let p = priced(&facts, API, "no-cache").unwrap();
+        assert_eq!(p.base, price(3.0, 6.0, 3.0, 3.0));
+        for none in ["zero-input", "no-output", "audio", "no-price", "unknown-entry"] {
+            assert_eq!(source(none), None, "{none}: tokens only");
+        }
+        // The record of a call to a dated price carries the day.
+        let rec = CallRecord::of_in(Some(&model("anthropic", API, "own-date")), Some(&call(1_000, 0, 0, 10)), &facts);
+        assert_eq!((rec.source.as_deref(), rec.as_of.as_deref()), (Some("built-in"), Some("2026-11-01")));
+    }
+
+    #[test]
+    fn only_an_exact_address_and_model_have_a_catalog_price() {
+        let facts = four();
         let name = "claude-sonnet-5-5";
-        assert!(
-            price_of(&model("anthropic", "", name)).is_some(),
-            "the default base is Anthropic's"
-        );
-        assert!(price_of(&model("anthropic", "https://gateway.example.com/v1", name)).is_none());
-        assert!(price_of(&model("openai", "https://api.openai.com/v1", "gpt-6")).is_none());
-        assert!(
-            price_of(&model("anthropic", API, "claude-sonnet-3-7")).is_none(),
-            "not listed"
-        );
-        // A dated name is the same model; a different version is not.
-        assert!(price_of(&model("anthropic", API, "claude-sonnet-5-5-20261103")).is_some());
-        assert!(price_of(&model("anthropic", API, "claude-sonnet-5-55")).is_none());
+        assert!(priced(&facts, "", name).is_some(), "the default base is Anthropic's");
+        assert!(priced(&facts, "https://api.anthropic.com/", name).is_some());
+        // The provider name at another address inherits nothing.
+        assert!(priced(&facts, "https://gateway.example.com/v1", name).is_none());
+        assert!(price_in(&model("openai", "https://api.openai.com/v1", "gpt-6"), &facts).is_none());
+        // Not listed; a similar name is not the model.
+        assert!(priced(&facts, API, "claude-sonnet-3-7").is_none());
+        assert!(priced(&facts, API, "claude-sonnet-5-5-20261103").is_none());
+        assert!(priced(&facts, API, "claude-sonnet-5-55").is_none());
         // A Claude subscription is billed to the account.
         let mut oauth = model("anthropic", API, name);
         oauth.auth_mode = Some("claude_oauth".into());
-        assert!(price_of(&oauth).is_none());
+        assert!(price_in(&oauth, &facts).is_none());
         assert_eq!(billing_of(&oauth), Billing::Account);
     }
 
@@ -491,20 +572,20 @@ mod tests {
             cache_read: None,
             cache_write: Some(1.5),
         });
-        let priced = price_of(&cfg).unwrap();
+        let priced = price_in(&cfg, &four()).unwrap();
         assert_eq!(priced.source, PriceSource::Config);
-        assert_eq!(priced.price, price(1.0, 3.0, 1.0, 1.5));
+        assert_eq!(priced.base, price(1.0, 3.0, 1.0, 1.5));
         // A configured price is flat: a long-prompt call costs the same.
         let t = [call(200_000, 50_000, 0, 1_000)];
         assert!((cost(&priced, &t) - (0.15 + 0.05 + 0.003)).abs() < 1e-9);
-        // It prices a model the table has never heard of, too.
+        // It prices a model the catalog has never heard of, too.
         let mut gemini = model(
             "gemini",
             "https://generativelanguage.googleapis.com/v1beta/openai",
             "g-9",
         );
         gemini.price = cfg.price.clone();
-        assert!(price_of(&gemini).is_some());
+        assert!(price_in(&gemini, &four()).is_some());
     }
 
     #[test]
@@ -559,34 +640,35 @@ mod tests {
     #[test]
     fn a_call_is_recorded_with_its_class_and_its_cost() {
         let used = call(9_200, 5_000, 3_000, 400); // 1,200 in, 3,000 written, 5,000 read, 400 out
+        let facts = four();
         let sonnet = model("anthropic", API, "claude-sonnet-5-5");
-        let rec = CallRecord::of(Some(&sonnet), Some(&used));
+        let rec = CallRecord::of_in(Some(&sonnet), Some(&used), &facts);
         assert_eq!(rec.billing, Some(Billing::Metered));
         assert!(rec.priced);
         // 1,200 x 2 + 3,000 x 2.5 + 5,000 x 0.1 + 400 x 10, per million.
         assert!((rec.cost_usd.unwrap() - 0.0144).abs() < 1e-9, "{rec:?}");
         assert_eq!(
             (rec.source.as_deref(), rec.as_of.as_deref()),
-            (Some("built-in"), Some("2026-11-03"))
+            (Some("built-in"), Some("2026-11-23"))
         );
         // A call that reported nothing had a price and cost nothing known.
-        let none = CallRecord::of(Some(&sonnet), None);
+        let none = CallRecord::of_in(Some(&sonnet), None, &facts);
         assert_eq!((none.priced, none.cost_usd), (true, Some(0.0)));
         // No price: the class, no amount.
         let gateway = model("anthropic", "https://gw.example.com", "claude-sonnet-5-5");
-        let rec = CallRecord::of(Some(&gateway), Some(&used));
+        let rec = CallRecord::of_in(Some(&gateway), Some(&used), &facts);
         assert_eq!(
             (rec.billing, rec.priced, rec.cost_usd),
             (Some(Billing::Metered), false, None)
         );
         // An account model: its class, never an amount (a price is a config error).
-        let rec = CallRecord::of(Some(&model("chatgpt", "", "gpt")), Some(&used));
+        let rec = CallRecord::of_in(Some(&model("chatgpt", "", "gpt")), Some(&used), &facts);
         assert_eq!(
             (rec.billing, rec.priced, rec.cost_usd),
             (Some(Billing::Account), false, None)
         );
         // A model not in the config claims nothing.
-        assert_eq!(CallRecord::of(None, Some(&used)), CallRecord::default());
+        assert_eq!(CallRecord::of_in(None, Some(&used), &facts), CallRecord::default());
     }
 
     fn entry(

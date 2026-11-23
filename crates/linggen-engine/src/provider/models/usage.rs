@@ -53,11 +53,6 @@ impl TokenUsage {
     }
 }
 
-/// A prompt longer than this many tokens (cache reads and writes counted) is
-/// a "long" call: Anthropic's Haiku 5.5 prices such a call at higher rates,
-/// each request on its own — so a call is priced when it is made.
-pub const LONG_PROMPT_TOKENS: usize = 100_000;
-
 /// What model calls used, in the four kinds a provider bills apart. `input`
 /// is the prompt not served from the provider's cache and not written to it;
 /// the prompt is `input + cache_read + cache_write`. [`Tokens::of`] is the

@@ -127,6 +127,10 @@ impl ModelManager {
         for row in rows.iter().copied().filter(|row| row.is_builtin)
             .chain(config.chat_models()).chain(self.live_rows())
         {
+            let kind = kind_of(row);
+            if kind == Kind::NoLane {
+                continue;
+            }
             let sign_in = row.sign_in();
             let id = provider_id(sign_in, row.provider_name(), &row.url);
             let group = groups.entry(id).or_insert_with(|| ProviderView::new(sign_in, row.provider_name(), &row.url));
@@ -134,7 +138,6 @@ impl ModelManager {
                 continue;
             }
             group.mark_key(credentials::resolve_api_key(row, creds).is_some());
-            let kind = kind_of(row);
             let why = match kind {
                 Kind::Chat => {
                     if rows.iter().any(|m| m.id == row.id && m.is_builtin == row.is_builtin) {
@@ -149,7 +152,7 @@ impl ModelManager {
                         .is_some_and(|p| live::key_ready(p, &config.models, creds));
                     (!ready).then_some(NotReady::NoKey)
                 }
-                Kind::Speak | Kind::Hear | Kind::Draw => unreachable!("not configured rows"),
+                Kind::Speak | Kind::Hear | Kind::Draw | Kind::NoLane => unreachable!("not configured rows"),
             };
             group.add(ProviderModel { id: row.id.clone(), model: row.model.clone(), kind: kind.as_str(), ready: why.is_none(), why, builtin: row.is_builtin });
         }
