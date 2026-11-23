@@ -408,6 +408,42 @@ pub fn resolve_api_key_shared(
     resolve_api_key(model, credentials)
 }
 
+/// The key stored for a provider's account at `host`, found without naming a
+/// model and without a model call: what a feature that talks to the provider
+/// itself (not through a model row) asks. The same sources and order as
+/// [`resolve_api_key`] — a configured model of that provider on that host
+/// (its TOML key, override, endpoint key), then an endpoint key stored for it
+/// with no model configured, then `LINGGEN_API_KEY_{PROVIDER}`. A key stored
+/// for the provider's name at another host (a gateway) is never returned: it
+/// is not the provider's.
+pub fn resolve_provider_key(
+    provider: &str,
+    host: &str,
+    configured: &[ModelConfig],
+    credentials: &Credentials,
+) -> Option<String> {
+    let named = |p: &str| p.trim().eq_ignore_ascii_case(provider);
+    let on_host = |url: &str| {
+        url::Url::parse(url.trim())
+            .ok()
+            .and_then(|u| u.host_str().map(|h| h.eq_ignore_ascii_case(host)))
+            .unwrap_or(false)
+    };
+    configured
+        .iter()
+        .filter(|m| named(&m.provider) && on_host(&m.url))
+        .find_map(|m| resolve_api_key(m, credentials))
+        .or_else(|| {
+            credentials
+                .endpoints
+                .iter()
+                .find(|e| named(&e.provider) && on_host(&e.url))
+                .and_then(|e| e.api_key.clone())
+                .filter(|k| !k.is_empty())
+        })
+        .or_else(|| env_key(provider))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -535,6 +571,24 @@ mod tests {
         assert_eq!(creds.model_override("fast"), None);
         assert_eq!(resolve_api_key(&configured[0], &creds), None);
         assert_eq!(creds.endpoint_key("groq", GROQ), Some("gsk-1"));
+    }
+
+    /// A provider's key is found with no model named: from a configured model
+    /// of that provider on that host, else its stored endpoint key; never one
+    /// stored for the same provider name at another host.
+    #[test]
+    fn a_providers_key_is_found_by_provider_and_host() {
+        const HOST: &str = "generativelanguage.googleapis.com";
+        let mut creds = Credentials::default();
+        assert_eq!(resolve_provider_key("gemini", HOST, &[], &creds), None);
+        creds.set_endpoint_key("gemini", "https://my-gateway.example/v1", Some("gateway".into()));
+        assert_eq!(resolve_provider_key("gemini", HOST, &[], &creds), None, "a gateway's key is not the provider's");
+        creds.set_endpoint_key("gemini", GEMINI, Some("AIza".into()));
+        assert_eq!(resolve_provider_key("gemini", HOST, &[], &creds), Some("AIza".into()));
+        let configured = [model("gemini-a", "gemini", GEMINI)];
+        assert_eq!(resolve_provider_key("gemini", HOST, &configured, &creds), Some("AIza".into()));
+        creds.set_model_override("gemini-a", Some("own".into()));
+        assert_eq!(resolve_provider_key("gemini", HOST, &configured, &creds), Some("own".into()));
     }
 
     #[test]

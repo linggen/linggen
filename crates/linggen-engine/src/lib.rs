@@ -13,6 +13,7 @@ mod front;
 pub mod hf_mirror;
 pub mod js_runtime;
 pub mod language;
+pub mod live;
 pub mod logging;
 pub mod mcp_client;
 pub mod memory_host;
