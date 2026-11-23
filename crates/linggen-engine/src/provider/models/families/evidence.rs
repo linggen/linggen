@@ -70,7 +70,14 @@ impl Evidence {
         Self { lister, fresh_for, held: Default::default() }
     }
 
+    #[cfg_attr(feature = "test-support", allow(dead_code))]
     pub(crate) fn http() -> Self { Self::new(Arc::new(HttpLister::default()), FRESH_FOR) }
+
+    /// A test build with no fixture: no provider is reachable, every ask fails.
+    #[cfg(feature = "test-support")]
+    pub(crate) fn unreachable() -> Self {
+        Self::new(Arc::new(Unreachable), FRESH_FOR)
+    }
 
     /// The lists of a fixture file (system tests): `{"lists": {"<preset key>":
     /// ["<model id>", …]}}`, read at each ask.
@@ -164,6 +171,15 @@ fn read_page(body: &serde_json::Value, paged: bool) -> Option<(Vec<String>, Opti
     let more = paged && body.get("has_more").and_then(serde_json::Value::as_bool).unwrap_or(false);
     let next = more.then(|| body.get("last_id")?.as_str().map(str::to_string)).flatten();
     Some((ids, next))
+}
+
+#[cfg(feature = "test-support")]
+struct Unreachable;
+
+#[cfg(feature = "test-support")]
+#[async_trait]
+impl ModelLister for Unreachable {
+    async fn list(&self, _: &Target<'_>) -> Result<BTreeSet<String>, ListFailed> { Err(ListFailed) }
 }
 
 /// Answers from a file, by preset url: a system test's provider.

@@ -156,14 +156,19 @@ async fn a_legacy_settings_save_made_before_a_move_does_not_revert_it() {
     assert_eq!(row(&config)["family_binding"]["last_move"]["to"], "claude-opus-5-5");
     let forged = config["models"].as_array().unwrap().iter().find(|m| m["id"] == "forged").unwrap();
     assert!(forged.get("family_binding").is_none(), "a binding is not accepted from the legacy route");
-    // Raced with a move the other way round: the saved model is the move's in both orders.
-    for _ in 0..3 {
-        let (_, _, _) = tokio::join!(
+    // Raced with a real move, in whatever order they land: each round starts
+    // from the version before it, and the move survives the stale save.
+    for _ in 0..4 {
+        assert_eq!(act(&w, &id, "claude-opus", json!({"action": "choose", "model": "claude-opus-5"})).await.0, 200);
+        let (_, moved) = tokio::join!(
             w.api.post_status("/api/config", posted.clone()),
             act(&w, &id, "claude-opus", json!({"action": "follow"})),
-            act(&w, &id, "claude-opus", json!({"action": "pin"})),
         );
-        assert_eq!(row(&w.api.get("/api/config").await)["model"], "claude-opus-5-5");
+        assert_eq!(moved.0, 200, "{}", moved.1);
+        let config = w.api.get("/api/config").await;
+        assert_eq!(row(&config)["model"], "claude-opus-5-5");
+        assert_eq!(row(&config)["family_binding"]["mode"], "follow");
+        assert_eq!(row(&config)["family_binding"]["last_move"]["to"], "claude-opus-5-5");
     }
 }
 
@@ -203,6 +208,9 @@ async fn unticking_refuses_the_first_default_unless_a_replacement_is_named_and_n
     let before = w.api.get("/api/providers").await;
     assert_eq!(act(&w, &id, "claude-opus", json!({"action": "untick"})).await, (409, "first_default".into()));
     assert_eq!(act(&w, &id, "claude-opus", json!({"action": "untick", "model": "no-such-model"})).await.0, 400);
+    assert_eq!(w.api.get("/api/providers").await, before);
+    // The exact-row delete route does not slip past the same guard.
+    assert_eq!(w.api.delete_status(&format!("/api/providers/{id}/models/fam-seed"), json!({})).await, 409);
     assert_eq!(w.api.get("/api/providers").await, before);
     let (status, text) = act(&w, &id, "claude-opus", json!({"action": "untick", "model": "fake-ling"})).await;
     assert_eq!(status, 200, "{text}");

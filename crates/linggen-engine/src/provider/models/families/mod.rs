@@ -41,6 +41,10 @@ pub struct Families {
     /// Rows whose first call on a just-moved model was refused, waiting for
     /// the go-back under the settings write lock.
     refused: Mutex<BTreeSet<(String, String)>>,
+    /// Rows moved in this run whose new model has not answered a call yet:
+    /// only their first call can send them back. In memory on purpose — a
+    /// restart disarms them, and a stray refusal weeks later never does.
+    armed: Mutex<BTreeSet<String>>,
     wake: tokio::sync::Notify,
 }
 
@@ -65,12 +69,15 @@ impl Families {
                     .and_then(|v| v.get("today")?.as_str()?.parse().ok());
                 return Self::with(Evidence::from_fixture(path), today);
             }
+            // A test build without a fixture reaches no provider.
+            return Self::with(Evidence::unreachable(), None);
         }
+        #[cfg(not(feature = "test-support"))]
         Self::with(Evidence::http(), None)
     }
 
     pub(crate) fn with(evidence: Evidence, today: Option<NaiveDate>) -> Self {
-        Self { evidence, today, fixed_catalog: None, refused: Default::default(), wake: Default::default() }
+        Self { evidence, today, fixed_catalog: None, refused: Default::default(), armed: Default::default(), wake: Default::default() }
     }
 
     fn catalog(&self) -> Arc<Snapshot> {
@@ -102,7 +109,8 @@ impl Families {
         follow::follow_all(self, config, creds)
     }
 
-    /// Carry out a person's action on one family of an endpoint.
+    /// Carry out a person's action on one family of an endpoint. Gather the
+    /// provider's list first (`gather`) when [`Action::needs_list`].
     pub fn act(&self, config: &mut Config, creds: &Credentials, endpoint: (&str, &str), family: &str, action: Action) -> Result<bool, Refusal> {
         act::run(self, config, creds, endpoint, family, action)
     }
@@ -119,10 +127,34 @@ impl Families {
         keep_bindings(next, current)
     }
 
-    /// A call on `model_id` was refused. When that is a followed row's newer
-    /// model, queue the go-back. Never blocks; nothing is written here.
+    /// A call on `model_id` succeeded: its move, if it had one, is proven,
+    /// and no later refusal sends the row back. Cheap; called on every answer.
+    pub fn model_answered(&self, model_id: &str) {
+        let mut armed = self.armed.lock().unwrap_or_else(|e| e.into_inner());
+        if !armed.is_empty() {
+            armed.remove(model_id);
+        }
+    }
+
+    /// Whether a refusal on `model_id` could send it back: it moved in this
+    /// run and has not answered since.
+    pub fn is_armed(&self, model_id: &str) -> bool {
+        self.armed.lock().unwrap_or_else(|e| e.into_inner()).contains(model_id)
+    }
+
+    fn arm(&self, row_id: &str) {
+        self.armed.lock().unwrap_or_else(|e| e.into_inner()).insert(row_id.to_string());
+    }
+
+    fn disarm(&self, row_id: &str) {
+        self.armed.lock().unwrap_or_else(|e| e.into_inner()).remove(row_id);
+    }
+
+    /// A call on `model_id` was refused. When that is the first call on a
+    /// followed row's newer model, queue the go-back. Never blocks; nothing
+    /// is written here.
     pub fn model_refused(&self, config: &Config, model_id: &str, err: &anyhow::Error) {
-        if follow::wants_go_back(config, model_id, err) {
+        if self.is_armed(model_id) && follow::wants_go_back(config, model_id, err) {
             let wire = config.models.iter().find(|row| row.id == model_id).map(|row| row.model.clone()).unwrap_or_default();
             self.refused.lock().unwrap_or_else(|e| e.into_inner()).insert((model_id.to_string(), wire));
             self.wake.notify_one();

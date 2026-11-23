@@ -248,6 +248,11 @@ async fn apply(state: &Arc<ServerState>, edit: Edit) -> Result<(Config, Credenti
         }
         Edit::RemoveModel(id, model) => {
             let index = config.models.iter().position(|row| row.id == model && matches_group(row, &id)).ok_or(MISSING)?;
+            // A family's row is removed by unticking, which names a replacement
+            // when the row is the first default chat model.
+            if config.models[index].family_binding.is_some() && config.routing.default_models.first() == Some(&model) {
+                return Err((StatusCode::CONFLICT, "first_default"));
+            }
             let row = config.models.remove(index);
             validate_config(&config)?;
             if !config.models.iter().any(|row| matches_group(row, &id)) && creds.endpoint_key(&name, &url).is_none() {

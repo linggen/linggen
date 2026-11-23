@@ -250,6 +250,42 @@ async fn a_refused_first_call_sends_the_row_back_pinned_with_one_notice() {
 }
 
 #[tokio::test]
+async fn only_the_first_call_on_a_moved_model_can_send_the_row_back() {
+    let refusal = anyhow::anyhow!("anthropic error (404 Not Found): not_found_error: model: claude-opus-5-5");
+    let mut w = world(TODAY);
+    let id = w.ticked_on("claude-opus", "claude-opus-5", Mode::Follow);
+    w.gather().await;
+    assert!(!w.families.is_armed(&id), "nothing has moved");
+    w.families.follow(&mut w.settings, &w.creds);
+    assert!(w.families.is_armed(&id));
+    // The moved model answers once: a refusal weeks later is not the first call.
+    w.families.model_answered(&id);
+    assert!(!w.families.is_armed(&id));
+    w.families.model_refused(&w.settings, &id, &refusal);
+    assert!(!w.families.go_back_refused(&mut w.settings));
+    let row = w.row("claude-opus");
+    assert_eq!((row.model.as_str(), row.family_binding.as_ref().unwrap().follows()), ("claude-opus-5-5", true));
+    // A restart forgets what was armed: no go-back for a move of an earlier run.
+    let mut later = world(TODAY);
+    later.settings = w.settings.clone();
+    assert!(!later.families.is_armed(&id));
+}
+
+#[tokio::test]
+async fn a_row_whose_address_was_edited_away_is_an_exact_row() {
+    let mut w = world(TODAY);
+    w.ticked_on("claude-opus", "claude-opus-5", Mode::Follow);
+    w.settings.models[0].url = "https://example.invalid/v1".into();
+    w.gather().await;
+    assert!(!w.families.follow(&mut w.settings, &w.creds));
+    assert_eq!(w.settings.models[0].model, "claude-opus-5");
+    let json = serde_json::to_value(w.families.view(&w.settings, &w.creds, ("anthropic", ANTHROPIC)).unwrap()).unwrap();
+    let opus = json["families"].as_array().unwrap().iter().find(|f| f["family"] == "claude-opus").unwrap();
+    assert_eq!(opus["ticked"], false);
+    assert_eq!(w.act("claude-opus", Action::Pin { moved: None }), Err(Refusal::Missing));
+}
+
+#[tokio::test]
 async fn a_move_the_person_acknowledged_or_a_pinned_row_is_never_sent_back() {
     let refusal = anyhow::anyhow!("openai error (404): The model `x` does not exist or you do not have access to it");
     let mut w = world(TODAY);

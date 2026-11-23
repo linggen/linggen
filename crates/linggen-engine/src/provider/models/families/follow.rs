@@ -37,7 +37,10 @@ pub(super) fn follow_all(f: &Families, config: &mut Config, creds: &Credentials)
     for (id, from, to) in moves {
         let preset = config.models.iter().find(|r| r.id == id).and_then(preset_for);
         let facts = preset.and_then(|p| snapshot.entry(p, &to));
-        changed |= facts.is_some_and(|facts| binding::follow_to(config, &id, &from, facts, today));
+        if facts.is_some_and(|facts| binding::follow_to(config, &id, &from, facts, today)) {
+            f.arm(&id);
+            changed = true;
+        }
     }
     changed
 }
@@ -102,7 +105,10 @@ pub(super) fn go_back(f: &Families, config: &mut Config, queued: std::collection
         let Some(moved) = row.family_binding.as_ref().and_then(|b| b.notice()).filter(|m| m.kind() == binding::MoveKind::Followed) else { continue };
         let (seq, from) = (moved.seq(), moved.from().to_string());
         let previous = preset_for(row).and_then(|p| snapshot.entry(p, &from));
-        changed |= binding::went_back(config, &id, seq, previous, today);
+        if binding::went_back(config, &id, seq, previous, today) {
+            f.disarm(&id);
+            changed = true;
+        }
     }
     changed
 }

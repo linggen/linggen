@@ -13,7 +13,7 @@
 //! write lock and saves in the same config write, so a move and its notice
 //! are one change.
 
-use super::super::family_catalog::ModelFacts;
+use super::super::family_catalog::{preset_for, ModelFacts};
 use crate::config::{providers::Preset, Config, ModelConfig};
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
@@ -303,14 +303,22 @@ pub(crate) fn keep_bindings(next: &mut Config, current: &Config) {
     }
 }
 
+/// Whether a row still sits at the endpoint of the preset its binding names.
+/// A row whose address was edited away is an exact row from then on.
+fn at_its_preset(row: &ModelConfig, binding: &FamilyBinding) -> bool {
+    preset_for(row).is_some_and(|p| p.key == binding.preset)
+}
+
 /// The row a preset's family is ticked as.
 pub(super) fn row_of<'a>(config: &'a Config, preset_key: &str, family: &str) -> Option<&'a ModelConfig> {
     config.models.iter().find(|row| {
-        row.family_binding.as_ref().is_some_and(|b| b.preset == preset_key && b.family == family)
+        row.family_binding.as_ref().is_some_and(|b| b.preset == preset_key && b.family == family && at_its_preset(row, b))
     })
 }
 
-/// Every row that follows its family.
+/// Every row that follows its family, at its preset's endpoint.
 pub(super) fn following(config: &Config) -> Vec<&ModelConfig> {
-    config.models.iter().filter(|row| row.family_binding.as_ref().is_some_and(FamilyBinding::follows)).collect()
+    config.models.iter()
+        .filter(|row| row.family_binding.as_ref().is_some_and(|b| b.follows() && at_its_preset(row, b)))
+        .collect()
 }

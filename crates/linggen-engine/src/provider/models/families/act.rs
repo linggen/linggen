@@ -45,6 +45,14 @@ pub enum Refusal {
     NoPrevious,
 }
 
+impl Action {
+    /// Whether the action decides on the provider's list: gather it first.
+    /// Notice answers, pins and unticks need no list.
+    pub fn needs_list(&self) -> bool {
+        matches!(self, Action::Tick | Action::Follow | Action::Choose { .. } | Action::Back { .. })
+    }
+}
+
 impl Refusal {
     pub fn code(self) -> &'static str {
         match self {
@@ -91,10 +99,12 @@ pub(super) fn run(f: &Families, config: &mut Config, creds: &Credentials, (name,
                 let replacement = replacement.filter(|r| !r.is_empty() && *r != id).ok_or(Refusal::FirstDefault)?;
                 config.make_default(&replacement);
             }
+            f.disarm(&id);
             Ok(binding::remove(config, &id))
         }
         Action::Pin { moved } => {
             let (id, _) = needs_row()?;
+            f.disarm(&id);
             Ok(binding::pin(config, &id, moved))
         }
         Action::Follow => {
@@ -108,6 +118,9 @@ pub(super) fn run(f: &Families, config: &mut Config, creds: &Credentials, (name,
                 _ => None,
             };
             let moved = next.is_some_and(|facts| binding::follow_to(config, &id, &model, facts, today));
+            if moved {
+                f.arm(&id);
+            }
             Ok(resumed || moved)
         }
         Action::Choose { model } => {
@@ -119,7 +132,10 @@ pub(super) fn run(f: &Families, config: &mut Config, creds: &Credentials, (name,
                 return Err(Refusal::NoAccess);
             }
             match row {
-                Some((id, _)) => Ok(binding::choose(config, &id, facts)),
+                Some((id, _)) => {
+                    f.disarm(&id);
+                    Ok(binding::choose(config, &id, facts))
+                }
                 None => {
                     binding::tick(config, preset, family, facts, binding::Mode::Pinned);
                     Ok(true)
@@ -128,6 +144,7 @@ pub(super) fn run(f: &Families, config: &mut Config, creds: &Credentials, (name,
         }
         Action::Ack { moved } => {
             let (id, _) = needs_row()?;
+            f.disarm(&id);
             Ok(binding::acknowledge(config, &id, moved))
         }
         Action::Back { moved } => {
@@ -142,6 +159,7 @@ pub(super) fn run(f: &Families, config: &mut Config, creds: &Credentials, (name,
             if !listing.as_ref().is_some_and(|l| l.usable.contains(&before)) {
                 return Err(Refusal::NoAccess);
             }
+            f.disarm(&id);
             Ok(binding::rollback(config, &id, moved, previous))
         }
     }

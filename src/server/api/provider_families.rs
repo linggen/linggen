@@ -72,7 +72,9 @@ async fn act(state: &Arc<ServerState>, id: &str, family: &str, body: Bytes) -> R
     let config = state.manager.get_config_snapshot().await;
     let creds = Credentials::load_with(&path, &config.models);
     let (name, url) = endpoint(state, &config, &creds, id).await?;
-    state.manager.families.gather(&config, &creds, Some((&name, &url))).await;
+    if action.needs_list() {
+        state.manager.families.gather(&config, &creds, Some((&name, &url))).await;
+    }
 
     let _write = state.settings_write.lock().await;
     let mut config = state.manager.get_config_snapshot().await;

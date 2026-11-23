@@ -615,6 +615,9 @@ impl AgentEngine {
                         );
                     }
                     crate::provider::models::note_healthy(&model_id);
+                    if let Some(manager) = self.tools.get_manager() {
+                        manager.families.model_answered(&model_id);
+                    }
                     self.remember_call(&model_id, attempt_messages, tools.as_ref(), &result);
                     self.note_call(&model_id, &spent);
                     self.note_run_model(&model_id);
@@ -678,7 +681,8 @@ impl AgentEngine {
     /// refusal is queued for the go-back, which the server answers under the
     /// settings write lock (`families::Families::model_refused`).
     async fn report_model_refusal(&self, model_id: &str, err: &anyhow::Error) {
-        if let Some(manager) = self.tools.get_manager() {
+        let Some(manager) = self.tools.get_manager() else { return };
+        if manager.families.is_armed(model_id) {
             manager.families.model_refused(&manager.get_config_snapshot().await, model_id, err);
         }
     }
