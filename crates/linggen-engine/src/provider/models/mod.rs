@@ -2,6 +2,7 @@ use crate::config::{ModelConfig, ProviderKind, SignIn};
 use crate::credentials::{self, Credentials};
 use crate::message::ChatMessage;
 use crate::provider::anthropic::AnthropicClient;
+use crate::provider::kinds::{kind_of, Kind};
 use crate::provider::codex_auth;
 use crate::provider::ollama::OllamaClient;
 use crate::provider::openai::OpenAiClient;
@@ -15,6 +16,8 @@ use tokio::sync::Semaphore;
 mod catalog;
 pub mod chatgpt_catalog;
 mod health;
+#[cfg(test)]
+mod kind_tests;
 mod pricing;
 mod providers;
 mod readiness;
@@ -92,6 +95,9 @@ pub struct ModelManager {
     /// Registered for exact pins only (older ChatGPT models the backend still
     /// lists): reachable by id, never listed.
     hidden: std::collections::HashSet<String>,
+    /// Live-voice rows (`provider::kinds::Kind::LiveVoice`): kept, never
+    /// registered as a chat model.
+    live_rows: Vec<ModelConfig>,
 }
 
 struct ModelInstance {
@@ -189,7 +195,13 @@ impl ModelManager {
         let hidden = inject_chatgpt_builtin(&mut configs, catalog).into_iter().collect();
         let mut models = HashMap::new();
 
+        // The one chokepoint of kinds (`provider::kinds`): only a chat row
+        // gets a client and a place in any list. A live-voice row is kept
+        // apart, read by `live_rows` alone.
         let all_configs = configs.clone();
+        let (configs, live_rows): (Vec<_>, Vec<_>) = configs
+            .into_iter()
+            .partition(|c| kind_of(c) == Kind::Chat);
         for mut cfg in configs {
             // Check if this model uses ChatGPT OAuth
             let sign_in = cfg.sign_in();
@@ -237,7 +249,17 @@ impl ModelManager {
                 },
             );
         }
-        Self { models, hidden }
+        Self {
+            models,
+            hidden,
+            live_rows,
+        }
+    }
+
+    /// The configured live-voice rows: in no chat list, no client. Read by
+    /// the providers view alone (`provider::models::providers_view`).
+    pub fn live_rows(&self) -> &[ModelConfig] {
+        &self.live_rows
     }
 
     pub async fn chat_text_stream(

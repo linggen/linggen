@@ -12,6 +12,7 @@ pub mod anthropic;
 pub mod claude_auth;
 pub mod codex_auth;
 pub mod error;
+pub mod kinds;
 pub mod models;
 pub mod ollama;
 pub mod openai;

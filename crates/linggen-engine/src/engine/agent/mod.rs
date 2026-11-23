@@ -187,7 +187,7 @@ impl AgentManager {
         skip_dead_auth: bool,
     ) -> Result<String> {
         let model_ids: std::collections::HashSet<&str> =
-            config.models.iter().map(|m| m.id.as_str()).collect();
+            config.chat_models().map(|m| m.id.as_str()).collect();
 
         // 1. Config agent override
         if let Some(choice) =
@@ -238,7 +238,7 @@ impl AgentManager {
         }
 
         // 4. First configured model
-        if let Some(m) = config.models.first() {
+        if let Some(m) = config.chat_models().next() {
             return Ok(m.id.clone());
         }
 

@@ -634,6 +634,42 @@ impl Config {
             )
     }
 
+    /// The configured rows a chat model is picked from: every row but a
+    /// live-voice one (`provider::kinds`). Any list of models built from the
+    /// config's own rows starts here, never from `self.models` (a lock in
+    /// `src/server/model_locks.rs` counts the readers of the raw rows).
+    pub fn chat_models(&self) -> impl Iterator<Item = &ModelConfig> {
+        use crate::provider::kinds::{kind_of, Kind};
+        self.models.iter().filter(|m| kind_of(m) == Kind::Chat)
+    }
+
+    /// Whether `id` names a configured live-voice row.
+    pub fn is_live_voice_row(&self, id: &str) -> bool {
+        use crate::provider::kinds::{kind_of, Kind};
+        self.models
+            .iter()
+            .any(|m| m.id == id && kind_of(m) == Kind::LiveVoice)
+    }
+
+    /// A live-voice model in a place that runs chat turns — the default
+    /// chain, the companion's model, an agent's model — is refused at save.
+    fn check_no_live_voice_model_in_chat_places(&self) -> Result<()> {
+        let chain = self.routing.default_models.iter().map(|id| ("routing.default_models", id));
+        let pet = std::iter::once(("pet.model", &self.pet.model));
+        let agents = self
+            .agents
+            .iter()
+            .filter_map(|a| a.model.as_ref().map(|id| ("agents[].model", id)));
+        for (place, id) in chain.chain(pet).chain(agents) {
+            if self.is_live_voice_row(id) {
+                anyhow::bail!(
+                    "'{id}' is a live-voice model; it cannot be used for chat ({place}). Pick a chat model."
+                );
+            }
+        }
+        Ok(())
+    }
+
     /// Make `id` the default model: first in the chain, the models that were
     /// there kept after it as fallbacks, `id` never twice.
     pub fn make_default(&mut self, id: &str) {
@@ -732,6 +768,7 @@ impl Config {
         // what's configured here, so an empty list is a valid "use only the
         // built-ins" config, not a broken one.
         self.check_prices()?;
+        self.check_no_live_voice_model_in_chat_places()?;
         let mut seen_ids = std::collections::HashSet::new();
         for model in &self.models {
             if model.id.trim().is_empty() {
@@ -1384,6 +1421,48 @@ mod tests {
         cfg.models[0].provider = "some_random_provider_xyz".to_string();
         let err = cfg.validate().unwrap_err();
         assert!(err.to_string().contains("unknown provider"));
+    }
+
+    fn with_live_voice_row() -> Config {
+        let mut cfg = valid_config();
+        let mut live = cfg.models[0].clone();
+        live.id = "voice".into();
+        live.provider = "qwen".into();
+        live.url = "https://ap-southeast-1.maas.qwencloudapi.com/compatible-mode/v1".into();
+        live.model = "qwen-audio-3.1-realtime-flash".into();
+        cfg.models.push(live);
+        cfg
+    }
+
+    /// A live-voice row may sit in the config; it may not be named where a
+    /// chat turn runs: the chain, the companion's model, an agent's model.
+    #[test]
+    fn a_live_voice_row_is_refused_where_a_chat_turn_runs() {
+        with_live_voice_row().validate().expect("the row alone is fine");
+        let mut cfg = with_live_voice_row();
+        cfg.routing.default_models = vec!["voice".into(), "test-model".into()];
+        assert!(cfg.validate().unwrap_err().to_string().contains("live-voice"));
+        let mut cfg = with_live_voice_row();
+        cfg.pet.model = "voice".into();
+        assert!(cfg.validate().unwrap_err().to_string().contains("pet.model"));
+        let mut cfg = with_live_voice_row();
+        cfg.agents.push(AgentSpecRef {
+            id: "ling".into(),
+            spec_path: "agents/ling.md".into(),
+            model: Some("voice".into()),
+        });
+        assert!(cfg.validate().unwrap_err().to_string().contains("agents[].model"));
+        let mut cfg = with_live_voice_row();
+        cfg.routing.default_models = vec!["test-model".into()];
+        cfg.validate().expect("a chat model in the chain is fine");
+    }
+
+    #[test]
+    fn chat_models_leave_out_a_live_voice_row() {
+        let cfg = with_live_voice_row();
+        let ids: Vec<&str> = cfg.chat_models().map(|m| m.id.as_str()).collect();
+        assert_eq!(ids, vec!["test-model"]);
+        assert!(cfg.is_live_voice_row("voice") && !cfg.is_live_voice_row("test-model"));
     }
 
     #[test]

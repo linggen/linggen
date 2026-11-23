@@ -444,6 +444,14 @@ pub fn resolve_host_key(
     stored_key_at(|_| true, host, configured, credentials)
 }
 
+/// The host an address names — the one reading of "which host is this url
+/// at", for key lookups and for a model's kind (`provider::kinds`).
+pub fn url_host(url: &str) -> Option<String> {
+    url::Url::parse(url.trim())
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_string))
+}
+
 /// A stored key for a provider name `named` accepts, at `host`: a configured
 /// model's key first, then an endpoint key stored with no model configured.
 fn stored_key_at(
@@ -452,12 +460,7 @@ fn stored_key_at(
     configured: &[ModelConfig],
     credentials: &Credentials,
 ) -> Option<String> {
-    let on_host = |url: &str| {
-        url::Url::parse(url.trim())
-            .ok()
-            .and_then(|u| u.host_str().map(|h| h.eq_ignore_ascii_case(host)))
-            .unwrap_or(false)
-    };
+    let on_host = |url: &str| url_host(url).is_some_and(|h| h.eq_ignore_ascii_case(host));
     configured
         .iter()
         .filter(|m| named(&m.provider) && on_host(&m.url))

@@ -62,7 +62,7 @@ pub(crate) async fn continue_api(
         .default_models
         .iter()
         .cloned()
-        .chain(config.models.iter().map(|m| m.id.clone()))
+        .chain(config.chat_models().map(|m| m.id.clone()))
         .collect();
     let pinned = old.agents.first().and_then(|m| m.model.as_deref());
     let model = model_for(&models, pinned, &chain);

@@ -64,8 +64,8 @@ const LISTED: &[(&str, usize, &str)] = &[
     // Not the engine's: another struct's field of the same name.
     (
         "crates/linggen-engine/src/config.rs",
-        18,
-        "RoutingConfig::default_models (`make_default` and its test included)",
+        20,
+        "RoutingConfig::default_models (`make_default` and its tests included)",
     ),
     (
         "crates/linggen-engine/src/extensions/missions/mod.rs",

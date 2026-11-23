@@ -229,6 +229,15 @@ fn google_socket(p: &Provider, token: &Secret) -> String {
     format!("{}?access_token={}", p.socket_url, token.expose())
 }
 
+/// Whether `model` at `host` is a live-voice model this engine declares
+/// ([`PROVIDERS`]): the one fact `provider::kinds::kind_of` asks to tell a
+/// live-voice row from a chat one.
+pub fn declares(host: &str, model: &str) -> bool {
+    PROVIDERS.iter().any(|p| {
+        p.key_host.eq_ignore_ascii_case(host.trim()) && p.model.eq_ignore_ascii_case(model.trim())
+    })
+}
+
 /// The provider a page named.
 pub fn provider_named(id: &str) -> Option<&'static Provider> {
     PROVIDERS.iter().find(|p| p.id == id)

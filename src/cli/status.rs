@@ -310,13 +310,14 @@ async fn check_models(config: &Config) {
     for problem in &config.problems {
         fail("Config", problem);
     }
-    if config.models.is_empty() {
+    // Chat models only: a live-voice row has no chat endpoint to probe.
+    if config.chat_models().next().is_none() {
         println!("  Models (0):");
         info("  none configured", "");
         return;
     }
 
-    println!("  Models ({}):", config.models.len());
+    println!("  Models ({}):", config.chat_models().count());
 
     let client = match reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
@@ -337,7 +338,7 @@ async fn check_models(config: &Config) {
         &config.models,
     );
 
-    for m in &config.models {
+    for m in config.chat_models() {
         let label = format!("Model [{}]", m.id);
         let base = m.url.trim_end_matches('/');
         let sign_in = m.sign_in();

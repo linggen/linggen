@@ -28,6 +28,7 @@ mod hearing;
 mod mac_tools;
 mod memory_ops;
 mod met;
+mod model_kinds;
 mod leftovers;
 mod live_token;
 mod missions;

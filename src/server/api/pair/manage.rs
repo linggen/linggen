@@ -85,6 +85,8 @@ pub(super) fn resolve_model_catalog(
     );
     allow
         .iter()
+        // A live-voice row is not a chat model: the phone is not offered it.
+        .filter(|id| !config.is_live_voice_row(id))
         .map(|id| {
             if crate::provider::models::chatgpt_catalog::is_builtin(id) {
                 return serde_json::json!({ "id": id, "kind": "oauth" });
@@ -92,7 +94,7 @@ pub(super) fn resolve_model_catalog(
             if id == crate::provider::models::LINGGEN_CLOUD_MODEL_ID {
                 return serde_json::json!({ "id": id, "kind": "cloud" });
             }
-            match config.models.iter().find(|m| &m.id == id) {
+            match config.chat_models().find(|m| &m.id == id) {
                 Some(m) if m.provider_kind() == crate::config::ProviderKind::Ollama => {
                     serde_json::json!({ "id": id, "kind": "local" })
                 }

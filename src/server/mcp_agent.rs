@@ -234,17 +234,12 @@ pub async fn run(
             model,
         )
         .ok();
+        // The ids it may name: the manager's chat models (a live-voice row
+        // is in none of them).
+        let mut ids = models.model_ids();
+        ids.sort();
         drop(models);
-        let config = state.manager.get_config_snapshot().await;
-        Some(validate_model(
-            model,
-            resolved,
-            &config
-                .models
-                .iter()
-                .map(|m| m.id.clone())
-                .collect::<Vec<_>>(),
-        )?)
+        Some(validate_model(model, resolved, &ids)?)
     } else {
         None
     };

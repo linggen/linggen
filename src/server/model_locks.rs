@@ -68,3 +68,40 @@ fn a_reports_cache_counts_are_read_only_through_tokens_of() {
         found.join("\n")
     );
 }
+
+/// A model's kind is decided by `provider::kinds::kind_of`, and the one
+/// walk of the config's rows for a list of chat models is
+/// `Config::chat_models`. A production file outside the config, the keys,
+/// the model registry and the config-save route that walks the raw
+/// `models` rows builds a list the live-voice rows can leak into.
+#[test]
+fn no_file_builds_a_model_list_from_the_raw_config_rows() {
+    let walks = [
+        ".models.iter()",
+        ".models.iter_mut()",
+        ".models.into_iter()",
+        ".models.first()",
+        ".models.last()",
+        ".models.values()",
+    ];
+    let found = lines_with(
+        &walks,
+        |rel| {
+            rel == "crates/linggen-engine/src/config.rs"
+                || rel == "crates/linggen-engine/src/credentials.rs"
+                || rel == "crates/linggen-engine/src/provider/kinds.rs"
+                || rel.starts_with("crates/linggen-engine/src/provider/models/")
+                // Saving the config strips and files the keys of every row.
+                || rel == "src/server/api/config.rs"
+        },
+        "src/cli/status.rs",
+    );
+    assert!(
+        found.is_empty(),
+        "ask Config::chat_models() (or the manager's model_ids / list_models) instead:\n{}",
+        found.join("\n")
+    );
+    // The scan sees what it is meant to: a walk, spelled as it is spelled.
+    let code = "for m in config.models.iter() {}";
+    assert!(walks.iter().any(|w| code.contains(w)));
+}
