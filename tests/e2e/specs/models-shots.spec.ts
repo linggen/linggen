@@ -1,0 +1,55 @@
+// Pictures of the real Models page for the owner to look at: light theme, in
+// Chinese, at 1280 and 420 px — the page, Anthropic open, the move notice, and
+// 添加服务商. Not a check: it runs only when MODELS_SHOTS_DIR names a folder.
+import { mkdirSync } from 'node:fs';
+import path from 'node:path';
+import { test, expect, expectWebRtc } from '../support/world';
+
+const DIR = process.env.MODELS_SHOTS_DIR;
+const LISTS = { anthropic: ['claude-opus-5', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'] };
+const PINNED_OPUS = `
+[[models]]
+id = "seed-opus"
+provider = "anthropic"
+url = "https://api.anthropic.com"
+model = "claude-opus-5"
+[models.family_binding]
+family = "claude-opus"
+preset = "anthropic"
+mode = "pinned"
+`;
+
+test.skip(!DIR, 'set MODELS_SHOTS_DIR to take the pictures');
+test.use({ scenario: { families: { today: '2026-11-23', lists: LISTS }, configAppend: PINNED_OPUS }, colorScheme: 'light' });
+
+for (const width of [1280, 420]) {
+  test(`pictures at ${width} px`, async ({ page, world, httpRequests }) => {
+    // Tall enough that the settings' own scroll box shows the whole page.
+    await page.setViewportSize({ width, height: width < 600 ? 3200 : 2000 });
+    mkdirSync(DIR!, { recursive: true });
+    const shot = (name: string) => page.screenshot({ path: path.join(DIR!, `${name}-${width}.png`) });
+    await page.goto(`${world.url}/settings/models?lang=zh`);
+    await expectWebRtc(page, httpRequests);
+    await expect(page.getByTestId('models-page')).toBeVisible();
+    await shot('page');
+
+    const row = page.getByTestId('provider-row').filter({ hasText: 'Anthropic' }).first();
+    await row.getByRole('button').first().click();
+    await row.getByTestId('key-input').fill('test-only-marker');
+    await row.getByTestId('key-input').press('Enter');
+    await expect(row.getByTestId('key-set')).toBeVisible();
+    const opus = row.getByTestId('family-row').filter({ has: page.getByLabel('Opus', { exact: true }) });
+    await opus.getByRole('button').first().click();
+    await page.getByRole('menuitem').filter({ hasText: '恢复自动跟上' }).click();
+    await expect(opus.getByTestId('move-notice')).toBeVisible();
+    await shot('claude-notice');
+    await opus.getByTestId('move-notice').getByRole('button', { name: '知道了' }).click();
+    await expect(opus.getByTestId('move-notice')).toBeHidden();
+    await row.getByTestId('advanced').locator('summary').click();
+    await shot('claude-open');
+
+    await page.getByTestId('add-provider-button').click();
+    await expect(page.getByTestId('add-provider')).toBeVisible();
+    await shot('add-provider');
+  });
+}

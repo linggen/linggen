@@ -19,7 +19,7 @@ export const DefaultCard: React.FC<Props> = ({ providers, first, busy, onPick })
     <section className={cardCls}>
       <h2 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">{W.defaultModel}</h2>
       <p className={`${hintCls} mt-1`}>{W.defaultModelHint}</p>
-      <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5">
+      <div className="mt-3 flex flex-col gap-1.5 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-4">
         <span className="w-28 shrink-0 text-[13px] font-semibold">{W.chat}</span>
         <select
           data-testid="default-chat"
@@ -39,7 +39,7 @@ export const DefaultCard: React.FC<Props> = ({ providers, first, busy, onPick })
         </select>
       </div>
       {others.map((u) => (
-        <div key={`${u.word}${u.model}`} data-testid="use-line" className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-0.5">
+        <div key={`${u.word}${u.model}`} data-testid="use-line" className="mt-2 flex flex-col gap-0.5 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-4">
           <span className="w-28 shrink-0 text-[13px] font-semibold">{u.word}</span>
           <span className="min-w-0 break-all text-xs" data-no-i18n>{u.model}</span>
           <span className={hintCls}>{u.ready ? W.ready : W.notReady}</span>

@@ -97,7 +97,7 @@ export const AgentsSection: React.FC<{
             <Field
               label="Model"
               hint="Default for new chats. A chat can switch its own."
-              details="The first starred model in Models. The other stars are fallbacks, tried in order."
+              details="The default model in Models. The models after it are fallbacks, tried in order."
             >
               <select className={inputCls} value={lingModel} onChange={(e) => setLingModel(e.target.value)}>
                 {!lingModel && <option value="">Not set (first configured model)</option>}

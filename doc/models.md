@@ -92,7 +92,7 @@ Optional fields:
 
 ### Web UI setup
 
-The easiest way to add models: open **Settings → Models** in the browser, click **Add Model**, pick a provider, paste your API key. The health indicator turns green when connected.
+The easiest way to add models: open **Settings → Models** in the browser, click **Add provider**, pick one, paste your key once. The engine ticks the provider's starter families (Sonnet for Claude, say); tick more, or type a model name under **Advanced**. The page draws what `GET /api/providers` answers and decides nothing; each button calls its route (`PUT /api/providers/{id}/key`, `PUT …/families/{family}`, `POST …/models` with just `{model}` — the engine makes the row's id).
 
 ## Prompt cache
 
@@ -167,12 +167,12 @@ All use their respective `provider` value (or `provider = "openai"` with their e
 
 Settings → Models sets the default:
 
-- **Star** — the default for new sessions (`routing.default_models`).
+- **The default-model card** — the default for new sessions (`routing.default_models`). Picking a model puts it first and keeps the chain after it as fallbacks, as `Config::make_default` does (the page's `madeDefault` says the same rule).
 
 A Claude model runs natively, with an API key or the Claude subscription
 sign-in. The 2.5.1 key for the retired Claude sessions' default,
 `routing.claude_default_model`, is read once on load: when the config names
-no other default it becomes the star, so a person who ran only Claude keeps
+no other default it becomes the default, so a person who ran only Claude keeps
 it (`Config::migrate_retired_claude_default`); it is never written again.
 
 **A sign-in makes work possible.** When a person signs in (ChatGPT, or the
