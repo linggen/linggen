@@ -107,6 +107,12 @@ own world and throws it away:
   cannot send) is a loopback stand-in in the test (`tests/system/drawing.rs`);
   `Setup::image_api` points the engine at it through
   `LINGGEN_IMAGE_API_URL`.
+  Live-voice tokens (`tests/system/live_token.rs`) are the same: a loopback
+  stand-in for Google's `auth_tokens`, reached through
+  `LINGGEN_LIVE_GOOGLE_BASE` — read only by a build with the `test-support`
+  feature (a shipped `ling` has no such code), set in the engine's
+  environment when it starts, so no page or request can set it — and the key
+  from `LINGGEN_LIVE_GOOGLE_KEY`.
 - **The event stream**: each world's engine runs with
   `LINGGEN_EVENT_LOG=<root>/events.jsonl` — every UI event it sends, one JSON
   line each (off unless set) — so a test reads what a surface would see

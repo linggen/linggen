@@ -120,6 +120,9 @@ around (`doc/plan-3.0.md`) is not started.
 - `POST /api/stt` hears a clip (WAV 16 kHz mono up to 60 s, or JSON
   `{"wav_b64"}`) for the owner and answers `{text, language, ms}`;
   `GET /api/stt` says whether this Mac can hear and why not.
+- `POST /api/live/token` gives an app's page a token for one live voice
+  session (Google, the owner only) without the page ever holding your key;
+  `GET /api/live` says whether it can.
 
 ## [2.6.1] - 2026-11-22 — a private app answers in its own session; the moon's real phase
 

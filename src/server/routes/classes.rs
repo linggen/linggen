@@ -54,6 +54,10 @@ pub(crate) const CLASSES: &[(&str, &str, RouteClass)] = &[
     ("POST", "/api/stt", At(Chat)),
     ("GET", "/api/stt", At(Chat)),
     ("GET", "/api/user/language", At(Chat)),
+    // Live voice: reached at chat like hearing and her voice; the handlers
+    // keep both to the owner (`api::live`), as `/api/stt`'s do.
+    ("GET", "/api/live", At(Chat)),
+    ("POST", "/api/live/token", At(Chat)),
     // -- The way in: health, pairing's bootstrap, the channel's signaling,
     // and the page shell (the LAN gate leaves the first three open).
     ("GET", "/api/health", At(Chat)),

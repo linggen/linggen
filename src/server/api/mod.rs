@@ -10,6 +10,7 @@ pub(super) mod config;
 pub(super) mod ling_mem_config;
 pub(super) mod ling_mem_connect;
 pub(super) mod ling_mem_primary;
+pub(super) mod live;
 pub(super) mod marketplace;
 pub(super) mod media;
 pub(super) mod memory;

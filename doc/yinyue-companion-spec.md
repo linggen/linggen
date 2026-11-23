@@ -97,6 +97,31 @@ The person is at that page when one of its own surfaces reads present
 gesture, never the talking loop, and fetches no audio — as when muted. When
 and how often she speaks up is unchanged. The phone has no spoken voice.
 
+### Live voice for an app's page (2.7)
+
+An app whose page talks to a provider's live voice socket (the language
+teacher's live lesson) never holds the provider's key: the engine, which holds
+the keys, mints a token good for **one** session and hands the page only that.
+The engine names no app; any page may ask. Providers are a declared list
+(`live::PROVIDERS`, one entry each: token endpoint, model, socket address, the
+provider name its key is stored under); `google` is the first.
+
+- **`POST /api/live/token`** `{"provider": "google"}` → `{provider, model, ws_url,
+  token, expires}`; `ws_url` is complete — the page opens it as given. The token
+  is fixed to the engine's model and audio output, one use, alive 30 minutes, to
+  be used within one minute. Refusals are `{"error": <code>}` with a fixed code
+  and nothing of the provider's reply: `unknown_provider` 400, `no_key` 409,
+  `slow_down` 429 (five tokens a minute), `key_refused`, `request_refused`,
+  `provider_down`, `unreachable`, `bad_answer` (each 502).
+- **`GET /api/live`** → `{providers: [{id, ready, why?}]}`, `why` one of `no_key`,
+  `not_owner`. It calls no provider and starts nothing.
+- **Owner only**, as hearing is: both routes are classed at chat and answer a
+  caller below the owner 403 `beyond_level` (the list says `not_owner`).
+- **The key and the token are never written** to a log, an event, a session row
+  or an error text. The key is the one stored for the `gemini` provider
+  (Settings → Models, found by provider and host, no model call); scratch
+  engines, which hold none, take `LINGGEN_LIVE_GOOGLE_KEY` (`doc/cli.md`).
+
 ### Asked aloud — answered aloud (2.7, engine half built)
 
 A person who speaks to her is not reading, so the rule above has one agreed

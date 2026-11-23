@@ -16,6 +16,9 @@ pub(super) fn routes() -> Routes {
                 .layer(axum::extract::DefaultBodyLimit::max(api::stt::BODY_LIMIT))
                 .get(api::stt::stt_status_handler),
         )
+        // Live voice: a one-session token for an app's page (owner only)
+        .route("/api/live", get(api::live::status_handler))
+        .route("/api/live/token", post(api::live::token_handler))
         .route("/api/yinyue/chat", post(api::yinyue::chat_handler))
         .route("/api/yinyue/event", post(api::yinyue::event_handler))
         .route("/api/yinyue/answer", post(api::yinyue::answer_handler))
