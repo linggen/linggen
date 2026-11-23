@@ -48,12 +48,9 @@ async fn respond(
         serde_json::from_str(&body).unwrap_or(Value::Null),
     ));
     match answer {
-        Answer::Token => {
-            let expire = serde_json::from_str::<Value>(&body)
-                .ok()
-                .and_then(|b| b["expireTime"].as_str().map(String::from));
-            axum::Json(json!({"name": TOKEN, "expireTime": expire})).into_response()
-        }
+        // As the real service answers (seen 2026-11-23): the token alone, no
+        // expiry — the engine tells the page the lifetime it asked for.
+        Answer::Token => axum::Json(json!({"name": TOKEN})).into_response(),
         Answer::Status(code) => {
             let text =
                 json!({"error": {"message": format!("{PROVIDER_BODY} key={key}")}}).to_string();

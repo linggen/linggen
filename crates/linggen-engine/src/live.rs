@@ -51,7 +51,9 @@ impl std::fmt::Debug for Secret {
 /// What a provider's token answer comes to.
 struct Answer {
     token: Secret,
-    expires: String,
+    /// When the provider says the token ends; none when its answer holds only
+    /// the token (then it ends when this engine asked: `token_minutes`).
+    expires: Option<String>,
 }
 
 /// One live provider: everything that differs between providers.
@@ -76,6 +78,9 @@ pub struct Provider {
     /// The scratch engines' knob: when this environment variable is set it is
     /// the key for this route, and for this route only (`find_key`).
     key_env: &'static str,
+    /// How long a token lives, as this engine asks for it. Also the expiry
+    /// told to the page when the provider's answer names none.
+    token_minutes: i64,
     /// The token request's body, fixing the model and audio output.
     body: fn(&Provider, DateTime<Utc>) -> Value,
     /// The token and its expiry out of the provider's answer.
@@ -97,6 +102,7 @@ const GOOGLE: Provider = Provider {
     key_provider: "gemini",
     key_host: "generativelanguage.googleapis.com",
     key_env: "LINGGEN_LIVE_GOOGLE_KEY",
+    token_minutes: 30,
     body: google_body,
     read: google_answer,
     socket_with: google_socket,
@@ -107,11 +113,10 @@ const GOOGLE: Provider = Provider {
 /// `bidiGenerateContentSetup`: the service refuses the SDK's
 /// `liveConnectConstraints` (400, measured 2026-11-22).
 fn google_body(p: &Provider, now: DateTime<Utc>) -> Value {
-    let at = |span: Span| (now + span).format("%Y-%m-%dT%H:%M:%SZ").to_string();
     json!({
         "uses": 1,
-        "expireTime": at(Span::minutes(30)),
-        "newSessionExpireTime": at(Span::minutes(1)),
+        "expireTime": stamp(now + Span::minutes(p.token_minutes)),
+        "newSessionExpireTime": stamp(now + Span::minutes(1)),
         "bidiGenerateContentSetup": {
             "model": format!("models/{}", p.model),
             "generationConfig": { "responseModalities": ["AUDIO"] },
@@ -119,10 +124,16 @@ fn google_body(p: &Provider, now: DateTime<Utc>) -> Value {
     })
 }
 
-/// The token is the answer's `name`.
+/// A time as a provider reads it: UTC, to the second.
+fn stamp(at: DateTime<Utc>) -> String {
+    at.format("%Y-%m-%dT%H:%M:%SZ").to_string()
+}
+
+/// The token is the answer's `name`. The real answer holds nothing else
+/// (seen 2026-11-23); an `expireTime` is read when one is there.
 fn google_answer(v: &Value) -> Option<Answer> {
     let token = v.get("name")?.as_str().filter(|t| !t.is_empty())?;
-    let expires = v.get("expireTime")?.as_str()?.to_string();
+    let expires = v.get("expireTime").and_then(Value::as_str).map(str::to_string);
     Some(Answer {
         token: Secret::new(token),
         expires,
@@ -269,6 +280,7 @@ pub async fn mint(
     }
     let answer: Value = response.json().await.map_err(|_| Refusal::BadAnswer)?;
     let Answer { token, expires } = (p.read)(&answer).ok_or(Refusal::BadAnswer)?;
+    let expires = expires.unwrap_or_else(|| stamp(now + Span::minutes(p.token_minutes)));
     Ok(Minted {
         provider: p.id,
         model: p.model,
@@ -380,15 +392,17 @@ mod tests {
     }
 
     #[test]
-    fn the_answer_needs_a_token_and_an_expiry() {
+    fn the_answer_needs_a_token_and_may_name_its_expiry() {
         let ok = json!({"name": "auth_tokens/abc", "expireTime": "2026-11-22T12:30:00Z"});
-        assert_eq!(
-            (google().read)(&ok).unwrap().token.expose(),
-            "auth_tokens/abc"
-        );
+        let read = (google().read)(&ok).unwrap();
+        assert_eq!(read.token.expose(), "auth_tokens/abc");
+        assert_eq!(read.expires.as_deref(), Some("2026-11-22T12:30:00Z"));
+        // The real service answers with the token alone (seen 2026-11-23).
+        let bare = (google().read)(&json!({"name": "auth_tokens/abc"})).unwrap();
+        assert_eq!(bare.token.expose(), "auth_tokens/abc");
+        assert_eq!(bare.expires, None);
         assert!((google().read)(&json!({"expireTime": "x"})).is_none());
         assert!((google().read)(&json!({"name": "", "expireTime": "x"})).is_none());
-        assert!((google().read)(&json!({"name": "t"})).is_none());
     }
 
     /// Lock: the key is read in one function and sent in one; a secret is
