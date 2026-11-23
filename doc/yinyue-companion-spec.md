@@ -133,6 +133,8 @@ typed line at the page stays text.
   that must not download without a yes (`/shared/hold-to-talk.js` with `knock:
   false`) asks `status()`, and sends the empty request (`start()`) only from the
   person's yes.
+  A fetch that failed says why and whether trying again helps (at most 20 words);
+  one being retried says so (`hf_fetch::Note`; see storage-spec).
 - **Can she speak? `GET /api/tts`**: `{"speaks": true, "natural": bool}`, or
   `{"speaks": false, "natural": false, "reason"}` on a machine with none of her
   voices. `natural`: the voice lane's own voice is on disk; otherwise a line is

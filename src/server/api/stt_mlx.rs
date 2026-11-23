@@ -25,6 +25,7 @@ use base64::Engine as _;
 
 use super::mlx_sidecar::VoiceSidecar;
 use super::stt::{Heard, SttProvider, Unavailable, RATE};
+use crate::hf_fetch::Note;
 use crate::runtime::{Attempt, AttemptState};
 
 /// The least a hear waits for the model's reply once it has the slot. The
@@ -114,6 +115,8 @@ struct Standing {
     /// Those and the hearing model.
     model_on_disk: bool,
     fetch: AttemptState,
+    /// What the fetch last said of itself: the reason it gave up, or that it is trying again.
+    fetch_note: Option<Note>,
     loaded: bool,
     loading: AttemptState,
 }
@@ -170,8 +173,15 @@ impl MlxSttProvider {
         s.lane.map_err(|reason| Unavailable::never(format!("Hearing {reason}.")))?;
         if !s.model_on_disk {
             return Err(match (s.fetch, s.voice_ready) {
+                // The fetch says why, and that it is trying again, in its own words (`hf_fetch::Note`).
+                (AttemptState::Running { .. }, voice_ready) if matches!(s.fetch_note, Some(Note::Retrying { .. })) => {
+                    Unavailable::working(note_line(s.fetch_note.as_ref(), voice_ready))
+                }
                 (AttemptState::Running { retry }, voice_ready) => Unavailable::working(fetch_line(retry, voice_ready)),
-                (AttemptState::Failed, voice_ready) => Unavailable::download(format!("Couldn't fetch {}. Hold again to try again.", download_of(voice_ready))),
+                (AttemptState::Failed, voice_ready) => Unavailable::download(match &s.fetch_note {
+                    Some(note @ Note::Failed(_)) => note_line(Some(note), voice_ready),
+                    _ => format!("Couldn't fetch {}. Hold again to try again.", download_of(voice_ready)),
+                }),
                 (AttemptState::Idle, true) => Unavailable::download("The hearing model (1.6 GB) is not on this Mac yet."),
                 (AttemptState::Idle, false) => Unavailable::download("Her voice and hearing (about 4 GB) are not on this Mac yet."),
             });
@@ -208,13 +218,20 @@ fn fetch_line(retry: bool, voice_ready: bool) -> String {
     }
 }
 
+/// What the fetch said of itself, in a sentence: why it gave up and whether
+/// trying again can help, or that it is trying again.
+fn note_line(note: Option<&Note>, voice_ready: bool) -> String {
+    let again = "Hold again to try again.";
+    note.map_or_else(String::new, |n| n.told(download_of(voice_ready), again))
+}
+
 /// What a hearing fetch brings, with its size — the one place the size is
 /// told, before the person says yes (the "not on this Mac yet" line) and
 /// while it runs: only the hearing model, or the voice environment under it
 /// too (a Mac that has not built her voice yet).
 fn download_of(voice_ready: bool) -> &'static str {
     match voice_ready {
-        true => "the hearing model (1.6 GB)",
+        true => crate::runtime::what_is_fetched(crate::runtime::STT_MODEL),
         false => "her voice and hearing (about 4 GB)",
     }
 }
@@ -227,6 +244,7 @@ impl SttProvider for MlxSttProvider {
             voice_ready: crate::runtime::voice_ready(),
             model_on_disk: crate::runtime::hearing_ready(),
             fetch: crate::runtime::hearing_fetch(),
+            fetch_note: crate::runtime::hearing_note(),
             loaded: self.sidecar.hearing_loaded(),
             loading: self.loader.attempt.state(),
         })
@@ -316,6 +334,7 @@ done
             voice_ready: true,
             model_on_disk: true,
             fetch: AttemptState::Idle,
+            fetch_note: None,
             loaded: true,
             loading: AttemptState::Idle,
         }

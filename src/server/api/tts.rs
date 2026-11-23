@@ -416,6 +416,15 @@ pub(crate) fn speech_standing(natural: bool, system_say: bool, kokoro_on_disk: b
     Speech { speaks: natural || system_say || kokoro_on_disk, natural }
 }
 
+/// Why there is no voice: its fetch gave up (and why), or it is not here yet.
+fn no_voice_reason() -> String {
+    let again = "It tries again on its own.";
+    match crate::runtime::voice_note() {
+        Some(note) => note.told(crate::runtime::what_is_fetched(crate::runtime::TTS_MODEL), again),
+        None => "This Mac has no voice to read with.".to_string(),
+    }
+}
+
 fn speech_now() -> Speech {
     #[cfg(feature = "kokoro")]
     let kokoro = KokoroProvider::weights_on_disk();
@@ -433,7 +442,7 @@ pub(crate) async fn tts_status_handler() -> impl IntoResponse {
         false => Json(serde_json::json!({
             "speaks": false,
             "natural": false,
-            "reason": "This Mac has no voice to read with."
+            "reason": no_voice_reason()
         })),
     }
 }

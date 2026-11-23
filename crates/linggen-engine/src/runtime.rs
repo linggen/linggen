@@ -423,9 +423,9 @@ async fn prewarm_lanes(wanted: Wanted, progress: Progress, quiet: Quiet) {
     for attempt in 0..3u32 {
         match prewarm_stages(wanted, &progress, &quiet).await {
             Ok(()) => return,
-            Err(e) if format!("{e:#}").contains("low disk") => {
-                // Not retryable on a timer — the disk won't free itself.
-                // Next boot re-checks; no 10/20/40-minute wedge.
+            Err(e) if e.downcast_ref::<crate::hf_fetch::Failure>().is_some_and(|f| !f.cause.transient()) => {
+                // Not retryable on a timer — the disk won't free itself, a
+                // refusal stands. Next boot re-checks; no 10/20/40-minute wedge.
                 tracing::warn!("[runtime] prewarm stopped: {e:#}");
                 return;
             }
@@ -483,6 +483,7 @@ fn tts_model_stamp() -> PathBuf {
 /// not wait for quiet — only for the download slot.
 pub fn ensure_pictures_in_background() {
     let wanted = Wanted { voice: false, pictures: true, hearing: false };
+    crate::hf_fetch::forget(&[PICTURE_MODEL]);
     tokio::spawn(prewarm_lanes(wanted, progress_sink(), always_quiet()));
 }
 
@@ -497,6 +498,7 @@ pub fn ensure_hearing_in_background(then: impl FnOnce() + Send + 'static) {
     let Some(run) = hearing_attempt().begin() else {
         return;
     };
+    crate::hf_fetch::forget(&hearing_repos());
     tokio::spawn(run_attempt(run, fetch_hearing(), then));
 }
 
@@ -517,6 +519,28 @@ async fn fetch_hearing() -> Result<()> {
 fn hearing_attempt() -> &'static Attempt {
     static FETCH: std::sync::OnceLock<Attempt> = std::sync::OnceLock::new();
     FETCH.get_or_init(Attempt::default)
+}
+
+/// The models a hearing fetch brings: the hearing model, and the voice model
+/// under it on a Mac that has not built her voice yet.
+fn hearing_repos() -> [&'static str; 2] {
+    [STT_MODEL, TTS_MODEL]
+}
+
+/// What the hearing fetch last said about itself (retrying, or why it gave
+/// up). Asking starts nothing.
+pub fn hearing_note() -> Option<crate::hf_fetch::Note> {
+    crate::hf_fetch::note_for(&hearing_repos())
+}
+
+/// What the picture model's fetch last said about itself. Asking starts nothing.
+pub fn pictures_note() -> Option<crate::hf_fetch::Note> {
+    crate::hf_fetch::note_for(&[PICTURE_MODEL])
+}
+
+/// What her voice model's fetch last said about itself. Asking starts nothing.
+pub fn voice_note() -> Option<crate::hf_fetch::Note> {
+    crate::hf_fetch::note_for(&[TTS_MODEL])
 }
 
 /// What the hearing model's fetch is doing now. Asking starts nothing.
@@ -702,9 +726,7 @@ async fn run_stage(stage: &str) -> Result<()> {
         "tools" | "tts" | "pictures" => {
             ensure_venv(stage).await?;
         }
-        "tts-model" => ensure_tts_model().await?,
-        "stt-model" => ensure_stt_model().await?,
-        "pictures-model" => ensure_picture_model().await?,
+        model if HUB_MODELS.iter().any(|m| m.stage == model) => ensure_hub_model(model).await?,
         _ => unreachable!(),
     }
     Ok(())
@@ -875,79 +897,125 @@ async fn pip(env: &str, args: &[&str]) -> Result<String> {
     Err(last.unwrap_or_else(|| anyhow::anyhow!("pip: nothing to run")))
 }
 
-/// Warm the TTS model into the shared HF cache (the same one Kokoro uses),
-/// so the first spoken line never downloads, and stamp it so a later boot
-/// skips both the load and the quiet wait. huggingface_hub resumes
-/// partial downloads on its own; `HF_ENDPOINT` is the user's, else
-/// hf-mirror.com when huggingface.co is unreachable (see `hf_mirror`).
-async fn ensure_tts_model() -> Result<()> {
-    if stamp_matches(&tts_model_stamp(), TTS_MODEL) {
-        return Ok(());
-    }
-    check_disk_headroom(&runtime_dir(), 6)?;
-    let code = format!("from mlx_audio.tts.utils import load_model; load_model({TTS_MODEL:?})");
-    run_ok(
-        tokio::process::Command::new(env_bin("tts", "python3"))
-            .arg("-c")
-            .arg(&code)
-            .env("HF_HOME", hf_home())
-            .env("HF_ENDPOINT", crate::hf_mirror::endpoint().await),
-        "warm tts model",
-    )
-    .await?;
-    std::fs::write(tts_model_stamp(), TTS_MODEL)?;
-    tracing::info!("[runtime] tts model ready");
-    Ok(())
+/// A model fetched from the Hugging Face Hub into the shared cache: the one
+/// shape the voice, hearing and picture models have. How such a model is
+/// fetched is decided in [`crate::hf_fetch`] and started only by
+/// [`ensure_hub_model`]; a model is added by adding a row here (and its
+/// constant, stamp and stage name), never by writing another fetch.
+pub struct HubModel {
+    /// The stage name `prewarm_stages` runs it under.
+    pub stage: &'static str,
+    pub repo: &'static str,
+    /// The venv whose Python runs the library's fetch.
+    pub venv: &'static str,
+    /// Free disk it needs, whole GB.
+    pub need_gb: u64,
+    /// What a person is told is being fetched, with its size where it is the
+    /// whole fetch. (The hearing page names its own, which counts the voice
+    /// environment under it when that is missing too: `stt_mlx::download_of`.)
+    pub what: &'static str,
+    /// How the library is asked: see [`crate::hf_fetch::LibraryStep`].
+    pub step: crate::hf_fetch::LibraryStep,
+    /// The file that says the model is whole.
+    pub stamp: fn() -> PathBuf,
 }
 
-/// Fetch the hearing model into the same HF cache and stamp it, so
-/// [`hearing_ready`] is a file test. Downloaded, not loaded: the sidecar
-/// reads it from this cache by local path (`local_files_only`), so hearing
-/// never reaches the hub. `HF_ENDPOINT` as in [`ensure_tts_model`].
-async fn ensure_stt_model() -> Result<()> {
-    if stamp_matches(&stt_model_stamp(), STT_MODEL) {
-        return Ok(());
-    }
-    check_disk_headroom(&runtime_dir(), 3)?;
-    let code = format!(
-        "from huggingface_hub import snapshot_download; snapshot_download({STT_MODEL:?})"
-    );
-    run_ok(
-        tokio::process::Command::new(env_bin("tts", "python3"))
-            .arg("-c")
-            .arg(&code)
-            .env("HF_HOME", hf_home())
-            .env("HF_ENDPOINT", crate::hf_mirror::endpoint().await),
-        "fetch hearing model",
-    )
-    .await?;
-    std::fs::write(stt_model_stamp(), STT_MODEL)?;
-    tracing::info!("[runtime] hearing model ready");
-    Ok(())
+/// Every model the engine fetches from the Hub. Exactly these three
+/// (`hub_models_are_fetched_in_one_place` fails on a fourth fetch).
+pub const HUB_MODELS: [HubModel; 3] = [
+    HubModel {
+        stage: "tts-model",
+        repo: TTS_MODEL,
+        venv: "tts",
+        need_gb: 6,
+        what: "her voice model",
+        // Loads it too, as it always has: a voice that will not load is found
+        // out here, not on the first spoken line.
+        step: crate::hf_fetch::LibraryStep::LoadAudioModel,
+        stamp: tts_model_stamp,
+    },
+    HubModel {
+        stage: "stt-model",
+        repo: STT_MODEL,
+        venv: "tts",
+        need_gb: 3,
+        what: "the hearing model (1.6 GB)",
+        // Downloaded, not loaded: the sidecar reads it from this cache by
+        // local path (`local_files_only`), so hearing never reaches the hub.
+        step: crate::hf_fetch::LibraryStep::Snapshot,
+        stamp: stt_model_stamp,
+    },
+    HubModel {
+        stage: "pictures-model",
+        repo: PICTURE_MODEL,
+        venv: "pictures",
+        need_gb: PICTURES_LANE.disk_gb,
+        what: "the picture model (about 4 GB)",
+        step: crate::hf_fetch::LibraryStep::Snapshot,
+        stamp: picture_model_stamp,
+    },
+];
+
+/// What a person is told is being fetched for `repo` ([`HubModel::what`]).
+pub fn what_is_fetched(repo: &str) -> &'static str {
+    HUB_MODELS.iter().find(|m| m.repo == repo).map_or("a model", |m| m.what)
 }
 
-/// Warm the picture model into the same HF cache, then stamp it so
-/// [`pictures_ready`] is a file test. snapshot_download resumes partial
-/// pulls on its own; `HF_ENDPOINT` as in [`ensure_tts_model`].
-async fn ensure_picture_model() -> Result<()> {
-    if stamp_matches(&picture_model_stamp(), PICTURE_MODEL) {
-        return Ok(());
-    }
-    check_disk_headroom(&runtime_dir(), PICTURES_LANE.disk_gb)?;
-    let code = format!(
-        "from huggingface_hub import snapshot_download; snapshot_download({PICTURE_MODEL:?})"
-    );
-    run_ok(
-        tokio::process::Command::new(env_bin("pictures", "python3"))
-            .arg("-c")
+fn hub_model(stage: &str) -> &'static HubModel {
+    HUB_MODELS.iter().find(|m| m.stage == stage).expect("a stage that fetches a hub model")
+}
+
+/// The library's fetch of one model, run in its venv ([`crate::hf_fetch::Steps`]).
+struct LibraryRun {
+    model: &'static HubModel,
+}
+
+#[async_trait::async_trait]
+impl crate::hf_fetch::Steps for LibraryRun {
+    async fn library(&self, offline: bool) -> std::result::Result<(), String> {
+        let code = crate::hf_fetch::library_code(self.model.step, self.model.repo, offline);
+        let mut cmd = tokio::process::Command::new(env_bin(self.model.venv, "python3"));
+        cmd.arg("-c")
             .arg(&code)
             .env("HF_HOME", hf_home())
-            .env("HF_ENDPOINT", crate::hf_mirror::endpoint().await),
-        "warm picture model",
-    )
-    .await?;
-    std::fs::write(picture_model_stamp(), PICTURE_MODEL)?;
-    tracing::info!("[runtime] picture model ready");
+            // Asked each try: a VPN switched on between two is noticed.
+            .env("HF_ENDPOINT", crate::hf_mirror::endpoint().await);
+        if offline {
+            cmd.env("HF_HUB_OFFLINE", "1");
+        }
+        run_ok(&mut cmd, self.model.stage)
+        .await
+        .map(|_| ())
+        .map_err(|e| format!("{e:#}"))
+    }
+
+    async fn hub(&self) -> crate::hf_fetch::Hub {
+        crate::hf_fetch::Hub {
+            bases: crate::hf_mirror::bases().await,
+            users: crate::hf_mirror::endpoint_is_users().await,
+        }
+    }
+}
+
+/// Fetch one hub model into the shared HF cache and stamp it, so the model's
+/// `*_ready` is a file test and a later boot skips both the fetch and the
+/// quiet wait. A failure is a [`crate::hf_fetch::Failure`]: what was the
+/// matter, and whether trying again can help, which the page, the picture
+/// tool and the voice status tell the person. Every `ensure_*` of a model
+/// goes through here.
+async fn ensure_hub_model(stage: &str) -> Result<()> {
+    let model = hub_model(stage);
+    if stamp_matches(&(model.stamp)(), model.repo) {
+        return Ok(());
+    }
+    if let Err(e) = check_disk_headroom(&runtime_dir(), model.need_gb) {
+        let failure = crate::hf_fetch::Failure::classify(&format!("{e:#}"), false);
+        return Err(crate::hf_fetch::failed(model.repo, failure).into());
+    }
+    let cache = hf_home().join("hub");
+    crate::hf_fetch::fetch(model.repo, &cache, &LibraryRun { model }, &crate::hf_fetch::Pace::patient()).await?;
+    std::fs::write((model.stamp)(), model.repo)?;
+    tracing::info!("[runtime] {} ready", model.what);
     Ok(())
 }
 
@@ -996,7 +1064,7 @@ async fn download_verified(asset: &str, sha256: &str, dest: &Path) -> Result<()>
     Err(last.unwrap_or_else(|| anyhow::anyhow!("no download source for {asset}")))
 }
 
-async fn download_resumable(url: &str, part: &Path) -> Result<()> {
+pub(crate) async fn download_resumable(url: &str, part: &Path) -> Result<()> {
     let have = part.metadata().map(|m| m.len()).unwrap_or(0);
     let client = reqwest::Client::builder()
         .connect_timeout(crate::mirror::CONNECT_TIMEOUT)
