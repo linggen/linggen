@@ -54,7 +54,7 @@ function clock() {
  *   gate()                 holds the microphone request until release() / fail(name)
  *   speak(ms, rate)        the recorder posts a block of sound
  */
-function rig() {
+function rig(more = {}) {
   const clk = clock();
   const win = new EventTarget();
   const doc = Object.assign(new EventTarget(), { hidden: false });
@@ -114,7 +114,7 @@ function rig() {
     now: clk.now, setTimer: clk.setTimer, clearTimer: clk.clearTimer, win, doc,
   };
   const answerHears = (a) => { heldGet?.(a); heldGet = null; };
-  const talk = createHoldToTalk(deps);
+  const talk = createHoldToTalk({ ...deps, ...more });
   talk.subscribe(() => r.views.push(talk.view()));
   return Object.assign(r, {
     talk, clk, win, doc, answerHears,
@@ -646,6 +646,69 @@ test('lock: the header a call names its wait in is the channel\'s and the UI pol
 test('lock: the one wait a hearing is given is a plain number the engine reads', () => {
   // src/server/api/stt_mlx.rs reads this line to hold its own waits inside it.
   assert.match(shared, /^export const HEAR_BUDGET_MS = [\d_]+;$/m);
+});
+
+// ── An app page's own way: the language, no knock, the status and the yes ──
+
+const NOT_HERE = { status: 200, body: { hears: false, reason: 'The hearing model (1.6 GB) is not on this Mac yet.', fetching: false, next: 'download' } };
+
+test('a clip names its language when the page does, and says nothing of it when not', async () => {
+  for (const [language, want] of [[undefined, undefined], ['auto', 'auto'], ['en', 'en']]) {
+    const r = rig(language ? { language } : {});
+    await hold(r);
+    r.speak(800);
+    r.talk.release('pointer');
+    await r.clk.advance(0);
+    const body = JSON.parse(posts(r)[0].init.body);
+    assert.equal(body.language, want, String(language));
+    assert.equal(Object.hasOwn(body, 'language'), want !== undefined, 'no field at all without a language: the engine decides, as ever');
+  }
+});
+
+test('a page that opts out of the knock: a hold that finds her deaf shows the reason and downloads nothing', async () => {
+  const r = rig({ knock: false });
+  r.hearsAs.value = NOT_HERE;
+  await hold(r);
+  assert.equal(r.talk.view().note, NOT_HERE.body.reason);
+  assert.equal(posts(r).length, 0, 'not one POST: the knock is what starts the fetch');
+  assert.equal(r.asked, 0);
+  r.talk.release('pointer');
+});
+
+test('status() asks and starts nothing: one GET, no POST, the engine\'s word and sentence', async () => {
+  const r = rig();
+  r.hearsAs.value = NOT_HERE;
+  assert.deepEqual(await r.talk.status(), { hears: false, next: 'download', reason: NOT_HERE.body.reason });
+  r.hearsAs.value = { status: 200, body: { hears: true } };
+  assert.deepEqual(await r.talk.status(), { hears: true, next: null, reason: null });
+  r.hearsAs.value = { status: 200, body: { hears: false, reason: 'Hearing needs an Apple Silicon Mac.', fetching: false, next: 'never' } };
+  assert.equal((await r.talk.status()).next, 'never');
+  r.hearsAs.value = FETCHING;
+  assert.equal((await r.talk.status()).next, 'working', 'an engine that names no `next` but is fetching');
+  r.hearsAs.value = 'throw';
+  assert.deepEqual(await r.talk.status(), { hears: false, next: 'retry', reason: WORDS.failed, failed: true });
+  assert.equal(posts(r).length, 0);
+  assert.equal(r.asked, 0);
+});
+
+test('start() is the one call that knocks: a POST with no clip, then the fresh status', async () => {
+  const r = rig({ knock: false });
+  r.hearsAs.value = NOT_HERE;
+  r.heardAs.value = { status: 503, body: { error: 'unavailable', reason: 'Fetching the hearing model (1.6 GB).', fetching: true, next: 'working' } };
+  const first = await r.talk.start();
+  assert.equal(posts(r).length, 1);
+  assert.equal(posts(r)[0].url, '/api/stt');
+  assert.ok(!posts(r)[0].init.body.includes('wav_b64'), 'a knock carries no sound');
+  assert.equal(first.next, 'download', 'it answers what the engine says now (a GET after the knock)');
+  assert.deepEqual(r.fetched.map((f) => f.init.method), ['POST', 'GET']);
+});
+
+test('a hold still asks the engine, and for an engine that hears knocks nothing', async () => {
+  const r = rig({ knock: false, language: 'auto' });
+  await hold(r);
+  assert.equal(phase(r), 'listening');
+  assert.equal(posts(r).length, 0);
+  r.talk.cancel();
 });
 
 // ── Review fixes ───────────────────────────────────────────────────────

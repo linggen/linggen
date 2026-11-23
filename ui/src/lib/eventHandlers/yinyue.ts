@@ -199,6 +199,9 @@ function showWords(text: string, emotion: string, raised?: SpeechAbout): void {
 }
 
 /// One clause's audio, over the data channel (the WAV comes back as bytes).
+/// An app's page has its own small reader of `/api/tts` (shared/speak-aloud.js):
+/// this player is tied to her avatar and the pet store, so there are two — a change
+/// in how a line is cut into clauses or queued is looked at in both.
 async function fetchClause(text: string): Promise<ArrayBuffer> {
   const resp = await fetch('/api/tts', {
     method: 'POST',

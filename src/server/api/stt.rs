@@ -6,15 +6,19 @@
 //! sidecar ([`super::stt_mlx`]).
 //!
 //! `GET /api/stt` — can she hear now? `{"hears": true}`, or `{"hears": false,
-//! "reason", "fetching"}`, asked before the microphone opens. It is the same
+//! "reason", "fetching", "next"}` (`next`: [`Next`], what would help), asked
+//! before the microphone opens. It is the same
 //! judgement the POST makes ([`hears_now`], the only place that asks the
 //! provider), so the two cannot disagree; asking starts nothing.
 //!
 //! The body is one clip, WAV, 16 kHz mono 16-bit PCM, at most 60 seconds —
 //! raw (`audio/wav`), or `{"wav_b64": "…"}` as JSON, the form a request on
-//! the data channel can carry (it sends every body as JSON). The answer is
+//! the data channel can carry (it sends every body as JSON), which may also
+//! name the language the clip is in (`"language": "en"`, a language code, or
+//! `"auto"`: tell the hearing model nothing). Without it the engine decides
+//! ([`language_to_hear`]). The answer is
 //! `{text, language, ms}`; nothing intelligible is `{"text": ""}`; a machine
-//! that cannot hear is 503 `{error: "unavailable", reason, fetching}`, the
+//! that cannot hear is 503 `{error: "unavailable", reason, fetching, next}`, the
 //! reason in words a person can read — said before the clip is looked at, so
 //! a silent clip on such a machine gets the reason, not "Didn't catch that".
 //!
@@ -64,28 +68,74 @@ pub struct Heard {
     pub language: String,
 }
 
+/// What a person (or a page) can do about a machine that cannot hear now.
+/// Decided where the "no" is made ([`Unavailable`]), so a page never reads a
+/// sentence to know whether a click would download something.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Next {
+    /// This machine cannot hear, whatever is done (the voice lane's gate).
+    Never,
+    /// Files are missing and no fetch runs: a clip sent now starts a download.
+    Download,
+    /// A fetch or a load is under way: wait, and ask again.
+    Working,
+    /// Nothing is missing: a clip sent now starts the load, or tries again.
+    /// Nothing is downloaded.
+    Retry,
+}
+
+impl Next {
+    /// The word a page reads (`"never"`, `"download"`, `"working"`, `"retry"`).
+    fn word(self) -> &'static str {
+        match self {
+            Next::Never => "never",
+            Next::Download => "download",
+            Next::Working => "working",
+            Next::Retry => "retry",
+        }
+    }
+}
+
 /// This machine cannot hear now. The reason is words for the person, not for
-/// a log: what stops it, or what is being done about it. `fetching`: what
-/// hearing waits on (the model's fetch, or its load) is under way, so trying
-/// again soon will do; false after a failure, where the next press tries again.
+/// a log: what stops it, or what is being done about it. `next` says what
+/// would help ([`Next`]); `fetching` on the wire is `next == Working` (what
+/// hearing waits on — the model's fetch, or its load — is under way, so
+/// trying again soon will do; false after a failure, where the next press
+/// tries again).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Unavailable {
     pub reason: String,
-    pub fetching: bool,
+    pub next: Next,
 }
 
 impl Unavailable {
-    pub fn because(reason: impl Into<String>) -> Self {
-        Self { reason: reason.into(), fetching: false }
+    fn with(next: Next, reason: impl Into<String>) -> Self {
+        Self { reason: reason.into(), next }
     }
 
-    pub fn fetching(reason: impl Into<String>) -> Self {
-        Self { reason: reason.into(), fetching: true }
+    pub fn never(reason: impl Into<String>) -> Self {
+        Self::with(Next::Never, reason)
+    }
+
+    pub fn download(reason: impl Into<String>) -> Self {
+        Self::with(Next::Download, reason)
+    }
+
+    pub fn working(reason: impl Into<String>) -> Self {
+        Self::with(Next::Working, reason)
+    }
+
+    pub fn retry(reason: impl Into<String>) -> Self {
+        Self::with(Next::Retry, reason)
+    }
+
+    pub fn is_working(&self) -> bool {
+        self.next == Next::Working
     }
 
     /// The fields a person's page reads, in both answers that carry a no.
     fn fields(&self) -> serde_json::Value {
-        json!({ "reason": self.reason, "fetching": self.fetching })
+        json!({ "reason": self.reason, "fetching": self.is_working(), "next": self.next.word() })
     }
 }
 
@@ -157,13 +207,14 @@ pub(crate) async fn stt_handler(
     answer(state.stt.as_ref(), (level, content_type), language_to_hear(&state), &body).await
 }
 
-/// The language a clip is in, as far as the engine knows it — the one place
-/// that decides it. Two sources, the first that has one: the person's own
+/// The language a clip is in when the request does not say, as far as the
+/// engine knows it. Two sources, the first that has one: the person's own
 /// setting (Settings → Language); under Auto, the language of the line they
 /// last typed to her (`resident::language_person_typed_to_her`). With
 /// neither the tag is empty and the model finds the language itself: the
 /// Mac's language is not evidence of what a person speaks, and a clip forced
-/// into the wrong language comes back as nonsense.
+/// into the wrong language comes back as nonsense. [`clip_language`] is what
+/// decides between this and a language the request names.
 async fn language_to_hear(state: &Arc<ServerState>) -> String {
     let setting = crate::language::setting();
     let written = match setting {
@@ -178,13 +229,31 @@ fn heard_in(setting: Option<&str>, written: Option<&str>) -> String {
     setting.or(written).unwrap_or("").to_string()
 }
 
+/// The word that asks for no language at all: the model is told nothing and
+/// finds it itself. What a learner needs: they speak the language they are
+/// learning, which neither the Settings language nor the last line typed says.
+pub(crate) const AUTO: &str = "auto";
+
+/// The tag the hearing is handed for one clip: the language the request
+/// names (a code as it is, or [`AUTO`] as the empty tag), else `otherwise`,
+/// which is awaited only then — a request that names one reads nothing of her
+/// thread. The one place a request's language and the engine's own meet.
+async fn clip_language(asked: Option<&str>, otherwise: impl std::future::Future<Output = String>) -> String {
+    match asked {
+        Some(tag) if tag.eq_ignore_ascii_case(AUTO) => String::new(),
+        Some(tag) => tag.to_string(),
+        None => otherwise.await,
+    }
+}
+
 /// The route's whole decision, on what it is handed (so a test needs no
 /// server): who asks, then which of the two body forms it is (a third is
 /// refused before anything starts), then whether this machine can hear at
 /// all (a press that finds it cannot starts the fetch it waits on), then
 /// what the body holds, whether that is speech, and only then the model.
-/// `language` is the clip's language, awaited at that last step alone: a
-/// request refused or answered before it reads nothing of her thread.
+/// `language` is the clip's language when the request names none, awaited at
+/// that last step alone: a request refused or answered before it reads
+/// nothing of her thread.
 async fn answer(
     stt: &dyn SttProvider,
     (level, content_type): (PermissionMode, &str),
@@ -203,15 +272,15 @@ async fn answer(
     if let Err(no) = hears_now(stt) {
         return unavailable(&no);
     }
-    let samples = match samples_of(form, body) {
-        Ok(samples) => samples,
+    let Clip { samples, language: asked } = match clip_of(form, body) {
+        Ok(clip) => clip,
         Err(refusal) => return refusal.into_response(),
     };
     if holds_no_speech(&samples) {
         return Json(json!({ "text": "" })).into_response();
     }
     let started = Instant::now();
-    match stt.hear(&samples, &language.await).await {
+    match stt.hear(&samples, &clip_language(asked.as_deref(), language).await).await {
         Ok(heard) if heard.text.trim().is_empty() => Json(json!({ "text": "" })).into_response(),
         Ok(heard) => {
             let ms = started.elapsed().as_millis() as u64;
@@ -264,6 +333,8 @@ enum Refusal {
     /// Not a clip in the one form heard.
     NotThatWav(&'static str),
     TooLong,
+    /// A `language` that is not a language code or `auto`.
+    NotThatLanguage,
 }
 
 impl IntoResponse for Refusal {
@@ -272,6 +343,11 @@ impl IntoResponse for Refusal {
             Refusal::NotThatWav(reason) => {
                 (StatusCode::BAD_REQUEST, Json(json!({ "error": "bad_audio", "reason": reason }))).into_response()
             }
+            Refusal::NotThatLanguage => (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": "bad_language", "reason": "language is a language code (en, zh-Hans) or auto." })),
+            )
+                .into_response(),
             Refusal::TooLong => (
                 StatusCode::PAYLOAD_TOO_LARGE,
                 Json(json!({ "error": "too_long", "reason": format!("At most {MAX_SECS} seconds.") })),
@@ -281,13 +357,30 @@ impl IntoResponse for Refusal {
     }
 }
 
-/// The clip's samples, from the form it came in.
-fn samples_of(form: BodyForm, body: &[u8]) -> Result<Vec<i16>, Refusal> {
+/// What a request body holds: the clip, and the language it asks to be heard
+/// in (only the JSON form can ask).
+struct Clip {
+    samples: Vec<i16>,
+    language: Option<String>,
+}
+
+/// A language code as a page writes it (`en`, `zh-Hans`, `pt_BR`), or [`AUTO`]:
+/// letters, digits, `-` and `_`, at most 16 — the hearing reads it as a hint
+/// and drops what it does not know, so the shape is all that is judged here.
+fn is_language_tag(text: &str) -> bool {
+    !text.is_empty() && text.len() <= 16 && text.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+/// The clip and its language, from the form the body came in.
+fn clip_of(form: BodyForm, body: &[u8]) -> Result<Clip, Refusal> {
     #[derive(serde::Deserialize)]
     struct Json {
         wav_b64: String,
+        #[serde(default)]
+        language: Option<serde_json::Value>,
     }
     let decoded;
+    let mut language = None;
     let wav = match form == BodyForm::Json {
         true => {
             let parsed: Json = serde_json::from_slice(body)
@@ -295,6 +388,11 @@ fn samples_of(form: BodyForm, body: &[u8]) -> Result<Vec<i16>, Refusal> {
             decoded = base64::engine::general_purpose::STANDARD
                 .decode(parsed.wav_b64)
                 .map_err(|_| Refusal::NotThatWav("wav_b64 is not base64"))?;
+            language = match parsed.language {
+                None => None,
+                Some(serde_json::Value::String(tag)) if is_language_tag(&tag) => Some(tag),
+                Some(_) => return Err(Refusal::NotThatLanguage),
+            };
             &decoded[..]
         }
         false => body,
@@ -303,7 +401,7 @@ fn samples_of(form: BodyForm, body: &[u8]) -> Result<Vec<i16>, Refusal> {
         .map_err(|_| Refusal::NotThatWav("expected a 16 kHz mono 16-bit PCM WAV clip"))?;
     match samples.len() > MAX_SECS * RATE as usize {
         true => Err(Refusal::TooLong),
-        false => Ok(samples),
+        false => Ok(Clip { samples, language }),
     }
 }
 
@@ -354,11 +452,11 @@ mod tests {
         }
         /// A machine that cannot hear, for a reason that will not pass.
         fn deaf(reason: &str) -> Self {
-            Fake { verdict: Err(Unavailable::because(reason)), ..Fake::saying("", "") }
+            Fake { verdict: Err(Unavailable::never(reason)), ..Fake::saying("", "") }
         }
         /// A machine whose hearing model is on its way.
         fn fetching(reason: &str) -> Self {
-            Fake { verdict: Err(Unavailable::fetching(reason)), ..Fake::saying("", "") }
+            Fake { verdict: Err(Unavailable::working(reason)), ..Fake::saying("", "") }
         }
         fn calls(&self) -> usize {
             self.calls.load(Ordering::SeqCst)
@@ -534,7 +632,7 @@ mod tests {
         let fake = Fake::deaf(reason);
         let (status, body) = ask(&fake, OWNER, "audio/wav", &wav(speech(1.0))).await;
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-        assert_eq!(body, json!({ "error": "unavailable", "reason": reason, "fetching": false }));
+        assert_eq!(body, json!({ "error": "unavailable", "reason": reason, "fetching": false, "next": "never" }));
         assert_eq!(fake.calls(), 0);
     }
 
@@ -581,7 +679,7 @@ mod tests {
         let (status, body) = status_of(&deaf, OWNER).await;
         assert_eq!(
             (status, body),
-            (StatusCode::OK, json!({ "hears": false, "reason": "Hearing needs an Apple Silicon Mac.", "fetching": false }))
+            (StatusCode::OK, json!({ "hears": false, "reason": "Hearing needs an Apple Silicon Mac.", "fetching": false, "next": "never" }))
         );
         let fetching = Fake::fetching("Fetching the hearing model (1.6 GB). Try again when it is done.");
         let (_, body) = status_of(&fetching, OWNER).await;
@@ -606,7 +704,7 @@ mod tests {
             let (status, posted) = ask(fake, OWNER, "audio/wav", &wav(speech(1.0))).await;
             assert_eq!(got["hears"].as_bool().unwrap(), status == StatusCode::OK, "{got} vs {status}");
             if status == StatusCode::SERVICE_UNAVAILABLE {
-                assert_eq!((&got["reason"], &got["fetching"]), (&posted["reason"], &posted["fetching"]));
+                assert_eq!((&got["reason"], &got["fetching"], &got["next"]), (&posted["reason"], &posted["fetching"], &posted["next"]));
             }
         }
     }
@@ -648,6 +746,91 @@ mod tests {
             assert_eq!(response.status(), StatusCode::OK);
             assert_eq!(fake.heard_in.lock().unwrap().as_deref(), Some(tag));
         }
+    }
+
+    /// Each way a machine cannot hear says on the wire what would help, and
+    /// `fetching` is only the one that is under way: a page tells "a click
+    /// downloads" from "a click only loads" from "nothing helps" without a sentence.
+    #[test]
+    fn a_no_says_what_would_help() {
+        let cases = [
+            (Unavailable::never("n"), "never", false),
+            (Unavailable::download("d"), "download", false),
+            (Unavailable::working("w"), "working", true),
+            (Unavailable::retry("r"), "retry", false),
+        ];
+        for (no, word, fetching) in cases {
+            let fields = no.fields();
+            assert_eq!((fields["next"].as_str(), fields["fetching"].as_bool()), (Some(word), Some(fetching)), "{no:?}");
+            assert_eq!(fields["reason"], no.reason);
+        }
+    }
+
+    /// A request may say what language its clip is in: a code goes to the
+    /// hearing as written, `auto` as no tag at all, and neither reads her
+    /// thread. Without it the engine's own decision stands, exactly as before.
+    #[tokio::test]
+    async fn a_request_may_name_the_language_of_its_clip() {
+        let b64 = base64::engine::general_purpose::STANDARD.encode(wav(speech(1.0)));
+        // (what the body names, what the hearing is handed, whether her thread was asked)
+        let cases = [
+            (None, "settings-said", true),
+            (Some("en"), "en", false),
+            (Some("zh-Hans"), "zh-Hans", false),
+            (Some("auto"), "", false),
+            (Some("AUTO"), "", false),
+        ];
+        for (named, handed, asked_thread) in cases {
+            let fake = Fake::saying("ok", "en");
+            let polled = AtomicUsize::new(0);
+            let language = async {
+                polled.fetch_add(1, Ordering::SeqCst);
+                "settings-said".to_string()
+            };
+            let body = match named {
+                Some(tag) => json!({ "wav_b64": b64, "language": tag }),
+                None => json!({ "wav_b64": b64 }),
+            };
+            let response = answer(&fake, (OWNER, "application/json"), language, body.to_string().as_bytes()).await;
+            assert_eq!(response.status(), StatusCode::OK, "{named:?}");
+            assert_eq!(fake.heard_in.lock().unwrap().as_deref(), Some(handed), "{named:?}");
+            assert_eq!(polled.load(Ordering::SeqCst), usize::from(asked_thread), "{named:?}");
+        }
+        // The raw WAV form cannot name one: the engine decides, as it always did.
+        let fake = Fake::saying("ok", "en");
+        ask(&fake, OWNER, "audio/wav", &wav(speech(1.0))).await;
+        assert_eq!(fake.heard_in.lock().unwrap().as_deref(), Some("en"), "the helper's own future answers `en`");
+    }
+
+    /// A language that is not a language code or `auto` is refused before the
+    /// model is asked.
+    #[tokio::test]
+    async fn a_language_that_is_not_a_language_is_refused() {
+        let b64 = base64::engine::general_purpose::STANDARD.encode(wav(speech(1.0)));
+        let fake = Fake::saying("ok", "en");
+        let too_long = "x".repeat(17);
+        for bad in [json!(3), json!(""), json!("e n"), json!("../x"), json!(too_long), json!(["en"]), json!(null)] {
+            let body = json!({ "wav_b64": b64, "language": bad });
+            let (status, got) = ask(&fake, OWNER, "application/json", body.to_string().as_bytes()).await;
+            if bad.is_null() {
+                assert_eq!(status, StatusCode::OK, "a null language is none named");
+                continue;
+            }
+            assert_eq!((status, got["error"].as_str()), (StatusCode::BAD_REQUEST, Some("bad_language")), "{bad}");
+        }
+        assert_eq!(fake.calls(), 1, "only the null one was heard");
+    }
+
+    /// The knock a page sends to start a fetch (`{}`, no clip, no language) is
+    /// still the knock: a machine that cannot hear answers it with its reason,
+    /// one that can calls it a bad clip.
+    #[tokio::test]
+    async fn the_knock_with_no_clip_is_unchanged() {
+        let deaf = Fake::fetching("Fetching the hearing model (1.6 GB). Hold again when it is done.");
+        assert_eq!(ask(&deaf, OWNER, "application/json", b"{}").await.0, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(deaf.fetches(), 1);
+        let hears = Fake::saying("ok", "en");
+        assert_eq!(ask(&hears, OWNER, "application/json", b"{}").await.0, StatusCode::BAD_REQUEST);
     }
 
     /// What is refused or answered before the model is asked never reads her

@@ -50,6 +50,7 @@ pub(crate) const CLASSES: &[(&str, &str, RouteClass)] = &[
     ("POST", "/api/yinyue/chat", At(Chat)),
     ("POST", "/api/yinyue/event", At(Chat)),
     ("POST", "/api/tts", At(Chat)),
+    ("GET", "/api/tts", At(Chat)),
     ("POST", "/api/stt", At(Chat)),
     ("GET", "/api/stt", At(Chat)),
     ("GET", "/api/user/language", At(Chat)),

@@ -41,7 +41,7 @@ async fn deaf_world() -> World {
 async fn a_machine_that_cannot_hear_says_so_before_any_clip() {
     let w = deaf_world().await;
     let said = w.api.get("/api/stt").await;
-    assert_eq!(said, json!({ "hears": false, "reason": NO_MEMORY, "fetching": false }));
+    assert_eq!(said, json!({ "hears": false, "reason": NO_MEMORY, "fetching": false, "next": "never" }));
 }
 
 /// The POST says the same, silence or not: the reason, never "nothing heard".
@@ -50,7 +50,7 @@ async fn a_silent_clip_on_a_machine_that_cannot_hear_gets_the_reason() {
     let w = deaf_world().await;
     let (status, body) = w.api.post_bytes("/api/stt", "audio/wav", silence(2)).await;
     assert_eq!(status, 503);
-    assert_eq!(body, json!({ "error": "unavailable", "reason": NO_MEMORY, "fetching": false }));
+    assert_eq!(body, json!({ "error": "unavailable", "reason": NO_MEMORY, "fetching": false, "next": "never" }));
 }
 
 /// A minute of audio as JSON is over the framework's body limit; this route
@@ -73,5 +73,18 @@ async fn a_body_that_is_neither_wav_nor_json_is_refused_whatever_the_machine() {
     for content_type in ["text/plain", "application/octet-stream", "audio/mpeg"] {
         let (status, body) = w.api.post_bytes("/api/stt", content_type, silence(2)).await;
         assert_eq!((status, body["error"].as_str()), (415, Some("unsupported_media_type")), "{content_type}");
+    }
+}
+
+/// Whether a line can be spoken is asked the way hearing is: a read that says
+/// which voice a line would have, and starts nothing (no fetch, no model load).
+#[tokio::test]
+async fn whether_she_speaks_is_asked_without_starting_anything() {
+    let w = deaf_world().await;
+    let said = w.api.get("/api/tts").await;
+    assert!(said["speaks"].is_boolean() && said["natural"].is_boolean(), "{said}");
+    assert!(said.get("stub").is_none());
+    if said["speaks"] == json!(false) {
+        assert!(said["reason"].as_str().is_some_and(|r| !r.is_empty()), "a no gives its reason: {said}");
     }
 }

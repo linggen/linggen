@@ -107,19 +107,41 @@ typed line at the page stays text.
 - **Hearing, `POST /api/stt`** (`server/api/stt.rs`, owner only, routed as
   `/api/tts` is). Body: one clip, WAV 16 kHz mono 16-bit PCM, at most 60 s —
   raw `audio/wav`, or `{"wav_b64": "…"}` as JSON (what a data-channel request
-  can carry); any other media type is 415 before anything starts. Answer `{text, language, ms}`; nothing intelligible, or a clip
+  can carry), the JSON form optionally naming `"language"`: a language code
+  (`en`, `zh-Hans`) the clip is in, or `"auto"` — tell the hearing model nothing
+  (an app for learners: they speak the language they learn, which neither the
+  Settings language nor the last line typed says); not a code is 400
+  `bad_language`, and without the field the engine decides as before
+  (`language_to_hear`; `clip_language` is where the two meet). Any other media type is 415 before anything starts. Answer `{text, language, ms}`; nothing intelligible, or a clip
   that never rises above a quiet room's noise (the model is not asked: Whisper
   invents words from silence), is `{"text": ""}`; not that WAV 400; over 60 s
   413; a machine that cannot hear 503 `{error: "unavailable", reason,
-  fetching}` with a reason of at most twenty words — said before the clip is
+  fetching, next}` with a reason of at most twenty words — said before the clip is
   looked at, so a silent clip gets it too.
 - **Can she hear? `GET /api/stt`** (same door, owner only): `{"hears": true}`
-  or `{"hears": false, "reason", "fetching"}`, asked by the page at the press,
+  or `{"hears": false, "reason", "fetching", "next"}`, asked by the page at the press,
   before the microphone opens. It is the POST's own judgement (one function,
   `stt::hears_now`; a test holds that the two never disagree) and starts
   nothing: only a clip sent begins the next step hearing waits on, so a refused
   press that finds the model absent (or not loaded) and not on its way sends an
-  empty request to start it.
+  empty request to start it. `next` is the engine's own word for what would help,
+  so a page never reads a sentence to decide: `never` (this Mac cannot hear),
+  `download` (files are missing and no fetch runs: a clip, or the empty request,
+  starts a download, and `reason` names its size — the hearing model 1.6 GB, about
+  4 GB with her voice), `working` (a fetch or a load runs; `fetching` is true),
+  `retry` (nothing is missing: the next press only loads, or tries again). A page
+  that must not download without a yes (`/shared/hold-to-talk.js` with `knock:
+  false`) asks `status()`, and sends the empty request (`start()`) only from the
+  person's yes.
+- **Can she speak? `GET /api/tts`**: `{"speaks": true, "natural": bool}`, or
+  `{"speaks": false, "natural": false, "reason"}` on a machine with none of her
+  voices. `natural`: the voice lane's own voice is on disk; otherwise a line is
+  spoken by Kokoro (when its weights are on disk) or the system voice. It reads
+  the disk and starts nothing (a test holds that its code names no synthesis, fetch
+  or load). `POST /api/tts` does not fetch the model in front of a line: with Kokoro's model
+  missing it speaks with the system voice and leaves the voice pack to the quiet-moment
+  fetch (with the model on disk and one voice pack absent, that ~500 KB pack is still
+  fetched by the line, as before). `/shared/speak-aloud.js` is the page's reader of both.
 - **The engine is Whisper large-v3 turbo on MLX** (`runtime::STT_MODEL`, named
   once beside the voice model), in the voice sidecar that already speaks her
   (`mlx_sidecar.rs`, one process, one slot; `mlx_voice.py`). Same machine

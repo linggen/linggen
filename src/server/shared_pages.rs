@@ -46,6 +46,7 @@ mod tests {
             "channel.js",
             "sky.js",
             "hold-to-talk.js",
+            "speak-aloud.js",
         ] {
             let res = serve(Path(file.to_string())).await;
             assert_eq!(res.status(), StatusCode::OK, "{file}");

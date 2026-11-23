@@ -174,6 +174,16 @@ export const WORDS = {
  * @typedef {{ phase: TalkPhase, heard: string | null, note: string | null }} TalkView
  */
 
+/**
+ * What the engine says of her hearing, asked of it (`GET /api/stt`) and never guessed.
+ * `next` is the engine's own word for what would help: `'never'` (this Mac cannot hear),
+ * `'download'` (files are missing: a `start()` downloads them — `reason` names the size),
+ * `'working'` (a fetch or load is under way), `'retry'` (nothing missing: a `start()` only
+ * loads, or tries again); `null` when she can hear. `reason` is the engine's sentence, as it
+ * said it. When the engine could not be reached: `hears` false, `next` `'retry'`, `reason` WORDS.failed, `failed` true.
+ * @typedef {{ hears: boolean, next: 'never'|'download'|'working'|'retry'|null, reason: string|null, failed?: true }} HearingStatus
+ */
+
 /** "Listening…" / "Thinking…" / nothing — told once each (the third state,
  *  speaking, is her voice and bubble). `petThinking` is the store's flag that a
  *  reply is in flight, so "Thinking…" ends when her line arrives. */
@@ -212,6 +222,14 @@ export function isTalkKey(e) {
 //                       it refused (a spoken line cannot go to an app's chat).
 //   cutOff()            the one stop the page's mute uses: pressing stops what is said.
 //   now, setTimer, clearTimer, win, doc   the clock and the window, handed in.
+//   language            optional: the language the clip is in, a code (`en`, `zh-Hans`)
+//                       or `'auto'` (tell the hearing model nothing). Without it the
+//                       engine decides (Settings, else the last line typed to her) — right
+//                       for Yinyue, wrong for a learner, who speaks the language being learned.
+//   knock               optional, default true: whether a hold that finds her unable to hear
+//                       sends the empty request that starts the model's fetch. An app page that
+//                       must not download without a yes passes false, asks `status()` itself, and
+//                       calls `start()` only from that yes.
 // A "take" below is the microphone, open: `stop()` ends its tracks and hands
 // back what it heard.
 
@@ -225,7 +243,11 @@ export function isTalkKey(e) {
  *   release(source: 'pointer' | 'key'): 'tap' | 'talk',
  *   cancel(): void,
  *   offered(): boolean,
- * }}  `press`: pointer down or key down. `release`: pointer up or key up — 'tap' if
+ *   status(): Promise<HearingStatus>,
+ *   start(): Promise<HearingStatus>,
+ * }}  `status`: ask whether she can hear — read only, starts nothing. `start`: begin what
+ *   hearing waits on (the model's fetch, or its load) — the one call that may download, made
+ *   only from a person's yes; answers what `status` then says. `press`: pointer down or key down. `release`: pointer up or key up — 'tap' if
  *   it never became a hold (let the avatar's click proceed), 'talk' if it did (swallow
  *   that click). `cancel`: drop a press that has not been heard yet — microphone off,
  *   nothing sent. `offered`: whether a press here can become a talk at all.
@@ -370,22 +392,45 @@ export function createHoldToTalk(deps) {
 
   const reasonOf = (body) => (typeof body.reason === 'string' && body.reason ? body.reason : null);
 
+  /** What the engine's answer to a "no" says, for a page. */
+  const noOf = (body) => ({
+    hears: false,
+    next: ['never', 'download', 'working', 'retry'].includes(body.next) ? body.next : body.fetching === true ? 'working' : 'retry',
+    reason: reasonOf(body) ?? WORDS.cannotHear,
+  });
+
+  /** Ask the engine whether she can hear (read only). */
+  async function ask() {
+    const asked = await request('GET', { headers: {} });
+    if (!asked?.ok) return { hears: false, next: 'retry', reason: WORDS.failed, failed: true };
+    if (asked.body.hears === true) return { hears: true, next: null, reason: null };
+    return noOf(asked.body);
+  }
+
+  /** The knock: a request with no clip. Its one use is to begin the fetch or the load hearing waits on
+   *  (`POST /api/stt` begins it before it looks at the body); what it answers is the reason. */
+  const knock = () => request('POST', { headers: { 'Content-Type': 'application/json' }, body: '{}' });
+
   /** Can she hear on this Mac: asked once at a hold, kept a minute when yes.
-   *  A no that is not a fetch on its way sends one knock — a request with no
-   *  clip — because the first real press is what starts the model's fetch (the
+   *  A no that is not a fetch on its way sends one knock (unless the page opted out with
+   *  `knock: false`) because the first real press is what starts the model's fetch (the
    *  question itself starts nothing); what the knock answers is the reason. */
   async function canHear() {
     if (deps.now() < hearsUntil) return { hears: true };
-    const asked = await request('GET', { headers: {} });
-    if (!asked?.ok) return { hears: false, reason: WORDS.failed };
-    if (asked.body.hears === true) {
+    const status = await ask();
+    if (status.hears) {
       hearsUntil = deps.now() + HEARS_MS;
       return { hears: true };
     }
-    const reason = reasonOf(asked.body) ?? WORDS.cannotHear;
-    if (asked.body.fetching === true) return { hears: false, reason };
-    const knocked = await request('POST', { headers: { 'Content-Type': 'application/json' }, body: '{}' });
-    return { hears: false, reason: (knocked?.status === 503 ? reasonOf(knocked.body) : null) ?? reason };
+    if (status.failed || status.next === 'working' || deps.knock === false) return { hears: false, reason: status.reason };
+    const knocked = await knock();
+    return { hears: false, reason: (knocked?.status === 503 ? reasonOf(knocked.body) : null) ?? status.reason };
+  }
+
+  /** A person's yes: begin what hearing waits on, then say how she stands. */
+  async function start() {
+    await knock();
+    return ask();
   }
 
   async function beginHold() {
@@ -462,7 +507,7 @@ export function createHoldToTalk(deps) {
       reply = await deps.fetch('/api/stt', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', [BUDGET_HEADER]: String(HEAR_BUDGET_MS) },
-        body: JSON.stringify({ wav_b64: toBase64(wav) }),
+        body: JSON.stringify(deps.language ? { wav_b64: toBase64(wav), language: deps.language } : { wav_b64: toBase64(wav) }),
       });
     } catch {
       if (mine === generation) fail(WORDS.failed);
@@ -547,6 +592,8 @@ export function createHoldToTalk(deps) {
     release,
     cancel: () => cancel(),
     offered: deps.offered,
+    status: ask,
+    start,
   };
 }
 

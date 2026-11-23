@@ -225,14 +225,18 @@ impl KokoroProvider {
     /// The files a Kokoro load reads, in any-tts' cache layout, plus the
     /// two voice packs [`prewarm`](TtsProvider::prewarm) speaks with.
     fn weights_on_disk() -> bool {
-        let snapshot = Self::hub_cache().join("models--hexgrad--Kokoro-82M/snapshots/main");
-        let weights = ["config.json", "kokoro-v1_0.pth"]
-            .iter()
-            .all(|f| snapshot.join(f).exists());
         let voices = [VOICE_EN, VOICE_ZH]
             .iter()
             .all(|v| Self::voices_dir().join(format!("{v}.pt")).exists());
-        weights && voices
+        Self::model_files_on_disk() && voices
+    }
+
+    /// The model's own files, without the voice packs.
+    fn model_files_on_disk() -> bool {
+        let snapshot = Self::hub_cache().join("models--hexgrad--Kokoro-82M/snapshots/main");
+        ["config.json", "kokoro-v1_0.pth"]
+            .iter()
+            .all(|f| snapshot.join(f).exists())
     }
 
     fn config() -> TtsConfig {
@@ -298,7 +302,13 @@ impl TtsProvider for KokoroProvider {
 
         // The crate reads the pack from `voices_dir` on every synthesis, so a
         // voice fetched now is usable now — no restart, no model reload.
-        let voice_ready = Self::ensure_voice(&voice).await;
+        // A line never starts a download in front of a person: with the model
+        // itself missing the line is `say` and the ~500 KB voice pack is left
+        // for the quiet-moment fetch (`fetch`), which brings both.
+        let voice_ready = match Self::model_files_on_disk() {
+            true => Self::ensure_voice(&voice).await,
+            false => Err(anyhow::anyhow!("Kokoro weights are not downloaded yet")),
+        };
         let model = match (&voice_ready, self.model().await) {
             (Ok(()), Ok(m)) => m,
             (voice_err, model_res) => {
@@ -390,6 +400,44 @@ async fn speak_line(
     Ok(super::tts_wav::encode(&super::tts_wav::join(&parts)))
 }
 
+/// Whether a clip made now is made without fetching anything, and in which
+/// voice: the one judgement behind `GET /api/tts`. What a page asks before it
+/// turns "read her replies aloud" on. `natural`: the GPU voice (Qwen3-TTS) is on
+/// disk, so lines are spoken in her own voice; without it a line is Kokoro (once
+/// its weights are on disk) or the system's `say`. `speaks` is false only on a
+/// machine with none of the three.
+#[derive(Debug, PartialEq)]
+pub(crate) struct Speech {
+    pub speaks: bool,
+    pub natural: bool,
+}
+
+pub(crate) fn speech_standing(natural: bool, system_say: bool, kokoro_on_disk: bool) -> Speech {
+    Speech { speaks: natural || system_say || kokoro_on_disk, natural }
+}
+
+fn speech_now() -> Speech {
+    #[cfg(feature = "kokoro")]
+    let kokoro = KokoroProvider::weights_on_disk();
+    #[cfg(not(feature = "kokoro"))]
+    let kokoro = false;
+    speech_standing(crate::runtime::voice_ready(), cfg!(target_os = "macos"), kokoro)
+}
+
+/// GET /api/tts — can a line be spoken now, and in her own voice? Reads the
+/// disk and starts nothing: no fetch, no model load, no synthesis.
+pub(crate) async fn tts_status_handler() -> impl IntoResponse {
+    let now = speech_now();
+    match now.speaks {
+        true => Json(serde_json::json!({ "speaks": true, "natural": now.natural })),
+        false => Json(serde_json::json!({
+            "speaks": false,
+            "natural": false,
+            "reason": "This Mac has no voice to read with."
+        })),
+    }
+}
+
 /// POST /api/tts — `{ text, voice? }` → `audio/wav` bytes.
 pub(crate) async fn tts_handler(
     State(state): State<Arc<ServerState>>,
@@ -448,6 +496,31 @@ mod tests {
         let heard = heard.0.into_inner().unwrap();
         let want = [None, Some("vivian".to_string()), Some("af_heart".to_string()), None];
         assert_eq!(heard, want);
+    }
+
+    /// The status says "speaks" when any of her voices is there, "natural"
+    /// only for the GPU voice, and never starts anything: it is a function of
+    /// three facts read from disk.
+    #[test]
+    fn the_status_names_the_voice_a_line_would_have() {
+        assert_eq!(speech_standing(true, false, false), Speech { speaks: true, natural: true });
+        assert_eq!(speech_standing(false, true, false), Speech { speaks: true, natural: false });
+        assert_eq!(speech_standing(false, false, true), Speech { speaks: true, natural: false });
+        assert_eq!(speech_standing(false, false, false), Speech { speaks: false, natural: false });
+    }
+
+    /// Lock: the status route reads, it does not make or fetch. Its handler and
+    /// the judgement behind it name no synthesis, no fetch and no load.
+    #[test]
+    fn the_status_route_starts_nothing() {
+        let code = include_str!("tts.rs");
+        let production = &code[..code.find("#[cfg(test)]").unwrap()];
+        let from = production.find("pub(crate) fn speech_standing").unwrap();
+        let to = production.find("/// POST /api/tts").unwrap();
+        let status = &production[from..to];
+        for starts in [".synthesize(", ".fetch(", ".prewarm(", "ensure_voice", "speak_line", "get_bytes", ".model()"] {
+            assert!(!status.contains(starts), "the status route calls `{starts}`");
+        }
     }
 
     #[test]

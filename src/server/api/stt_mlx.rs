@@ -167,22 +167,23 @@ impl MlxSttProvider {
     /// gate, then the hearing model on disk (or on its way, or failed), then
     /// loaded (or being got ready).
     fn verdict(s: Standing) -> Result<(), Unavailable> {
-        s.lane.map_err(|reason| Unavailable::because(format!("Hearing {reason}.")))?;
+        s.lane.map_err(|reason| Unavailable::never(format!("Hearing {reason}.")))?;
         if !s.model_on_disk {
             return Err(match (s.fetch, s.voice_ready) {
-                (AttemptState::Running { retry }, voice_ready) => Unavailable::fetching(fetch_line(retry, voice_ready)),
-                (AttemptState::Failed, _) => Unavailable::because("Couldn't fetch the hearing model. Hold again to try again."),
-                (AttemptState::Idle, _) => Unavailable::because("The hearing model (1.6 GB) is not on this Mac yet."),
+                (AttemptState::Running { retry }, voice_ready) => Unavailable::working(fetch_line(retry, voice_ready)),
+                (AttemptState::Failed, voice_ready) => Unavailable::download(format!("Couldn't fetch {}. Hold again to try again.", download_of(voice_ready))),
+                (AttemptState::Idle, true) => Unavailable::download("The hearing model (1.6 GB) is not on this Mac yet."),
+                (AttemptState::Idle, false) => Unavailable::download("Her voice and hearing (about 4 GB) are not on this Mac yet."),
             });
         }
         if s.loaded {
             return Ok(());
         }
         Err(match s.loading {
-            AttemptState::Running { retry: false } => Unavailable::fetching(PREPARING),
-            AttemptState::Running { retry: true } => Unavailable::fetching("The last try failed; getting ready to listen again…"),
-            AttemptState::Failed => Unavailable::because("Couldn't get ready to listen. Hold again to try again."),
-            AttemptState::Idle => Unavailable::because(PREPARING),
+            AttemptState::Running { retry: false } => Unavailable::working(PREPARING),
+            AttemptState::Running { retry: true } => Unavailable::working("The last try failed; getting ready to listen again…"),
+            AttemptState::Failed => Unavailable::retry("Couldn't get ready to listen. Hold again to try again."),
+            AttemptState::Idle => Unavailable::retry(PREPARING),
         })
     }
 
@@ -200,13 +201,21 @@ impl MlxSttProvider {
 /// What is being fetched, in words: only the hearing model, or the voice
 /// environment under it too (a Mac that has not built her voice yet).
 fn fetch_line(retry: bool, voice_ready: bool) -> String {
-    let what = match voice_ready {
-        true => "the hearing model (1.6 GB)",
-        false => "her voice and hearing (about 4 GB)",
-    };
+    let what = download_of(voice_ready);
     match retry {
         true => format!("The last try failed; fetching {what} again. Hold again when it is done."),
         false => format!("Fetching {what}. Hold again when it is done."),
+    }
+}
+
+/// What a hearing fetch brings, with its size — the one place the size is
+/// told, before the person says yes (the "not on this Mac yet" line) and
+/// while it runs: only the hearing model, or the voice environment under it
+/// too (a Mac that has not built her voice yet).
+fn download_of(voice_ready: bool) -> &'static str {
+    match voice_ready {
+        true => "the hearing model (1.6 GB)",
+        false => "her voice and hearing (about 4 GB)",
     }
 }
 
@@ -252,17 +261,18 @@ impl SttProvider for MlxSttProvider {
         // Never inside a hear's wait: a load is its own step.
         if !self.sidecar.hearing_loaded() {
             self.loader.start();
-            return Err(Unavailable::fetching(PREPARING));
+            return Err(Unavailable::working(PREPARING));
         }
         self.listen(samples, language).await.map_err(|e| {
             tracing::warn!("[stt] {e:#}");
-            Unavailable::because("Hearing stopped for a moment. Try again.")
+            Unavailable::retry("Hearing stopped for a moment. Try again.")
         })
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::stt::Next;
     use super::*;
 
     /// A sidecar that answers a `load` and a `hear` request and anything else
@@ -321,36 +331,45 @@ done
         assert_eq!(verdict(standing()), Ok(()));
         assert_eq!(verdict(Standing { fetch: running, ..standing() }), Ok(()), "the model arrived and is loaded");
         let lane_closed = verdict(Standing { lane: Err("needs an Apple Silicon Mac".into()), model_on_disk: false, ..standing() }).unwrap_err();
-        assert_eq!(lane_closed, Unavailable::because("Hearing needs an Apple Silicon Mac."));
+        assert_eq!(lane_closed, Unavailable::never("Hearing needs an Apple Silicon Mac."));
         let closed_fetching = verdict(Standing { lane: Err("needs a Mac".into()), model_on_disk: false, fetch: running, ..standing() }).unwrap_err();
-        assert!(!closed_fetching.fetching, "a machine that cannot hear is not fetching");
+        assert!(!closed_fetching.is_working(), "a machine that cannot hear is not fetching");
 
         let missing = Standing { model_on_disk: false, loaded: false, ..standing() };
         let not_here = verdict(Standing { ..missing.clone() }).unwrap_err();
-        assert!(!not_here.fetching && not_here.reason.contains("not on this Mac yet"));
+        assert!(not_here.next == Next::Download && !not_here.is_working() && not_here.reason.contains("not on this Mac yet"));
         let fetching = verdict(Standing { fetch: running, ..missing.clone() }).unwrap_err();
-        assert!(fetching.fetching && fetching.reason.contains("hearing model (1.6 GB)"), "{}", fetching.reason);
+        assert!(fetching.is_working() && fetching.reason.contains("hearing model (1.6 GB)"), "{}", fetching.reason);
         // The voice environment is under it too: the line says what is really fetched.
         let building = verdict(Standing { fetch: running, voice_ready: false, ..missing.clone() }).unwrap_err();
-        assert!(building.fetching && building.reason.contains("her voice and hearing"), "{}", building.reason);
+        assert!(building.is_working() && building.reason.contains("her voice and hearing"), "{}", building.reason);
         // A fetch that failed is not "fetching"; its retry says it is one.
         let failed = verdict(Standing { fetch: AttemptState::Failed, ..missing.clone() }).unwrap_err();
-        assert!(!failed.fetching && failed.reason.contains("Couldn't fetch"), "{}", failed.reason);
+        assert!(failed.next == Next::Download && failed.reason.contains("Couldn't fetch"), "{}", failed.reason);
+        // What the person is asked to say yes to: the size is the true one, before the yes (a Mac with no voice yet is told
+        // "about 4 GB", never "1.6 GB"), and each is a whole sentence.
+        let no_voice = Standing { voice_ready: false, ..missing.clone() };
+        let ask_voice = verdict(no_voice.clone()).unwrap_err();
+        assert_eq!((ask_voice.next, ask_voice.reason.as_str()), (Next::Download, "Her voice and hearing (about 4 GB) are not on this Mac yet."));
+        let ask_model = verdict(Standing { voice_ready: true, ..missing.clone() }).unwrap_err();
+        assert_eq!((ask_model.next, ask_model.reason.as_str()), (Next::Download, "The hearing model (1.6 GB) is not on this Mac yet."));
+        let failed_voice = verdict(Standing { fetch: AttemptState::Failed, ..no_voice.clone() }).unwrap_err();
+        assert_eq!((failed_voice.next, failed_voice.reason.as_str()), (Next::Download, "Couldn't fetch her voice and hearing (about 4 GB). Hold again to try again."));
         let retry = verdict(Standing { fetch: retrying, ..missing.clone() }).unwrap_err();
-        assert!(retry.fetching && retry.reason.contains("last try failed"), "{}", retry.reason);
+        assert!(retry.is_working() && retry.reason.contains("last try failed"), "{}", retry.reason);
 
         // On disk, not loaded: getting ready, then failed, then its retry.
         let unloaded = Standing { loaded: false, ..standing() };
         let idle = verdict(Standing { ..unloaded.clone() }).unwrap_err();
-        assert_eq!(idle, Unavailable::because(PREPARING), "a press knocks to start the load");
+        assert_eq!(idle, Unavailable::retry(PREPARING), "a press knocks to start the load; nothing is downloaded");
         let loading = verdict(Standing { loading: running, ..unloaded.clone() }).unwrap_err();
-        assert_eq!(loading, Unavailable::fetching(PREPARING));
+        assert_eq!(loading, Unavailable::working(PREPARING));
         let load_failed = verdict(Standing { loading: AttemptState::Failed, ..unloaded.clone() }).unwrap_err();
-        assert!(!load_failed.fetching && load_failed.reason.contains("Couldn't get ready"));
+        assert!(load_failed.next == Next::Retry && load_failed.reason.contains("Couldn't get ready"));
         let load_retry = verdict(Standing { loading: retrying, ..unloaded.clone() }).unwrap_err();
-        assert!(load_retry.fetching && load_retry.reason.contains("last try failed"));
+        assert!(load_retry.is_working() && load_retry.reason.contains("last try failed"));
 
-        for no in [lane_closed, not_here, fetching, building, failed, retry, idle, loading, load_failed, load_retry] {
+        for no in [lane_closed, not_here, fetching, building, failed, retry, idle, loading, load_failed, load_retry, ask_voice, ask_model, failed_voice] {
             assert!(no.reason.split_whitespace().count() <= 20, "{}", no.reason);
         }
     }
@@ -443,7 +462,7 @@ done
         let sidecar = fake_sidecar(dir.path());
         let hearing = MlxSttProvider::new(sidecar.clone());
         let refused = hearing.hear(&[100i16; 16_000], "zh").await.unwrap_err();
-        assert_eq!(refused, Unavailable::fetching(PREPARING));
+        assert_eq!(refused, Unavailable::working(PREPARING));
         for _ in 0..100 {
             if sidecar.hearing_loaded() {
                 break;

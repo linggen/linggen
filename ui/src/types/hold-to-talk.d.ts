@@ -86,6 +86,18 @@ declare module '@linggen/hold-to-talk' {
     clearTimer: (id: unknown) => void;
     win: Listenable;
     doc: Listenable & { hidden: boolean };
+    /** The language the clip is in (a code, or 'auto' = tell the model nothing); without it the engine decides. */
+    language?: string;
+    /** Default true. False: a hold that finds her unable to hear sends no knock (no download starts). */
+    knock?: boolean;
+  }
+
+  /** What the engine says of her hearing (asked, never guessed). `next` is the engine's word for what would help. */
+  export interface HearingStatus {
+    hears: boolean;
+    next: 'never' | 'download' | 'working' | 'retry' | null;
+    reason: string | null;
+    failed?: true;
   }
 
   type Source = 'pointer' | 'key';
@@ -102,6 +114,10 @@ declare module '@linggen/hold-to-talk' {
     cancel(): void;
     /** Whether a press here can become a talk at all. */
     offered(): boolean;
+    /** Ask whether she can hear. Read only: starts nothing. */
+    status(): Promise<HearingStatus>;
+    /** A person's yes: begin the fetch or load hearing waits on; answers how she then stands. */
+    start(): Promise<HearingStatus>;
   }
 
   export function createHoldToTalk(deps: TalkDeps): HoldToTalk;

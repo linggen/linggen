@@ -8,7 +8,7 @@ use axum::routing::{get, patch, post, put};
 pub(super) fn routes() -> Routes {
     Routes::new()
         // Companion
-        .route("/api/tts", post(api::tts::tts_handler))
+        .route("/api/tts", post(api::tts::tts_handler).get(api::tts::tts_status_handler))
         // A minute of audio is over the framework's body limit once it is JSON.
         .route(
             "/api/stt",
