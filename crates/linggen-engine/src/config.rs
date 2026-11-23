@@ -698,6 +698,17 @@ impl Config {
         Ok(())
     }
 
+    /// An id no model row has: the prefix and ten random characters. The one
+    /// place a row's id is made for a person (a ticked family, a typed model).
+    pub fn fresh_model_id(&self, prefix: &str) -> String {
+        loop {
+            let id = format!("{prefix}-{}", &uuid::Uuid::new_v4().simple().to_string()[..10]);
+            if !self.models.iter().any(|row| row.id == id) {
+                return id;
+            }
+        }
+    }
+
     /// Make `id` the default model: first in the chain, the models that were
     /// there kept after it as fallbacks, `id` never twice.
     pub fn make_default(&mut self, id: &str) {

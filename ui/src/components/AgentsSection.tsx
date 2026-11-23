@@ -9,6 +9,7 @@ import type { AppConfig } from '../types';
 import { useServerStore } from '../stores/serverStore';
 import { useAgentPresent } from '../hooks/useAgentPresent';
 import { COMPANION_ID } from '../lib/agentsMet.mts';
+import { madeDefault } from '../lib/defaultChain.mts';
 import { Field, Grid, NumberInput, Section, inputCls } from './settings/kit';
 
 const VOICES = ['vivian', 'serena', 'ono_anna', 'sohee', 'uncle_fu', 'ryan', 'aiden', 'eric', 'dylan'];
@@ -86,7 +87,7 @@ export const AgentsSection: React.FC<{
     onChange({ ...config, pet: { ...config.pet, ...patch } });
   // Ling's pick goes to the front of the chain; the others stay her fallbacks.
   const setLingModel = (id: string) =>
-    onChange({ ...config, routing: { ...config.routing, default_models: [id, ...chain.filter((m) => m !== id)] } });
+    onChange({ ...config, routing: { ...config.routing, default_models: madeDefault(chain, id) } });
 
   return (
     <Section title="Agents" desc="Each agent runs on its own model.">

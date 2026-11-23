@@ -108,19 +108,10 @@ fn run_on(row: &mut ModelConfig, facts: &ModelFacts) {
     row.supports_tools = facts.tool_call();
 }
 
-fn fresh_id(config: &Config) -> String {
-    loop {
-        let id = format!("fam-{}", &uuid::Uuid::new_v4().simple().to_string()[..10]);
-        if !config.models.iter().any(|row| row.id == id) {
-            return id;
-        }
-    }
-}
-
 /// File a family as a new row running `facts`. The caller has checked that
 /// the family is not ticked at this endpoint.
 pub(super) fn tick(config: &mut Config, preset: &Preset, family: &str, facts: &ModelFacts, mode: Mode) -> String {
-    let id = fresh_id(config);
+    let id = config.fresh_model_id("fam");
     let mut row = ModelConfig {
         id: id.clone(),
         provider: preset.name.into(),

@@ -86,3 +86,19 @@ async fn deleting_the_last_voice_row_files_its_override_as_the_endpoint_key() {
     assert_eq!(w.api.get("/api/credentials").await["models"], json!({}));
     assert_eq!(w.api.get("/api/live").await["providers"][0]["ready"], true);
 }
+
+/// The page types a model name only; the engine makes the row's id, and a
+/// second one of the same name is its own row.
+#[tokio::test]
+async fn a_typed_model_without_an_id_gets_one_from_the_engine() {
+    let w = World::start(Setup::default()).await;
+    let body = w.api.post("/api/providers", json!({"preset":"DeepSeek"})).await;
+    let id = provider(&body, "DeepSeek")["id"].as_str().unwrap().to_string();
+    let base = format!("/api/providers/{id}/models");
+    let first = w.api.post(&base, json!({"model":"deepseek-chat"})).await;
+    let second = w.api.post(&base, json!({"model":"deepseek-chat"})).await;
+    let rows = provider(&second, "DeepSeek")["models"].as_array().unwrap().clone();
+    assert_eq!(rows.len(), 2, "{first}");
+    assert!(rows.iter().all(|m| m["model"] == "deepseek-chat" && m["id"].as_str().unwrap().starts_with("own-")));
+    assert_ne!(rows[0]["id"], rows[1]["id"]);
+}

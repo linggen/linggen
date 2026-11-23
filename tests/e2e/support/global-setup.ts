@@ -14,11 +14,14 @@ function uiBuild() {
   execFileSync('npm', ['run', 'build'], { cwd: path.join(REPO, 'ui'), stdio: 'inherit' });
 }
 
-/** Build the world in the same scratch environment as the Rust tests. */
+/** Build the world in the same scratch environment as the Rust tests. With
+ *  `test-support`, as the system tests are: the engine then reads the
+ *  providers' model lists from the world's `test-families.json` and calls no
+ *  provider. */
 function worldBuild(): string {
   const out = execFileSync(
     path.join(REPO, 'scripts/scratch-test.sh'),
-    ['--test', 'world', '--no-run', '--message-format=json'],
+    ['--features', 'test-support', '--test', 'world', '--no-run', '--message-format=json'],
     { cwd: REPO, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'], maxBuffer: 256 << 20 },
   );
   for (const line of out.split('\n')) {

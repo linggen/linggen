@@ -1,780 +1,118 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Eye, EyeOff, LogIn, LogOut, Plus, Star, Trash2 } from 'lucide-react';
-import type { AppConfig, ModelConfigUI, ModelHealthInfo, ModelMove, OllamaPsResponse } from '../types';
-import { UsageMeter } from './UsageMeter';
-import { CodexUsage } from './CodexUsage';
+/**
+ * Settings → Models: 「Default model」 above 「Providers」. The page draws what
+ * the engine answers (`GET /api/providers`) and decides nothing: every button
+ * calls its route and the list is redrawn from the answer (models/useProviders).
+ * What a key provider shows, and how, is models/KeyRow; the words are
+ * lib/modelsWords.mts; reading the answer is lib/providers.mts.
+ */
+import React, { useEffect, useMemo, useState } from 'react';
+import { Plus } from 'lucide-react';
+import type { AppConfig, ModelMove } from '../types';
 import { useServerStore } from '../stores/serverStore';
-import { account as accountApi, modelsApi, providerAuth } from '../lib/endpoints';
-import { toggledDefault } from '../lib/defaultChain.mts';
-
-const CODEX_STATUS = '/api/auth/codex/status';
-type CodexStatus = { authenticated: boolean; account_id?: string };
-
-const inputCls = 'w-full bg-slate-100 dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded-lg px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-blue-500/50';
-const labelCls = 'text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400';
-const sectionCls = 'bg-white dark:bg-[#141414] rounded-xl border border-slate-200 dark:border-white/5 shadow-sm p-5';
-
-// Mirrors is_valid_go_duration in src/config.rs (the save-time authority):
-// Ollama's keep_alive grammar — "0", or signed <number><unit> groups with
-// unit ns/us/µs/ms/s/m/h, e.g. "10m", "90s", "1h30m".
-const isValidGoDuration = (s: string): boolean => {
-  let rest = s.replace(/^[+-]/, '');
-  if (rest === '0') return true;
-  if (!rest) return false;
-  while (rest) {
-    const num = rest.match(/^[0-9.]+/);
-    if (!num) return false;
-    rest = rest.slice(num[0].length);
-    const unit = ['ns', 'us', 'µs', 'ms', 's', 'm', 'h'].find((u) => rest.startsWith(u));
-    if (!unit) return false;
-    rest = rest.slice(unit.length);
-  }
-  return true;
-};
-
-const PROVIDER_PRESETS: Record<string, { url: string; defaultModel: string; placeholder: string; authMode?: string }> = {
-  ollama: { url: 'http://127.0.0.1:11434', defaultModel: '', placeholder: 'e.g. qwen3:32b' },
-  // No defaultModel: the ChatGPT built-in (the common case) is a card above,
-  // not something added here. This provider stays available in Add Model
-  // only for a genuinely different/custom ChatGPT-backed model id.
-  chatgpt: { url: 'https://chatgpt.com/backend-api/codex', defaultModel: '', placeholder: 'e.g. gpt-5.4, o3, gpt-4o', authMode: 'chatgpt_oauth' },
-  anthropic: { url: 'https://api.anthropic.com', defaultModel: 'claude-sonnet-5-5', placeholder: 'e.g. claude-sonnet-5-5, claude-haiku-5-5, claude-opus-5-5' },
-  openai: { url: 'https://api.openai.com/v1', defaultModel: 'gpt-4o', placeholder: 'e.g. gpt-4o' },
-  gemini: { url: 'https://generativelanguage.googleapis.com/v1beta/openai', defaultModel: 'gemini-2.5-flash', placeholder: 'e.g. gemini-2.5-flash, gemini-3-flash-preview' },
-  groq: { url: 'https://api.groq.com/openai/v1', defaultModel: 'llama-3.3-70b-versatile', placeholder: 'e.g. llama-3.3-70b-versatile' },
-  deepseek: { url: 'https://api.deepseek.com/v1', defaultModel: 'deepseek-chat', placeholder: 'e.g. deepseek-chat' },
-  openrouter: { url: 'https://openrouter.ai/api/v1', defaultModel: '', placeholder: 'e.g. google/gemini-2.5-pro' },
-  github: { url: 'https://models.inference.ai.azure.com', defaultModel: 'gpt-4o-mini', placeholder: 'e.g. gpt-4o-mini' },
-  // Mainland-China providers (OpenAI-compatible, own key like DeepSeek).
-  // Keep the names in step with KNOWN_PROVIDERS in src/config.rs.
-  qwen: { url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', defaultModel: 'qwen-plus', placeholder: 'e.g. qwen-plus, qwen3.8-max' },
-  moonshot: { url: 'https://api.moonshot.cn/v1', defaultModel: 'kimi-k2.6', placeholder: 'e.g. kimi-k2.6, kimi-k3' },
-  zhipu: { url: 'https://open.bigmodel.cn/api/paas/v4', defaultModel: 'glm-5.3', placeholder: 'e.g. glm-5.3, glm-5.3-flash' },
-  siliconflow: { url: 'https://api.siliconflow.cn/v1', defaultModel: 'Pro/deepseek-ai/DeepSeek-R1', placeholder: 'e.g. Pro/deepseek-ai/DeepSeek-R1' },
-};
-
-const emptyModel = (): ModelConfigUI => ({
-  id: '',
-  provider: 'ollama',
-  url: 'http://127.0.0.1:11434',
-  model: '',
-  api_key: null,
-  keep_alive: null,
-  tags: [],
-});
-
-/** credentials.json v2 (credentials.rs): a key belongs to a provider endpoint;
- *  every model on that endpoint shares it. A model may carry its own override. */
-type KeyEntry = { api_key?: string | null };
-type CredentialsMap = {
-  version?: number;
-  endpoints?: Array<KeyEntry & { provider: string; url: string }>;
-  models?: Record<string, KeyEntry>;
-  services?: Record<string, KeyEntry>;
-};
-/** Provider and base URL name an endpoint — mirrors same_endpoint() in credentials.rs. */
-const sameEndpoint = (a: { provider: string; url: string }, b: { provider: string; url: string }) =>
-  a.provider.trim().toLowerCase() === b.provider.trim().toLowerCase() &&
-  a.url.trim().replace(/\/+$/, '').toLowerCase() === b.url.trim().replace(/\/+$/, '').toLowerCase();
-
-const HealthDot: React.FC<{ health: ModelHealthInfo | undefined; ollamaStatus: 'connected' | 'disconnected' | 'na' }> = ({ health, ollamaStatus }) => {
-  // Priority: health tracker status > Ollama ps status
-  if (health && health.health !== 'healthy') {
-    const cls = health.health === 'quota_exhausted' ? 'bg-amber-500' : 'bg-red-500';
-    const label = health.health === 'quota_exhausted'
-      ? `Quota exhausted${health.since_secs ? ` (${Math.round(health.since_secs / 60)}m ago)` : ''}`
-      : `Down${health.last_error ? `: ${health.last_error.slice(0, 60)}` : ''}`;
-    return (
-      <span className="inline-flex items-center gap-1.5" title={label}>
-        <span className={`w-2 h-2 rounded-full ${cls}`} />
-        <span className="text-[11px] text-slate-500">
-          {health.health === 'quota_exhausted' ? 'Quota' : 'Down'}
-        </span>
-      </span>
-    );
-  }
-
-  const cls = ollamaStatus === 'connected' ? 'bg-green-500'
-    : ollamaStatus === 'disconnected' ? 'bg-red-500' : 'bg-slate-400';
-  const label = ollamaStatus === 'connected' ? 'Healthy'
-    : ollamaStatus === 'disconnected' ? 'Disconnected' : 'N/A';
-  return (
-    <span className="inline-flex items-center gap-1.5" title={label}>
-      <span className={`w-2 h-2 rounded-full ${cls}`} />
-      <span className="text-[11px] text-slate-500">{label}</span>
-    </span>
-  );
-};
-
-const TILE_TONES = {
-  amber: { box: 'border-amber-300/70 dark:border-amber-700/50 bg-amber-50/60 dark:bg-amber-500/[0.04]', icon: 'bg-amber-500/15 text-amber-500' },
-} as const;
-
-/** One kind of session and the model its new sessions start on. */
-const DefaultTile: React.FC<{
-  icon: React.ReactNode;
-  label: string;
-  tone: keyof typeof TILE_TONES;
-  modelId: string | undefined;
-  onClear: () => void;
-  children?: React.ReactNode;
-}> = ({ icon, label, tone, modelId, onClear, children }) => (
-  <div className={`flex items-center gap-3 px-3 py-2.5 rounded-xl border ${TILE_TONES[tone].box}`}>
-    <span className={`flex items-center justify-center w-8 h-8 rounded-lg shrink-0 ${TILE_TONES[tone].icon}`}>{icon}</span>
-    <div className="min-w-0 flex-1">
-      <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">{label}</div>
-      <div className="text-xs font-medium flex items-center flex-wrap">
-        {modelId ? <span className="truncate">{modelId}</span> : <span className="text-slate-400">Not set</span>}
-        {children}
-      </div>
-    </div>
-    {modelId && (
-      <button onClick={onClear} className="p-0.5 text-slate-400 hover:text-red-500" title="Clear default">
-        <Trash2 size={12} />
-      </button>
-    )}
-  </div>
-);
+import { appConfig, modelsApi, providersApi } from '../lib/endpoints';
+import { madeDefault } from '../lib/defaultChain.mts';
+import { W } from '../lib/modelsWords.mts';
+import { keyProviders, localProviders, readyToUse, sameAddress, type Preset, type ProvidersAnswer } from '../lib/providers.mts';
+import { AddProvider } from './models/AddProvider';
+import { DefaultCard } from './models/DefaultCard';
+import { KeyRow } from './models/KeyRow';
+import { LocalRow } from './models/LocalRow';
+import { ReadyRow } from './models/ReadyRows';
+import { cardCls, hintCls, linkBtn } from './models/shell';
+import { useProviders } from './models/useProviders';
 
 export const ModelsTab: React.FC<{
   config: AppConfig;
-  onChange: (config: AppConfig) => void;
-  onCredsDirtyChange?: (dirty: boolean) => void;
-  saveCredsRef?: React.MutableRefObject<(() => Promise<void>) | null>;
-}> = ({ config, onChange, onCredsDirtyChange, saveCredsRef }) => {
-  const [ollamaStatus, setOllamaStatus] = useState<OllamaPsResponse | null>(null);
-  const [healthMap, setHealthMap] = useState<Record<string, ModelHealthInfo>>({});
-  const [credentials, setCredentials] = useState<CredentialsMap>({});
-  const [localKeys, setLocalKeys] = useState<Record<string, string>>({});
-  const [revealKeys, setRevealKeys] = useState<Record<string, boolean>>({});
-  const [credsDirty, setCredsDirty] = useState(false);
-  const [codexAuthStatus, setCodexAuthStatus] = useState<CodexStatus | null>(null);
-  const [codexAuthLoading, setCodexAuthLoading] = useState(false);
-
-  const defaultModels = config.routing?.default_models ?? [];
-
-  // A sign-in that made another model the default: the page's copy of the
-  // chain follows (a later Save must not post the old one back) and one line
-  // says so.
+  /** Read the config again: a route of the engine changed it (Settings holds one copy). */
+  reload: () => Promise<void>;
+}> = ({ config, reload }) => {
+  const { answer, loadFailed, problem, busy, load, run } = useProviders(reload);
+  const [open, setOpen] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
+  // A sign-in that made another model the default: one line says so.
   const [signInLine, setSignInLine] = useState<string | null>(null);
-  // A sign-in ends minutes after its click: read the page as it is then.
-  const latest = useRef({ config, onChange });
-  latest.current = { config, onChange };
-  const adoptSignInDefault = async () => {
+
+  // The engine's note on a ChatGPT built-in whose family moved (`/api/models`).
+  const runtimeModels = useServerStore((s) => s.runtimeModels);
+  const refreshRuntimeModels = () => { void useServerStore.getState().refreshRuntimeModels(); };
+  useEffect(refreshRuntimeModels, []);
+  const moved = useMemo(() => Object.fromEntries(runtimeModels.map((m) => [m.id, m.moved as ModelMove | undefined])), [runtimeModels]);
+
+  /** A sign-in, sign-out or stay happened: read the list again, and say what it made the default. */
+  const signedInChanged = async () => {
+    await run(() => providersApi.list());
+    refreshRuntimeModels();
     const made = await modelsApi.signedInDefault().catch(() => null);
     if (!made) return;
-    const { config: now, onChange: change } = latest.current;
-    change({ ...now, routing: { ...now.routing, default_models: made.default_models } });
+    await reload();
     setSignInLine(made.line);
   };
 
-  // Runtime model list — includes built-ins the engine injects (Linggen
-  // Cloud, ChatGPT) regardless of what's in the config file. Shown read-only
-  // below so they can be starred as default.
-  const runtimeModels = useServerStore((s) => s.runtimeModels);
-  const runtimeModelsFailed = useServerStore((s) => s.runtimeModelsFailed);
-  const refetchRuntimeModels = () => { useServerStore.getState().refreshRuntimeModels(); };
-  useEffect(refetchRuntimeModels, []);
+  const makeDefault = (modelId: string) => run(async () => {
+    await appConfig.update((c) => ({ ...c, routing: { ...c.routing, default_models: madeDefault(c.routing?.default_models ?? [], modelId) } }));
+    return providersApi.list();
+  }).then(() => undefined);
 
-  // linggen.dev sign-in for the cloud built-in — same browser-login + poll
-  // flow the chat's inline CTA uses. On success the model list is refetched
-  // so auth_ok flips and the row swaps its button for the usage meter.
-  const [linggenLoginBusy, setLinggenLoginBusy] = useState(false);
-  const handleLinggenLogin = async () => {
-    setLinggenLoginBusy(true);
-    try {
-      if (await accountApi.signIn()) {
-        refetchRuntimeModels();
-        await adoptSignInDefault();
-      }
-    } finally {
-      setLinggenLoginBusy(false);
-    }
-  };
-  // A Stay (or following again) moved the family on the engine: the
-  // defaults and the companion's model in this page's copy follow, so a
-  // later Save does not post the old id back.
-  const followMove = (from: string, to: string) => {
-    const swap = (id: string) => (id === from ? to : id);
-    const routing = config.routing ? { ...config.routing, default_models: (config.routing.default_models ?? []).map(swap) } : config.routing;
-    const pet = config.pet?.model ? { ...config.pet, model: swap(config.pet.model) } : config.pet;
-    onChange({ ...config, routing, pet });
-  };
-  const builtinModels = runtimeModels.filter((m) => m.id && m.is_builtin);
-  // A model always renders as its built-in card, never as a raw editable
-  // entry below — even if the user's config file happens to still list the
-  // same id from before it became built-in.
-  const builtinIds = new Set(builtinModels.map((m) => m.id));
-
-  const hasOllamaModels = config.models?.some((m: { provider: string }) => m.provider === 'ollama') ?? false;
-
-  const fetchOllamaStatus = useCallback(async () => {
-    if (!hasOllamaModels) return;
-    try {
-      setOllamaStatus(await modelsApi.ollamaStatus());
-    } catch { setOllamaStatus(null); }
-  }, [hasOllamaModels]);
-
-  const fetchHealth = useCallback(async () => {
-    try {
-      const data = await modelsApi.health();
-      const map: Record<string, ModelHealthInfo> = {};
-      for (const h of data) map[h.id] = h;
-      setHealthMap(map);
-    } catch { /* ignore */ }
-  }, []);
-
-  const fetchCredentials = useCallback(async () => {
-    try {
-      setCredentials(await modelsApi.credentials<CredentialsMap>());
-      // A stored key is never echoed into the field: the label says it
-      // is set, the placeholder says where; typing replaces it.
-      setLocalKeys({});
-    } catch { /* ignore */ }
-  }, []);
-
-  const fetchCodexAuthStatus = useCallback(async () => {
-    try {
-      setCodexAuthStatus(await providerAuth.status<CodexStatus>(CODEX_STATUS));
-    } catch { /* ignore */ }
-  }, []);
-
-  const handleCodexLogin = async () => {
-    setCodexAuthLoading(true);
-    try {
-      await providerAuth.login('/api/auth/codex/login');
-      // Poll for auth status (browser flow takes time)
-      const poll = setInterval(async () => {
-        const data = await providerAuth.status<CodexStatus>(CODEX_STATUS).catch(() => null);
-        if (!data) return;
-        setCodexAuthStatus(data);
-        if (data.authenticated) {
-          clearInterval(poll);
-          setCodexAuthLoading(false);
-          adoptSignInDefault();
-        }
-      }, 2000);
-      // Timeout after 5 min
-      setTimeout(() => { clearInterval(poll); setCodexAuthLoading(false); }, 300_000);
-    } catch {
-      setCodexAuthLoading(false);
-    }
+  const pick = async (preset: Preset) => {
+    let made: ProvidersAnswer | void = undefined;
+    const done = await run(async () => (made = await providersApi.create(preset.label)));
+    const row = done && made ? (made as ProvidersAnswer).providers.find((p) => p.way === 'key' && p.provider === preset.name && sameAddress(p.url, preset.url)) : undefined;
+    if (row) setOpen(row.id);
+    setAdding(false);
   };
 
-  const handleCodexLogout = async () => {
-    await providerAuth.logout('/api/auth/codex/logout').catch(() => {});
-    setCodexAuthStatus({ authenticated: false });
-  };
-
-  useEffect(() => {
-    fetchOllamaStatus();
-    fetchHealth();
-    fetchCredentials();
-    fetchCodexAuthStatus();
-    const timer = setInterval(() => { fetchOllamaStatus(); fetchHealth(); }, 5000);
-    return () => clearInterval(timer);
-  }, [fetchOllamaStatus, fetchHealth, fetchCredentials, fetchCodexAuthStatus]);
-
-  const updateModel = (index: number, field: keyof ModelConfigUI, value: string | number | null) => {
-    const models = [...config.models];
-    const oldId = models[index]?.id;
-    const updated = { ...models[index], [field]: value };
-    if (field === 'provider' && value && PROVIDER_PRESETS[value]) {
-      updated.url = PROVIDER_PRESETS[value].url;
-      // Auto-fill model name if currently empty
-      if (!updated.model && PROVIDER_PRESETS[value].defaultModel) {
-        updated.model = PROVIDER_PRESETS[value].defaultModel;
-      }
-      // Set auth_mode for ChatGPT OAuth provider
-      updated.auth_mode = PROVIDER_PRESETS[value].authMode || null;
-    }
-    models[index] = updated;
-    // When model ID is renamed, update default_models to keep it in sync
-    let routing = config.routing;
-    if (field === 'id' && oldId && typeof value === 'string' && value && oldId !== value && defaultModels.includes(oldId)) {
-      const newDefaults = defaultModels.map((id) => id === oldId ? value : id);
-      routing = { ...routing, default_models: newDefaults };
-    }
-    onChange({ ...config, models, routing });
-  };
-
-  const addModel = () => {
-    onChange({ ...config, models: [emptyModel(), ...config.models] });
-  };
-
-  const removeModel = (index: number) => {
-    const modelId = config.models[index]?.id;
-    const newModels = config.models.filter((_, i) => i !== index);
-    // Also remove from default_models if present
-    const newDefaults = defaultModels.filter((id) => id !== modelId);
-    onChange({
-      ...config,
-      models: newModels,
-      routing: {
-        ...config.routing,
-        default_models: newDefaults,
-      },
-    });
-  };
-
-  const updateLocalKey = (modelId: string, value: string) => {
-    setLocalKeys((prev) => ({ ...prev, [modelId]: value }));
-    setCredsDirty(true);
-    onCredsDirtyChange?.(true);
-  };
-
-  const saveCredentials = useCallback(async () => {
-    // The flat shape: a key typed on a model row is the key for that
-    // model's endpoint (config.rs update_credentials_api).
-    const body: Record<string, { api_key: string | null; provider: string; url: string }> = {};
-    for (const model of config.models) {
-      if (!model.id) continue;
-      const val = localKeys[model.id];
-      if (val !== undefined && val !== '***') {
-        body[model.id] = { api_key: val || null, provider: model.provider, url: model.url };
-      }
-    }
-    // A refused save throws to the auto-save, which shows it failed and
-    // keeps the keys dirty for the next try.
-    await modelsApi.saveCredentials(body);
-    setCredsDirty(false);
-    onCredsDirtyChange?.(false);
-    fetchCredentials();
-  }, [config.models, localKeys, fetchCredentials, onCredsDirtyChange]);
-
-  // Expose saveCredentials to parent via ref
-  useEffect(() => {
-    if (saveCredsRef) saveCredsRef.current = saveCredentials;
-    return () => { if (saveCredsRef) saveCredsRef.current = null; };
-  }, [saveCredsRef, saveCredentials]);
-
-  const getOllamaStatus = (model: ModelConfigUI): 'connected' | 'disconnected' | 'na' => {
-    if (model.provider !== 'ollama') return 'na';
-    if (!ollamaStatus?.models) return 'disconnected';
-    const running = ollamaStatus.models.some(
-      (m) => m.name === model.model || m.model === model.model
-    );
-    return running ? 'connected' : 'disconnected';
-  };
-
-  const hasOwnKey = (model: ModelConfigUI) => !!credentials.models?.[model.id]?.api_key;
-  const hasEndpointKey = (model: ModelConfigUI) =>
-    !!(credentials.endpoints ?? []).find((e) => sameEndpoint(e, model))?.api_key;
-  const hasKey = (model: ModelConfigUI) => hasOwnKey(model) || hasEndpointKey(model);
-  /** How many configured models share this model's endpoint key. */
-  const sharedWith = (model: ModelConfigUI) =>
-    config.models.filter((o) => o.id !== model.id && sameEndpoint(o, model)).length;
-
-  // Default model selection helpers
-  const isDefault = (modelId: string) => defaultModels.includes(modelId);
-
-  const changeRouting = (change: (routing: NonNullable<AppConfig['routing']>) => NonNullable<AppConfig['routing']>) => {
-    onChange({ ...config, routing: change(config.routing ?? {}) });
-  };
-
-  const toggleDefault = (modelId: string) => {
-    // Single-select: set as default, or take the default off the chain
-    // (lib/defaultChain.mts).
-    changeRouting((routing) => ({ ...routing, default_models: toggledDefault(routing.default_models ?? [], modelId) }));
-  };
-
-
-  const updateTags = (index: number, tagsStr: string) => {
-    const tags = tagsStr.split(',').map((t) => t.trim()).filter(Boolean);
-    const models = [...config.models];
-    models[index] = { ...models[index], tags };
-    onChange({ ...config, models });
-  };
-
-  return (
-    <div className="space-y-6">
-      {/* The default model new sessions start on */}
-      <section className={sectionCls}>
-        <h2 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-3">
-          Default Models
-        </h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          {(() => {
-            const modelId = defaultModels[0];
-            const model = config.models.find((m) => m.id === modelId);
-            // A built-in default (e.g. Linggen Cloud) isn't in config.models —
-            // resolve it from the runtime list so the tile keeps its provider
-            // chip and doesn't read as an unknown model.
-            const builtin = builtinModels.find((m) => m.id === modelId);
-            const health = modelId ? healthMap[modelId] : undefined;
-            return (
-              <DefaultTile
-                icon={<Star size={14} fill="currentColor" />}
-                label="Linggen sessions"
-                tone="amber"
-                modelId={modelId}
-                onClear={() => toggleDefault(modelId)}
-              >
-                {model && model.model && <span className="text-[11px] text-slate-400 ml-1.5">({model.model})</span>}
-                {builtin?.provided_by && (
-                  <span className="ml-1.5 px-1.5 py-0.5 text-[10px] font-bold rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
-                    {builtin.provided_by}
-                  </span>
-                )}
-                {modelId && <HealthDot health={health} ollamaStatus={model ? getOllamaStatus(model) : 'na'} />}
-              </DefaultTile>
-            );
-          })()}
-        </div>
+  if (loadFailed && !answer) {
+    return (
+      <section className={cardCls}>
+        <p data-testid="providers-load-failed" className="text-xs text-red-600 dark:text-red-400">
+          <span>{W.providersFailed}</span>{' '}
+          <button type="button" className="underline" onClick={() => void load()}>{W.retry}</button>
+        </p>
       </section>
+    );
+  }
+  if (!answer) return <p className={hintCls}>{W.loading}</p>;
 
-      {/* Built-in models — injected by the engine, not part of the config
-          file. Read-only, but they can be starred as the default. */}
-      {runtimeModelsFailed && (
-        <section className={sectionCls}>
-          <p data-testid="builtin-load-failed" className="text-xs text-red-600 dark:text-red-400">
-            <span>The built-in models could not be loaded.</span>{' '}
-            <button type="button" className="underline" onClick={refetchRuntimeModels}>Retry</button>
-          </p>
-        </section>
-      )}
-      {builtinModels.length > 0 && (
-        <section className={sectionCls}>
-          <h2 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-3">
-            Built-in
-          </h2>
-          {signInLine && (
-            <p data-testid="signed-in-default" className="mb-3 text-xs text-green-700 dark:text-green-400">
-              {signInLine}
-            </p>
-          )}
-          <div className="space-y-2">
-            {builtinModels.map((m) => {
-              const modelIsDefault = isDefault(m.id);
-              const isChatgptOauth = m.auth_mode === 'chatgpt_oauth';
-              return (
-                <div
-                  key={m.id}
-                  className={`flex items-center gap-2 px-3 py-2 bg-slate-50 dark:bg-white/[0.02] rounded-lg border ${modelIsDefault ? 'border-amber-300 dark:border-amber-700' : 'border-slate-100 dark:border-white/5'}`}
-                >
-                  <button
-                    onClick={() => toggleDefault(m.id)}
-                    className={`p-1 transition-colors ${modelIsDefault ? 'text-amber-500 hover:text-amber-600' : 'text-slate-300 hover:text-amber-500'}`}
-                    title={modelIsDefault ? 'Remove from defaults' : 'Set as default'}
-                  >
-                    <Star size={14} fill={modelIsDefault ? 'currentColor' : 'none'} />
-                  </button>
-                  <span className="text-xs font-medium flex-1">
-                    {m.id}
-                    {m.provided_by && (
-                      <span className="ml-1.5 px-1.5 py-0.5 text-[10px] font-bold rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
-                        {m.provided_by}
-                      </span>
-                    )}
-                    {m.moved && <FamilyMoved move={m.moved} onChanged={(from, to) => { followMove(from, to); refetchRuntimeModels(); }} />}
-                  </span>
-                  {isChatgptOauth && codexAuthStatus?.authenticated && <span className="text-[11px] text-slate-500">{healthMap[m.id]?.context_window ? `Context ${Math.round(healthMap[m.id].context_window! / 1000)}K` : 'Context unavailable'} <CodexUsage /></span>}
-                  {isChatgptOauth ? (
-                    codexAuthStatus?.authenticated ? (
-                      <div className="flex items-center gap-2">
-                        <span className="inline-flex items-center gap-1.5 text-[11px] text-green-600 dark:text-green-400 font-medium">
-                          <span className="w-2 h-2 rounded-full bg-green-500" />
-                          Signed in
-                          {codexAuthStatus.account_id && (
-                            <span className="text-slate-400 font-normal ml-1">({codexAuthStatus.account_id.slice(0, 8)}…)</span>
-                          )}
-                        </span>
-                        <button
-                          onClick={handleCodexLogout}
-                          className="flex items-center gap-1 text-[11px] text-red-500 hover:text-red-600 font-medium"
-                        >
-                          <LogOut size={10} /> Sign out
-                        </button>
-                      </div>
-                    ) : (
-                      <button
-                        onClick={handleCodexLogin}
-                        disabled={codexAuthLoading}
-                        className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-semibold rounded-lg bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 transition-colors"
-                      >
-                        <LogIn size={12} />
-                        {codexAuthLoading ? 'Waiting for browser login...' : 'Sign in with ChatGPT'}
-                      </button>
-                    )
-                  ) : m.provided_by === 'Linggen Cloud' ? (
-                    m.auth_ok === false ? (
-                      // Signed out, the meter renders nothing and the default
-                      // model would look healthy while every turn fails —
-                      // this row states it and offers the door.
-                      <button
-                        onClick={handleLinggenLogin}
-                        disabled={linggenLoginBusy}
-                        className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-semibold rounded-lg bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 transition-colors"
-                      >
-                        <LogIn size={12} />
-                        {linggenLoginBusy ? 'Waiting for browser login...' : 'Sign in to linggen.dev'}
-                      </button>
-                    ) : (
-                      // The account's cloud allowance ("19.2M left") is spent only
-                      // by Linggen Cloud models, so the meter lives on this row.
-                      <UsageMeter />
-                    )
-                  ) : (
-                    <HealthDot health={healthMap[m.id]} ollamaStatus="na" />
-                  )}
-                </div>
-              );
-            })}
+  const { providers } = answer;
+  const addable = answer.presets.filter((p) => p.way === 'key' && !providers.some((q) => q.way === 'key' && q.provider === p.name && sameAddress(q.url, p.url)));
+  const local = localProviders(providers);
+  return (
+    <div className="space-y-6" data-testid="models-page">
+      <DefaultCard providers={providers} first={config.routing?.default_models?.[0]} busy={busy} onPick={(id) => void makeDefault(id)} />
+      <section className={cardCls}>
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div className="min-w-0">
+            <h2 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">{W.providers}</h2>
+            <p className={`${hintCls} mt-1`}>{W.providersHint}</p>
           </div>
-        </section>
-      )}
-
-      {/* Model cards */}
-      <section className={sectionCls}>
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">Models</h2>
-          <button onClick={addModel} className="flex items-center gap-1 text-[11px] font-bold text-blue-600 hover:text-blue-700">
-            <Plus size={12} /> Add Model
+          <button type="button" data-testid="add-provider-button" className={`${linkBtn} flex items-center gap-1`} onClick={() => setAdding(!adding)}>
+            <Plus size={12} />{W.addProvider}
           </button>
         </div>
-        <div className="space-y-4">
-          {config.models.map((model, i) => {
-            if (builtinIds.has(model.id)) return null;
-            const health = healthMap[model.id];
-            const modelIsDefault = model.id ? isDefault(model.id) : false;
-            return (
-              <div key={i} className={`bg-slate-50 dark:bg-white/[0.02] rounded-lg p-4 border relative ${modelIsDefault ? 'border-amber-300 dark:border-amber-700' : 'border-slate-100 dark:border-white/5'}`}>
-                <div className="absolute top-3 right-3 flex items-center gap-3">
-                  <HealthDot health={health} ollamaStatus={getOllamaStatus(model)} />
-                  {model.id && (
-                    <button
-                      onClick={() => toggleDefault(model.id)}
-                      className={`p-1 transition-colors ${modelIsDefault ? 'text-amber-500 hover:text-amber-600' : 'text-slate-300 hover:text-amber-500'}`}
-                      title={modelIsDefault ? 'Remove from defaults' : 'Add to defaults'}
-                    >
-                      <Star size={14} fill={modelIsDefault ? 'currentColor' : 'none'} />
-                    </button>
-                  )}
-                  <button
-                    onClick={() => removeModel(i)}
-                    className="p-1 text-slate-400 hover:text-red-500 transition-colors"
-                    title="Remove model"
-                  >
-                    <Trash2 size={12} />
-                  </button>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className={labelCls}>ID</label>
-                    <input className={inputCls} value={model.id} onChange={(e) => updateModel(i, 'id', e.target.value)} placeholder="e.g. local_ollama" />
-                  </div>
-                  <div>
-                    <label className={labelCls}>Provider</label>
-                    <select className={inputCls} value={model.provider} onChange={(e) => updateModel(i, 'provider', e.target.value)}>
-                      <option value="ollama">Ollama (local)</option>
-                      <option value="chatgpt">ChatGPT (Subscription)</option>
-                      <option value="anthropic">Anthropic Claude (API)</option>
-                      <option value="gemini">Google Gemini</option>
-                      <option value="openai">OpenAI (API)</option>
-                      <option value="groq">Groq</option>
-                      <option value="deepseek">DeepSeek</option>
-                      <option value="openrouter">OpenRouter</option>
-                      <option value="github">GitHub Models</option>
-                      <option value="qwen">Qwen (DashScope)</option>
-                      <option value="moonshot">Kimi (Moonshot)</option>
-                      <option value="zhipu">GLM (Zhipu)</option>
-                      <option value="siliconflow">SiliconFlow</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className={labelCls}>URL</label>
-                    <input className={inputCls} value={model.url} onChange={(e) => updateModel(i, 'url', e.target.value)} placeholder={PROVIDER_PRESETS[model.provider]?.url || 'http://...'} />
-                  </div>
-                  <div>
-                    <label className={labelCls}>Model</label>
-                    <input className={inputCls} value={model.model} onChange={(e) => updateModel(i, 'model', e.target.value)} placeholder={PROVIDER_PRESETS[model.provider]?.placeholder || 'e.g. model-name'} />
-                  </div>
-                  <div>
-                    {model.auth_mode === 'chatgpt_oauth' ? (
-                      <>
-                        <label className={labelCls}>ChatGPT OAuth</label>
-                        {codexAuthStatus?.authenticated ? (
-                          <div className="flex items-center gap-2 mt-1">
-                            <span className="inline-flex items-center gap-1.5 text-[11px] text-green-600 dark:text-green-400 font-medium">
-                              <span className="w-2 h-2 rounded-full bg-green-500" />
-                              Signed in
-                              {codexAuthStatus.account_id && (
-                                <span className="text-slate-400 font-normal ml-1">({codexAuthStatus.account_id.slice(0, 8)}…)</span>
-                              )}
-                            </span>
-                            <button
-                              onClick={handleCodexLogout}
-                              className="flex items-center gap-1 text-[11px] text-red-500 hover:text-red-600 font-medium"
-                            >
-                              <LogOut size={10} /> Sign out
-                            </button>
-                          </div>
-                        ) : (
-                          <button
-                            onClick={handleCodexLogin}
-                            disabled={codexAuthLoading}
-                            className="mt-1 flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-semibold rounded-lg bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 transition-colors"
-                          >
-                            <LogIn size={12} />
-                            {codexAuthLoading ? 'Waiting for browser login...' : 'Sign in with ChatGPT'}
-                          </button>
-                        )}
-                        <p className="text-[10px] text-slate-400 mt-1">Uses your ChatGPT Plus/Pro subscription — no API key needed.</p>
-                      </>
-                    ) : (
-                      <>
-                        <label className={labelCls}>
-                          API Key
-                          {hasOwnKey(model) && <span className="ml-1 text-green-500 text-[8px]">(own key)</span>}
-                          {!hasOwnKey(model) && hasEndpointKey(model) && (
-                            <span className="ml-1 text-green-500 text-[8px]">
-                              (set{sharedWith(model) > 0 ? ` · shared by ${sharedWith(model) + 1} ${model.provider} models` : ''})
-                            </span>
-                          )}
-                        </label>
-                        <div className="relative">
-                          <input
-                            className={inputCls + ' pr-8'}
-                            type={revealKeys[model.id] ? 'text' : 'password'}
-                            value={localKeys[model.id] ?? ''}
-                            onChange={(e) => updateLocalKey(model.id, e.target.value)}
-                            placeholder={
-                              hasKey(model)
-                                ? '(stored in ~/.linggen/credentials.json)'
-                                : model.provider === 'ollama'
-                                  ? '(optional)'
-                                  : `(the ${model.provider} key for this endpoint)`
-                            }
-                          />
-                          <button
-                            type="button"
-                            className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                            onClick={() => setRevealKeys((prev) => ({ ...prev, [model.id]: !prev[model.id] }))}
-                            tabIndex={-1}
-                          >
-                            {revealKeys[model.id] ? <EyeOff size={12} /> : <Eye size={12} />}
-                          </button>
-                        </div>
-                      </>
-                    )}
-                  </div>
-                  <div>
-                    <label className={labelCls}>
-                      Context Window
-                      {!model.context_window && health?.context_window && (
-                        <span className="font-normal text-slate-400 ml-1">
-                          (auto: {health.context_window >= 1_000_000
-                            ? `${(health.context_window / 1_000_000).toFixed(health.context_window % 1_000_000 === 0 ? 0 : 1)}M`
-                            : `${Math.round(health.context_window / 1_000)}K`})
-                        </span>
-                      )}
-                    </label>
-                    <input
-                      className={inputCls}
-                      type="number"
-                      value={model.context_window ?? ''}
-                      onChange={(e) => updateModel(i, 'context_window', e.target.value ? Number(e.target.value) : null)}
-                      placeholder={health?.context_window ? `${Math.round(health.context_window / 1_000)}K (auto-detected)` : 'e.g. 128000'}
-                    />
-                  </div>
-                  <div>
-                    <label className={labelCls}>Keep Alive</label>
-                    <input
-                      className={`${inputCls} ${model.keep_alive && !isValidGoDuration(model.keep_alive.trim()) ? 'border-red-400 dark:border-red-500/60 focus:ring-red-500/50' : ''}`}
-                      value={model.keep_alive || ''}
-                      onChange={(e) => updateModel(i, 'keep_alive', e.target.value || null)}
-                      placeholder="e.g. 30m"
-                    />
-                    {model.keep_alive && !isValidGoDuration(model.keep_alive.trim()) && (
-                      <p className="text-[11px] text-red-500 mt-1">Needs a time unit — e.g. 10m, 30s, 1h</p>
-                    )}
-                  </div>
-                  <div>
-                    <label className={labelCls}>
-                      Tags
-                      <span className="font-normal text-slate-400 ml-1">(comma-separated)</span>
-                    </label>
-                    <input
-                      className={inputCls}
-                      value={(model.tags ?? []).join(', ')}
-                      onChange={(e) => updateTags(i, e.target.value)}
-                      placeholder="e.g. vision, fast"
-                    />
-                  </div>
-                  <div>
-                    <label className={labelCls}>
-                      Reasoning Effort
-                      <span className="font-normal text-slate-400 ml-1">(GPT-5, o3, Gemini 2.5)</span>
-                    </label>
-                    <select
-                      className={inputCls}
-                      value={model.reasoning_effort || ''}
-                      onChange={(e) => updateModel(i, 'reasoning_effort', e.target.value || null)}
-                    >
-                      <option value="">Default</option>
-                      <option value="low">Low — faster, cheaper</option>
-                      <option value="medium">Medium — balanced</option>
-                      <option value="high">High — thorough reasoning</option>
-                    </select>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-          {config.models.every((m: { id: string }) => builtinIds.has(m.id)) && (
-            <p className="text-xs text-slate-400 text-center py-4">No custom models. The built-ins above work out of the box — add one here for your own API key or a local model.</p>
-          )}
-        </div>
-        {credsDirty && (
-          <div className="mt-4 flex justify-end">
-            <button
-              onClick={saveCredentials}
-              className="px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-            >
-              Save API Keys
-            </button>
+        {problem && <p role="alert" data-testid="models-problem" className="mt-3 text-xs text-red-600 dark:text-red-400">{problem}</p>}
+        {signInLine && <p data-testid="signed-in-default" className="mt-3 text-xs text-green-700 dark:text-green-400">{signInLine}</p>}
+        <div className="mt-4">
+          {adding && <AddProvider presets={addable} busy={busy} onPick={(p) => void pick(p)} onClose={() => setAdding(false)} />}
+          <GroupHead title={W.readyToUse} hint={W.readyToUseHint} />
+          <div className="space-y-1.5" data-testid="ready-to-use">
+            {readyToUse(providers).map((p) => <ReadyRow key={p.id} provider={p} moved={moved} changed={signedInChanged} />)}
           </div>
-        )}
-        <p className="mt-3 text-[11px] text-slate-400">
-          API keys are stored in <code className="text-[11px]">~/.linggen/credentials.json</code>, one per provider endpoint — every model on the same endpoint shares it; paste it once.
-          Click <Star size={10} className="inline text-amber-500" /> to make a model the default. A Claude model runs here with an API key or a Claude sign-in.
-        </p>
+          <GroupHead title={W.ownKeys} hint={W.ownKeysHint} />
+          <div className="space-y-1.5">
+            {keyProviders(providers).map((p) => (
+              <KeyRow key={p.id} provider={p} open={open === p.id} onToggle={() => setOpen(open === p.id ? null : p.id)} run={run} busy={busy} makeDefault={makeDefault} />
+            ))}
+            {local.length > 0 && <LocalRow providers={local} />}
+          </div>
+        </div>
       </section>
     </div>
   );
 };
 
-/** One line on a ChatGPT built-in whose family moved — to what, since when —
- *  and the one control to stay on the previous model or follow again. */
-function FamilyMoved({ move, onChanged }: { move: ModelMove; onChanged: (from: string, to: string) => void }) {
-  const [busy, setBusy] = useState(false);
-  const date = move.since ? new Date(move.since * 1000).toLocaleDateString() : '';
-  const toggle = async () => {
-    setBusy(true);
-    try {
-      await modelsApi.stayChatgpt(move.family, !move.staying);
-      if (move.staying) onChanged(move.previous, move.current);
-      else onChanged(move.current, move.previous);
-    } finally {
-      setBusy(false);
-    }
-  };
-  const line = move.staying
-    ? `Staying on ${move.previous}; ${move.current} is newer.`
-    : `Moved up from ${move.previous} on ${date}.`;
-  const action = move.staying ? `Use ${move.current}` : `Stay on ${move.previous}`;
-  return (
-    <span className="block mt-0.5 text-[11px] font-normal text-slate-500">
-      <span>{line}</span>
-      {(move.staying || move.can_stay) && (
-        <button
-          onClick={toggle}
-          disabled={busy}
-          className="ml-2 text-[11px] font-semibold text-blue-600 hover:text-blue-700 disabled:opacity-50"
-        >
-          {action}
-        </button>
-      )}
-    </span>
-  );
-}
+const GroupHead: React.FC<{ title: string; hint: string }> = ({ title, hint }) => (
+  <div className="mb-2 mt-4 flex flex-wrap items-baseline gap-2 first:mt-0">
+    <h3 className="text-[11px] font-bold text-slate-500 dark:text-slate-400">{title}</h3>
+    <span className="text-[11px] text-slate-400">{hint}</span>
+  </div>
+);

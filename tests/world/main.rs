@@ -15,6 +15,14 @@
 //! `{"noConfig": true}` starts a true first install instead: no fixture, no
 //! config at all (`Setup::no_config`).
 //!
+//! Three more fields start a provider page on what the family tests use
+//! (tests/system/families.rs): `"configAppend"` is TOML appended to the
+//! config (a followed row, say), `"defaultModel"` the one model the default
+//! chain starts as, and `"families"` the day and the providers' model lists,
+//! written as `test-families.json` in the home (the engine reads it in a
+//! `test-support` build only — which is how this target is built, see
+//! tests/e2e/support/global-setup.ts — so no provider is ever called).
+//!
 //! Once up it prints one JSON line — `{"url", "root", "work", "linggen_home"}`
 //! — and then reads commands on stdin, one per line:
 //!   `calls`  → one JSON line: every model call (agent, matched, model)
@@ -41,13 +49,15 @@ fn main() {
         .enable_all()
         .build()
         .expect("tokio runtime");
-    rt.block_on(serve(setup(&scenario)));
+    rt.block_on(serve(setup(&scenario), scenario["families"].clone()));
 }
 
 fn setup(scenario: &Value) -> Setup {
     let mut setup = Setup {
         fixture: scenario["fixture"].as_str().map(leak),
         no_config: scenario["noConfig"].as_bool().unwrap_or(false),
+        config_append: scenario["configAppend"].as_str().map(leak),
+        default_model: scenario["defaultModel"].as_str().map(leak),
         ..Setup::default()
     };
     let scripts = scenario["scripts"].as_object().cloned().unwrap_or_default();
@@ -77,8 +87,13 @@ fn leak(s: &str) -> &'static str {
     Box::leak(s.to_string().into_boxed_str())
 }
 
-async fn serve(setup: Setup) {
-    let w = World::start(setup).await;
+async fn serve(setup: Setup, families: Value) {
+    let w = World::start_with_home(setup, |home| {
+        if !families.is_null() {
+            std::fs::write(home.linggen_home().join("test-families.json"), families.to_string()).expect("families fixture");
+        }
+    })
+    .await;
     let hello = json!({
         "url": w.engine.base_url(),
         "root": w.home.root,

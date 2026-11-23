@@ -20,6 +20,13 @@ export type Scenario = {
   /** A true first install: no fixture, no config folder at all (the engine's
    *  own defaults; its memory the store it hosts on its own port). */
   noConfig?: boolean;
+  /** TOML appended to the config before the engine starts (a followed row). */
+  configAppend?: string;
+  /** The one model the default chain starts as. */
+  defaultModel?: string;
+  /** The day and the providers' model lists the engine reads instead of
+   *  asking a provider (`test-families.json`; tests/system/families.rs). */
+  families?: { today: string; lists: Record<string, string[]> };
   scripts?: { ling?: Reply[]; yinyue?: Reply[] };
 };
 

@@ -1,9 +1,11 @@
-// Settings → Models shows the engine's built-in models (ChatGPT, Linggen Cloud).
-// They came from `GET /api/models`, which answers by who asks; over the
+// Settings → Models shows the engine's built-in models (ChatGPT, Linggen Cloud)
+// under "Ready to use". `GET /api/models` answers by who asks; over the
 // channel the owner's own page was taken for no one, the list came back empty
-// and the "Built-in" group vanished while the chat's picker (page_state) still
-// listed them. The test asks the engine for its list the way the owner's
-// machine does and holds the page to it, for both ways into the page.
+// and the group vanished while the chat's picker (page_state) still listed
+// them. The page now draws `GET /api/providers`: the test asks the engine for
+// the built-in list the way the owner's machine does and holds the page to it,
+// for both ways into the page — and holds a failed provider list to its
+// failure line and Retry.
 import type { APIRequestContext, Page } from '@playwright/test';
 import { test, expect, expectWebRtc } from '../support/world';
 
@@ -13,9 +15,10 @@ async function builtinIds(world: { url: string }, request: APIRequestContext): P
   return rows.filter((m) => m.is_builtin).map((m) => m.id);
 }
 
-/** Every built-in id is on the page, under a "Built-in" heading. */
+/** Every built-in id is on the page, under the "Ready to use" heading. */
 async function expectBuiltinGroup(page: Page, ids: string[]) {
-  const group = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Built-in', exact: true }) });
+  await expect(page.getByRole('heading', { name: 'Ready to use', exact: true })).toBeVisible();
+  const group = page.getByTestId('ready-to-use');
   await expect(group).toBeVisible();
   for (const id of ids) await expect(group.getByText(id).first()).toBeVisible();
 }
@@ -40,17 +43,17 @@ test('going to Models from the settings home shows every built-in model the engi
   await expectBuiltinGroup(page, ids);
 });
 
-test('a built-in list that cannot be loaded says so and offers a retry', async ({ page, world, request, httpRequests }) => {
+test('a provider list that cannot be loaded says so and offers a retry', async ({ page, world, request, httpRequests }) => {
   const ids = await builtinIds(world, request);
   await page.goto(`${world.url}/settings`);
   await expectWebRtc(page, httpRequests);
   await page.evaluate(() => {
-    // The next read of /api/models, through the page's own fetch, is refused.
+    // The next read of /api/providers, through the page's own fetch, is refused.
     const ask = window.fetch.bind(window);
     let refused = false;
     window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.pathname : input.url;
-      if (!refused && url.split('?')[0].endsWith('/api/models')) {
+      if (!refused && url.split('?')[0].endsWith('/api/providers')) {
         refused = true;
         return Promise.resolve(new Response('no', { status: 500 }));
       }
@@ -58,8 +61,8 @@ test('a built-in list that cannot be loaded says so and offers a retry', async (
     }) as typeof window.fetch;
   });
   await page.getByRole('button', { name: 'Models', exact: true }).click();
-  await expect(page.getByTestId('builtin-load-failed')).toBeVisible();
-  await page.getByTestId('builtin-load-failed').getByRole('button', { name: 'Retry' }).click();
-  await expect(page.getByTestId('builtin-load-failed')).toBeHidden();
+  await expect(page.getByTestId('providers-load-failed')).toBeVisible();
+  await page.getByTestId('providers-load-failed').getByRole('button', { name: 'Retry' }).click();
+  await expect(page.getByTestId('providers-load-failed')).toBeHidden();
   await expectBuiltinGroup(page, ids);
 });

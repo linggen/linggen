@@ -76,6 +76,7 @@ async fn a_key_ticks_the_starter_family_once_and_never_again() {
     assert_eq!((sonnet["ticked"].clone(), sonnet["mode"].clone()), (true.into(), "follow".into()));
     assert_eq!(sonnet["current"]["model"], "claude-sonnet-5-5");
     assert_eq!(sonnet["current"]["price"]["source"], "catalog");
+    assert_eq!(sonnet["label"], "Sonnet", "a family is named by the engine");
     assert_eq!(family(&body, "claude-opus")["ticked"], false);
     assert_eq!(anthropic(&body)["families"]["catalog"]["observed_at"], TODAY);
     assert!(!body.to_string().contains(KEY), "the key is in no answer");

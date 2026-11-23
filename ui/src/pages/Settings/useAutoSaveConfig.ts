@@ -1,8 +1,9 @@
 /**
- * Settings save themselves. A change to the config file, or to the API keys
- * (`credentials.json`), is written once the person stops changing it for a
- * moment — a toggle at once, typing when it pauses. The engine validates each
- * write; a refused one is shown and kept dirty, and the next edit tries again.
+ * Settings save themselves. A change to the config file is written once the
+ * person stops changing it for a moment — a toggle at once, typing when it
+ * pauses. The engine validates each write; a refused one is shown and kept
+ * dirty, and the next edit tries again. (API keys are not here: the Models
+ * page sends a key to its own route.)
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AppConfig } from '../../types';
@@ -20,8 +21,6 @@ export type SaveState = 'idle' | 'saving' | 'saved' | 'error';
 export function useAutoSaveConfig(enabled = true) {
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [saved, setSaved] = useState<AppConfig | null>(null);
-  const [credsDirty, setCredsDirty] = useState(false);
-  const saveCredsRef = useRef<(() => Promise<void>) | null>(null);
   const [state, setState] = useState<SaveState>('idle');
   const [error, setError] = useState<string | null>(null);
 
@@ -44,37 +43,50 @@ export function useAutoSaveConfig(enabled = true) {
   const writes = useState(() => settleWrites(SETTLE_MS))[0];
   useEffect(() => () => writes.flush(), [writes]);
 
+  // What the page holds, for `reload` to read when it is called.
+  const held = useRef({ config, saved });
+  useEffect(() => { held.current = { config, saved }; });
+
+  /** A route of the engine changed the config (a family ticked, a default
+   *  made): read it again, so no later save posts the old copy back — a save
+   *  of a copy older than a tick would remove the ticked row. An edit still
+   *  waiting is written first. */
+  const reload = useCallback(async () => {
+    const { config: edited, saved: written } = held.current;
+    writes.cancel();
+    if (edited && written && JSON.stringify(edited) !== JSON.stringify(written)) await appConfig.save(edited);
+    const data = await appConfig.get();
+    setConfig(data);
+    setSaved(data);
+    useServerStore.setState({ defaultModels: data.routing?.default_models ?? [] });
+  }, [writes]);
+
   useEffect(() => {
-    if (!config || !saved || (!configDirty && !credsDirty)) {
+    if (!config || !saved || !configDirty) {
       writes.cancel();
       return;
     }
-    // Taken when the edit is made: leaving the Models tab drops its saver.
-    const saveCreds = saveCredsRef.current;
     writes.later(async () => {
       setState('saving');
       setError(null);
       try {
-        if (configDirty) {
-          await appConfig.save(config);
-          setSaved(config);
-          // The chat's model pickers read the defaults from here.
-          useServerStore.setState({ defaultModels: config.routing?.default_models ?? [] });
-          // A new language is the whole page's: reload it into the new words.
-          if (config.language !== saved.language) {
-            rememberLanguage(config.language ?? null);
-            (window.top ?? window).location.reload();
-            return;
-          }
+        await appConfig.save(config);
+        setSaved(config);
+        // The chat's model pickers read the defaults from here.
+        useServerStore.setState({ defaultModels: config.routing?.default_models ?? [] });
+        // A new language is the whole page's: reload it into the new words.
+        if (config.language !== saved.language) {
+          rememberLanguage(config.language ?? null);
+          (window.top ?? window).location.reload();
+          return;
         }
-        if (credsDirty && saveCreds) await saveCreds();
         setState('saved');
       } catch (e) {
         setError(apiErrorMessage(e) || `Save failed: ${e}`);
         setState('error');
       }
     });
-  }, [config, saved, configDirty, credsDirty, writes]);
+  }, [config, saved, configDirty, writes]);
 
   // "Saved" fades after a moment; an error stays until the next save.
   useEffect(() => {
@@ -83,5 +95,5 @@ export function useAutoSaveConfig(enabled = true) {
     return () => clearTimeout(timer);
   }, [state]);
 
-  return { config, setConfig, setCredsDirty, saveCredsRef, state, error };
+  return { config, setConfig, reload, state, error };
 }

@@ -1,9 +1,10 @@
 /**
- * The default model chain after a star or Clear on `modelId`: the default
- * (the chain's first) is taken off the chain and the fallbacks after it
- * stay; any other model becomes the one default. Pure, so node tests can
- * hold it.
+ * The default model chain after `modelId` is made the default: it goes first,
+ * the models that were there stay after it as fallbacks, and it is never in
+ * the chain twice. The same rule as `Config::make_default` in the engine
+ * (crates/linggen-engine/src/config.rs); the two pages that pick a default
+ * (Models, Agents) both say it through here. Pure, so node tests can hold it.
  */
-export function toggledDefault(chain: string[], modelId: string): string[] {
-  return chain[0] === modelId ? chain.slice(1) : [modelId];
+export function madeDefault(chain: string[], modelId: string): string[] {
+  return [modelId, ...chain.filter((id) => id !== modelId)];
 }

@@ -45,7 +45,7 @@ function configSection(render: (props: SectionProps, config: AppConfig) => React
 const sections = {
   general: configSection(({ save }, config) => <Scroll><GeneralTab config={config} onChange={save.setConfig} /></Scroll>),
   agents: configSection(({ save, projectRoot }, config) => <Scroll><AgentsPage config={config} onChange={save.setConfig} projectRoot={projectRoot} /></Scroll>),
-  models: configSection(({ save }, config) => <Scroll><ModelsTab config={config} onChange={save.setConfig} onCredsDirtyChange={save.setCredsDirty} saveCredsRef={save.saveCredsRef} /></Scroll>),
+  models: configSection(({ save }, config) => <Scroll><ModelsTab config={config} reload={save.reload} /></Scroll>),
   session: configSection(({ save }, config) => <Scroll><SessionTab config={config} onChange={save.setConfig} /></Scroll>),
   skills: ({ projectRoot }) => <div className="h-full overflow-y-auto px-3 md:px-6 py-4 md:py-5"><div className="max-w-6xl mx-auto h-full"><SkillsTab projectRoot={projectRoot} /></div></div>,
   tools: () => <Scroll><ToolsTab /></Scroll>,

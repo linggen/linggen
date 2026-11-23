@@ -28,6 +28,8 @@ struct CatalogView {
 #[derive(Serialize)]
 struct FamilyView {
     family: String,
+    /// The short name a page shows beside the checkbox (`label_of`).
+    label: String,
     ticked: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     row: Option<String>,
@@ -109,7 +111,9 @@ pub(super) fn of(f: &Families, config: &Config, creds: &Credentials, (name, url)
     let snapshot = f.catalog();
     let today = f.today();
     let listing = endpoint.listing(f);
-    let families = snapshot.chat_families(endpoint.preset).into_iter().enumerate().map(|(rank, (family, _))| {
+    let ranked = snapshot.chat_families(endpoint.preset);
+    let keys: Vec<&str> = ranked.iter().map(|(key, _)| key.as_str()).collect();
+    let families = ranked.iter().enumerate().map(|(rank, (family, _))| {
         let row = binding::row_of(config, endpoint.preset.key, &family);
         let answer = endpoint.ask(&snapshot, &family, row.map(|r| r.model.as_str()), listing.as_deref(), today);
         let (next, hold, choose) = match &answer {
@@ -151,7 +155,8 @@ pub(super) fn of(f: &Families, config: &Config, creds: &Credentials, (name, url)
             folded: rank >= SHOWN && row.is_none() && notice.is_none(),
             notice,
             references: row.map(|r| references(config, &r.id)).unwrap_or_default(),
-            family,
+            label: label_of(family, &keys),
+            family: family.clone(),
         }
     }).collect();
     Some(FamiliesView {
@@ -162,6 +167,27 @@ pub(super) fn of(f: &Families, config: &Config, creds: &Credentials, (name, url)
         },
         families,
     })
+}
+
+/// A family's short name: its key in words, without the first word when other
+/// families of the endpoint start with it too ("claude-opus" beside
+/// "claude-sonnet" is "Opus"). A key that is only that word stays whole
+/// ("gpt" is "GPT"). The one place a family is named for a page.
+fn label_of(key: &str, siblings: &[&str]) -> String {
+    let mut words: Vec<&str> = key.split('-').collect();
+    let first = words[0];
+    let shared = siblings.iter().any(|other| *other != key && other.split('-').next() == Some(first));
+    let stripped = shared && words.len() > 1;
+    if stripped {
+        words.remove(0);
+    }
+    // A short key that stood alone is an acronym ("gpt"); a short word left over is a name ("sol").
+    let acronym = !stripped && words.len() == 1 && words[0].len() <= 3;
+    words.iter().map(|word| {
+        if acronym { return word.to_uppercase(); }
+        let mut chars = word.chars();
+        chars.next().map(|c| c.to_uppercase().chain(chars).collect()).unwrap_or_default()
+    }).collect::<Vec<String>>().join(" ")
 }
 
 /// A model of the endpoint as a line: its name, date and dated price.
@@ -186,4 +212,18 @@ fn references(config: &Config, id: &str) -> Vec<Reference> {
     let agents = config.agents.iter().filter(|a| a.model.as_deref() == Some(id))
         .map(|a| Reference { place: "agent", who: Some(a.id.clone()) });
     chain.chain(pet).chain(agents).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::label_of;
+
+    #[test]
+    fn a_family_is_named_without_the_word_its_siblings_share() {
+        let keys = ["claude-fable", "claude-haiku", "claude-opus", "claude-sonnet"];
+        assert_eq!(keys.map(|k| label_of(k, &keys)), ["Fable", "Haiku", "Opus", "Sonnet"]);
+        let gpt = ["gpt", "gpt-sol", "gpt-deep-research"];
+        assert_eq!(gpt.map(|k| label_of(k, &gpt)), ["GPT", "Sol", "Deep Research"]);
+        assert_eq!(label_of("deepseek-flash", &["deepseek-flash"]), "Deepseek Flash");
+    }
 }

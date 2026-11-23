@@ -61,7 +61,11 @@ struct AddressEdit { url: String }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct NewModel { id: String, model: String }
+struct NewModel {
+    /// Left out by the page: the engine makes one (`Config::fresh_model_id`).
+    id: Option<String>,
+    model: String,
+}
 
 pub(super) type Failure = (StatusCode, &'static str);
 pub(super) const BAD: Failure = (StatusCode::BAD_REQUEST, "Invalid provider settings.");
@@ -241,7 +245,8 @@ async fn apply(state: &Arc<ServerState>, edit: Edit) -> Result<(Config, Credenti
         Edit::AddModel(id, body) => {
             let model = parse::<NewModel>(&body)?;
             address(&url)?;
-            let row = serde_json::from_value(json!({"id": model.id, "model": model.model, "provider": name, "url": url})).map_err(|_| BAD)?;
+            let row_id = model.id.unwrap_or_else(|| config.fresh_model_id("own"));
+            let row = serde_json::from_value(json!({"id": row_id, "model": model.model, "provider": name, "url": url})).map_err(|_| BAD)?;
             config.models.push(row);
             save_config(state, &config).await?;
             state.provider_drafts.lock().await.remove(&id);

@@ -4,9 +4,10 @@
  * proxy, JSON encoding and error handling are the same everywhere.
  */
 import type { StatusResponse } from '../types/generated/StatusResponse';
-import type { AgentFileInfo, AppConfig, BuiltInSkillInfo, ModelHealthInfo, OllamaPsResponse, SkillInfoFull } from '../types';
+import type { AgentFileInfo, AppConfig, BuiltInSkillInfo, SkillInfoFull } from '../types';
 import type { PeopleReply, PersonPatch, PersonSettings } from './people.mts';
 import type { OutsideAppsReply } from './outsideApps.mts';
+import type { FamilyAction, ProvidersAnswer } from './providers.mts';
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from './api';
 
 const q = (params: Record<string, string | undefined>) => {
@@ -102,14 +103,27 @@ export interface SignedInDefault {
 
 export const modelsApi = {
   signedInDefault: () => apiGet<SignedInDefault | null>('/api/models/signed-in-default'),
-  health: () => apiGet<ModelHealthInfo[]>('/api/models/health'),
-  ollamaStatus: () => apiGet<OllamaPsResponse>('/api/utils/ollama-status'),
-  credentials: <T>() => apiGet<T>('/api/credentials'),
-  saveCredentials: (body: Record<string, { api_key: string | null; provider: string; url: string }>) =>
-    apiPut<void>('/api/credentials', body),
   /** Stay on a ChatGPT family's previous model, or follow it again. */
   stayChatgpt: (family: string, stay: boolean) =>
     apiPost<void>('/api/models/chatgpt/stay', { family, stay }),
+};
+
+/** The owner's provider settings (src/server/api/providers.rs and
+ *  provider_families.rs). Every call answers with the fresh list; the page
+ *  draws that answer and decides nothing itself (lib/providers.mts). */
+const provider = (id: string) => `/api/providers/${encodeURIComponent(id)}`;
+export const providersApi = {
+  list: () => apiGet<ProvidersAnswer>('/api/providers'),
+  /** A provider the person picked from `presets`, by its label. */
+  create: (preset: string) => apiPost<ProvidersAnswer>('/api/providers', { preset }),
+  setKey: (id: string, apiKey: string | null) => apiPut<ProvidersAnswer>(`${provider(id)}/key`, { api_key: apiKey }),
+  setAddress: (id: string, url: string) => apiPatch<ProvidersAnswer>(provider(id), { url }),
+  /** A model typed by name; the engine makes the row's id. */
+  addModel: (id: string, model: string) => apiPost<ProvidersAnswer>(`${provider(id)}/models`, { model }),
+  removeModel: (id: string, modelId: string) => apiDelete<ProvidersAnswer>(`${provider(id)}/models/${encodeURIComponent(modelId)}`),
+  /** Tick, untick, choose, pin, follow, or answer a notice (`move` is its number). */
+  family: (id: string, family: string, action: FamilyAction) =>
+    apiPut<ProvidersAnswer>(`${provider(id)}/families/${encodeURIComponent(family)}`, action),
 };
 
 /** A provider's browser login (codex, claude): start it, poll its status. */
