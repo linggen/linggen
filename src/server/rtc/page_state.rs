@@ -345,32 +345,14 @@ pub async fn build_page_state(
     if include_global {
         ps.ui_build = crate::server::app_pages::ui_build(state.dev_mode);
         ps.agents_met = Some(state.manager.met.status());
-        // Models — admin sees all, others see shared_models only
-        let models_guard = state.manager.models.read().await;
-        let all_models: Vec<(_, bool)> = models_guard
-            .list_models()
-            .into_iter()
-            .map(|m| {
-                let auth_ok = models_guard.model_auth_ok(&m.id);
-                (m.clone(), auth_ok)
-            })
-            .collect();
-        drop(models_guard);
         let people = crate::server::people::current();
-        let models = if let Some(ref cfg) = room_cfg {
-            let shared: std::collections::HashSet<&str> =
-                cfg.shared_models.iter().map(|s| s.as_str()).collect();
-            all_models
-                .into_iter()
-                .filter(|(m, _)| shared.contains(m.id.as_str()))
-                .collect::<Vec<_>>()
-        } else {
-            // Another person is shown the models they were given.
-            all_models
-                .into_iter()
-                .filter(|(m, _)| people.may_run_model(person, &m.id))
-                .collect::<Vec<_>>()
-        };
+        let models = crate::server::model_list::for_person(
+            state,
+            person,
+            crate::provider::kinds::Kind::Chat,
+            &people,
+            room_cfg.as_ref().map(|cfg| cfg.shared_models.as_slice()),
+        ).await;
         ps.models = Some(
             models
                 .into_iter()

@@ -109,15 +109,17 @@ impl Peer {
         .expect("matching control message")
     }
 
-    async fn replay(&mut self) -> Value {
-        let msg =
-            json!({"type":"http_request", "request_id":"latest", "method":"GET", "url":LATEST});
+    fn send(&mut self, msg: Value) {
         assert!(self
             .rtc
             .channel(self.control)
             .unwrap()
             .write(false, msg.to_string().as_bytes())
             .unwrap());
+    }
+
+    async fn replay(&mut self) -> Value {
+        self.send(json!({"type":"http_request", "request_id":"latest", "method":"GET", "url":LATEST}));
         let reply = self.message(|msg| msg["request_id"] == "latest").await;
         assert_eq!(reply["data"]["status"], 200, "{reply}");
         serde_json::from_str::<Value>(reply["data"]["body"].as_str().unwrap()).unwrap()["payload"]
@@ -151,6 +153,7 @@ async fn world() -> World {
         Setup {
             lan: true,
             daily_session: Some(true),
+            config_append: Some(crate::model_kinds::LIVE_ROW),
             ..Setup::default()
         },
         |home| {
@@ -170,7 +173,7 @@ async fn world() -> World {
             let people = json!({
                 "version": 1,
                 "owner": {"mine_only": ["private"]},
-                "people": {"u-given": {"apps": ["music"]}, "u-not-given": {"apps": []}},
+                "people": {"u-given": {"apps": ["music"], "models": ["fake-ling", "voice-row"], "level": "read"}, "u-not-given": {"apps": []}},
             });
             std::fs::write(root.join("people.json"), people.to_string()).unwrap();
             std::fs::write(
@@ -255,6 +258,37 @@ async fn catalogs(live: bool) {
         );
         let updated = given.live(|payload| payload["tools"] == json!([])).await;
         assert_eq!(given.replay().await, updated);
+    }
+}
+
+#[tokio::test]
+async fn http_and_pushed_model_ids_agree_for_the_owner_and_a_guest() {
+    fn ids(rows: &Value) -> Vec<&str> {
+        let mut ids: Vec<_> = rows.as_array().unwrap().iter()
+            .map(|row| row["id"].as_str().unwrap()).collect();
+        ids.sort_unstable();
+        ids
+    }
+
+    let w = world().await;
+    let local = w.engine.base_url();
+    let lan = lan_base(&w);
+    for (base, token) in [(&local, None), (&lan, Some("token-given"))] {
+        let mut peer = Peer::connect(base, token).await;
+        peer.send(json!({"type":"set_view_context", "view":"main"}));
+        let pushed = peer.message(|msg| msg["kind"] == "page_state" && msg["data"]["models"].is_array()).await;
+        let request = reqwest::Client::new().get(format!("{base}/api/models"));
+        let request = if let Some(token) = token { request.header("x-linggen-device", token) } else { request };
+        let http: Value = request.send().await.unwrap().error_for_status().unwrap().json().await.unwrap();
+        let listed = ids(&http);
+        assert_eq!(listed, ids(&pushed["data"]["models"]));
+        assert!(listed.contains(&"fake-ling"));
+        assert!(!listed.contains(&"voice-row"));
+        if token.is_some() {
+            assert_eq!(listed, ["fake-ling"]);
+        } else {
+            assert!(listed.len() > 1, "the owner also sees built-ins");
+        }
     }
 }
 

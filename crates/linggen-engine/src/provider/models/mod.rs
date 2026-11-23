@@ -370,6 +370,16 @@ impl ModelManager {
             .collect()
     }
 
+    /// Configured and built-in model rows of the requested kind. Runtime
+    /// lanes are reported by the providers view, not the model registry.
+    pub fn list_of_kind(&self, kind: Kind) -> Vec<&ModelConfig> {
+        match kind {
+            Kind::Chat => self.list_models(),
+            Kind::LiveVoice => self.live_rows.iter().collect(),
+            Kind::Speak | Kind::Hear | Kind::Draw => Vec::new(),
+        }
+    }
+
     /// Register proxy models from a remote room owner.
     /// Returns the list of registered proxy model IDs for connection tracking.
     pub fn register_proxy_models(

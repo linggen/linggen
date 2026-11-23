@@ -15,6 +15,7 @@ mod mac_tools;
 mod mcp;
 mod mcp_agent;
 mod mcp_grants;
+mod model_list;
 #[cfg(test)]
 mod model_locks;
 mod met_watch;

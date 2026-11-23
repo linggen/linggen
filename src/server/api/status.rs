@@ -17,18 +17,17 @@ pub(crate) async fn list_models_api(
     // A person is shown the models of this Mac they were given, and no others.
     let person = crate::server::person::of_headers(&headers);
     let people = crate::server::people::current();
-    let models_guard = state.manager.models.read().await;
+    let rows = crate::server::model_list::for_person(
+        &state, &person, crate::provider::kinds::Kind::Chat, &people, None,
+    ).await;
     let catalog = crate::provider::models::chatgpt_catalog::current();
     // `auth_ok` rides beside the config rather than on ModelConfig itself:
     // it is a runtime reading (are this model's credentials present NOW),
     // and the config round-trip must never persist it.
-    let models: Vec<serde_json::Value> = models_guard
-        .list_models()
+    let models: Vec<serde_json::Value> = rows
         .into_iter()
-        .filter(|m| people.may_run_model(&person, &m.id))
-        .map(|m| {
-            let auth_ok = models_guard.model_auth_ok(&m.id);
-            let mut v = shown(m);
+        .map(|(m, auth_ok)| {
+            let mut v = shown(&m);
             if let Some(obj) = v.as_object_mut() {
                 obj.insert("auth_ok".into(), auth_ok.into());
                 // A ChatGPT built-in whose family moved: to what, since when.
@@ -39,7 +38,6 @@ pub(crate) async fn list_models_api(
             v
         })
         .collect();
-    drop(models_guard);
     Json(models).into_response()
 }
 

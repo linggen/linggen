@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 
 /// The Qwen live-voice row as a person files it: a made-up text model at the
 /// live host. No key is on the row.
-const LIVE_ROW: &str = r#"
+pub(crate) const LIVE_ROW: &str = r#"
 [[models]]
 id = "voice-row"
 provider = "qwen"

@@ -1133,10 +1133,7 @@ mod tests {
         );
         only_here_and(
             ".may_run_model(",
-            &[
-                ("src/server/api/status.rs", 1, "GET /api/models"),
-                ("src/server/rtc/page_state.rs", 1, "the page state's models"),
-            ],
+            &[("src/server/model_list.rs", 1, "the shared HTTP and pushed model list")],
         );
         only_here_and(
             "people::installed(",
