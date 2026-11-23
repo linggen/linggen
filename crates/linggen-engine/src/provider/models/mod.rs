@@ -29,6 +29,43 @@ pub use usage::*;
 
 use providers::{ChunkStream, Provider, TurnOptions};
 
+/// How many calls a provider's own service answers for one model at the same
+/// time. Its limits are the provider's to enforce; ours only keeps a burst of
+/// sessions from opening without bound.
+const SERVICE_CALLS_AT_ONCE: usize = 6;
+
+/// How many calls ONE model answers at the same time — the only place that
+/// decides it. A model run on this machine answers one: a second call would
+/// share the same memory and processor and both would crawl. A room's shared
+/// model is its owner's to pace, so it stays at one here. A provider's service
+/// answers several, so sessions on the same model do not wait for each other
+/// (six jobs on one model used to take turns, one reply at a time).
+fn calls_at_once(kind: ProviderKind, url: &str) -> usize {
+    match kind {
+        ProviderKind::Ollama | ProviderKind::Proxy => 1,
+        ProviderKind::OpenAiCompatible if on_this_machine(url) => 1,
+        ProviderKind::Anthropic | ProviderKind::ChatGpt | ProviderKind::OpenAiCompatible => {
+            SERVICE_CALLS_AT_ONCE
+        }
+    }
+}
+
+/// An address on this machine: a model served here, not a provider's service.
+fn on_this_machine(url: &str) -> bool {
+    let rest = url.split("://").nth(1).unwrap_or(url);
+    let authority = rest.split('/').next().unwrap_or("");
+    if authority.starts_with("[::1]") {
+        return true;
+    }
+    let host = authority.split(':').next().unwrap_or("");
+    matches!(host, "localhost" | "127.0.0.1" | "0.0.0.0") || host.ends_with(".localhost")
+}
+
+/// The permits of one model, from [`calls_at_once`].
+fn call_slots(kind: ProviderKind, url: &str) -> Arc<Semaphore> {
+    Arc::new(Semaphore::new(calls_at_once(kind, url)))
+}
+
 /// Keep the model's concurrency permit alive for as long as its stream is
 /// being read.
 fn hold_permit(stream: ChunkStream, permit: tokio::sync::OwnedSemaphorePermit) -> ChunkStream {
@@ -187,7 +224,7 @@ impl ModelManager {
                 // All other providers (openai, gemini, groq, deepseek, etc.) use OpenAI-compatible API.
                 _ => Arc::new(OpenAiClient::new(cfg.url.clone(), cfg.api_key.clone())),
             };
-            let semaphore = Arc::new(Semaphore::new(1));
+            let semaphore = call_slots(kind, &cfg.url);
             models.insert(
                 cfg.id.clone(),
                 ModelInstance {
@@ -367,7 +404,7 @@ impl ModelManager {
                 ModelInstance {
                     config,
                     client: Arc::new(proxy_client.clone()),
-                    semaphore: Arc::new(Semaphore::new(1)),
+                    semaphore: call_slots(ProviderKind::Proxy, ""),
                     context_window: OnceCell::new(),
                     output_cap: OnceCell::new(),
                     has_vision: OnceCell::new(),
@@ -587,6 +624,43 @@ fn gpt_sees(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    /// A model on this machine answers one call at a time; a provider's
+    /// service answers several, so sessions do not queue behind each other.
+    #[test]
+    fn calls_at_once_is_one_here_and_several_at_a_service() {
+        use super::{calls_at_once, SERVICE_CALLS_AT_ONCE};
+        use crate::config::ProviderKind as K;
+        assert_eq!(calls_at_once(K::Ollama, "http://127.0.0.1:11434"), 1);
+        assert_eq!(calls_at_once(K::Proxy, ""), 1);
+        assert_eq!(
+            calls_at_once(K::OpenAiCompatible, "http://localhost:1234/v1"),
+            1
+        );
+        assert_eq!(
+            calls_at_once(K::OpenAiCompatible, "http://[::1]:8080/v1"),
+            1
+        );
+        assert_eq!(
+            calls_at_once(K::OpenAiCompatible, "https://api.example.com/v1"),
+            SERVICE_CALLS_AT_ONCE
+        );
+        assert_eq!(
+            calls_at_once(K::Anthropic, "https://api.anthropic.com"),
+            SERVICE_CALLS_AT_ONCE
+        );
+        assert_eq!(calls_at_once(K::ChatGpt, ""), SERVICE_CALLS_AT_ONCE);
+        assert!(SERVICE_CALLS_AT_ONCE > 1);
+    }
+
+    /// The lock: a model's permits are made in ONE place. A second
+    /// `Semaphore::new` in this file would be a second rule.
+    #[test]
+    fn a_models_permits_are_made_in_one_place() {
+        let source = include_str!("mod.rs");
+        let made = source.matches(concat!("Semaphore::", "new(")).count();
+        assert_eq!(made, 1, "make a model's permits with call_slots()");
+    }
+
     use super::*;
 
     fn byok(id: &str) -> ModelConfig {
