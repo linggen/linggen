@@ -10,6 +10,7 @@ export const ZH: Record<string, string> = {
   "Apps didn't load.": '应用加载失败。',
   'No apps installed.': '未安装应用。',
   'Retry': '重试',
+  'The built-in models could not be loaded.': '内置模型加载失败。',
   'Apps': '应用',
   'Desktop': '桌面',
   'Capabilities': '能力',

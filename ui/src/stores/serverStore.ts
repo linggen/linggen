@@ -31,6 +31,8 @@ interface ServerState {
   /** GET /api/models — the settings screens' view (built-ins, auth mode).
    *  One shared copy; refreshRuntimeModels() re-reads it. */
   runtimeModels: RuntimeModelInfo[];
+  /** The last read of it failed (the list shown, if any, is the one before). */
+  runtimeModelsFailed: boolean;
   refreshRuntimeModels: () => Promise<void>;
   ollamaStatus: OllamaPsResponse | null;
   defaultModels: string[];
@@ -128,11 +130,15 @@ export const useServerStore = create<ServerState>((set, get) => ({
   agentRuns: [],
   runPlaces: {},
   runtimeModels: [],
+  runtimeModelsFailed: false,
   refreshRuntimeModels: async () => {
     try {
       const ms = await apiGet<RuntimeModelInfo[]>('/api/models');
-      set({ runtimeModels: Array.isArray(ms) ? ms : [] });
-    } catch { /* keep the last list */ }
+      set({ runtimeModels: Array.isArray(ms) ? ms : [], runtimeModelsFailed: false });
+    } catch {
+      // Keep the last list, and say so: the page must not look empty.
+      set({ runtimeModelsFailed: true });
+    }
   },
   // The member the person picked to speak with in this chat; '' = whoever
   // the session answers with by default (`lib/sessionMembers`).

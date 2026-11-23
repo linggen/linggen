@@ -329,16 +329,24 @@ pub(crate) fn of_token(token: &str) -> Option<Person> {
 }
 
 /// Who a request that reached a handler (over loopback, from the channel
-/// or the LAN gate) is from: the paired device it names, else — with no level
-/// stamped on it, as from this machine's own page — the owner, else no one.
-/// For a handler that answers by person (a list of apps).
+/// or the LAN gate) is from: the paired device it names, else — by what the
+/// tunnel marked it with — the owner when it is this machine's own page or
+/// the owner's relay login (`TUNNEL_LOCAL`, `TUNNEL_OWNER`), else no one. A
+/// request with no mark and no level is straight to loopback: the owner's.
+/// The channel stamps a level on every request, the owner's page included,
+/// so the level says nothing of who asks. For a handler that answers by
+/// person (a list of apps, of models).
 pub(crate) fn of_headers(headers: &axum::http::HeaderMap) -> Person {
+    use crate::server::api::pair::{LEVEL_HEADER, TUNNEL_HEADER, TUNNEL_LOCAL, TUNNEL_OWNER};
     if let Some(device) = crate::server::api::pair::caller_device(headers) {
         return standing_of(&device).person().clone();
     }
-    match headers.contains_key(crate::server::api::pair::LEVEL_HEADER) {
-        true => no_one(),
-        false => owner(),
+    let mark = headers.get(TUNNEL_HEADER).and_then(|v| v.to_str().ok());
+    match mark {
+        Some(TUNNEL_LOCAL | TUNNEL_OWNER) => owner(),
+        Some(_) => no_one(),
+        None if headers.contains_key(LEVEL_HEADER) => no_one(),
+        None => owner(),
     }
 }
 
@@ -1008,6 +1016,28 @@ mod tests {
         let owners = super::consumer_in("u-owner", Some("u-owner"));
         assert_eq!(owners.person(), &super::Person::no_one(), "not the owner through a room");
         assert_eq!(super::consumer_in("u-room", Some("u-owner")).person(), &super::Person::account("u-room"));
+    }
+
+    /// A list a person is shown (models, apps) is answered for who is asking.
+    /// The channel stamps a level on every request it re-issues, the owner's
+    /// own page included: a request this machine's page or the owner's relay
+    /// login sends is the owner's (it showed the owner no built-in models), and
+    /// one the tunnel does not know as the owner's is no one's.
+    #[test]
+    fn a_request_over_the_channel_is_the_owners_when_the_tunnel_knows_it() {
+        use crate::server::api::pair::{LEVEL_HEADER, TUNNEL_HEADER, TUNNEL_LOCAL, TUNNEL_OWNER};
+        let from = |pairs: &[(&'static str, &str)]| {
+            let mut h = axum::http::HeaderMap::new();
+            for (k, v) in pairs {
+                h.insert(*k, v.parse().unwrap());
+            }
+            super::of_headers(&h)
+        };
+        assert_eq!(from(&[]), super::Person::owner(), "this machine, straight to loopback");
+        assert_eq!(from(&[(TUNNEL_HEADER, TUNNEL_LOCAL), (LEVEL_HEADER, "admin")]), super::Person::owner(), "this machine's page");
+        assert_eq!(from(&[(TUNNEL_HEADER, TUNNEL_OWNER), (LEVEL_HEADER, "admin")]), super::Person::owner(), "the owner on the relay");
+        assert_eq!(from(&[(TUNNEL_HEADER, "1"), (LEVEL_HEADER, "chat")]), super::Person::no_one(), "a peer that named no device");
+        assert_eq!(from(&[(LEVEL_HEADER, "admin")]), super::Person::no_one(), "a level with no tunnel mark");
     }
 
     /// A peer that named no device is the owner only when the tunnel knows it.

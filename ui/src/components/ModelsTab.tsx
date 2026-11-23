@@ -172,6 +172,7 @@ export const ModelsTab: React.FC<{
   // Cloud, ChatGPT) regardless of what's in the config file. Shown read-only
   // below so they can be starred as default.
   const runtimeModels = useServerStore((s) => s.runtimeModels);
+  const runtimeModelsFailed = useServerStore((s) => s.runtimeModelsFailed);
   const refetchRuntimeModels = () => { useServerStore.getState().refreshRuntimeModels(); };
   useEffect(refetchRuntimeModels, []);
 
@@ -424,6 +425,14 @@ export const ModelsTab: React.FC<{
 
       {/* Built-in models — injected by the engine, not part of the config
           file. Read-only, but they can be starred as the default. */}
+      {runtimeModelsFailed && (
+        <section className={sectionCls}>
+          <p data-testid="builtin-load-failed" className="text-xs text-red-600 dark:text-red-400">
+            <span>The built-in models could not be loaded.</span>{' '}
+            <button type="button" className="underline" onClick={refetchRuntimeModels}>Retry</button>
+          </p>
+        </section>
+      )}
       {builtinModels.length > 0 && (
         <section className={sectionCls}>
           <h2 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-3">
