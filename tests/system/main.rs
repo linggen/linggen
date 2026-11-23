@@ -47,6 +47,7 @@ mod shared_table;
 mod step_limit;
 mod turn_entrance;
 mod skills;
+mod spoken_line;
 mod spend;
 mod support;
 mod unprompted;

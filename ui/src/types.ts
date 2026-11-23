@@ -81,7 +81,7 @@ export interface ChatMessage {
   from?: string;
   to?: string;
   text: string;
-  /** The person said this aloud to Yinyue and she heard it (the saved row's `heard`). */
+  /** The person said this aloud and it was heard — to Yinyue (her door), or at an app's page that holds the microphone (the chat bridge's `send(text, {heard})`): the saved row's `heard`. */
   heard?: boolean;
   timestamp: string;
   timestampMs?: number;
@@ -116,7 +116,7 @@ export interface ChatMessage {
    *  or `:home` (lib/dayFold.mts). */
   place?: string;
   /** On a "Message failed to send" line: what was sent, so a tap can resend it. */
-  resend?: { text: string; agentId: string; images?: string[]; persisted?: boolean; clientId?: string };
+  resend?: { text: string; agentId: string; images?: string[]; persisted?: boolean; clientId?: string; heard?: boolean };
   /** A run that ended without a reply: its tool calls, then a short note. */
   interrupted?: boolean;
   /** When an interrupted run's last row was written (ms). */

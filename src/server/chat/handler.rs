@@ -439,6 +439,7 @@ pub(crate) async fn enqueue_if_busy(
     target_id: &str,
     clean_msg: &str,
     sent: (&str, &[String], Option<String>),
+    heard: bool,
     queue: Meets,
 ) -> Option<(QueuedChatItem, bool)> {
     if !was_busy {
@@ -462,6 +463,7 @@ pub(crate) async fn enqueue_if_busy(
         place: sent.2,
         text: sent.0.to_string(),
         images: sent.1.to_vec(),
+        heard,
     };
 
     let key = queue_key(effective_session_id, target_id);
@@ -545,7 +547,7 @@ pub(crate) async fn dequeue_and_emit(
     images: &[String],
 ) -> bool {
     let key = queue_key(session_id, target_id);
-    let shown = persist_then_dequeue(&state.queued_chats, &key, queued_id, || {
+    let shown = persist_then_dequeue(&state.queued_chats, &key, queued_id, |heard| {
         persist_and_emit_with_images(
             &state.manager.global_sessions,
             events_tx,
@@ -556,6 +558,7 @@ pub(crate) async fn dequeue_and_emit(
             client_id,
             (via, via_note),
             images,
+            heard,
         )
     })
     .await;
@@ -565,23 +568,24 @@ pub(crate) async fn dequeue_and_emit(
     shown
 }
 
-/// Keep `queued_id` (`persist`), then take it off the queue `key`, the
-/// queue locked throughout. False, and nothing kept, when it is gone; false,
-/// and still queued, when it could not be kept.
+/// Keep `queued_id` (`persist`, told whether the line was spoken aloud: the
+/// item carries it), then take it off the queue `key`, the queue locked
+/// throughout. False, and nothing kept, when it is gone; false, and still
+/// queued, when it could not be kept.
 async fn persist_then_dequeue<F: std::future::Future<Output = bool>>(
     queue: &tokio::sync::Mutex<std::collections::HashMap<String, Vec<QueuedChatItem>>>,
     key: &str,
     queued_id: &str,
-    persist: impl FnOnce() -> F,
+    persist: impl FnOnce(bool) -> F,
 ) -> bool {
     let mut guard = queue.lock().await;
     let queued = guard
         .get(key)
-        .is_some_and(|items| items.iter().any(|item| item.id == queued_id));
-    if !queued {
+        .and_then(|items| items.iter().find(|item| item.id == queued_id));
+    let Some(queued) = queued else {
         return false;
-    }
-    if !persist().await {
+    };
+    if !persist(queued.heard).await {
         return false; // not kept: it stays queued, and nothing runs on it
     }
     if let Some(items) = guard.get_mut(key) {
@@ -1072,6 +1076,7 @@ pub(crate) async fn say_in_app(state: Arc<ServerState>, app: &str, agent_id: &st
         via: None,
         via_note: None,
         followups: false,
+        heard: false,
         client_id: None,
         level: None,
     };
@@ -1103,6 +1108,7 @@ async fn turn_in_session(
         via: None,
         via_note: None,
         followups: false,
+        heard: false,
         client_id: None,
         level: None,
     };
@@ -1454,6 +1460,7 @@ pub(crate) async fn start_turn(
         &target_id,
         &clean_msg,
         (&req.message, &req.images, told),
+        req.heard,
         queue,
     )
     .await;
@@ -1471,6 +1478,7 @@ pub(crate) async fn start_turn(
             client_id.as_deref(),
             (via.as_deref(), via_note.as_deref()),
             &req.images,
+            req.heard,
         )
         .await;
         // Not saved: refused to its sender, and no turn runs on it.
@@ -1807,6 +1815,7 @@ mod tests {
             place: None,
             text: "hi".into(),
             images: Vec::new(),
+            heard: false,
         };
         let queue = Arc::new(tokio::sync::Mutex::new(HashMap::from([(
             "s|ling".to_string(),
@@ -1824,7 +1833,7 @@ mod tests {
             }
         };
         let during = std::sync::Mutex::new(None);
-        let shown = persist_then_dequeue(&queue, "s|ling", "1-1", || async {
+        let shown = persist_then_dequeue(&queue, "s|ling", "1-1", |_| async {
             // A snapshot asked for while the message is being kept.
             *during.lock().unwrap() = Some(snapshot());
             tokio::task::yield_now().await;
@@ -1839,7 +1848,7 @@ mod tests {
             "the snapshot found the message nowhere"
         );
         assert!(queue.lock().await.is_empty());
-        let again = persist_then_dequeue(&queue, "s|ling", "1-1", || async {
+        let again = persist_then_dequeue(&queue, "s|ling", "1-1", |_| async {
             panic!("a message gone from the queue is not kept again")
         })
         .await;
@@ -1862,9 +1871,10 @@ mod tests {
             place: None,
             text: "hi".into(),
             images: Vec::new(),
+            heard: false,
         };
         let queue = tokio::sync::Mutex::new(HashMap::from([("s|ling".to_string(), vec![item])]));
-        let runs = persist_then_dequeue(&queue, "s|ling", "1-1", || async { false }).await;
+        let runs = persist_then_dequeue(&queue, "s|ling", "1-1", |_| async { false }).await;
         assert!(!runs, "a message that was not kept ran");
         assert_eq!(queue.lock().await["s|ling"].len(), 1, "a message that was not kept left the queue");
     }

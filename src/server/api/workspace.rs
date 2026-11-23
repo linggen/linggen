@@ -352,6 +352,7 @@ pub(crate) async fn get_workspace_state(
             };
             let images = std::mem::take(&mut m.images);
             let place = day.as_ref().and_then(|d| m.place_of(d));
+            let heard = m.heard;
             let meta = crate::state_fs::StateFile::Message {
                 id: format!("msg-{}", m.timestamp),
                 from: m.from_id,
@@ -368,6 +369,11 @@ pub(crate) async fn get_workspace_state(
             }
             if let Some(place) = place {
                 meta["place"] = serde_json::Value::from(place);
+            }
+            // Said aloud and heard: the page draws its small mark (left out
+            // when not; the same in `sessions::get_skill_session_state`).
+            if heard {
+                meta["heard"] = true.into();
             }
             let meta = crate::state_fs::session_images::with_urls(meta, sid, &images);
             Some((

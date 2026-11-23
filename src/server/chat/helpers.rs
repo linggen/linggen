@@ -218,14 +218,29 @@ pub(crate) async fn persist_and_emit_to_store(
         client_id,
         (via, via_note),
         &[],
+        false,
     )
     .await;
+}
+
+/// The mark "this was spoken" a stored row carries (`ChatMsg::heard`): said
+/// aloud and heard, a fact for a page that shows it. It is a mark and nothing
+/// more — it changes who may send, what a turn may do and every permission
+/// by nothing — and it is a person's alone: a line sent as an agent, or
+/// handed off from another device, is never marked. The one place that
+/// decides it, for both writers of the mark (a chat line and the companion's
+/// own door, [`persist_user_line`]); `structure_lock_tests` holds that no
+/// other row is built with a mark.
+fn heard_mark(said_aloud: bool, from: &str, via: Option<&str>) -> bool {
+    said_aloud && via.is_none() && crate::state_fs::RowAuthor::of(from).is_person()
 }
 
 /// [`persist_and_emit_to_store`] for a person's message that carried
 /// pictures (`sent`, base64 as the chat sent them): each is kept beside the
 /// transcript and the row names them (`ChatMsg::images`), so every chat
-/// surface draws them again after a reload.
+/// surface draws them again after a reload. `heard`: the person spoke it
+/// aloud at a page that holds the microphone ([`heard_mark`] says whether
+/// the row takes the mark).
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn persist_and_emit_with_images(
     store: &crate::state_fs::SessionStore,
@@ -237,6 +252,7 @@ pub(crate) async fn persist_and_emit_with_images(
     client_id: Option<&str>,
     (via, via_note): (Option<&str>, Option<&str>),
     sent: &[String],
+    heard: bool,
 ) -> bool {
     let client_id = client_id.map(str::to_string);
     let sid = session_id.unwrap_or("default");
@@ -260,7 +276,7 @@ pub(crate) async fn persist_and_emit_with_images(
         via_note: via_note.map(str::to_string),
         images: kept,
         place: None,
-        heard: false,
+        heard: heard_mark(heard, from, via),
     };
     // Saved before it is shown: a page never shows what a reload would not.
     if let Err(e) = store.add_chat_message(sid, &msg) {
@@ -308,7 +324,10 @@ pub(crate) fn persist_user_line(
     session_id: Option<&str>,
     heard: bool,
 ) {
-    let row = crate::state_fs::sessions::ChatMsg { heard, ..chat_row((agent_id, "user", agent_id), content, false, None) };
+    let row = crate::state_fs::sessions::ChatMsg {
+        heard: heard_mark(heard, "user", None),
+        ..chat_row((agent_id, "user", agent_id), content, false, None)
+    };
     file_row(manager, session_id, &row);
 }
 
@@ -568,10 +587,50 @@ mod unsaved_tests {
             None,
             (None, None),
             &[],
+            false,
         )
         .await;
         assert!(!kept, "a failed save reads as kept");
         assert!(rx.try_recv().is_err(), "a message that was not saved was shown");
+    }
+}
+
+#[cfg(test)]
+mod heard_tests {
+    use super::{heard_mark, persist_and_emit_with_images};
+
+    /// The mark is a person's alone, said aloud: nothing else takes it.
+    #[test]
+    fn only_a_persons_spoken_line_takes_the_mark() {
+        assert!(heard_mark(true, "user", None));
+        assert!(!heard_mark(false, "user", None), "not spoken");
+        assert!(!heard_mark(true, "yinyue", None), "an agent's line");
+        assert!(!heard_mark(true, "ling", None), "an agent's line");
+        assert!(!heard_mark(true, "system", None), "the engine's own row");
+        assert!(!heard_mark(true, "user", Some("iphone")), "a hand-off is no spoken line");
+    }
+
+    async fn kept_mark(from: &str, via: Option<&str>, heard: bool) -> bool {
+        let dir = tempfile::tempdir().unwrap();
+        let store = crate::state_fs::SessionStore::with_sessions_dir(dir.path().to_path_buf());
+        let tx = crate::engine::event_bus::EventBus::new(8);
+        let kept = persist_and_emit_with_images(
+            &store, &tx, "ling", (from, "ling", "bonjour"), Some("s1"), false, None, (via, None), &[], heard,
+        )
+        .await;
+        assert!(kept);
+        store.get_chat_history("s1").unwrap()[0].heard
+    }
+
+    /// The one writer of a chat line's row sets the mark from what it is
+    /// handed, by the rule above — every caller (a line at once, a queued
+    /// one) passes through it.
+    #[tokio::test]
+    async fn the_row_of_a_spoken_line_carries_the_mark_and_others_do_not() {
+        assert!(kept_mark("user", None, true).await);
+        assert!(!kept_mark("user", None, false).await, "a typed line, as before");
+        assert!(!kept_mark("yinyue", None, true).await, "the flag is ignored for a sender");
+        assert!(!kept_mark("user", Some("iphone"), true).await);
     }
 }
 
@@ -637,6 +696,7 @@ mod via_tests {
             Some("c-1"),
             (None, None),
             &sent,
+            false,
         )
         .await;
         let rows = store.get_chat_history("s1").unwrap();

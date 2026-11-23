@@ -184,3 +184,30 @@ test("an app's own scripts read only their own place's rows of the day", async (
     channel.fetch = was;
   }
 });
+
+test("a spoken line is sent to the chat marked heard; a typed one is as ever", async () => {
+  const el = fakeElement();
+  const posted: { action: string; payload: unknown }[] = [];
+  const frame = { postMessage: (m: { action: string; payload: unknown }) => { posted.push(m); } };
+  el.appendChild = (child: ReturnType<typeof fakeElement>) => {
+    child.contentWindow = frame;
+    setTimeout(() => child.fire('load'), 0);
+  };
+  const before = windowListeners.length;
+  const chat = await mount(el, { skillName: 'demo', sessionId: 'sess-1' });
+  // The embed shows life: what the page posted so far is delivered.
+  for (const fn of windowListeners.slice(before)) {
+    fn({ data: { type: 'linggen-skill-event', event: 'activity', payload: {} }, source: frame, origin: 'http://engine' });
+  }
+  chat.send('Hello there');
+  chat.send('Bonjour', { heard: true });
+  chat.send('Typed after', { heard: false });
+  chat.send('Truthy but not true', { heard: 'yes' });
+  const sent = posted.filter((m) => m.action === 'send').map((m) => m.payload);
+  assert.deepEqual(sent, [
+    { text: 'Hello there' },
+    { text: 'Bonjour', heard: true },
+    { text: 'Typed after' },
+    { text: 'Truthy but not true' },
+  ]);
+});

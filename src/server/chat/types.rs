@@ -50,6 +50,14 @@ pub(crate) struct ChatRequest {
     /// The surface shows follow-up buttons — ask the model for them this turn.
     #[serde(default)]
     pub(crate) followups: bool,
+    /// The words were spoken aloud, at a page that holds the microphone and
+    /// heard there (`shared/hold-to-talk.js`, sent through the chat bridge's
+    /// `send(text, {heard: true})`). A mark on the stored row of a person's
+    /// line and nothing else: it is ignored for a line sent as an agent
+    /// (`sender`) or handed off (`via`), and changes no turn, permission or
+    /// reply (`helpers::heard_mark` decides; not [`TurnSettings::heard`]).
+    #[serde(default)]
+    pub(crate) heard: bool,
     /// The id the surface gave its bubble for this message. Kept on the
     /// saved row and echoed on its `message` event, so the surface matches
     /// its bubble to the row by id — the row keeps the words after an

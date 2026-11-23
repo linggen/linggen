@@ -284,11 +284,14 @@ export async function mount(el, options) {
   }
   if (options.deleteOnLeave) window.addEventListener('pagehide', onPageHide);
 
-  /** Send a message to the chat (the embed submits it). */
-  function send(text) {
+  /** Send a message to the chat (the embed submits it). `opts.heard`: the
+   *  person spoke it aloud and the page heard it (its microphone,
+   *  /shared/hold-to-talk.js): the saved row carries the mark, nothing more
+   *  changes. Without it the message is as ever. */
+  function send(text, opts = {}) {
     streamBuffers.clear();
     ensureMounted();
-    post({ type: 'linggen-skill', action: 'send', payload: { text } });
+    post({ type: 'linggen-skill', action: 'send', payload: opts?.heard === true ? { text, heard: true } : { text } });
   }
 
   /** Send a message to the agent without showing it in the chat. */

@@ -373,6 +373,11 @@ pub(crate) async fn get_skill_session_state(
             if silent {
                 meta["silent"] = true.into();
             }
+            // Said aloud and heard: the page draws its small mark (left out when
+            // not; the same in `workspace::get_workspace_state`).
+            if m.heard {
+                meta["heard"] = true.into();
+            }
             let meta = crate::state_fs::session_images::with_urls(meta, &session_id, &m.images);
             Some(serde_json::json!([
                 run_calls::with_tools(meta, m.run_id.as_deref(), calls),

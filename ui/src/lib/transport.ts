@@ -54,6 +54,8 @@ export interface ChatRequest {
   mission_id?: string;
   model_id?: string;
   images?: string[];
+  /** The words were spoken aloud at a page that heard them: the saved row is marked. */
+  heard?: boolean;
   /** This surface shows the next-prompt hint — fork a suggestion after the turn. */
   followups?: boolean;
   /** The id of this message's bubble — kept on its row, echoed on its event. */

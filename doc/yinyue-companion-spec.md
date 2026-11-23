@@ -158,7 +158,9 @@ typed line at the page stays text.
   of the turn's start: `TurnStart::Aloud` (`chat/turn_start.rs`), a person's
   words in every way a typed line is, whose line is kept as the user's row of
   her thread with `heard: true` (one field of the row, for a page that shows
-  it was spoken) and whose answer `speaks_aloud` (`api/yinyue.rs`, still the
+  it was spoken; an app's own page that holds the microphone marks a person's
+  line in its chat the same way, through `ChatRequest.heard` — `chat::helpers::heard_mark`
+  decides for both, and it changes nothing else) and whose answer `speaks_aloud` (`api/yinyue.rs`, still the
   one place) says aloud unless muted. Quiet hours and the hourly limit do not
   apply to it: she was asked. A line that would be carried to an app's own chat
   (a private app named, or her stage on an app page with a chat) is not: a

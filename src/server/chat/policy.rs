@@ -111,6 +111,7 @@ pub(crate) async fn keep_refusal(state: &ServerState, session: &str, agent: &str
         None,
         (None, None),
         &[],
+        false,
     )
     .await;
 }

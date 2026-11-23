@@ -64,6 +64,11 @@ pub struct QueuedChatItem {
     #[serde(skip)]
     #[cfg_attr(any(test, feature = "test-support"), ts(skip))]
     pub images: Vec<String>,
+    /// The line was spoken aloud (`ChatRequest::heard`): the row it becomes,
+    /// when it leaves the queue, carries the mark as a direct line would.
+    #[serde(skip)]
+    #[cfg_attr(any(test, feature = "test-support"), ts(skip))]
+    pub heard: bool,
 }
 /// One background task of a session (doc/background-tasks-spec.md).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

@@ -622,6 +622,7 @@ mod tests {
             place: None,
             text: "hello".into(),
             images: Vec::new(),
+            heard: false,
         }
     }
 

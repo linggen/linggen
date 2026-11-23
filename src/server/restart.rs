@@ -1201,6 +1201,7 @@ mod tests {
             place: None,
             text: text.into(),
             images: vec![format!("{text}.png")],
+            heard: false,
         }
     }
 

@@ -100,7 +100,7 @@ export function useChatActions(
     }
   }, [runningMainRunIds]);
 
-  const sendChatMessage = useCallback(async (userMessage: string, targetAgent?: string, images?: string[], opts?: { resend?: boolean; clientId?: string }) => {
+  const sendChatMessage = useCallback(async (userMessage: string, targetAgent?: string, images?: string[], opts?: { resend?: boolean; clientId?: string; heard?: boolean }) => {
     if (!userMessage.trim() && !(images && images.length > 0)) return;
     if (isRestartCommand(userMessage, images)) {
       const ui = useUiStore.getState();
@@ -143,6 +143,7 @@ export function useChatActions(
         role: 'user', from: 'user', to: agentToUse, text: userMessage, clientId,
         timestamp: now.toLocaleTimeString(), timestampMs: now.getTime(), isGenerating: false,
         ...(images && images.length > 0 ? { images, imageCount: images.length } : {}),
+        ...(opts?.heard ? { heard: true } : {}),
       });
       scrollToBottom();
     }
@@ -314,6 +315,7 @@ export function useChatActions(
         ...(skillName ? { skill_name: skillName } : {}),
         ...(sessionModel ? { model_id: sessionModel } : {}),
         ...(images && images.length > 0 ? { images } : {}),
+        ...(opts?.heard ? { heard: true } : {}),
         followups: true,
         client_id: clientId,
       });
@@ -403,7 +405,7 @@ export function useChatActions(
           role: 'agent', from: 'system', to: 'user',
           text, isError: true,
           timestamp: ts.toLocaleTimeString(), timestampMs: ts.getTime(), isGenerating: false,
-          resend: { text: userMessage, agentId: agentToUse, clientId, ...(images && images.length > 0 ? { images } : {}) },
+          resend: { text: userMessage, agentId: agentToUse, clientId, ...(images && images.length > 0 ? { images } : {}), ...(opts?.heard ? { heard: true } : {}) },
         });
       }
     }
@@ -413,10 +415,10 @@ export function useChatActions(
   const resendMessage = useCallback((failed: ChatMessage) => {
     if (!failed.resend) return;
     useChatStore.getState().removeMessage(failed);
-    const { text, agentId, images, persisted, clientId } = failed.resend;
+    const { text, agentId, images, persisted, clientId, heard } = failed.resend;
     // A send that never landed already has its bubble (and keeps its id); a
-    // persisted one gets a new one.
-    sendChatMessage(text, agentId, images, persisted ? undefined : { resend: true, clientId });
+    // persisted one gets a new one. A spoken line is resent as spoken.
+    sendChatMessage(text, agentId, images, { heard, ...(persisted ? {} : { resend: true, clientId }) });
   }, [sendChatMessage]);
 
   const respondToAskUser = useCallback(async (questionId: string, answers: AskUserAnswer[]) => {

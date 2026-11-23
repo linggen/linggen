@@ -152,7 +152,7 @@ export const ChatMessageRow = React.memo<{
           <>
             {/* The person's own words: never mistaken for the page's English. */}
             <span data-no-i18n>{msg.text}</span>
-            {/* Said aloud to her and heard (the row's `heard`): one glanceable mark. */}
+            {/* Said aloud and heard — to her, or at an app's page with a microphone (the row's `heard`): one glanceable mark. */}
             {msg.heard && <Mic data-testid="heard-mark" aria-label="Spoken" className="ml-1.5 inline h-3 w-3 align-baseline text-slate-400 dark:text-slate-500"><title>Spoken</title></Mic>}
             {recipient && (
               <span data-testid="chat-recipient" data-no-i18n className="ml-1.5 text-[11px] text-slate-400 dark:text-slate-500 whitespace-nowrap">

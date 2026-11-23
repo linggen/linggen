@@ -27,6 +27,12 @@
 //!   `permission_mode`) are written once, in `mcp_agent::HostMode`: the
 //!   schema, its descriptions and the grant are made from it.
 //!
+//! - The mark "this was spoken" on a stored row (`ChatMsg::heard`) is decided
+//!   by `chat::helpers::heard_mark` alone (a person's line, said aloud, not
+//!   handed off), and only the two writers of a chat line in that file ask
+//!   it: no other production code builds a `ChatMsg` with `heard` anything
+//!   but a literal `false`.
+//!
 //! The module walk is the same as `permission_lock_tests.rs`'s; new locks of
 //! this kind are added to this walker, not a third one.
 
@@ -48,6 +54,11 @@ const CLASS_WORDS_DECIDER: &str = "crates/linggen-engine/src/engine/permission/a
 const REACH_WORDS_DECIDER: &str = "crates/linggen-engine/src/engine/skill/reach.rs";
 /// The one place an app action's level is judged.
 const CLASS_JUDGE: &str = "crates/linggen-engine/src/engine/skill/judge.rs";
+/// The two writers of a row's `heard` mark, and the one rule they ask.
+const HEARD_WRITERS: [&str; 2] = [
+    "src/server/chat/helpers.rs::persist_and_emit_with_images <- heard_mark",
+    "src/server/chat/helpers.rs::persist_user_line <- heard_mark",
+];
 /// The one place a host's permission-mode words are written.
 const HOST_WORDS_DECIDER: &str = "src/server/mcp_agent.rs::word";
 
@@ -90,6 +101,9 @@ struct Found {
     /// `file::fn` of every production call of `ActionClass::level_needed` or
     /// `destroys`.
     class_levels: Vec<String>,
+    /// `file::fn <- what` of every production `ChatMsg { heard: … }` whose
+    /// value is not the literal `false` (what: the fn called, or `value`).
+    heard_marks: Vec<String>,
 }
 
 /// The permission-mode words, the `write` alias with them.
@@ -262,6 +276,29 @@ impl<'ast> Visit<'ast> for Scan<'_> {
             self.found.reach_reads.push(here);
         }
         visit::visit_expr_path(self, path);
+    }
+
+    fn visit_expr_struct(&mut self, expr: &'ast syn::ExprStruct) {
+        let row = expr.path.segments.last().is_some_and(|seg| seg.ident == "ChatMsg");
+        let marked = expr
+            .fields
+            .iter()
+            .find(|f| matches!(&f.member, syn::Member::Named(n) if n == "heard"));
+        if let (true, Some(field)) = (row, marked) {
+            let fixed = matches!(&field.expr, Expr::Lit(l) if matches!(&l.lit, Lit::Bool(b) if !b.value));
+            if !fixed {
+                let by = match &field.expr {
+                    Expr::Call(call) => match &*call.func {
+                        Expr::Path(p) => p.path.segments.last().map(|s| s.ident.to_string()),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                let here = format!("{} <- {}", self.here(), by.unwrap_or_else(|| "value".into()));
+                self.found.heard_marks.push(here);
+            }
+        }
+        visit::visit_expr_struct(self, expr);
     }
 
     fn visit_field_value(&mut self, field: &'ast syn::FieldValue) {
@@ -498,6 +535,15 @@ fn a_hosts_permission_words_are_written_once() {
 }
 
 #[test]
+fn the_spoken_mark_on_a_row_is_decided_in_one_place() {
+    assert_eq!(
+        production().heard_marks,
+        HEARD_WRITERS,
+        "a row's `heard` is `false`, or `chat::helpers::heard_mark(..)` in the two writers of a chat line; never set from a request here"
+    );
+}
+
+#[test]
 fn the_scan_finds_policies_mode_words_and_host_words_but_not_test_fixtures() {
     let parsed = syn::parse_file(
         r#"fn a() { let p = SessionPolicy::owner(); let q = crate::engine::session_policy::SessionPolicy::default(); }
@@ -551,4 +597,28 @@ fn the_scan_finds_stores_and_sender_compares_but_not_test_fixtures() {
     .visit_file(&parsed);
     assert_eq!(found.stores, ["lib.rs::a"]);
     assert_eq!(found.sender_literals, ["lib.rs::a", "lib.rs::b", "lib.rs::b"]);
+}
+
+#[test]
+fn the_scan_finds_a_rows_mark_but_not_another_structs_nor_test_fixtures() {
+    let parsed = syn::parse_file(
+        r#"fn a() { let r = ChatMsg { heard: false, ..x() }; }
+           fn b(h: bool) { let r = crate::state_fs::sessions::ChatMsg { heard: heard_mark(h, f, None), ..x() }; }
+           fn c(heard: bool) { let r = ChatMsg { heard, ..x() }; }
+           fn d(req: &R) { let r = ChatMsg { heard: req.heard, ..x() }; }
+           fn e(t: &T) { let s = TurnSettings { heard: t.heard.clone(), ..Default::default() }; }
+           #[cfg(test)] mod tests { fn f() { ChatMsg { heard: true }; } }
+           #[test] fn t() { ChatMsg { heard: true }; }"#,
+    )
+    .unwrap();
+    let mut found = Found::default();
+    Scan {
+        root: Path::new(""),
+        file: Path::new("lib.rs"),
+        modules: Path::new(""),
+        func: String::new(),
+        found: &mut found,
+    }
+    .visit_file(&parsed);
+    assert_eq!(found.heard_marks, ["lib.rs::b <- heard_mark", "lib.rs::c <- value", "lib.rs::d <- value"]);
 }

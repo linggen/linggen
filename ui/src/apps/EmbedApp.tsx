@@ -247,7 +247,8 @@ export const EmbedApp: React.FC = () => {
       const { action, payload } = e.data;
       switch (action) {
         case 'send': {
-          sendChatMessageRef.current(payload?.text || '');
+          // `heard`: the page's microphone heard it (shared/chat-bridge.js send).
+          sendChatMessageRef.current(payload?.text || '', undefined, undefined, payload?.heard === true ? { heard: true } : undefined);
           break;
         }
         case 'send_hidden': {

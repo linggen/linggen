@@ -371,6 +371,7 @@ async fn tell_in_place(
                 Some(&mark),
                 (None, None),
                 &[],
+                false,
             )
             .await;
             // Not kept: no turn either, so a retry never runs it twice.
