@@ -106,13 +106,21 @@ The engine names no app; any page may ask. Providers are a declared list
 (`live::PROVIDERS`, one entry each: token endpoint, model, socket address, the
 provider name its key is stored under); `google` is the first.
 
-- **`POST /api/live/token`** `{"provider": "google"}` → `{provider, model, ws_url,
-  token, expires}`; `ws_url` is complete — the page opens it as given. The token
-  is fixed to the engine's model and audio output, one use, alive 30 minutes, to
-  be used within one minute. Refusals are `{"error": <code>}` with a fixed code
-  and nothing of the provider's reply: `unknown_provider` 400, `no_key` 409,
-  `slow_down` 429 (five tokens a minute), `key_refused`, `request_refused`,
-  `provider_down`, `unreachable`, `bad_answer` (each 502).
+- **`POST /api/live/token`** `{"provider": "google", "setup": {…}}` → `{provider, model,
+  ws_url, token, expires}`; `ws_url` is complete — the page opens it as given.
+  `setup` (optional) is the session the page wants, in the provider's own shape.
+  The token CARRIES it: the provider uses the setup in the token and ignores what
+  the socket sends afterwards, so an instruction sent only on the socket is
+  dropped. The provider's entry keeps only what a page may ask (its
+  instruction, the two transcripts, resumption, compression — never tools) and
+  writes the model and audio output itself. One use, alive 30 minutes, to be
+  used within one minute; a reconnect asks a new token with the handle in its
+  setup. `expires` is the provider's when it names one, else the lifetime asked
+  for. Refusals are `{"error": <code>}` with a fixed code and nothing of the
+  provider's reply: `unknown_provider`, `bad_setup` (not an object, or over
+  64 KiB) 400, `no_key` 409, `slow_down` 429 (five tokens a minute),
+  `key_refused`, `request_refused`, `provider_down`, `unreachable`,
+  `bad_answer` (each 502).
 - **`GET /api/live`** → `{providers: [{id, ready, why?}]}`, `why` one of `no_key`,
   `not_owner`. It calls no provider and starts nothing.
 - **Owner only**, as hearing is: both routes are classed at chat and answer a

@@ -121,8 +121,10 @@ around (`doc/plan-3.0.md`) is not started.
   `{"wav_b64"}`) for the owner and answers `{text, language, ms}`;
   `GET /api/stt` says whether this Mac can hear and why not.
 - `POST /api/live/token` gives an app's page a token for one live voice
-  session (Google, the owner only) without the page ever holding your key;
-  `GET /api/live` says whether it can.
+  session (Google, the owner only) without the page ever holding your key.
+  The token carries the session the page asked for — its instruction, never
+  tools — with the model fixed by the engine; `GET /api/live` says whether
+  it can.
 
 ## [2.6.1] - 2026-11-22 — a private app answers in its own session; the moon's real phase
 
