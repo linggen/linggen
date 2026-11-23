@@ -60,7 +60,33 @@ pub(crate) async fn status_handler(
     Json(json!({ "providers": providers })).into_response()
 }
 
-/// POST /api/live/token `{provider}` — a token for one new live session.
+/// The largest request a page may send for a token: a setup is an
+/// instruction of a few thousand characters and a few small settings.
+const MAX_ASK_BYTES: usize = 64 * 1024;
+
+/// What the page asked: the provider it named and the session setup it wants
+/// carried in the token (an object in the provider's own shape; absent means
+/// none). A body too large, or a setup that is not an object, is refused.
+fn asked_of(body: &[u8]) -> Result<(Option<&'static Provider>, Value), Refusal> {
+    if body.len() > MAX_ASK_BYTES {
+        return Err(Refusal::BadSetup);
+    }
+    let parsed: Value = serde_json::from_slice(body).unwrap_or(Value::Null);
+    let provider = parsed
+        .get("provider")
+        .and_then(Value::as_str)
+        .and_then(live::provider_named);
+    let setup = match parsed.get("setup") {
+        None | Some(Value::Null) => json!({}),
+        Some(setup) if setup.is_object() => setup.clone(),
+        Some(_) => return Err(Refusal::BadSetup),
+    };
+    Ok((provider, setup))
+}
+
+/// POST /api/live/token `{provider, setup?}` — a token for one new live
+/// session, carrying the setup the page asked for (cut to what a page may
+/// ask, the model and output fixed: `crate::live`).
 pub(crate) async fn token_handler(
     State(state): State<Arc<ServerState>>,
     headers: HeaderMap,
@@ -71,16 +97,17 @@ pub(crate) async fn token_handler(
         return refused;
     }
     let configured = state.manager.get_config_snapshot().await.models;
-    let asked = serde_json::from_slice::<Value>(&body)
-        .ok()
-        .and_then(|v| v.get("provider")?.as_str().and_then(live::provider_named));
-    answer(asked, &configured, &state.live_rate).await
+    match asked_of(&body) {
+        Ok((provider, setup)) => answer(provider, &setup, &configured, &state.live_rate).await,
+        Err(why) => refuse(why, "?"),
+    }
 }
 
 /// The decision once the owner is known: the provider named, its key, the
 /// rate, then the one request to the provider.
 async fn answer(
     asked: Option<&'static Provider>,
+    setup: &Value,
     configured: &[crate::config::ModelConfig],
     rate: &live::TokenRate,
 ) -> Response {
@@ -93,7 +120,7 @@ async fn answer(
     if !rate.allow(Instant::now()) {
         return refuse(Refusal::SlowDown, p.id);
     }
-    match live::mint(p, &live::http_base(p), &key, chrono::Utc::now()).await {
+    match live::mint(p, &live::http_base(p), &key, chrono::Utc::now(), setup).await {
         Ok(minted) => {
             tracing::info!("live token made for {}", minted.provider);
             let mut res = Json(json!({

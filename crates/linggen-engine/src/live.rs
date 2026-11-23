@@ -81,8 +81,10 @@ pub struct Provider {
     /// How long a token lives, as this engine asks for it. Also the expiry
     /// told to the page when the provider's answer names none.
     token_minutes: i64,
-    /// The token request's body, fixing the model and audio output.
-    body: fn(&Provider, DateTime<Utc>) -> Value,
+    /// The token request's body: the session the page asked for (its
+    /// instruction and the like — only what this entry lets a page ask), with
+    /// the model and audio output fixed by the engine.
+    body: fn(&Provider, DateTime<Utc>, &Value) -> Value,
     /// The token and its expiry out of the provider's answer.
     read: fn(&Value) -> Option<Answer>,
     /// The address a page opens, from the token.
@@ -108,19 +110,42 @@ const GOOGLE: Provider = Provider {
     socket_with: google_socket,
 };
 
-/// A token good for one session, alive 30 minutes, to be used within one
-/// minute, fixed to the model and to audio output. The field is
-/// `bidiGenerateContentSetup`: the service refuses the SDK's
-/// `liveConnectConstraints` (400, measured 2026-11-22).
-fn google_body(p: &Provider, now: DateTime<Utc>) -> Value {
+/// What a page may ask of a session. Anything else in its setup is dropped
+/// here, so a token never carries tools, another model or another output: a
+/// live voice gets words, not tools.
+const GOOGLE_PAGE_MAY_ASK: &[&str] = &[
+    "systemInstruction",
+    "inputAudioTranscription",
+    "outputAudioTranscription",
+    "sessionResumption",
+    "contextWindowCompression",
+];
+
+/// A token good for one session, alive `token_minutes`, to be used within
+/// one minute. The token CARRIES the session's setup: the service uses the
+/// token's setup and ignores what the socket sends afterwards (measured
+/// 2026-11-23 — a token fixed to the model alone dropped the page's
+/// instruction). So the page's setup goes in here, cut down to
+/// [`GOOGLE_PAGE_MAY_ASK`], with the model and audio output written by the
+/// engine last. The field is `bidiGenerateContentSetup`: the service refuses
+/// the SDK's `liveConnectConstraints` (400, measured 2026-11-22).
+fn google_body(p: &Provider, now: DateTime<Utc>, asked: &Value) -> Value {
+    let mut setup = serde_json::Map::new();
+    for name in GOOGLE_PAGE_MAY_ASK {
+        if let Some(value) = asked.get(*name) {
+            setup.insert((*name).to_string(), value.clone());
+        }
+    }
+    setup.insert("model".into(), json!(format!("models/{}", p.model)));
+    setup.insert(
+        "generationConfig".into(),
+        json!({ "responseModalities": ["AUDIO"] }),
+    );
     json!({
         "uses": 1,
         "expireTime": stamp(now + Span::minutes(p.token_minutes)),
         "newSessionExpireTime": stamp(now + Span::minutes(1)),
-        "bidiGenerateContentSetup": {
-            "model": format!("models/{}", p.model),
-            "generationConfig": { "responseModalities": ["AUDIO"] },
-        },
+        "bidiGenerateContentSetup": setup,
     })
 }
 
@@ -155,6 +180,8 @@ pub fn provider_named(id: &str) -> Option<&'static Provider> {
 pub enum Refusal {
     /// The page named a provider this engine does not list.
     UnknownProvider,
+    /// The page's setup is not an object, or is larger than a setup is.
+    BadSetup,
     /// No key is stored for the provider.
     NoKey,
     /// Too many tokens asked for in a minute.
@@ -176,6 +203,7 @@ impl Refusal {
     pub fn code(self) -> &'static str {
         match self {
             Refusal::UnknownProvider => "unknown_provider",
+            Refusal::BadSetup => "bad_setup",
             Refusal::NoKey => "no_key",
             Refusal::SlowDown => "slow_down",
             Refusal::KeyRefused => "key_refused",
@@ -189,7 +217,7 @@ impl Refusal {
     /// The HTTP status the route answers with.
     pub fn status(self) -> u16 {
         match self {
-            Refusal::UnknownProvider => 400,
+            Refusal::UnknownProvider | Refusal::BadSetup => 400,
             Refusal::NoKey => 409,
             Refusal::SlowDown => 429,
             Refusal::KeyRefused
@@ -255,6 +283,7 @@ pub async fn mint(
     base: &str,
     key: &Secret,
     now: DateTime<Utc>,
+    asked: &Value,
 ) -> Result<Minted, Refusal> {
     let mut client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
@@ -267,7 +296,7 @@ pub async fn mint(
     let sent = client
         .post(format!("{base}{}", p.token_path))
         .header(p.key_header, key.expose())
-        .json(&(p.body)(p, now))
+        .json(&(p.body)(p, now, asked))
         .send()
         .await;
     let response = sent.map_err(|_| Refusal::Unreachable)?;
@@ -344,7 +373,7 @@ mod tests {
         let now = DateTime::parse_from_rfc3339("2026-11-22T12:00:00Z")
             .unwrap()
             .with_timezone(&Utc);
-        let body = (google().body)(google(), now);
+        let body = (google().body)(google(), now, &json!({}));
         assert_eq!(body["uses"], 1);
         assert_eq!(body["expireTime"], "2026-11-22T12:30:00Z");
         assert_eq!(body["newSessionExpireTime"], "2026-11-22T12:01:00Z");
@@ -360,6 +389,43 @@ mod tests {
             body.get("liveConnectConstraints").is_none(),
             "the service refuses the SDK's name"
         );
+    }
+
+    /// The token carries what the page asked for — and only what a page may
+    /// ask: its instruction, transcripts, resumption and compression stay;
+    /// tools, another model and another output do not.
+    #[test]
+    fn the_token_carries_the_pages_setup_cut_to_what_a_page_may_ask() {
+        let now = DateTime::parse_from_rfc3339("2026-11-22T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let asked = json!({
+            "model": "models/another-model",
+            "generationConfig": { "responseModalities": ["TEXT"], "temperature": 2 },
+            "systemInstruction": { "parts": [{ "text": "You are a teacher." }] },
+            "inputAudioTranscription": {},
+            "outputAudioTranscription": {},
+            "sessionResumption": { "handle": "h1" },
+            "contextWindowCompression": { "triggerTokens": 6000, "slidingWindow": { "targetTokens": 3000 } },
+            "tools": [{ "googleSearch": {} }],
+            "realtimeInputConfig": { "x": 1 },
+        });
+        let body = (google().body)(google(), now, &asked);
+        let setup = body["bidiGenerateContentSetup"].as_object().unwrap();
+        let mut names: Vec<&str> = setup.keys().map(String::as_str).collect();
+        names.sort_unstable();
+        let mut allowed: Vec<&str> = GOOGLE_PAGE_MAY_ASK.to_vec();
+        allowed.extend(["model", "generationConfig"]);
+        allowed.sort_unstable();
+        assert_eq!(names, allowed, "nothing but what a page may ask, plus the engine's two");
+        assert_eq!(setup["model"], "models/gemini-3.8-live", "the engine's model, not the page's");
+        assert_eq!(setup["generationConfig"], json!({ "responseModalities": ["AUDIO"] }));
+        assert_eq!(setup["systemInstruction"], asked["systemInstruction"]);
+        assert_eq!(setup["sessionResumption"], json!({ "handle": "h1" }));
+        assert!(!GOOGLE_PAGE_MAY_ASK.contains(&"tools"), "a live voice gets words, not tools");
+        // A setup that is not an object asks for nothing.
+        let bare = (google().body)(google(), now, &json!("x"));
+        assert_eq!(bare["bidiGenerateContentSetup"].as_object().unwrap().len(), 2);
     }
 
     #[test]
