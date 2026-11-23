@@ -66,14 +66,19 @@ pub struct Provider {
     http_base: &'static str,
     /// Where a token is asked for, under the origin.
     token_path: &'static str,
-    /// The header that carries the key on that request.
+    /// The header that carries the key on that request, and what comes
+    /// before the key in its value (`Bearer ` for a service that takes the
+    /// key as a bearer credential; empty when the header holds the key alone).
     key_header: &'static str,
+    key_prefix: &'static str,
     /// The live socket's address, without the token.
     socket_url: &'static str,
     /// The provider name the key is stored under (Settings → Models) and the
     /// host that name's account is at: a key stored for that name at another
-    /// host (a gateway) is not this provider's.
-    key_provider: &'static str,
+    /// host (a gateway) is not this provider's. `None` for a service whose
+    /// key is stored as an OpenAI-compatible model at its host, under a name
+    /// the owner chose and this code cannot know: any name at that host.
+    key_provider: Option<&'static str>,
     key_host: &'static str,
     /// The scratch engines' knob: when this environment variable is set it is
     /// the key for this route, and for this route only (`find_key`).
@@ -83,7 +88,9 @@ pub struct Provider {
     token_minutes: i64,
     /// The token request's body: the session the page asked for (its
     /// instruction and the like — only what this entry lets a page ask), with
-    /// the model and audio output fixed by the engine.
+    /// the model and audio output fixed by the engine. `Value::Null` sends no
+    /// body at all: a service whose page writes its own session on the
+    /// socket takes nothing of the page's setup, and the setup is dropped.
     body: fn(&Provider, DateTime<Utc>, &Value) -> Value,
     /// The token and its expiry out of the provider's answer.
     read: fn(&Value) -> Option<Answer>,
@@ -92,7 +99,11 @@ pub struct Provider {
 }
 
 /// The live providers this engine knows. An open set: a new one is one entry.
-pub const PROVIDERS: &[Provider] = &[GOOGLE];
+///
+/// **The order is the order of preference**: `GET /api/live` lists them in
+/// this order and a page takes the first one that is ready. Flipping the
+/// preference is one edit here.
+pub const PROVIDERS: &[Provider] = &[ALIBABA, GOOGLE];
 
 const GOOGLE: Provider = Provider {
     id: "google",
@@ -100,8 +111,9 @@ const GOOGLE: Provider = Provider {
     http_base: "https://generativelanguage.googleapis.com",
     token_path: "/v1beta/auth_tokens",
     key_header: "x-goog-api-key",
+    key_prefix: "",
     socket_url: "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained",
-    key_provider: "gemini",
+    key_provider: Some("gemini"),
     key_host: "generativelanguage.googleapis.com",
     key_env: "LINGGEN_LIVE_GOOGLE_KEY",
     token_minutes: 30,
@@ -109,6 +121,54 @@ const GOOGLE: Provider = Provider {
     read: google_answer,
     socket_with: google_socket,
 };
+
+/// Qwen's live voice. The short key is asked with a bearer header, no body,
+/// and a lifetime in the query (the service gives 60 s whatever is asked);
+/// the page opens the socket with the short key in the query and writes its
+/// own session there, so nothing of the page's setup is sent anywhere.
+const ALIBABA: Provider = Provider {
+    id: "alibaba",
+    model: "qwen-audio-3.1-realtime-flash",
+    http_base: "https://ap-southeast-1.maas.qwencloudapi.com",
+    token_path: "/api/v1/tokens?expire_in_seconds=60",
+    key_header: "Authorization",
+    key_prefix: "Bearer ",
+    socket_url: "wss://ap-southeast-1.maas.qwencloudapi.com/api-ws/v1/realtime",
+    key_provider: None,
+    key_host: "ap-southeast-1.maas.qwencloudapi.com",
+    key_env: "LINGGEN_LIVE_ALIBABA_KEY",
+    token_minutes: 1,
+    body: no_body,
+    read: alibaba_answer,
+    socket_with: alibaba_socket,
+};
+
+/// What a page may ask of a Qwen session: nothing. The page's setup is
+/// checked by the route (an object, the size cap) and dropped here.
+fn no_body(_: &Provider, _: DateTime<Utc>, _asked: &Value) -> Value {
+    Value::Null
+}
+
+/// The token is the answer's `token`, its end the answer's `expires_at`
+/// (unix seconds). A refusal's body (`{"code": …}`) holds no token.
+fn alibaba_answer(v: &Value) -> Option<Answer> {
+    let token = v.get("token")?.as_str().filter(|t| !t.is_empty())?;
+    let expires = v
+        .get("expires_at")
+        .and_then(Value::as_i64)
+        .and_then(|secs| DateTime::<Utc>::from_timestamp(secs, 0))
+        .map(stamp);
+    Some(Answer {
+        token: Secret::new(token),
+        expires,
+    })
+}
+
+/// The short key rides in the query: a browser cannot set a header on a
+/// socket.
+fn alibaba_socket(p: &Provider, token: &Secret) -> String {
+    format!("{}?model={}&api_key={}", p.socket_url, p.model, token.expose())
+}
 
 /// What a page may ask of a session. Anything else in its setup is dropped
 /// here, so a token never carries tools, another model or another output: a
@@ -246,13 +306,17 @@ pub fn http_base(p: &Provider) -> String {
 
 /// The key for `p`, or none: the scratch-engine knob first (`key_env`, set
 /// for this route alone), else the key stored for the provider — found by
-/// provider and host, with no model call ([`credentials::resolve_provider_key`]),
+/// provider and host (host alone when the entry names no provider), with no
+/// model call ([`credentials::resolve_provider_key`], [`credentials::resolve_host_key`]),
 /// from `~/.linggen/credentials.json` read fresh as web search reads its key.
 /// The only place a key is read.
 pub fn find_key(p: &Provider, configured: &[ModelConfig]) -> Option<Secret> {
     let stored = || {
         let creds = Credentials::load(&credentials::credentials_file());
-        credentials::resolve_provider_key(p.key_provider, p.key_host, configured, &creds)
+        match p.key_provider {
+            Some(name) => credentials::resolve_provider_key(name, p.key_host, configured, &creds),
+            None => credentials::resolve_host_key(p.key_host, configured, &creds),
+        }
     };
     pick_key(std::env::var(p.key_env).ok(), stored)
 }
@@ -293,12 +357,14 @@ pub async fn mint(
         client = client.no_proxy();
     }
     let client = client.build().map_err(|_| Refusal::Unreachable)?;
-    let sent = client
+    let mut request = client
         .post(format!("{base}{}", p.token_path))
-        .header(p.key_header, key.expose())
-        .json(&(p.body)(p, now, asked))
-        .send()
-        .await;
+        .header(p.key_header, format!("{}{}", p.key_prefix, key.expose()));
+    let body = (p.body)(p, now, asked);
+    if !body.is_null() {
+        request = request.json(&body);
+    }
+    let sent = request.send().await;
     let response = sent.map_err(|_| Refusal::Unreachable)?;
     let status = response.status().as_u16();
     match status {
@@ -428,6 +494,53 @@ mod tests {
         assert_eq!(bare["bidiGenerateContentSetup"].as_object().unwrap().len(), 2);
     }
 
+    fn alibaba() -> &'static Provider {
+        provider_named("alibaba").unwrap()
+    }
+
+    /// The list's order is the preference order, and Qwen is first.
+    #[test]
+    fn the_first_provider_listed_is_the_one_preferred() {
+        let ids: Vec<&str> = PROVIDERS.iter().map(|p| p.id).collect();
+        assert_eq!(ids, ["alibaba", "google"]);
+    }
+
+    /// Qwen's token request: a bearer header, the lifetime in the query, no
+    /// body — and the page's setup, whatever it holds, is not sent.
+    #[test]
+    fn qwens_token_request_has_a_bearer_header_a_lifetime_and_no_body() {
+        let p = alibaba();
+        assert_eq!(p.token_path, "/api/v1/tokens?expire_in_seconds=60");
+        assert_eq!((p.key_header, p.key_prefix), ("Authorization", "Bearer "));
+        let now = Utc::now();
+        let asked = json!({ "systemInstruction": "x", "tools": [1], "anything": true });
+        assert!((p.body)(p, now, &asked).is_null(), "a page's setup is dropped");
+        assert!((p.body)(p, now, &json!({})).is_null());
+    }
+
+    #[test]
+    fn qwens_answer_needs_a_token_and_names_its_end_in_unix_seconds() {
+        let ok = json!({"token": "st-abc", "expires_at": 1_800_000_000});
+        let read = (alibaba().read)(&ok).unwrap();
+        assert_eq!(read.token.expose(), "st-abc");
+        assert_eq!(read.expires.as_deref(), Some("2027-01-15T08:00:00Z"));
+        let bare = (alibaba().read)(&json!({"token": "st-abc"})).unwrap();
+        assert_eq!(bare.expires, None);
+        assert!((alibaba().read)(&json!({"expires_at": 1_800_000_000})).is_none());
+        assert!((alibaba().read)(&json!({"token": ""})).is_none());
+        let refusal = json!({"code": "InvalidApiKey", "message": "m", "request_id": "r"});
+        assert!((alibaba().read)(&refusal).is_none());
+    }
+
+    #[test]
+    fn qwens_address_is_complete_with_the_model_and_the_short_key_in_the_query() {
+        let url = (alibaba().socket_with)(alibaba(), &Secret::new("st-abc"));
+        assert_eq!(
+            url,
+            "wss://ap-southeast-1.maas.qwencloudapi.com/api-ws/v1/realtime?model=qwen-audio-3.1-realtime-flash&api_key=st-abc"
+        );
+    }
+
     #[test]
     fn a_secret_says_nothing_of_itself() {
         let key = Secret::new("AIza-very-secret");
@@ -490,8 +603,8 @@ mod tests {
         );
         assert_eq!(
             production.matches(".expose()").count(),
-            2,
-            "the key's header and the socket address open a secret"
+            3,
+            "the key's header and each provider's socket address open a secret"
         );
         assert_eq!(
             production.matches("key.expose()").count(),

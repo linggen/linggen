@@ -1,9 +1,11 @@
 //! Live voice for an app's page (`GET /api/live`, `POST /api/live/token`,
 //! doc/yinyue-companion-spec.md § Live voice): the engine mints a token for
-//! one live session and hands the page only that. The provider is a loopback
-//! stand-in (`LINGGEN_LIVE_GOOGLE_BASE`, honoured only by a build with the
-//! `test-support` feature; no request leaves this machine). The key comes
-//! from the scratch engines' knob, `LINGGEN_LIVE_GOOGLE_KEY`.
+//! one live session and hands the page only that. Two providers are listed,
+//! `alibaba` first, `google` second. Each is a loopback stand-in
+//! (`LINGGEN_LIVE_GOOGLE_BASE`, `LINGGEN_LIVE_ALIBABA_BASE`, honoured only by
+//! a build with the `test-support` feature; no request leaves this machine).
+//! The keys come from the scratch engines' knobs, `LINGGEN_LIVE_GOOGLE_KEY`
+//! and `LINGGEN_LIVE_ALIBABA_KEY`.
 
 use crate::support::{Setup, World};
 use axum::{
@@ -15,6 +17,8 @@ use std::sync::{Arc, Mutex};
 
 const KEY: &str = "AIza-test-key-not-real-0001";
 const TOKEN: &str = "auth_tokens/FAKE-token-not-real-0002";
+const QWEN_KEY: &str = "sk-ws-test-key-not-real-0003";
+const QWEN_TOKEN: &str = "st-FAKE-short-key-not-real-0004";
 const PROVIDER_BODY: &str = "PROVIDER-BODY-MUST-NOT-REACH-THE-PAGE";
 
 #[derive(Clone, Copy)]
@@ -78,23 +82,105 @@ impl TokenApi {
     }
 }
 
-/// An engine whose Google key is the knob's (`with_key`) and whose token
-/// endpoint is `api`; `lan` binds it to every address for the phone tests.
-async fn world(api: &TokenApi, with_key: bool, lan: bool) -> World {
-    let mut env = vec![
-        ("LINGGEN_LIVE_GOOGLE_BASE", api.url.clone()),
-        // Nothing stored on this machine may stand in for the knob.
-        ("LINGGEN_API_KEY_GEMINI", String::new()),
-    ];
-    if with_key {
-        env.push(("LINGGEN_LIVE_GOOGLE_KEY", KEY.to_string()));
+/// Qwen's `POST /api/v1/tokens?expire_in_seconds=60`, on loopback: it keeps
+/// each request's authorization header, query and body text; a failure's body
+/// repeats the key and a marker, as a provider's error text might.
+struct QwenApi {
+    url: String,
+    seen: Arc<Mutex<Vec<(String, String, String)>>>,
+}
+
+async fn qwen_respond(
+    State((answer, seen)): State<(Answer, Arc<Mutex<Vec<(String, String, String)>>>)>,
+    uri: axum::http::Uri,
+    headers: HeaderMap,
+    body: String,
+) -> axum::response::Response {
+    let auth = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    seen.lock()
+        .unwrap()
+        .push((auth.clone(), uri.query().unwrap_or("").to_string(), body));
+    match answer {
+        // As the service answers (wire notes): the token and its end in unix seconds.
+        Answer::Token => {
+            axum::Json(json!({"token": QWEN_TOKEN, "expires_at": 1_800_000_000})).into_response()
+        }
+        Answer::Status(code) => {
+            let text = json!({"code": "InvalidApiKey", "message": format!("{PROVIDER_BODY} {auth}")})
+                .to_string();
+            (StatusCode::from_u16(code).unwrap(), text).into_response()
+        }
     }
+}
+
+impl QwenApi {
+    async fn start(answer: Answer) -> Self {
+        let seen = Arc::default();
+        let app = Router::new()
+            .route("/api/v1/tokens", post(qwen_respond))
+            .with_state((answer, Arc::clone(&seen)));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind qwen token api");
+        let url = format!("http://{}", listener.local_addr().expect("qwen api addr"));
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        Self { url, seen }
+    }
+
+    /// Each request as (authorization header, query, body text).
+    fn requests(&self) -> Vec<(String, String, String)> {
+        self.seen.lock().unwrap().clone()
+    }
+}
+
+/// An engine with these environment variables, set last; `lan` binds it to
+/// every address for the phone tests.
+async fn world_env(mut env: Vec<(&'static str, String)>, lan: bool) -> World {
+    // Nothing stored on this machine may stand in for a knob.
+    env.push(("LINGGEN_API_KEY_GEMINI", String::new()));
     World::start(Setup {
         env,
         lan,
         ..Setup::default()
     })
     .await
+}
+
+/// An engine whose Google key is the knob's (`with_key`) and whose token
+/// endpoint is `api`; it holds no Qwen key.
+async fn world(api: &TokenApi, with_key: bool, lan: bool) -> World {
+    let mut env = vec![("LINGGEN_LIVE_GOOGLE_BASE", api.url.clone())];
+    if with_key {
+        env.push(("LINGGEN_LIVE_GOOGLE_KEY", KEY.to_string()));
+    }
+    world_env(env, lan).await
+}
+
+/// An engine whose Qwen key is the knob's (`with_key`), whose Qwen endpoint is
+/// `api`, and which holds no Google key.
+async fn qwen_world(api: &QwenApi, with_key: bool) -> World {
+    let mut env = vec![("LINGGEN_LIVE_ALIBABA_BASE", api.url.clone())];
+    if with_key {
+        env.push(("LINGGEN_LIVE_ALIBABA_KEY", QWEN_KEY.to_string()));
+    }
+    world_env(env, false).await
+}
+
+/// Neither Qwen's key nor its short key, nor a part the provider said, is in
+/// the log — and the log is being read.
+fn assert_qwen_log_is_clean(w: &World, what: &str) {
+    let log = w.engine.log();
+    assert!(
+        log.contains("live token"),
+        "the log shows no live line, so a clean log proves nothing ({what})"
+    );
+    for secret in [QWEN_KEY, QWEN_TOKEN, "st-FAKE", PROVIDER_BODY, "api_key="] {
+        assert!(!log.contains(secret), "the log holds `{secret}` ({what})");
+    }
 }
 
 /// Neither the key nor the token, nor a part the provider said, is in the log
@@ -122,7 +208,7 @@ async fn the_owner_is_given_a_token_for_one_session_and_never_the_key() {
     let listed = w.api.get("/api/live").await;
     assert_eq!(
         listed,
-        json!({"providers": [{"id": "google", "ready": true}]}),
+        json!({"providers": [{"id": "alibaba", "ready": false, "why": "no_key"}, {"id": "google", "ready": true}]}),
         "{listed}"
     );
     assert!(
@@ -203,7 +289,7 @@ async fn no_key_is_not_ready_and_a_refusal_that_calls_nobody() {
     let listed = w.api.get("/api/live").await;
     assert_eq!(
         listed,
-        json!({"providers": [{"id": "google", "ready": false, "why": "no_key"}]}),
+        json!({"providers": [{"id": "alibaba", "ready": false, "why": "no_key"}, {"id": "google", "ready": false, "why": "no_key"}]}),
         "{listed}"
     );
     let (status, got) = post_token(&w, json!({"provider": "google"})).await;
@@ -343,7 +429,7 @@ async fn a_phone_that_is_not_the_owner_is_refused_and_told_why() {
             .unwrap();
         assert_eq!(
             listed,
-            json!({"providers": [{"id": "google", "ready": false, "why": "not_owner"}]}),
+            json!({"providers": [{"id": "alibaba", "ready": false, "why": "not_owner"}, {"id": "google", "ready": false, "why": "not_owner"}]}),
             "{listed}"
         );
     }
@@ -353,4 +439,167 @@ async fn a_phone_that_is_not_the_owner_is_refused_and_told_why() {
     );
     // This Mac's own page is the owner: the same engine answers it.
     assert_eq!(post_token(&w, json!({"provider": "google"})).await.0, 200);
+}
+
+#[tokio::test]
+async fn the_owner_is_given_a_qwen_short_key_address_and_never_the_long_lived_key() {
+    let api = QwenApi::start(Answer::Token).await;
+    let w = qwen_world(&api, true).await;
+
+    let listed = w.api.get("/api/live").await;
+    assert_eq!(
+        listed,
+        json!({"providers": [{"id": "alibaba", "ready": true}, {"id": "google", "ready": false, "why": "no_key"}]}),
+        "{listed}"
+    );
+    assert!(
+        api.requests().is_empty(),
+        "asking who is ready made a request to the provider"
+    );
+
+    // The page's setup is checked and dropped: nothing of it is sent.
+    let setup = json!({"systemInstruction": "You are a teacher.", "tools": [{"x": 1}]});
+    let (status, got) = post_token(&w, json!({"provider": "alibaba", "setup": setup})).await;
+    assert_eq!(status, 200, "{got}");
+    assert_eq!(got["provider"], "alibaba");
+    assert_eq!(got["model"], "qwen-audio-3.1-realtime-flash");
+    assert_eq!(got["token"], QWEN_TOKEN);
+    assert_eq!(
+        got["ws_url"],
+        format!("wss://ap-southeast-1.maas.qwencloudapi.com/api-ws/v1/realtime?model=qwen-audio-3.1-realtime-flash&api_key={QWEN_TOKEN}")
+    );
+    assert_eq!(got["expires"], "2027-01-15T08:00:00Z", "the service's own end");
+    assert!(
+        !got.to_string().contains(QWEN_KEY),
+        "the page was handed the long-lived key: {got}"
+    );
+
+    // One request: bearer key, the lifetime in the query, no body.
+    let seen = api.requests();
+    assert_eq!(seen.len(), 1, "{seen:?}");
+    let (auth, query, body) = &seen[0];
+    assert_eq!(auth, &format!("Bearer {QWEN_KEY}"));
+    assert_eq!(query, "expire_in_seconds=60");
+    assert_eq!(body, "", "no body is sent, whatever the page's setup holds");
+    assert_qwen_log_is_clean(&w, "happy path");
+
+    // A setup that is not an object is refused before anyone is called.
+    let (status, got) = post_token(&w, json!({"provider": "alibaba", "setup": "x"})).await;
+    assert_eq!((status, got), (400, json!({"error": "bad_setup"})));
+    assert_eq!(api.requests().len(), 1);
+}
+
+#[tokio::test]
+async fn the_providers_are_listed_alibaba_first_then_google() {
+    let qwen = QwenApi::start(Answer::Token).await;
+    let google = TokenApi::start(Answer::Token).await;
+    let w = world_env(
+        vec![
+            ("LINGGEN_LIVE_ALIBABA_BASE", qwen.url.clone()),
+            ("LINGGEN_LIVE_ALIBABA_KEY", QWEN_KEY.to_string()),
+            ("LINGGEN_LIVE_GOOGLE_BASE", google.url.clone()),
+            ("LINGGEN_LIVE_GOOGLE_KEY", KEY.to_string()),
+        ],
+        false,
+    )
+    .await;
+    let listed = w.api.get("/api/live").await;
+    assert_eq!(
+        listed,
+        json!({"providers": [{"id": "alibaba", "ready": true}, {"id": "google", "ready": true}]}),
+        "{listed}"
+    );
+    // Each provider's key goes to its own service alone.
+    assert_eq!(post_token(&w, json!({"provider": "google"})).await.0, 200);
+    assert_eq!(post_token(&w, json!({"provider": "alibaba"})).await.0, 200);
+    assert_eq!(google.requests().len(), 1);
+    assert_eq!(google.requests()[0].0, KEY);
+    assert_eq!(qwen.requests().len(), 1);
+    assert_eq!(qwen.requests()[0].0, format!("Bearer {QWEN_KEY}"));
+}
+
+#[tokio::test]
+async fn a_mac_with_only_a_gemini_key_has_google_ready_and_alibaba_not() {
+    let api = TokenApi::start(Answer::Token).await;
+    let w = world(&api, true, false).await;
+    let listed = w.api.get("/api/live").await;
+    assert_eq!(
+        listed,
+        json!({"providers": [{"id": "alibaba", "ready": false, "why": "no_key"}, {"id": "google", "ready": true}]}),
+        "{listed}"
+    );
+    let (status, got) = post_token(&w, json!({"provider": "alibaba"})).await;
+    assert_eq!((status, got), (409, json!({"error": "no_key"})));
+    assert!(api.requests().is_empty(), "the Gemini key went to a call for Qwen");
+}
+
+#[tokio::test]
+async fn qwen_with_no_key_is_a_refusal_that_calls_nobody() {
+    let api = QwenApi::start(Answer::Token).await;
+    let w = qwen_world(&api, false).await;
+    let (status, got) = post_token(&w, json!({"provider": "alibaba"})).await;
+    assert_eq!((status, got), (409, json!({"error": "no_key"})));
+    assert!(api.requests().is_empty(), "a request went out without a key");
+    assert!(w
+        .engine
+        .log()
+        .contains("live token refused for alibaba: no_key"));
+}
+
+#[tokio::test]
+async fn a_qwen_failure_is_one_fixed_word_and_nothing_of_its_body() {
+    for (code, word) in [
+        (400, "request_refused"),
+        (401, "key_refused"),
+        (403, "key_refused"),
+        (429, "provider_down"),
+        (500, "provider_down"),
+        (503, "provider_down"),
+    ] {
+        let api = QwenApi::start(Answer::Status(code)).await;
+        let w = qwen_world(&api, true).await;
+        let (got_status, got) = post_token(&w, json!({"provider": "alibaba"})).await;
+        assert_eq!(
+            (got_status, got.clone()),
+            (502, json!({"error": word})),
+            "provider answered {code}"
+        );
+        let text = got.to_string();
+        for leak in [QWEN_KEY, PROVIDER_BODY, QWEN_TOKEN] {
+            assert!(
+                !text.contains(leak),
+                "the reply holds `{leak}` after a {code}: {text}"
+            );
+        }
+        assert_qwen_log_is_clean(&w, &format!("provider {code}"));
+    }
+}
+
+#[tokio::test]
+async fn a_phone_that_is_not_the_owner_cannot_ask_for_a_qwen_short_key() {
+    let api = QwenApi::start(Answer::Token).await;
+    let w = world_env(
+        vec![
+            ("LINGGEN_LIVE_ALIBABA_BASE", api.url.clone()),
+            ("LINGGEN_LIVE_ALIBABA_KEY", QWEN_KEY.to_string()),
+        ],
+        true,
+    )
+    .await;
+    let (client, base) = friends_phone(&w, json!({})).await;
+    let refused = client
+        .post(format!("{base}/api/live/token"))
+        .header("x-linggen-device", "tok-friend-phone")
+        .json(&json!({"provider": "alibaba"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(refused.status().as_u16(), 403);
+    let body: Value = refused.json().await.unwrap();
+    assert_eq!(body["error"], "beyond_level", "{body}");
+    assert!(
+        api.requests().is_empty(),
+        "a request went out for a caller that is not the owner"
+    );
+    assert_eq!(post_token(&w, json!({"provider": "alibaba"})).await.0, 200);
 }

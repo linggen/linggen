@@ -101,15 +101,22 @@ and how often she speaks up is unchanged. The phone has no spoken voice.
 
 An app whose page talks to a provider's live voice socket (the language
 teacher's live lesson) never holds the provider's key: the engine, which holds
-the keys, mints a token good for **one** session and hands the page only that.
-The engine names no app; any page may ask. Providers are a declared list
-(`live::PROVIDERS`, one entry each: token endpoint, model, socket address, the
-provider name its key is stored under); `google` is the first.
+the keys, mints a short-lived credential for **one** session and hands the page
+only that; the page then connects straight to the service. The engine names no
+app; any page may ask. Providers are a declared list (`live::PROVIDERS`, one
+entry each: token endpoint, model, socket address, where its key is found).
+There are two services, **in this order of preference: `alibaba` (Qwen's live
+audio model), then `google`**. A page takes the first one `GET /api/live` says
+is ready; flipping the preference is one edit to the list. Both hand the page a
+short-lived credential, never the account key.
 
 - **`POST /api/live/token`** `{"provider": "google", "setup": {…}}` → `{provider, model,
   ws_url, token, expires}`; `ws_url` is complete — the page opens it as given.
   `setup` (optional) is the session the page wants, in the provider's own shape.
-  The token CARRIES it: the provider uses the setup in the token and ignores what
+  For `alibaba` the setup is checked (an object, the size cap) and dropped: the
+  token is asked with no body, lives 60 seconds, `ws_url` carries it in the
+  query, the page writes its own session on the socket, and `expires` is the
+  service's. For `google` the token CARRIES it: the provider uses the setup in the token and ignores what
   the socket sends afterwards, so an instruction sent only on the socket is
   dropped. The provider's entry keeps only what a page may ask (its
   instruction, the two transcripts, resumption, compression — never tools) and
@@ -121,14 +128,17 @@ provider name its key is stored under); `google` is the first.
   64 KiB) 400, `no_key` 409, `slow_down` 429 (five tokens a minute),
   `key_refused`, `request_refused`, `provider_down`, `unreachable`,
   `bad_answer` (each 502).
-- **`GET /api/live`** → `{providers: [{id, ready, why?}]}`, `why` one of `no_key`,
-  `not_owner`. It calls no provider and starts nothing.
+- **`GET /api/live`** → `{providers: [{id, ready, why?}]}` in the order of
+  preference above, `why` one of `no_key`, `not_owner`. It calls no provider
+  and starts nothing.
 - **Owner only**, as hearing is: both routes are classed at chat and answer a
   caller below the owner 403 `beyond_level` (the list says `not_owner`).
 - **The key and the token are never written** to a log, an event, a session row
-  or an error text. The key is the one stored for the `gemini` provider
-  (Settings → Models, found by provider and host, no model call); scratch
-  engines, which hold none, take `LINGGEN_LIVE_GOOGLE_KEY` (`doc/cli.md`).
+  or an error text. Google's key is the one stored for the `gemini` provider
+  (Settings → Models, found by provider and host, no model call); Qwen's is the
+  one stored for a model at host `ap-southeast-1.maas.qwencloudapi.com`, under
+  any provider name; scratch engines, which hold none, take
+  `LINGGEN_LIVE_GOOGLE_KEY` and `LINGGEN_LIVE_ALIBABA_KEY` (`doc/cli.md`).
 
 ### Asked aloud — answered aloud (2.7, engine half built)
 

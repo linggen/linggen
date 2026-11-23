@@ -422,7 +422,36 @@ pub fn resolve_provider_key(
     configured: &[ModelConfig],
     credentials: &Credentials,
 ) -> Option<String> {
-    let named = |p: &str| p.trim().eq_ignore_ascii_case(provider);
+    stored_key_at(
+        |p| p.trim().eq_ignore_ascii_case(provider),
+        host,
+        configured,
+        credentials,
+    )
+    .or_else(|| env_key(provider))
+}
+
+/// The key stored for whatever account is at `host`, under any provider name:
+/// for a service whose key is stored as an OpenAI-compatible model at its
+/// host, where the name the owner gave the provider is not known. The same
+/// stored sources as [`resolve_provider_key`], without the environment
+/// variable (it is named by a provider).
+pub fn resolve_host_key(
+    host: &str,
+    configured: &[ModelConfig],
+    credentials: &Credentials,
+) -> Option<String> {
+    stored_key_at(|_| true, host, configured, credentials)
+}
+
+/// A stored key for a provider name `named` accepts, at `host`: a configured
+/// model's key first, then an endpoint key stored with no model configured.
+fn stored_key_at(
+    named: impl Fn(&str) -> bool,
+    host: &str,
+    configured: &[ModelConfig],
+    credentials: &Credentials,
+) -> Option<String> {
     let on_host = |url: &str| {
         url::Url::parse(url.trim())
             .ok()
@@ -441,7 +470,6 @@ pub fn resolve_provider_key(
                 .and_then(|e| e.api_key.clone())
                 .filter(|k| !k.is_empty())
         })
-        .or_else(|| env_key(provider))
 }
 
 #[cfg(test)]
