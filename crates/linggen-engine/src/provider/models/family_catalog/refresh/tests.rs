@@ -19,7 +19,7 @@ impl Transport for Fake {
 async fn cold_start_304_and_failure_preserve_observation_and_last_good_bytes() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("catalog");
-    let now: DateTime<Utc> = "2026-12-01T10:00:00Z".parse().unwrap();
+    let now: DateTime<Utc> = "2026-12-20T10:00:00Z".parse().unwrap();
     std::fs::write(&path, &SHIPPED[..500]).unwrap();
     let mut cache = Cache::open(path.clone(), now);
     assert!(cache.snapshot.is_none());
@@ -30,12 +30,12 @@ async fn cold_start_304_and_failure_preserve_observation_and_last_good_bytes() {
     assert!(!cache.due(now));
     let mut cache = Cache::open(path.clone(), now);
     assert_eq!(cache.body, SHIPPED);
-    let tomorrow = now + Duration::days(1);
-    assert!(cache.refresh(tomorrow, &Fake(Some(reqwest::StatusCode::NOT_MODIFIED))).await.is_none());
-    assert!(!Cache::open(path.clone(), tomorrow).due(tomorrow));
-    assert_eq!(cache.snapshot.as_ref().unwrap().age_days(tomorrow.date_naive()), 9);
+    let next_week = now + Duration::days(CHECK_EVERY_DAYS);
+    assert!(cache.refresh(next_week, &Fake(Some(reqwest::StatusCode::NOT_MODIFIED))).await.is_none());
+    assert!(!Cache::open(path.clone(), next_week).due(next_week));
+    assert_eq!(cache.snapshot.as_ref().unwrap().age_days(next_week.date_naive()), 34);
     let stored = std::fs::read(&path).unwrap();
-    let due = tomorrow + Duration::days(1);
+    let due = next_week + Duration::days(CHECK_EVERY_DAYS);
     assert!(cache.refresh(due, &Fake(Some(reqwest::StatusCode::NOT_FOUND))).await.is_none());
     assert!(!cache.due(due + Duration::minutes(14)));
     assert!(cache.refresh(due + Duration::minutes(15), &Fake(None)).await.is_none());
@@ -44,6 +44,23 @@ async fn cold_start_304_and_failure_preserve_observation_and_last_good_bytes() {
     assert!(cache.apply(due, Reply::Body { bytes: SHIPPED[..500].to_vec(), etag: None }).is_err());
     assert_eq!(std::fs::read(&path).unwrap(), stored);
     assert_eq!(cache.body, SHIPPED);
+}
+
+#[test]
+fn the_check_is_due_on_start_after_a_week_and_then_weekly() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("catalog");
+    let day: DateTime<Utc> = "2026-11-24T12:00:00Z".parse().unwrap();
+    assert_eq!(CHECK_EVERY_DAYS, 7);
+    let mut cache = Cache::open(path.clone(), day);
+    assert!(cache.due(day), "nothing checked yet");
+    cache.apply(day, Reply::Body { bytes: SHIPPED.to_vec(), etag: None }).unwrap();
+    let week = Duration::days(CHECK_EVERY_DAYS);
+    for (later, due) in [(Duration::days(1), false), (week - Duration::minutes(1), false), (week, true)] {
+        assert_eq!(cache.due(day + later), due, "{later}");
+        // A restart reads the same stored check time and decides the same way.
+        assert_eq!(Cache::open(path.clone(), day + later).due(day + later), due, "restart {later}");
+    }
 }
 
 #[test]

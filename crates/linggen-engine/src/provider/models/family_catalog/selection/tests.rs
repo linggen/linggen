@@ -53,8 +53,10 @@ fn follow_requires_fresh_evidence_for_this_credential_and_a_newer_day() {
     for revision in [None, Some(2)] {
         assert!(matches!(decide(Some("claude-opus-5"), revision, TODAY), FamilyCurrent::Choose { current: Some("claude-opus-5"), reason: Hold::NoAccess, .. }));
     }
-    assert!(matches!(decide(Some("claude-opus-5"), Some(1), "2026-12-01"), FamilyCurrent::Choose { reason: Hold::Stale, .. }));
-    assert!(matches!(decide(None, Some(1), "2026-12-01"), FamilyCurrent::Current { current: None, .. }));
+    // 21 days after the observation still follows; 22 does not.
+    assert!(matches!(decide(Some("claude-opus-5"), Some(1), "2026-12-14"), FamilyCurrent::Current { .. }));
+    assert!(matches!(decide(Some("claude-opus-5"), Some(1), "2026-12-15"), FamilyCurrent::Choose { reason: Hold::Stale, .. }));
+    assert!(matches!(decide(None, Some(1), "2026-12-15"), FamilyCurrent::Current { current: None, .. }));
     assert!(matches!(decide(Some("claude-opus-5"), Some(1), TODAY), FamilyCurrent::Current { next, .. } if next.id() == "claude-opus-5-5"));
     assert!(matches!(resolve(&s, "anthropic", "never-seen", None, Some(1), TODAY), FamilyCurrent::Unavailable { current: None }));
 }

@@ -21,6 +21,9 @@ pub(crate) fn current() -> std::sync::Arc<Snapshot> {
 }
 
 const SHIPPED: &[u8] = include_bytes!("model-catalog-v1.json");
+/// The served catalog is regenerated weekly, so three missed weeks is the
+/// point where its facts are no longer trusted to move an existing row.
+pub(crate) const AUTOMATIC_MOVE_TRUST_DAYS: u64 = 21;
 const MAX_BYTES: usize = 512 * 1024;
 
 #[derive(Debug, Deserialize)]
@@ -131,7 +134,7 @@ impl Snapshot {
         today.signed_duration_since(self.observed).num_days().max(0) as u64
     }
 
-    pub(crate) fn is_stale(&self, today: NaiveDate) -> bool { self.age_days(today) > 7 }
+    pub(crate) fn is_stale(&self, today: NaiveDate) -> bool { self.age_days(today) > AUTOMATIC_MOVE_TRUST_DAYS }
 
     pub(crate) fn exact(&self, cfg: &ModelConfig) -> Option<&ModelFacts> {
         let binding = preset_for(cfg)?.catalog?;

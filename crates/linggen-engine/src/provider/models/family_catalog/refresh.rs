@@ -7,6 +7,8 @@ use std::{io::{self, Read, Write}, path::{Path, PathBuf}, sync::{Arc, LazyLock, 
 const URL: &str = "https://linggen.dev/model-catalog/v1.json";
 const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 const MAX_ETAG: usize = 512;
+/// The served catalog is regenerated weekly; asking more often finds nothing new.
+pub(super) const CHECK_EVERY_DAYS: i64 = 7;
 
 type View = Arc<Snapshot>;
 static CURRENT: LazyLock<RwLock<Option<View>>> = LazyLock::new(|| RwLock::new(None));
@@ -124,7 +126,7 @@ impl Cache {
 
     fn due(&self, now: DateTime<Utc>) -> bool {
         self.retry_at.map_or_else(
-            || self.checked.is_none_or(|last| now >= last + Duration::days(1)),
+            || self.checked.is_none_or(|last| now >= last + Duration::days(CHECK_EVERY_DAYS)),
             |retry| now >= retry,
         )
     }

@@ -7,7 +7,10 @@ fn shipped_contract_covers_bound_presets_and_preserves_exact_rows() {
     assert_eq!(seed.providers["openrouter"].len(), 380);
     assert!(seed.providers["anthropic"].contains_key("claude-haiku-5-5"));
     assert!(seed.providers["deepseek"].contains_key("deepseek-v4-flash-vision-exp"));
-    for (age, stale) in [(7, false), (8, true)] {
+    assert_eq!(AUTOMATIC_MOVE_TRUST_DAYS, 21);
+    // Two missed weekly checks must not already make a row stop following.
+    assert!(AUTOMATIC_MOVE_TRUST_DAYS >= 3 * refresh::CHECK_EVERY_DAYS as u64);
+    for (age, stale) in [(21, false), (22, true)] {
         let now = seed.observed + Days::new(age);
         assert_eq!(seed.age_days(now), age);
         assert_eq!(seed.is_stale(now), stale);
