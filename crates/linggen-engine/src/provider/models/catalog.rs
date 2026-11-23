@@ -44,6 +44,12 @@ pub fn follow_model_id(id: &str) -> String {
     chatgpt_catalog::successor(id).unwrap_or_else(|| id.to_string())
 }
 
+pub(super) fn linggen_cloud_url() -> String {
+    format!("{}/api/llm", crate::account::site_url())
+}
+
+pub(super) const LINGGEN_CLOUD_PROVIDER: &str = "openai";
+
 pub(super) fn inject_linggen_cloud(configs: &mut Vec<ModelConfig>) {
     const CLOUD_MODEL_ID: &str = LINGGEN_CLOUD_MODEL_ID;
     if configs.iter().any(|c| c.id == CLOUD_MODEL_ID) {
@@ -51,8 +57,8 @@ pub(super) fn inject_linggen_cloud(configs: &mut Vec<ModelConfig>) {
     }
     configs.push(ModelConfig {
         id: CLOUD_MODEL_ID.to_string(),
-        provider: "openai".to_string(),
-        url: format!("{}/api/llm", crate::account::site_url()),
+        provider: LINGGEN_CLOUD_PROVIDER.to_string(),
+        url: linggen_cloud_url(),
         model: CLOUD_MODEL_ID.to_string(),
         api_key: None,
         keep_alive: None,

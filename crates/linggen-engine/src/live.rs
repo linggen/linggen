@@ -241,7 +241,11 @@ fn google_socket(p: &Provider, token: &Secret) -> String {
 /// ([`PROVIDERS`]): the one fact `provider::kinds::kind_of` asks to tell a
 /// live-voice row from a chat one.
 pub fn declares(host: &str, model: &str) -> bool {
-    PROVIDERS.iter().any(|p| {
+    at_model(host, model).is_some()
+}
+
+pub(crate) fn at_model(host: &str, model: &str) -> Option<&'static Provider> {
+    PROVIDERS.iter().find(|p| {
         p.key_host.eq_ignore_ascii_case(host.trim()) && p.model.eq_ignore_ascii_case(model.trim())
     })
 }
@@ -328,14 +332,26 @@ pub fn http_base(p: &Provider) -> String {
 /// from `~/.linggen/credentials.json` read fresh as web search reads its key.
 /// The only place a key is read.
 pub fn find_key(p: &Provider, configured: &[ModelConfig]) -> Option<Secret> {
-    let stored = || {
+    provider_key(p, || {
         let creds = Credentials::load(&credentials::credentials_file());
-        match p.key_provider {
-            Some(name) => credentials::resolve_provider_key(name, p.key_host, configured, &creds),
-            None => credentials::resolve_host_key(p.key_host, configured, &creds),
-        }
-    };
+        stored_key(p, configured, &creds)
+    })
+}
+
+fn provider_key(p: &Provider, stored: impl FnOnce() -> Option<String>) -> Option<Secret> {
     pick_key(std::env::var(p.key_env).ok(), stored)
+}
+
+fn stored_key(p: &Provider, configured: &[ModelConfig], creds: &Credentials) -> Option<String> {
+    match p.key_provider {
+        Some(name) => credentials::resolve_provider_key(name, p.key_host, configured, creds),
+        None => credentials::resolve_host_key(p.key_host, configured, creds),
+    }
+}
+
+/// Same key sources as the live route, using the providers view's snapshot.
+pub(crate) fn key_ready(p: &Provider, configured: &[ModelConfig], creds: &Credentials) -> bool {
+    provider_key(p, || stored_key(p, configured, creds)).is_some()
 }
 
 /// The knob wins when set and not blank; otherwise what is stored.

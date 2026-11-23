@@ -40,6 +40,7 @@ mod plan;
 mod presence;
 mod private_app;
 mod prompt;
+mod providers;
 mod reading;
 mod restart;
 mod rooms;

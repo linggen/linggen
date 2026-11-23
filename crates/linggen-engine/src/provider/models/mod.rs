@@ -20,6 +20,7 @@ mod health;
 mod kind_tests;
 mod pricing;
 mod providers;
+pub mod providers_view;
 mod readiness;
 mod usage;
 

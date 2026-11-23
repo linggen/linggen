@@ -23,6 +23,7 @@ pub(super) mod outside_apps;
 pub(crate) mod pair;
 pub(super) mod people;
 pub(super) mod permissions;
+pub(super) mod providers;
 pub(super) mod quests;
 pub(super) mod rooms;
 pub(super) mod sessions;

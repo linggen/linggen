@@ -82,7 +82,7 @@ pub const PRESETS: &[Preset] = &[
     Preset {
         name: "chatgpt",
         label: "ChatGPT 订阅",
-        url: "https://chatgpt.com/backend-api/codex",
+        url: crate::provider::codex_auth::CHATGPT_API_BASE,
         way: Way::Subscription,
         default_model: "",
         placeholder: "",

@@ -47,6 +47,7 @@ pub(super) fn routes() -> Routes {
         // Models & skills GETs — used by SharingTab and SkillsTab Settings pages directly.
         // Session list / agents / agent-runs come via page_state only (no GET route).
         .route("/api/models", get(list_models_api))
+        .route("/api/providers", get(api::providers::list))
         .route("/api/mcp", get(api::config::list_mcp_api))
         .route(
             "/api/mcp/outside-apps",

@@ -87,10 +87,11 @@ impl Default for Credentials {
 /// trailing slashes aside.
 pub fn same_endpoint(provider_a: &str, url_a: &str, provider_b: &str, url_b: &str) -> bool {
     provider_a.trim().eq_ignore_ascii_case(provider_b.trim())
-        && url_a
-            .trim()
-            .trim_end_matches('/')
-            .eq_ignore_ascii_case(url_b.trim().trim_end_matches('/'))
+        && endpoint_url(url_a).eq_ignore_ascii_case(endpoint_url(url_b))
+}
+
+pub(crate) fn endpoint_url(url: &str) -> &str {
+    url.trim().trim_end_matches('/')
 }
 
 /// The version-1 row shape: a key entered for one model id, optionally
