@@ -70,6 +70,7 @@ pub(super) fn inject_linggen_cloud(configs: &mut Vec<ModelConfig>) {
         max_output_tokens: None,
         provided_by: Some("Linggen Cloud".to_string()),
         is_builtin: true,
+        family_binding: None,
             price: None,
     });
 }
@@ -116,6 +117,7 @@ fn chatgpt_config(id: &str, snap: &Snapshot) -> ModelConfig {
         max_output_tokens: None,
         provided_by: Some("ChatGPT".to_string()),
         is_builtin: true,
+        family_binding: None,
             price: None,
     }
 }

@@ -15,6 +15,7 @@ use tokio::sync::Semaphore;
 
 mod catalog;
 pub mod chatgpt_catalog;
+pub mod families;
 pub(crate) mod family_catalog;
 mod health;
 #[cfg(test)]
@@ -440,6 +441,7 @@ impl ModelManager {
                 max_output_tokens: None,
                 provided_by: owner_name.clone(),
                 is_builtin: false,
+                family_binding: None,
             price: None,
             };
 
@@ -723,6 +725,7 @@ mod tests {
             max_output_tokens: None,
             provided_by: None,
             is_builtin: false,
+            family_binding: None,
             price: None,
         }
     }

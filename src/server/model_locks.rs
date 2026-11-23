@@ -156,3 +156,53 @@ fn no_file_builds_a_model_list_from_the_raw_config_rows() {
     let code = "for m in config.models.iter() {}";
     assert!(walks.iter().any(|w| code.contains(w)));
 }
+
+const FAMILIES_DIR: &str = "crates/linggen-engine/src/provider/models/families";
+
+/// A ticked family's binding is written by `families/binding.rs` alone: the
+/// row's `family_binding` and the record of started endpoints. Every other
+/// file reads them, and the mutating functions are private to the module.
+/// A second writer would be a second place deciding what a family row is.
+#[test]
+fn only_the_binding_writer_writes_a_family_binding() {
+    let writer = format!("{FAMILIES_DIR}/binding.rs");
+    let found = lines_with(
+        &[
+            "family_binding =", "family_binding: Some", "family_binding.take", "family_binding.as_mut",
+            "family_binding.replace", "family_binding.insert", "family_binding.get_or_insert",
+            "FamilyBinding {", "family_starts =", "family_starts.0", "family_starts.push",
+            "family_starts.insert", "family_starts.clone_from",
+        ],
+        |rel| rel == writer || (rel.starts_with(FAMILIES_DIR) && rel.ends_with("/tests.rs")),
+        &writer,
+    );
+    assert!(found.is_empty(), "go through families::binding:\n{}", found.join("\n"));
+    // The scan sees what it is meant to: a write, spelled as it is spelled.
+    let code = "row.family_binding = Some(binding);";
+    assert!(["family_binding ="].iter().any(|w| code.contains(w)));
+}
+
+/// The things that change a family row run under the settings write lock:
+/// their only callers are the routes and jobs of the three files below, and
+/// each of them takes `settings_write` itself.
+#[test]
+fn families_are_changed_only_by_callers_that_hold_the_settings_write_lock() {
+    let callers = [
+        "src/server/api/provider_families.rs",
+        "src/server/api/providers.rs",
+        "src/server/api/config.rs",
+    ];
+    let found = lines_with(
+        &[
+            "families.follow(", "families.act(", "families.start_endpoint(", "families.go_back_refused(",
+            "Families::keep_bindings(",
+        ],
+        |rel| callers.contains(&rel) || rel.starts_with(FAMILIES_DIR),
+        callers[0],
+    );
+    assert!(found.is_empty(), "change families only where the settings write lock is held:\n{}", found.join("\n"));
+    for file in callers {
+        let code = production_code(&["src/server/api"]).into_iter().find(|(rel, _)| rel == file).expect("caller file").1;
+        assert!(code.contains("settings_write.lock()"), "{file} calls the families without taking the lock");
+    }
+}

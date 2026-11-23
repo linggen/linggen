@@ -26,6 +26,10 @@ pub struct ProviderView {
     used_by: Vec<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     disk_gb: Option<u64>,
+    /// The catalog's families at this endpoint (`families::Families::view`),
+    /// filled by the route that has them; absent where there are none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub families: Option<super::families::FamiliesView>,
 }
 
 #[derive(Serialize)]
@@ -94,7 +98,7 @@ impl ProviderView {
             id: provider_id(sign_in, provider, url), label, way: way.as_str(),
             provider: provider.into(), url: shown_url(url), connected: false, fix: None,
             key: (way == Way::Key).then_some(KeyState { set: false }),
-            models: Vec::new(), used_by: Vec::new(), disk_gb: None,
+            models: Vec::new(), used_by: Vec::new(), disk_gb: None, families: None,
         }
     }
 

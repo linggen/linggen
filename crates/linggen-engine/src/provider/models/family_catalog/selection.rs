@@ -29,6 +29,26 @@ pub(crate) enum Hold {
     NotNewer,
 }
 
+impl Hold {
+    /// The word a settings answer carries for why a model is held back.
+    pub(crate) fn code(self) -> &'static str {
+        match self {
+            Hold::NonStable(Stability::Preview) => "preview",
+            Hold::NonStable(Stability::Experimental) => "experimental",
+            Hold::NonStable(Stability::Alias) => "alias",
+            Hold::NonStable(Stability::Deprecated) => "deprecated",
+            Hold::NonStable(_) => "not_stable",
+            Hold::MissingDate => "missing_date",
+            Hold::NoChatLane => "not_chat",
+            Hold::NoAccess => "no_access",
+            Hold::Older => "older",
+            Hold::AmbiguousHead => "same_day",
+            Hold::Stale => "stale_catalog",
+            Hold::NotNewer => "not_newer",
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct Choice<'a> {
     pub facts: &'a ModelFacts,

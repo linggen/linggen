@@ -50,6 +50,7 @@ pub(super) fn routes() -> Routes {
         .route("/api/providers", get(api::providers::list).post(api::providers::create))
         .route("/api/providers/{id}", axum::routing::patch(api::providers::edit))
         .route("/api/providers/{id}/key", put(api::providers::edit))
+        .route("/api/providers/{id}/families/{family}", put(api::provider_families::put))
         .route("/api/providers/{id}/models", post(api::providers::edit))
         .route("/api/providers/{id}/models/{model_id}", delete(api::providers::remove_model))
         .route("/api/mcp", get(api::config::list_mcp_api))

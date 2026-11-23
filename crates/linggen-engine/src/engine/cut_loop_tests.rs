@@ -207,6 +207,7 @@ async fn engine_on(
         max_output_tokens: None,
         provided_by: None,
         is_builtin: false,
+        family_binding: None,
             price: None,
     };
     let models = Arc::new(ModelManager::new_with_credentials(

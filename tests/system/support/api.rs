@@ -108,6 +108,18 @@ impl Api {
         (status, serde_json::from_str(&text).unwrap_or(Value::Null))
     }
 
+    /// A PUT of `payload` that may be refused: the status and the body as text.
+    pub async fn put_text(&self, path: &str, payload: Value) -> (u16, String) {
+        let resp = self
+            .client
+            .put(format!("{}{path}", self.base))
+            .json(&payload)
+            .send()
+            .await
+            .unwrap_or_else(|e| panic!("{path}: {e}"));
+        (resp.status().as_u16(), resp.text().await.unwrap_or_default())
+    }
+
     pub async fn patch(&self, path: &str, payload: Value) -> Value {
         let resp = self
             .client

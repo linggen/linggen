@@ -8,9 +8,8 @@ use serde::Deserialize;
 use std::{collections::{BTreeMap, BTreeSet}, sync::OnceLock};
 
 mod refresh;
-// The family binding writer is a later slice.
-#[allow(dead_code)]
 mod selection;
+pub(crate) use selection::{family_current, AccessEvidence, Connection, FamilyCurrent};
 #[cfg(test)]
 mod tests;
 pub(crate) use refresh::start;
@@ -159,6 +158,28 @@ impl Snapshot {
         self.providers.get(source).into_iter().flat_map(|models| models.values())
     }
 
+    /// One entry of the provider a preset is bound to, by its exact id.
+    pub(crate) fn entry(&self, preset: &Preset, id: &str) -> Option<&ModelFacts> {
+        self.providers.get(preset.catalog?.source_id)?.get(id)
+    }
+
+    /// The families a preset's provider has a plain chat model in, the one
+    /// with the newest release first, ties by key: the order a page lists
+    /// them in. A family with no dated release sorts last.
+    pub(crate) fn chat_families(&self, preset: &Preset) -> Vec<(String, Option<NaiveDate>)> {
+        let Some(models) = preset.catalog.and_then(|b| self.providers.get(b.source_id)) else { return Vec::new() };
+        let mut newest: BTreeMap<&str, Option<NaiveDate>> = BTreeMap::new();
+        for m in models.values().filter(|m| m.text_chat()) {
+            let Some(family) = m.family.as_deref() else { continue };
+            let day = m.release_date.as_deref().and_then(date);
+            let slot = newest.entry(family).or_insert(day);
+            *slot = (*slot).max(day);
+        }
+        let mut families: Vec<_> = newest.into_iter().map(|(k, d)| (k.to_string(), d)).collect();
+        families.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        families
+    }
+
     pub(crate) fn exact(&self, cfg: &ModelConfig) -> Option<&ModelFacts> {
         let binding = preset_for(cfg)?.catalog?;
         self.providers.get(binding.source_id)?.get(&cfg.model)
@@ -176,7 +197,7 @@ impl Snapshot {
         Self::parse(&serde_json::to_vec(&file).unwrap()).expect("test catalog")
     }
 
-    fn parse(bytes: &[u8]) -> Result<Self> {
+    pub(super) fn parse(bytes: &[u8]) -> Result<Self> {
         ensure!(bytes.len() <= MAX_BYTES, "oversized catalog");
         let file: File = serde_json::from_slice(bytes)?;
         ensure!(file.schema == 1 && file.source == "models.dev", "unknown catalog schema or source");
@@ -253,6 +274,11 @@ fn valid_rates(rates: Rates) -> bool {
 
 impl ModelFacts {
     pub(crate) fn id(&self) -> &str { &self.id }
+    pub(crate) fn name(&self) -> &str { &self.name }
+    pub(crate) fn family(&self) -> Option<&str> { self.family.as_deref() }
+    pub(crate) fn release_date(&self) -> Option<&str> { self.release_date.as_deref() }
+    pub(crate) fn context(&self) -> Option<u32> { self.context }
+    pub(crate) fn tool_call(&self) -> Option<bool> { self.tool_call }
 
     /// Whether a plain text conversation runs on this entry: text in, text
     /// only out (image or audio in is fine), and no other declared task. An
@@ -265,6 +291,12 @@ impl ModelFacts {
     }
 
     pub(crate) fn cost(&self) -> Option<&Cost> { self.cost.as_ref() }
+
+    /// Whether a person may pick this exact version by hand: a dated, stable,
+    /// plain chat model. (Moving a row by itself asks more: `family_current`.)
+    pub(crate) fn chooseable(&self) -> bool {
+        self.stability == Stability::Stable && self.text_chat() && self.release_date.as_deref().and_then(date).is_some()
+    }
 
     fn validate(&self, observed: NaiveDate) -> Result<()> {
         ensure!(word(&self.id) && word(&self.name), "empty model id or label");

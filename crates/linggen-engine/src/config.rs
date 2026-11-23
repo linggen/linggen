@@ -56,6 +56,12 @@ pub struct Config {
     /// Mac; a saved config keeps what it holds (`api::config`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub outside_apps: Vec<String>,
+    /// Which endpoints have had their starter families ticked, once
+    /// (`families::Families::start_endpoint`). Absent: none. Written only
+    /// by `families::binding`; a saved config keeps what it holds.
+    #[serde(default, skip_serializing_if = "crate::provider::models::families::FamilyStarts::is_empty")]
+    #[cfg_attr(any(test, feature = "test-support"), ts(skip))]
+    pub family_starts: crate::provider::models::families::FamilyStarts,
     /// What was wrong in the file and was set right on load rather than
     /// refusing the whole config (a bad model `price` is dropped, that
     /// model alone). Runtime-only — never read from or written to the file —
@@ -231,6 +237,15 @@ pub struct ModelConfig {
     /// editable entries, regardless of what's in the user's config file.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub is_builtin: bool,
+    /// Set on the one row a ticked family keeps (`provider/models/families`):
+    /// it names the family the row follows or is pinned in, and the last move
+    /// a person has yet to acknowledge. A released 2.6.1 binary reads the
+    /// other fields and drops this one on save; the row then runs as an
+    /// exact row, and nothing infers a family from its id or its model.
+    /// Written only by `families::binding`; read through its accessors.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(any(test, feature = "test-support"), ts(skip))]
+    pub family_binding: Option<crate::provider::models::families::FamilyBinding>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -969,6 +984,7 @@ impl Default for Config {
             pet: PetConfig::default(),
             mcp_servers: Default::default(),
             outside_apps: Vec::new(),
+            family_starts: Default::default(),
             problems: Vec::new(),
         }
     }
@@ -1054,6 +1070,7 @@ mod tests {
             max_output_tokens: None,
             provided_by: None,
             is_builtin: false,
+            family_binding: None,
             price: None,
         });
         cfg

@@ -904,6 +904,7 @@ mod window_tests {
             max_output_tokens: None,
             provided_by: None,
             is_builtin: false,
+            family_binding: None,
             price: None,
         }
     }

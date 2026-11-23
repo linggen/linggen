@@ -31,7 +31,10 @@ pub(crate) async fn update_config_api(
     let _write = state.settings_write.lock().await;
     // Which private apps outside agents may use is set at this Mac alone
     // (`outside_apps::set`): a saved config, from any page, keeps it.
-    new_config.outside_apps = state.manager.get_config_snapshot().await.outside_apps;
+    let current = state.manager.get_config_snapshot().await;
+    new_config.outside_apps = current.outside_apps.clone();
+    // Nor does it undo a family's move, or set a binding: the writer is `families`.
+    crate::provider::models::families::Families::keep_bindings(&mut new_config, &current);
     if let Err(e) = take_credentials(&mut new_config, &credentials::credentials_file()) {
         return (StatusCode::BAD_REQUEST, e).into_response();
     }
@@ -311,6 +314,7 @@ pub(crate) async fn adopt_default_after_sign_in(
     state: &std::sync::Arc<crate::server::ServerState>,
     signed_in: crate::config::SignIn,
 ) {
+    let _write = state.settings_write.lock().await;
     if state.manager.adopt_default_after_sign_in(signed_in).await.is_some() {
         crate::server::rtc::proxy_room::reapply_proxy_models(state).await;
     }

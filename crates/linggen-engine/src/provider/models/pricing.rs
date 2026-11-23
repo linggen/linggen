@@ -73,6 +73,11 @@ pub enum PriceSource {
 }
 
 impl Priced {
+    /// The rates a call without a long prompt is priced at, per million tokens.
+    pub fn base_rates(&self) -> Price {
+        self.base
+    }
+
     /// What one call cost at this price, each request on its own; `None`
     /// when the tier its prompt falls in has no usable rate.
     pub fn cost_of_call(&self, used: &Tokens) -> Option<f64> {

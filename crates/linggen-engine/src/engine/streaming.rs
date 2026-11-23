@@ -644,6 +644,7 @@ impl AgentEngine {
                         continue;
                     }
                     crate::provider::models::note_unavailable(&model_id, &e);
+                    self.report_model_refusal(&model_id, &e).await;
                     tried.push(model_id.clone());
                     self.note_run_model(&model_id);
                     let worthy = crate::provider::models::is_fallback_worthy_error(&e);
@@ -670,6 +671,15 @@ impl AgentEngine {
                     model_id = next;
                 }
             }
+        }
+    }
+
+    /// A followed family's row that just moved is refused its first call: the
+    /// refusal is queued for the go-back, which the server answers under the
+    /// settings write lock (`families::Families::model_refused`).
+    async fn report_model_refusal(&self, model_id: &str, err: &anyhow::Error) {
+        if let Some(manager) = self.tools.get_manager() {
+            manager.families.model_refused(&manager.get_config_snapshot().await, model_id, err);
         }
     }
 
@@ -933,6 +943,7 @@ mod fallback_window_tests {
             max_output_tokens: None,
             provided_by: None,
             is_builtin: false,
+            family_binding: None,
             price: None,
         }
     }

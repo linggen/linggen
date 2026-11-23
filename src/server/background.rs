@@ -26,6 +26,7 @@ pub(super) fn spawn_background_tasks(
     prewarm_voice(state, pet_enabled);
     connect_mcp_servers(state);
     spawn_chatgpt_catalog(state);
+    super::api::provider_families::spawn(state);
     // Memory lives in this process, and other tools on the machine use it
     // whether or not a Linggen window is open — so the engine stays up. App
     // shells before 2.3 still pass the flag; it is accepted and ignored.
@@ -160,6 +161,8 @@ pub(crate) async fn follow_chatgpt_catalog(
     state: &Arc<ServerState>,
     catalog: &crate::provider::models::chatgpt_catalog::Snapshot,
 ) {
+    // Read-modify-apply of the whole config: one writer at a time.
+    let _write = state.settings_write.lock().await;
     let mut config = state.manager.get_config_snapshot().await;
     if config.follow_chatgpt_catalog(catalog) {
         if let Err(e) = state.manager.apply_config(config).await {

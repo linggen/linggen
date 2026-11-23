@@ -112,6 +112,9 @@ pub struct AgentManager {
     /// Which agents appear only once met, and which have been
     /// (`met.rs`) — the one gate every surface asks.
     pub met: met::MetGate,
+    /// Ticked families: the provider lists they move on and the refusals
+    /// that send a moved row back (`provider::models::families`).
+    pub families: crate::provider::models::families::Families,
     /// Native sessions' background shells and subagents.
     pub background: crate::engine::background::Background,
     pub(crate) run_messages: std::sync::Mutex<std::collections::HashMap<String, Vec<String>>>,
@@ -388,6 +391,7 @@ impl AgentManager {
                 daily_session,
                 changes_generation: Default::default(),
                 met: met::MetGate::new(crate::paths::met_dir()),
+                families: crate::provider::models::families::Families::new(),
                 background: Default::default(),
                 run_messages: Default::default(),
                 run_lives: Default::default(),

@@ -21,17 +21,20 @@ pub(crate) async fn list(State(state): State<Arc<ServerState>>, headers: HeaderM
     answer(&state, &config, &creds).await
 }
 
-fn owner_refusal(headers: &HeaderMap) -> Option<Response> {
+pub(super) fn owner_refusal(headers: &HeaderMap) -> Option<Response> {
     (!person::of_headers(headers).is_owner()).then(|| StatusCode::FORBIDDEN.into_response())
 }
 
-async fn answer(state: &ServerState, config: &Config, creds: &Credentials) -> Response {
+pub(super) async fn answer(state: &ServerState, config: &Config, creds: &Credentials) -> Response {
     let mut providers = state.manager.models.read().await.providers_view(config, creds);
     let drafts = state.provider_drafts.lock().await;
     for (id, (name, url)) in drafts.iter() {
         if !providers.iter().any(|p| &p.id == id) {
             providers.push(ProviderView::draft(name, url));
         }
+    }
+    for provider in providers.iter_mut().filter(|p| p.way == Way::Key.as_str()) {
+        provider.families = state.manager.families.view(config, creds, (&provider.provider, &provider.url));
     }
     let presets: Vec<_> = PRESETS.iter().map(|p| json!({
         "name": p.name, "label": p.label, "url": p.url, "way": p.way.as_str(),
@@ -60,13 +63,13 @@ struct AddressEdit { url: String }
 #[serde(deny_unknown_fields)]
 struct NewModel { id: String, model: String }
 
-type Failure = (StatusCode, &'static str);
-const BAD: Failure = (StatusCode::BAD_REQUEST, "Invalid provider settings.");
-const MISSING: Failure = (StatusCode::NOT_FOUND, "Provider or model not found.");
-const SAVE: Failure = (StatusCode::INTERNAL_SERVER_ERROR, "Could not save provider settings.");
+pub(super) type Failure = (StatusCode, &'static str);
+pub(super) const BAD: Failure = (StatusCode::BAD_REQUEST, "Invalid provider settings.");
+pub(super) const MISSING: Failure = (StatusCode::NOT_FOUND, "Provider or model not found.");
+pub(super) const SAVE: Failure = (StatusCode::INTERNAL_SERVER_ERROR, "Could not save provider settings.");
 const CONFLICT: Failure = (StatusCode::CONFLICT, "That provider address or model ID is already in use.");
 
-fn parse<T: serde::de::DeserializeOwned>(body: &[u8]) -> Result<T, Failure> {
+pub(super) fn parse<T: serde::de::DeserializeOwned>(body: &[u8]) -> Result<T, Failure> {
     serde_json::from_slice(body).map_err(|_| BAD)
 }
 
@@ -102,12 +105,39 @@ pub(crate) async fn create(State(state): State<Arc<ServerState>>, headers: Heade
 
 pub(crate) async fn edit(State(state): State<Arc<ServerState>>, headers: HeaderMap, method: Method, Path(id): Path<String>, body: Bytes) -> Response {
     let edit = match method {
-        Method::PUT => Edit::Key(id, body),
+        Method::PUT => return put_key(state, headers, id, body).await,
         Method::PATCH => Edit::Address(id, body),
         Method::POST => Edit::AddModel(id, body),
         _ => return StatusCode::METHOD_NOT_ALLOWED.into_response(),
     };
     mutate(state, headers, edit).await
+}
+
+/// File an endpoint's key; then, outside the write lock, ask its provider for
+/// the models it lists; then, once per endpoint, tick the preset's starter
+/// families (`families::Families::start_endpoint`). A key the provider does
+/// not accept ticks nothing and records nothing.
+async fn put_key(state: Arc<ServerState>, headers: HeaderMap, id: String, body: Bytes) -> Response {
+    if let Some(refused) = owner_refusal(&headers) { return refused; }
+    let filed = {
+        let _write = state.settings_write.lock().await;
+        apply(&state, Edit::Key(id.clone(), body)).await
+    };
+    let (config, creds) = match filed {
+        Ok(filed) => filed,
+        Err(failure) => return failure.into_response(),
+    };
+    let Ok((name, url)) = endpoint(&state, &config, &creds, &id).await else {
+        return answer(&state, &config, &creds).await;
+    };
+    state.manager.families.gather(&config, &creds, Some((&name, &url))).await;
+    let _write = state.settings_write.lock().await;
+    let mut config = state.manager.get_config_snapshot().await;
+    let creds = Credentials::load_with(&credentials::credentials_file(), &config.models);
+    if state.manager.families.start_endpoint(&mut config, &creds, (&name, &url)) {
+        if let Err(failure) = save_config(&state, &config).await { return failure.into_response(); }
+    }
+    answer(&state, &config, &creds).await
 }
 
 pub(crate) async fn remove_model(State(state): State<Arc<ServerState>>, headers: HeaderMap, Path((id, model)): Path<(String, String)>) -> Response {
@@ -135,7 +165,7 @@ fn matches_group(row: &ModelConfig, id: &str) -> bool {
     !row.is_builtin && row.sign_in() == SignIn::Key && provider_id(row.sign_in(), &row.provider, &row.url) == id
 }
 
-async fn endpoint(state: &ServerState, config: &Config, creds: &Credentials, id: &str) -> Result<(String, String), Failure> {
+pub(super) async fn endpoint(state: &ServerState, config: &Config, creds: &Credentials, id: &str) -> Result<(String, String), Failure> {
     let filed = config.models.iter().find(|row| matches_group(row, id))
         .map(|row| (row.provider.clone(), row.url.clone()))
         .or_else(|| creds.endpoints.iter().find(|e| provider_id(SignIn::Key, &e.provider, &e.url) == id)
@@ -248,7 +278,7 @@ fn validate_config(config: &Config) -> Result<(), Failure> {
     })
 }
 
-async fn save_config(state: &Arc<ServerState>, config: &Config) -> Result<(), Failure> {
+pub(super) async fn save_config(state: &Arc<ServerState>, config: &Config) -> Result<(), Failure> {
     validate_config(config)?;
     state.manager.apply_config(config.clone()).await.map_err(|_| SAVE)?;
     crate::server::rtc::proxy_room::reapply_proxy_models(state).await;
