@@ -11,6 +11,14 @@ test('default voice engine, live order and app model survive reload', async ({ p
   expect(response.ok()).toBeTruthy();
   await page.goto(`${world.url}/settings/models?lang=zh`);
   await expectWebRtc(page, httpRequests);
+  const card = page.getByTestId('default-card');
+  await expect(card.getByText('自动（现在用 qwen-audio-3.1-realtime-flash）', { exact: true })).toBeVisible();
+  await expect(card.getByText('Qwen Cloud', { exact: true }).first()).toBeVisible();
+  await expect(card.getByText('Whisper large-v3 turbo', { exact: true })).toBeVisible();
+  await expect(card.locator('span').filter({ hasText: /^(?:FLUX\.2 klein 4B|自动（现在用 FLUX\.2 klein 4B）)$/ })).toBeVisible();
+  await expect(card.getByText('本机 · 4.3 GB · 免费', { exact: true })).toBeVisible();
+  await expect(card.locator('span').filter({ hasText: /^(?:ChatGPT 画图|自动（现在用 ChatGPT 画图）)$/ })).toBeVisible();
+  await expect(page.getByTestId('default-speak').locator('option[value="system"]')).toHaveText('macOS 系统声音 · 本机 · 免费');
   const picks = [['speak', 'system'], ['live', 'google'], ['app-model-lesson', 'fake-eye']];
   for (const [id, value] of picks) {
     const select = page.getByTestId(`default-${id}`);
@@ -21,7 +29,6 @@ test('default voice engine, live order and app model survive reload', async ({ p
   await page.reload();
   await expectWebRtc(page, httpRequests);
   for (const [id, value] of picks) await expect(page.getByTestId(`default-${id}`)).toHaveValue(value);
-  const card = page.getByTestId('default-card');
   await expect(card).toContainText('应用用的模型');
   await expect(card).toContainText('听写');
   const dir = process.env.MODELS_SHOTS_DIR;

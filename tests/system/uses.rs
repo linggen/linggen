@@ -18,6 +18,29 @@ api_key = "test-not-a-key"
     assert!(before["speak"]["choice"].is_null());
     assert!(before["draw"]["choice"].is_null());
     assert_eq!(before["hear"]["options"][0]["id"], "local-stt");
+    for kind in ["chat", "live", "speak", "voice", "draw", "hear"] {
+        let options = before[kind]["options"].as_array().unwrap();
+        assert!(!options.is_empty(), "{kind}");
+        for option in options {
+            let name = option["name"].as_str().expect("readable name");
+            let source = &option["source"];
+            assert!(matches!(source["way"].as_str(), Some("key" | "subscription" | "account" | "local")), "{option}");
+            assert!(!name.trim().is_empty() && !name.contains('/'), "{option}");
+            assert!(!["local", "this mac", "本机", "subscription", "订阅", "key", "密钥", "account", "账户", "chatgpt", "alibaba", "google", "system"].contains(&name.to_lowercase().as_str()), "{option}");
+            assert_ne!(option["name"], source["provider"], "{option}");
+        }
+    }
+    let option = |kind: &str, id: &str| before[kind]["options"].as_array().unwrap().iter().find(|o| o["id"] == id).unwrap();
+    let flux = option("draw", "local");
+    assert_eq!(flux["name"], "FLUX.2 klein 4B");
+    assert_eq!(flux["source"], json!({"way":"local","size_gb":4.3,"free":true}));
+    assert_eq!(flux["model_id"], "ar9av/FLUX.2-klein-4B-mflux-4bit");
+    assert_eq!(option("draw", "chatgpt")["name"], "ChatGPT drawing");
+    assert_eq!(option("speak", "qwen")["name"], "Qwen3-TTS 0.6B");
+    assert_eq!(option("speak", "system")["name"], "macOS system voices");
+    assert_eq!(option("hear", "local-stt")["name"], "Whisper large-v3 turbo");
+    assert_eq!(option("live", "alibaba")["name"], "qwen-audio-3.1-realtime-flash");
+    assert_eq!(option("live", "alibaba")["source"]["provider"], "Qwen Cloud");
     assert_eq!(w.api.get("/api/live").await["providers"][0]["id"], "alibaba");
     assert_eq!(w.api.put_json("/api/credentials", json!({"endpoints":[
         {"provider":"qwen","url":"https://ap-southeast-1.maas.qwencloudapi.com/compatible-mode/v1","api_key":"test-only"},
@@ -39,6 +62,12 @@ api_key = "test-not-a-key"
     let after = w.api.get("/api/uses").await;
     assert_eq!(after["chain"], json!(["reasoning"]));
     assert_eq!(after["effort"]["choice"], "medium");
+    let effort = after["effort"]["options"].as_array().unwrap();
+    assert!(!effort.is_empty());
+    for option in effort {
+        assert!(matches!(option["name"].as_str(), Some("low" | "medium" | "high")), "{option}");
+        assert_eq!(option["source"]["way"], "key");
+    }
     assert_eq!(after["live"]["effective"], "google");
     assert_eq!(after["speak"]["effective"], "system");
     assert_eq!(after["draw"]["effective"], "chatgpt");

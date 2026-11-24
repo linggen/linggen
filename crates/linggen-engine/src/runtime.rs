@@ -906,6 +906,9 @@ pub struct HubModel {
     /// The stage name `prewarm_stages` runs it under.
     pub stage: &'static str,
     pub repo: &'static str,
+    pub name: &'static str,
+    /// Approximate model weights, distinct from free disk needed to install.
+    pub size_gb: f64,
     /// The venv whose Python runs the library's fetch.
     pub venv: &'static str,
     /// Free disk it needs, whole GB.
@@ -926,6 +929,8 @@ pub const HUB_MODELS: [HubModel; 3] = [
     HubModel {
         stage: "tts-model",
         repo: TTS_MODEL,
+        name: "Qwen3-TTS 0.6B",
+        size_gb: 2.8,
         venv: "tts",
         need_gb: 6,
         what: "her voice model",
@@ -937,6 +942,8 @@ pub const HUB_MODELS: [HubModel; 3] = [
     HubModel {
         stage: "stt-model",
         repo: STT_MODEL,
+        name: "Whisper large-v3 turbo",
+        size_gb: 1.6,
         venv: "tts",
         need_gb: 3,
         what: "the hearing model (1.6 GB)",
@@ -948,6 +955,8 @@ pub const HUB_MODELS: [HubModel; 3] = [
     HubModel {
         stage: "pictures-model",
         repo: PICTURE_MODEL,
+        name: "FLUX.2 klein 4B",
+        size_gb: 4.3,
         venv: "pictures",
         need_gb: PICTURES_LANE.disk_gb,
         what: "the picture model (about 4 GB)",

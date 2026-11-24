@@ -3,6 +3,7 @@ import { ArrowDown, ArrowUp, X } from 'lucide-react';
 import type { NotReady, UseEdit, UseOption, Uses } from '../../lib/modelUses';
 import { W, say } from '../../lib/modelsWords.mts';
 import { translate } from '../../lib/i18n';
+import { modelName, nativeModelLabel } from './UseOptionLabel';
 import { hintCls, inputCls, linkBtn } from './shell';
 
 const reasons: Record<NotReady, string> = {
@@ -17,9 +18,9 @@ const reasons: Record<NotReady, string> = {
 };
 
 function FallbackName({ id, option }: { id: string; option?: UseOption }) {
-  if (option?.state === 'ready') return <span className="font-medium text-slate-600 dark:text-slate-300">{option.label}</span>;
+  if (option?.state === 'ready') return <span title={option.model_id} className="font-medium text-slate-600 dark:text-slate-300">{modelName(option)}</span>;
   const reason = option ? (option.reason ? reasons[option.reason] : W.notReady) : W.modelMissing;
-  return <span className="text-slate-500 dark:text-slate-400">{option?.label ?? id} <span aria-hidden>· </span><span>{reason}</span></span>;
+  return <span title={option?.model_id ?? (option ? undefined : id)} className="text-slate-500 dark:text-slate-400">{option && <>{modelName(option)} <span aria-hidden>· </span></>}<span>{reason}</span></span>;
 }
 
 const actionCls = 'rounded p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-800 disabled:opacity-35 dark:text-slate-400 dark:hover:bg-white/10 dark:hover:text-slate-200';
@@ -36,7 +37,7 @@ export function ChatFallbacks({ view, busy, pick }: { view: Uses; busy: boolean;
     save(next);
   };
   const actionLabel = (word: typeof W.moveUp | typeof W.moveDown | typeof W.removeFallback, id: string) =>
-    say(translate(word) as typeof word ?? word, { model: options.get(id)?.label ?? id });
+    say(translate(word) ?? word, { model: options.get(id)?.name ?? (translate(W.modelMissing) ?? W.modelMissing) });
 
   return <div className={`${hintCls} mt-1.5 min-w-0`}>
     <div className="flex items-baseline gap-2">
@@ -58,7 +59,7 @@ export function ChatFallbacks({ view, busy, pick }: { view: Uses; busy: boolean;
       </ol>}
       <select aria-label={W.addFallback} className={`${inputCls} max-w-full px-2 py-1 dark:[color-scheme:dark]`} value="" disabled={busy || !addable.length} onChange={(e) => save([...ids, e.target.value])}>
         <option value="" disabled>{W.addFallback}</option>
-        {addable.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+        {addable.map((o) => <option key={o.id} title={o.model_id} value={o.id}>{nativeModelLabel(o)}</option>)}
       </select>
     </div>
     {ids.length > 0 && <label className="mt-1 flex w-fit items-center gap-1.5">

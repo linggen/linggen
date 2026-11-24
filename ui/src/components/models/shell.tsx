@@ -32,9 +32,10 @@ const connection = {
   subscription: { word: W.kindSubscription, tone: 'green' },
 } as const;
 
-export function ConnectionTag({ way }: { way: Way }) {
-  const { word, tone } = connection[way];
-  return <Tag tone={tone}>{word}</Tag>;
+export function connectionWord(way: Way) { return connection[way].word; }
+
+export function ConnectionTag({ way, children }: { way: Way; children?: React.ReactNode }) {
+  return <Tag tone={connection[way].tone}>{children ?? connectionWord(way)}</Tag>;
 }
 
 /** One provider: a head, and what is under it. A head that opens is one button. */

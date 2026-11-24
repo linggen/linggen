@@ -131,6 +131,19 @@ fn shown_url(url: &str) -> String {
     parsed.to_string()
 }
 
+/// Source shown for a configured model, shared by provider cards and `/api/uses`.
+pub fn provider_source(sign_in: SignIn, provider: &str, url: &str) -> (String, Way) {
+    match sign_in {
+        SignIn::LinggenAccount => ("Linggen Cloud".into(), Way::Account),
+        SignIn::ChatGpt => ("ChatGPT 订阅".into(), Way::Subscription),
+        SignIn::Claude => ("Claude 订阅".into(), Way::Subscription),
+        SignIn::Key | SignIn::Unknown => {
+            let way = if provider.eq_ignore_ascii_case("ollama") { Way::Local } else { Way::Key };
+            (label_for(provider, url), way)
+        }
+    }
+}
+
 impl ProviderView {
     /// An editable endpoint proposed by the owner, not yet filed on disk.
     pub fn draft(provider: &str, url: &str) -> Self {
@@ -142,15 +155,7 @@ impl ProviderView {
     }
 
     fn new(sign_in: SignIn, provider: &str, url: &str) -> Self {
-        let (label, way) = match sign_in {
-            SignIn::LinggenAccount => ("Linggen Cloud".into(), Way::Account),
-            SignIn::ChatGpt => ("ChatGPT 订阅".into(), Way::Subscription),
-            SignIn::Claude => ("Claude 订阅".into(), Way::Subscription),
-            SignIn::Key | SignIn::Unknown => {
-                let way = if provider.eq_ignore_ascii_case("ollama") { Way::Local } else { Way::Key };
-                (label_for(provider, url), way)
-            }
-        };
+        let (label, way) = provider_source(sign_in, provider, url);
         let preset = (way == Way::Key).then(|| PRESETS.iter().find(|p| p.way == Way::Key
             && credentials::same_endpoint("", p.url, "", url))).flatten();
         let (provider, url) = preset.map_or((provider, url), |p| (p.name, p.url));

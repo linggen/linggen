@@ -90,7 +90,7 @@ export const ModelsTab: React.FC<{
   const local = localProviders(providers);
   return (
     <div className="space-y-6" data-testid="models-page">
-      <DefaultCard view={uses} providers={providers} busy={busy} failed={usesFailed} retry={() => void loadUses()} pick={(edit) => void pickUse(edit)} />
+      <DefaultCard view={uses} busy={busy} failed={usesFailed} retry={() => void loadUses()} pick={(edit) => void pickUse(edit)} />
       <section className={cardCls}>
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <div className="min-w-0">

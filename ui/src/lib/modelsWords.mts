@@ -24,6 +24,10 @@ export const W = {
   fillKey: 'Enter key',
   notSet: 'Not set',
   automatic: 'Automatic',
+  automaticNow: 'Automatic (now using {model})',
+  chatgptDrawing: 'ChatGPT drawing',
+  macosVoices: 'macOS system voices',
+  freeTag: 'Free',
   followChat: 'Same as chat',
   appsModels: 'Models used by apps',
   effort: 'Thinking intensity',
@@ -35,8 +39,6 @@ export const W = {
   effortUltra: 'Ultra effort',
   thinking: 'Thinking',
   speaker: 'Qwen3-TTS speaker',
-  systemVoice: 'System voice',
-  downloadSize: 'Download needed · {n} GB',
   defaultsFailed: 'The defaults could not be loaded.',
   chatDefault: 'Default',
   fallbackLabel: 'Fallbacks:',
@@ -170,6 +172,6 @@ export const W = {
 export type Word = (typeof W)[keyof typeof W];
 
 /** A word with its `{slot}`s filled. */
-export function say(word: Word, slots: Record<string, string | number>): string {
+export function say(word: string, slots: Record<string, string | number>): string {
   return word.replace(/\{(\w+)\}/g, (hole, name: string) => (name in slots ? String(slots[name]) : hole));
 }

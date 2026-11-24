@@ -54,7 +54,9 @@ for (const [width, theme] of [[1280, 'light'], [420, 'light'], [1280, 'dark'], [
     const sonnet = row.getByRole('checkbox', { name: 'Sonnet', exact: true });
     await sonnet.click();
     await expect(sonnet).toBeChecked();
-    await add.selectOption({ label: 'Claude Sonnet 5.5' });
+    const sonnetOption = add.getByRole('option', { name: /^Claude Sonnet 5\.5 · / });
+    await expect(sonnetOption).toHaveCount(1);
+    await add.selectOption(await sonnetOption.getAttribute('value') ?? '');
     await expect(page.getByTestId('chat-fallback')).toHaveCount(1);
     await add.selectOption('fake-sol');
     await expect(page.getByTestId('chat-fallback')).toHaveCount(2);
