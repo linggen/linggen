@@ -12,7 +12,7 @@ use crate::engine::spend::{CallSpend, ForkSpend};
 use crate::engine::types::{PlanStatus, StreamResult};
 use crate::engine::AgentEngine;
 use crate::message::ChatMessage;
-use crate::provider::models::{ModelManager, StreamChunk, TokenUsage};
+use crate::provider::models::{EffortAsk, ModelManager, StreamChunk, TokenUsage};
 use filter::clean;
 use futures_util::StreamExt;
 use std::sync::Arc;
@@ -23,8 +23,9 @@ pub struct LastCall {
     model_id: String,
     messages: Vec<ChatMessage>,
     tools: Option<Vec<serde_json::Value>>,
-    /// The turn's own effort: a different one is a different cache.
-    effort: Option<String>,
+    /// What the turn's call sent (`"auto"`: none): a different one is a
+    /// different cache.
+    effort: String,
     app: Option<String>,
     reply: String,
 }
@@ -113,7 +114,7 @@ impl AgentEngine {
             model_id: model_id.to_string(),
             messages: messages.to_vec(),
             tools: tools.cloned(),
-            effort: self.reasoning_effort.clone(),
+            effort: self.sent_effort(model_id),
             app: self.app_product().map(str::to_string),
             reply: result.full_text.clone(),
         });
@@ -233,7 +234,7 @@ async fn predict(
     let mut messages = call.messages;
     messages.push(message("assistant", &call.reply));
     messages.push(message("user", PROMPT));
-    let (effort, app) = (call.effort.as_deref(), call.app.as_deref());
+    let (effort, app) = (EffortAsk::forced(&call.effort), call.app.as_deref());
     let mut stream = match call.tools {
         Some(tools) => {
             models
@@ -432,7 +433,7 @@ mod spend_tests {
             model_id: model.to_string(),
             messages: vec![message("user", "hello")],
             tools: None,
-            effort: None,
+            effort: "auto".to_string(),
             app: None,
             reply: "Hi".to_string(),
         }

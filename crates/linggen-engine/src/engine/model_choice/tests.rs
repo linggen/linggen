@@ -453,6 +453,7 @@ async fn the_two_switches_make_one_answer() {
             .add_session(&crate::state_fs::sessions::SessionMeta {
                 id: id.into(),
                 model_fallback: flag,
+                effort: None,
                 ..Default::default()
             })
             .unwrap();

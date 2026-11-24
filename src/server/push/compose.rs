@@ -147,7 +147,7 @@ async fn ask(
 ) -> Result<String, String> {
     let models = state.manager.models.read().await.clone();
     let mut stream = models
-        .chat_text_stream(model, msgs, Some("low"), app)
+        .chat_text_stream(model, msgs, crate::provider::models::EffortAsk::forced("low"), app)
         .await
         .map_err(|e| format!("{e:#}"))?;
     let mut text = String::new();

@@ -7,6 +7,7 @@
 use std::sync::Arc;
 
 use crate::engine::permission::PermissionMode;
+use crate::provider::models::EffortAsk;
 use crate::server::ServerState;
 
 use super::ControlRequest;
@@ -193,16 +194,16 @@ pub(super) async fn process_inference_request(
             let stream_result = if let Some(tools) = tools {
                 if !tools.is_empty() {
                     models
-                        .chat_tool_stream(model_id, &messages, tools, None, None)
+                        .chat_tool_stream(model_id, &messages, tools, EffortAsk::default(), None)
                         .await
                 } else {
                     models
-                        .chat_text_stream(model_id, &messages, None, None)
+                        .chat_text_stream(model_id, &messages, EffortAsk::default(), None)
                         .await
                 }
             } else {
                 models
-                    .chat_text_stream(model_id, &messages, None, None)
+                    .chat_text_stream(model_id, &messages, EffortAsk::default(), None)
                     .await
             };
 

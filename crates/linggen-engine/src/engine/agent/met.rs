@@ -460,6 +460,7 @@ mod tests {
             title_locked: false,
             withheld_tools: Vec::new(),
             model_fallback: None,
+            effort: None,
             params: Default::default(),
         };
         meta.legacy = Default::default();

@@ -85,9 +85,9 @@ impl AgentEngine {
         // streams to a forwarder — a SILENT must never flash in the chat.
         self.set_run_id(None);
         self.thinking_tx = None;
-        let effort = self.reasoning_effort.replace("low".to_string());
+        let effort = self.forced_effort.replace("low");
         let result = self.stream_with_fallback(&msgs, None).await;
-        self.reasoning_effort = effort;
+        self.forced_effort = effort;
         let reply = match result {
             Ok(r) => r.full_text,
             Err(e) => {

@@ -2,7 +2,7 @@
 //! host answers the Models API (`GET /v1/models/{id}`) and the Messages API,
 //! and keeps what it was sent.
 use crate::config::ModelConfig;
-use crate::provider::models::ModelManager;
+use crate::provider::models::{EffortAsk, ModelManager};
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -82,14 +82,14 @@ async fn manager_on(host: &Host, id: &str, max_output_tokens: Option<u32>) -> Mo
 async fn ask_with_tools(m: &ModelManager, id: &str) -> anyhow::Result<()> {
     let tool = serde_json::json!({"type":"function","function":{"name":"Write","description":"w","parameters":{"type":"object"}}});
     let messages = vec![crate::message::ChatMessage::new("user", "hi".to_string())];
-    let mut stream = m.chat_tool_stream(id, &messages, vec![tool], None, None).await?;
+    let mut stream = m.chat_tool_stream(id, &messages, vec![tool], EffortAsk::default(), None).await?;
     while futures_util::StreamExt::next(&mut stream).await.is_some() {}
     Ok(())
 }
 
 async fn ask_text(m: &ModelManager, id: &str) -> anyhow::Result<()> {
     let messages = vec![crate::message::ChatMessage::new("user", "hi".to_string())];
-    let mut stream = m.chat_text_stream(id, &messages, None, None).await?;
+    let mut stream = m.chat_text_stream(id, &messages, EffortAsk::default(), None).await?;
     while futures_util::StreamExt::next(&mut stream).await.is_some() {}
     Ok(())
 }

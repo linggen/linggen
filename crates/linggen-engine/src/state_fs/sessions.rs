@@ -192,6 +192,13 @@ pub struct SessionMeta {
     /// (`agent_run`) start with `false`; the model picker's switch sets it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_fallback: Option<bool>,
+    /// How much this conversation thinks, for every member and whatever
+    /// model answers: a value the model offers (`ModelManager::effort_choices`).
+    /// None: inherit the chat default (`[uses] chat_effort`). Kept even when
+    /// a later model lacks the value; that call goes to the provider's default
+    /// (`provider::models::effort`, the one resolver).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
     /// The values this session is bound to — the bound skill's declared
     /// session parameters (`session-params`), set once when the session is
     /// made (`POST /api/sessions` `params`) and checked against the
@@ -726,6 +733,23 @@ impl SessionStore {
         Ok(true)
     }
 
+    /// The session's own effort choice (`SessionMeta::effort`); None for no
+    /// choice, an unreadable session, or one that is not there.
+    pub fn effort_of(&self, session_id: &str) -> Option<String> {
+        self.get_session_meta(session_id).ok().flatten().and_then(|m| m.effort)
+    }
+
+    /// Keep `effort` as the session's choice; `None` returns it to the
+    /// inherited one. Read-modify-write; false when the session is not there.
+    pub fn set_effort(&self, session_id: &str, effort: Option<String>) -> Result<bool> {
+        Self::validate_id(session_id)?;
+        if !self.session_dir(session_id).join("session.yaml").exists() {
+            return Ok(false);
+        }
+        self.edit(session_id, |meta| meta.effort = effort)?;
+        Ok(true)
+    }
+
     /// Remove what the 2.5.1 Claude host kept in an old Claude session's
     /// folder beside its conversation: the resume pointer, the subagents'
     /// records and the usage figure. Clear on such a session calls this, so
@@ -1123,6 +1147,24 @@ mod tests {
         assert!(store.model_fallback_allowed("old"));
     }
 
+    /// The session's effort is stored with it: absent writes nothing, a value
+    /// survives a reload, clearing returns to inherit, and a session that is
+    /// not there keeps nothing.
+    #[test]
+    fn a_sessions_effort_survives_a_reload_and_clears_to_inherit() {
+        let (store, _dir) = temp_store();
+        store.add_session(&SessionMeta { id: "s".into(), title: "t".into(), ..Default::default() }).unwrap();
+        assert!(!yaml_of(&store, "s").contains("effort"));
+        assert_eq!(store.effort_of("s"), None);
+        assert!(store.set_effort("s", Some("high".into())).unwrap());
+        assert!(yaml_of(&store, "s").contains("effort: high"));
+        assert_eq!(store.effort_of("s").as_deref(), Some("high"));
+        assert!(store.set_effort("s", None).unwrap());
+        assert!(!yaml_of(&store, "s").contains("effort"));
+        assert!(!store.set_effort("nowhere", Some("low".into())).unwrap());
+        assert_eq!(store.effort_of("nowhere"), None);
+    }
+
     /// A session's project is the git repo its folder is in, also from a
     /// subdirectory. A move out of every repo keeps it; a move into another
     /// repo switches it; a session never in a repo has none. One that was
@@ -1232,6 +1274,7 @@ mod tests {
             title_locked: false,
             withheld_tools: Vec::new(),
             model_fallback: None,
+            effort: None,
             params: Default::default(),
         };
         store.add_session(&meta).unwrap();
@@ -1321,6 +1364,7 @@ mod tests {
                     title_locked: false,
                     withheld_tools: Vec::new(),
                     model_fallback: None,
+                    effort: None,
                     params: Default::default(),
                 })
                 .unwrap();
@@ -1361,6 +1405,7 @@ mod tests {
             title_locked: false,
             withheld_tools: Vec::new(),
             model_fallback: None,
+            effort: None,
             params: Default::default(),
         };
         store.add_session(&meta).unwrap();
@@ -1464,6 +1509,7 @@ mod tests {
                 title_locked: false,
                 withheld_tools: Vec::new(),
                 model_fallback: None,
+                effort: None,
                 params: Default::default(),
             })
             .unwrap();
@@ -1544,6 +1590,7 @@ mod tests {
                 title_locked: false,
                 withheld_tools: Vec::new(),
                 model_fallback: None,
+                effort: None,
                 params: Default::default(),
             })
             .unwrap();
@@ -1600,6 +1647,7 @@ mod tests {
                 title_locked: false,
                 withheld_tools: Vec::new(),
                 model_fallback: None,
+                effort: None,
                 params: Default::default(),
             })
             .unwrap();
@@ -1656,6 +1704,7 @@ mod tests {
                 title_locked: false,
                 withheld_tools: Vec::new(),
                 model_fallback: None,
+                effort: None,
                 params: Default::default(),
             })
             .is_err());
@@ -1682,6 +1731,7 @@ mod tests {
                 title_locked: false,
                 withheld_tools: Vec::new(),
                 model_fallback: None,
+                effort: None,
                 params: Default::default(),
             })
             .is_err());
@@ -1708,6 +1758,7 @@ mod tests {
                 title_locked: false,
                 withheld_tools: Vec::new(),
                 model_fallback: None,
+                effort: None,
                 params: Default::default(),
             })
             .is_err());

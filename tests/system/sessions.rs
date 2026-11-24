@@ -501,3 +501,47 @@ async fn a_page_removes_only_its_own_apps_sessions() {
     assert_eq!(w.api.delete_status("/api/skill-sessions", own).await, 200);
     assert!(w.rows_opt(&dice).is_none(), "its own app's session stays");
 }
+
+/// The conversation's effort: only a value the answering model offers is
+/// kept, it stays through a model change and an engine restart, and "" gives
+/// it back to the chat default. The models list tells the chip what is offered.
+#[tokio::test]
+async fn a_sessions_effort_is_kept_checked_and_survives_a_restart() {
+    const ROW: &str = r#"
+[[models]]
+id = "reasoning"
+provider = "openai"
+url = "https://api.openai.com/v1"
+model = "gpt-5.4"
+api_key = "test-not-a-key"
+"#;
+    let mut w = World::start(Setup { config_append: Some(ROW), ..Setup::default() }).await;
+    let offered = |models: &serde_json::Value, id: &str| {
+        models.as_array().unwrap().iter().find(|m| m["id"] == id).map(|m| m["effort"].clone())
+    };
+    let models = w.api.get("/api/models").await;
+    assert_eq!(offered(&models, "reasoning"), Some(json!(["low", "medium", "high"])));
+    assert_eq!(offered(&models, "fake-ling"), Some(json!([])));
+
+    let sid = w.api.create_session(json!({"title": "Chat"})).await;
+    // The standing model offers none, and nothing is kept for it.
+    assert_eq!(w.api.patch_status("/api/sessions", json!({"session_id": sid, "effort": "high"})).await, 400);
+    assert!(work_meta(&w, &sid).get("effort").is_none());
+    // The same request that moves the member to a model with it is fine.
+    let both = json!({"session_id": sid, "agent_id": "ling", "model_id": "reasoning", "effort": "high"});
+    assert_eq!(w.api.patch_status("/api/sessions", both).await, 200);
+    assert_eq!(work_meta(&w, &sid)["effort"], "high");
+    // A value no wire carries is refused and the kept one stays.
+    assert_eq!(w.api.patch_status("/api/sessions", json!({"session_id": sid, "effort": "xhigh"})).await, 400);
+    assert_eq!(work_meta(&w, &sid)["effort"], "high");
+    // A model change leaves it alone, even to a model without it.
+    let other = json!({"session_id": sid, "agent_id": "ling", "model_id": "fake-ling"});
+    assert_eq!(w.api.patch_status("/api/sessions", other).await, 200);
+    assert_eq!(work_meta(&w, &sid)["effort"], "high");
+
+    w.engine.restart(&w.home).await;
+    assert_eq!(work_meta(&w, &sid)["effort"], "high");
+    let back = json!({"session_id": sid, "effort": ""});
+    assert_eq!(w.api.patch_status("/api/sessions", back).await, 200);
+    assert!(work_meta(&w, &sid).get("effort").is_none());
+}

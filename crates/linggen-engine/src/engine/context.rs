@@ -807,7 +807,7 @@ impl AgentEngine {
         let summary = summarize_text(
             &self.model_manager,
             &self.model_id,
-            (self.reasoning_effort.as_deref(), self.app_product()),
+            (self.agent_effort_ask(), self.app_product()),
             prompt,
             &mut spent,
         )
@@ -831,7 +831,7 @@ impl AgentEngine {
 pub async fn summarize_text(
     models: &crate::provider::models::ModelManager,
     model_id: &str,
-    (effort, app): (Option<&str>, Option<&str>),
+    (effort, app): (crate::provider::models::EffortAsk<'_>, Option<&str>),
     prompt: String,
     spent: &mut crate::engine::spend::CallSpend,
 ) -> Option<String> {

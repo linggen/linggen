@@ -16,6 +16,7 @@ use tokio::sync::Semaphore;
 mod catalog;
 pub mod chatgpt_catalog;
 mod effort;
+pub use effort::{Effort, EffortAsk, Resolved};
 pub mod families;
 pub(crate) mod family_catalog;
 mod health;
@@ -280,7 +281,7 @@ impl ModelManager {
         &self,
         model_id: &str,
         messages: &[ChatMessage],
-        effort_override: Option<&str>,
+        effort: EffortAsk<'_>,
         app: Option<&str>,
     ) -> Result<ChunkStream> {
         let instance = self
@@ -291,7 +292,7 @@ impl ModelManager {
             model_id,
             messages,
             instance.config.keep_alive.clone(),
-            effort_override,
+            effort,
             app,
         )
         .await
@@ -302,7 +303,7 @@ impl ModelManager {
         model_id: &str,
         messages: &[ChatMessage],
         keep_alive: Option<String>,
-        effort_override: Option<&str>,
+        effort: EffortAsk<'_>,
         app: Option<&str>,
     ) -> Result<ChunkStream> {
         let instance = self
@@ -326,7 +327,7 @@ impl ModelManager {
                 messages,
                 TurnOptions {
                     keep_alive,
-                    effort: effort_override,
+                    effort: effort::resolve(&instance.config, &effort).effort,
                     app,
                     max_output,
                 },
@@ -342,7 +343,7 @@ impl ModelManager {
         model_id: &str,
         messages: &[ChatMessage],
         tools: Vec<serde_json::Value>,
-        effort_override: Option<&str>,
+        effort: EffortAsk<'_>,
         app: Option<&str>,
     ) -> Result<ChunkStream> {
         let instance = self
@@ -366,7 +367,7 @@ impl ModelManager {
                 tools,
                 TurnOptions {
                     keep_alive: instance.config.keep_alive.clone(),
-                    effort: effort_override,
+                    effort: effort::resolve(&instance.config, &effort).effort,
                     app,
                     max_output,
                 },

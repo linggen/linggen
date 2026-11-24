@@ -120,6 +120,18 @@ impl Api {
         (resp.status().as_u16(), resp.text().await.unwrap_or_default())
     }
 
+    /// A PATCH that may be refused: the status only.
+    pub async fn patch_status(&self, path: &str, payload: Value) -> u16 {
+        self.client
+            .patch(format!("{}{path}", self.base))
+            .json(&payload)
+            .send()
+            .await
+            .unwrap_or_else(|e| panic!("PATCH {path}: {e}"))
+            .status()
+            .as_u16()
+    }
+
     pub async fn patch(&self, path: &str, payload: Value) -> Value {
         let resp = self
             .client

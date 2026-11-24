@@ -182,11 +182,6 @@ pub(crate) fn has_write_path_conflicts(actions: &[(&str, &serde_json::Value)], c
 // ---------------------------------------------------------------------------
 
 impl AgentEngine {
-    fn turn_effort(&self, model_id: &str) -> Option<&str> {
-        let chat = self.session_permissions.interactive.then_some(self.cfg.chat_effort.as_deref()).flatten();
-        self.model_manager.turn_effort(model_id, self.reasoning_effort.as_deref(), chat)
-    }
-
     /// App product for per-app usage attribution on the Linggen Cloud proxy
     /// (X-Linggen-App): what the session's bound skill declares as its
     /// `product`. Everything else meters the shared 'linggen' bucket.
@@ -207,14 +202,12 @@ impl AgentEngine {
         spent: &mut CallSpend,
     ) -> Result<StreamResult> {
         use crate::provider::models::StreamChunk;
+        let session_effort = self.session_effort();
+        let effort = self.effort_ask(session_effort.as_deref());
+        self.tell_if_effort_held_back(model_id, &effort).await;
         let mut stream = self
             .model_manager
-            .chat_text_stream(
-                model_id,
-                messages,
-                self.turn_effort(model_id),
-                self.app_product(),
-            )
+            .chat_text_stream(model_id, messages, effort, self.app_product())
             .await?;
         spent.opened();
         let mut accumulated = String::new();
@@ -313,15 +306,12 @@ impl AgentEngine {
     ) -> Result<StreamResult> {
         use crate::provider::models::StreamChunk;
 
+        let session_effort = self.session_effort();
+        let effort = self.effort_ask(session_effort.as_deref());
+        self.tell_if_effort_held_back(model_id, &effort).await;
         let mut stream = self
             .model_manager
-            .chat_tool_stream(
-                model_id,
-                messages,
-                tools,
-                self.turn_effort(model_id),
-                self.app_product(),
-            )
+            .chat_tool_stream(model_id, messages, tools, effort, self.app_product())
             .await?;
         spent.opened();
 
@@ -1146,6 +1136,7 @@ mod fallback_window_tests {
             .add_session(&crate::state_fs::sessions::SessionMeta {
                 id: session.clone(),
                 model_fallback: flag,
+                effort: None,
                 agents: vec![crate::state_fs::sessions::SessionMember::new("ling")],
                 ..Default::default()
             })
@@ -1312,6 +1303,7 @@ mod fallback_window_tests {
             .add_session(&crate::state_fs::sessions::SessionMeta {
                 id: "s-ghost".into(),
                 model_fallback: Some(false),
+                effort: None,
                 ..Default::default()
             })
             .unwrap();

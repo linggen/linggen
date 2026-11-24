@@ -156,7 +156,7 @@ pub(crate) async fn compact_session(
     let text = crate::engine::summarize_text(
         &model_manager,
         &models.summarizer,
-        (None, None),
+        (crate::provider::models::EffortAsk::default(), None),
         prompt,
         &mut spent,
     )

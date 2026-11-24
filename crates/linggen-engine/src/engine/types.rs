@@ -327,6 +327,12 @@ pub struct AgentEngine {
     /// Per-agent reasoning-effort override from the agent spec ("low"|"medium"|
     /// "high"). Overrides the model config's effort at call time when set.
     pub reasoning_effort: Option<String>,
+    /// An internal turn's own effort (the light turn's "low"): asked of the
+    /// resolver ahead of the person's choices (`engine/effort_ask.rs`).
+    pub(crate) forced_effort: Option<&'static str>,
+    /// The model and value the conversation was last told it does not take
+    /// (`engine/effort_ask.rs`).
+    pub(crate) told_effort: std::sync::Mutex<Option<(String, String)>>,
     pub tools: ToolRegistry,
     pub role: AgentRole,
     pub(crate) task: Option<String>,
@@ -725,6 +731,8 @@ impl AgentEngine {
             default_model_id: model_id.clone(),
             model_id,
             reasoning_effort: None,
+            forced_effort: None,
+            told_effort: std::sync::Mutex::new(None),
             tools,
             role,
             task: None,

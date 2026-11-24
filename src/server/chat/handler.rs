@@ -272,6 +272,7 @@ async fn ensure_session(
         title_locked: true,
         withheld_tools: Vec::new(),
         model_fallback: None,
+        effort: None,
         params: Default::default(),
     };
 
@@ -1767,6 +1768,7 @@ mod tests {
                 .add_session(&crate::state_fs::sessions::SessionMeta {
                     id: session.clone(),
                     model_fallback: session_switch,
+                    effort: None,
                     agents: vec![crate::state_fs::sessions::SessionMember {
                         id: "ling".into(),
                         model: Some("ghost-model".into()),

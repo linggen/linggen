@@ -3,7 +3,7 @@
 //! can see. Each client answers in its own way; the manager no longer asks
 //! which client it is holding.
 
-use super::{ModelManager, StreamChunk};
+use super::{Effort, ModelManager, StreamChunk};
 use crate::config::ModelConfig;
 use crate::message::ChatMessage;
 use crate::provider::anthropic::AnthropicClient;
@@ -23,7 +23,8 @@ pub type ChunkStream = Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send>>;
 /// What a turn asks of a backend beyond the messages.
 pub struct TurnOptions<'a> {
     pub keep_alive: Option<String>,
-    pub effort: Option<&'a str>,
+    /// Resolved by `effort::resolve` alone; a backend sends exactly this.
+    pub effort: Effort,
     pub app: Option<&'a str>,
     /// The output limit this request carries, for a backend that sets one
     /// (`Provider::max_output_tokens`).
@@ -197,9 +198,8 @@ impl Provider for OpenAiClient {
         messages: &[ChatMessage],
         opts: TurnOptions<'_>,
     ) -> Result<ChunkStream> {
-        let effort = opts.effort.or(cfg.reasoning_effort.as_deref());
         let stream = self
-            .chat_text_stream(&cfg.model, messages, effort, opts.app)
+            .chat_text_stream(&cfg.model, messages, opts.effort.wire(), opts.app)
             .await?;
         Ok(Box::pin(stream))
     }
@@ -211,9 +211,8 @@ impl Provider for OpenAiClient {
         tools: Vec<serde_json::Value>,
         opts: TurnOptions<'_>,
     ) -> Result<ChunkStream> {
-        let effort = opts.effort.or(cfg.reasoning_effort.as_deref());
         let stream = self
-            .chat_tool_stream(&cfg.model, messages, tools, effort, opts.app)
+            .chat_tool_stream(&cfg.model, messages, tools, opts.effort.wire(), opts.app)
             .await?;
         Ok(Box::pin(stream))
     }

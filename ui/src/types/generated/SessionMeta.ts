@@ -89,6 +89,14 @@ withheld_tools?: Array<string>,
  */
 model_fallback?: boolean | null, 
 /**
+ * How much this conversation thinks, for every member and whatever
+ * model answers: a value the model offers (`ModelManager::effort_choices`).
+ * None: inherit the chat default (`[uses] chat_effort`). Kept even when
+ * a later model lacks the value; that call goes to the provider's default
+ * (`provider::models::effort`, the one resolver).
+ */
+effort?: string | null, 
+/**
  * The values this session is bound to — the bound skill's declared
  * session parameters (`session-params`), set once when the session is
  * made (`POST /api/sessions` `params`) and checked against the

@@ -1,6 +1,6 @@
 //! Status + models listing.
 
-use crate::server::ServerState;
+use crate::server::{model_list::Listed, ServerState};
 use axum::{
     extract::{Json, Query, State},
     response::IntoResponse,
@@ -26,10 +26,11 @@ pub(crate) async fn list_models_api(
     // and the config round-trip must never persist it.
     let models: Vec<serde_json::Value> = rows
         .into_iter()
-        .map(|(m, auth_ok)| {
+        .map(|Listed { config: m, auth_ok, effort }| {
             let mut v = shown(&m);
             if let Some(obj) = v.as_object_mut() {
                 obj.insert("auth_ok".into(), auth_ok.into());
+                obj.insert("effort".into(), effort.into());
                 // A ChatGPT built-in whose family moved: to what, since when.
                 if let Some(note) = catalog.moved_note(&m.id).filter(|_| m.is_builtin) {
                     obj.insert("moved".into(), note);

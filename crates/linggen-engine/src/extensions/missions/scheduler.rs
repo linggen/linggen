@@ -391,6 +391,7 @@ pub(crate) fn mission_session_meta(
         title_locked: true,
         withheld_tools: Vec::new(),
         model_fallback: None,
+        effort: None,
         params: Default::default(),
     };
     meta.set_cwd(&cwd);

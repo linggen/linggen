@@ -1,7 +1,7 @@
 //! What an Anthropic reply reports it used, read off the wire: a fake host
 //! answers the Messages API with a scripted usage block.
 use crate::config::ModelConfig;
-use crate::provider::models::{ModelManager, StreamChunk, TokenUsage};
+use crate::provider::models::{EffortAsk, ModelManager, StreamChunk, TokenUsage};
 use axum::{
     http::StatusCode,
     response::IntoResponse,
@@ -44,7 +44,7 @@ async fn reported(events: &[(&str, serde_json::Value)]) -> Option<TokenUsage> {
     let m = manager_answering(sse(events)).await;
     let messages = vec![crate::message::ChatMessage::new("user", "hi".to_string())];
     let mut stream = m
-        .chat_text_stream("m", &messages, None, None)
+        .chat_text_stream("m", &messages, EffortAsk::default(), None)
         .await
         .unwrap();
     let mut usage: Option<TokenUsage> = None;

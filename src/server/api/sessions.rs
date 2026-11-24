@@ -164,6 +164,7 @@ pub(crate) async fn create_session(
         title_locked: is_skill,
         withheld_tools: req.withheld_tools,
         model_fallback: None,
+        effort: None,
         params: req.params,
     };
     if let Some(word) = req.work.as_deref() {
@@ -467,12 +468,47 @@ pub(crate) struct RenameSessionRequest {
     /// false stops a failed model call from being answered by another model.
     #[serde(default)]
     model_fallback: Option<bool>,
+    /// The conversation's effort (`SessionMeta::effort`): a value the model
+    /// answering it offers, or "" to inherit the chat default again. Absent:
+    /// unchanged, and a model change leaves it as it is.
+    #[serde(default)]
+    effort: Option<String>,
+}
+
+/// The model a session's effort is checked against: the one in this request,
+/// else the member the picker shows, else the standing default.
+async fn model_asked_about_effort(state: &ServerState, req: &RenameSessionRequest) -> Option<String> {
+    if let Some(model) = req.model_id.as_deref().filter(|m| !m.is_empty()) {
+        return Some(model.to_string());
+    }
+    let members = crate::server::chat::members::of_session(&state.manager, &req.session_id).await;
+    let member = req.agent_id.clone().filter(|a| !a.trim().is_empty())
+        .unwrap_or_else(|| crate::server::chat::members::default_responder(&members));
+    let own = members.iter().find(|m| m.id == member).and_then(|m| m.model.clone());
+    match own {
+        Some(model) => Some(model),
+        None => state.manager.get_config_snapshot().await.routing.default_models.first().cloned(),
+    }
+}
+
+/// Refuse an effort the session's model does not offer, before anything is
+/// written. "" (inherit) and "auto" (the provider's default) fit every model.
+async fn effort_refusal(state: &ServerState, req: &RenameSessionRequest) -> Option<axum::response::Response> {
+    let effort = req.effort.as_deref().filter(|e| !e.is_empty() && *e != "auto")?;
+    let offered = match model_asked_about_effort(state, req).await {
+        Some(model) => state.manager.models.read().await.effort_choices(&model),
+        None => Vec::new(),
+    };
+    (!offered.contains(&effort)).then(|| (StatusCode::BAD_REQUEST, "that model does not offer this effort").into_response())
 }
 
 pub(crate) async fn rename_session_api(
     State(state): State<Arc<ServerState>>,
     Json(req): Json<RenameSessionRequest>,
 ) -> impl IntoResponse {
+    if let Some(refused) = effort_refusal(&state, &req).await {
+        return refused;
+    }
     if let Some(word) = req.work.as_deref() {
         let sessions = &state.manager.global_sessions;
         match sessions.edit(&req.session_id, |meta| ask_work(meta, word)) {
@@ -490,6 +526,13 @@ pub(crate) async fn rename_session_api(
         // does not.
         if meta.is_old_claude() && req.model_id.is_some() {
             return (StatusCode::GONE, crate::server::old_claude::READ_ONLY).into_response();
+        }
+    }
+    if let Some(ref effort) = req.effort {
+        let value = (!effort.is_empty()).then(|| effort.clone());
+        if let Err(e) = state.manager.global_sessions.set_effort(&req.session_id, value) {
+            tracing::warn!("effort not set on '{}': {e}", req.session_id);
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     }
     if let Some(allowed) = req.model_fallback {

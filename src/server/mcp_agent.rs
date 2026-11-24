@@ -794,6 +794,7 @@ fn delegate_meta(
         // A delegated run that cannot use its model ends there, named, for the
         // calling agent to decide — unless the caller opts back in.
         model_fallback: Some(new_session_fallback(model_fallback)),
+        effort: None,
         params: Default::default(),
     };
     meta.params.insert(HOST_PARAM.into(), host.into());

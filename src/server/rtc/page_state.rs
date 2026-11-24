@@ -4,7 +4,7 @@
 //! change, the server pushes a single `PageState` message over the WebRTC
 //! control data channel at 0.5 Hz (every 2 seconds), only when state changed.
 
-use crate::server::ServerState;
+use crate::server::{model_list::Listed, ServerState};
 use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -356,7 +356,7 @@ pub async fn build_page_state(
         ps.models = Some(
             models
                 .into_iter()
-                .map(|(m, auth_ok)| model_row(&m, auth_ok))
+                .map(|Listed { config, auth_ok, effort }| model_row(&config, auth_ok, &effort))
                 .collect(),
         );
 
@@ -547,7 +547,7 @@ pub async fn build_page_state(
 /// so the pickers can mark a model that would only bail AUTH_REQUIRED; what
 /// the model signs in with is the engine's answer (`ModelConfig::sign_in`),
 /// told, not worked out again in the UI.
-fn model_row(m: &crate::config::ModelConfig, auth_ok: bool) -> serde_json::Value {
+fn model_row(m: &crate::config::ModelConfig, auth_ok: bool, effort: &[&str]) -> serde_json::Value {
     serde_json::json!({
         "id": m.id,
         "provider": m.provider,
@@ -556,6 +556,7 @@ fn model_row(m: &crate::config::ModelConfig, auth_ok: bool) -> serde_json::Value
         "supports_tools": m.supports_tools,
         "provided_by": m.provided_by,
         "auth_ok": auth_ok,
+        "effort": effort,
         "signs_in_with_chatgpt": m.signs_in_with_chatgpt(),
     })
 }
@@ -577,12 +578,25 @@ mod tests {
             }))
             .unwrap();
             m.auth_mode = auth.map(Into::into);
-            model_row(&m, true)["signs_in_with_chatgpt"].clone()
+            model_row(&m, true, &[])["signs_in_with_chatgpt"].clone()
         };
         assert_eq!(row("openai", Some("chatgpt_oauth")), true);
         assert_eq!(row("chatgpt", None), true);
         assert_eq!(row("chatgpt", Some("linggen_account")), false);
         assert_eq!(row("openai", None), false);
+    }
+
+    /// The page's session row carries the conversation's effort, and none
+    /// until one is chosen.
+    #[test]
+    fn a_session_row_carries_the_conversations_effort() {
+        let meta = |effort: Option<&str>| crate::state_fs::sessions::SessionMeta {
+            id: "s".into(),
+            effort: effort.map(Into::into),
+            ..Default::default()
+        };
+        assert_eq!(session_row(meta(Some("high"))).unwrap()["effort"], "high");
+        assert!(session_row(meta(None)).unwrap().get("effort").is_none());
     }
 
     #[test]

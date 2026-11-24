@@ -156,6 +156,7 @@ pub(crate) async fn case(mode: &str) -> Case {
         .add_session(&crate::state_fs::sessions::SessionMeta {
             id: session.clone(),
             model_fallback: Some(false),
+            effort: None,
             agents: vec![crate::state_fs::sessions::SessionMember::new("ling")],
             ..Default::default()
         })
