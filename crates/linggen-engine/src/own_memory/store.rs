@@ -15,7 +15,7 @@ const STATE: &str = ".state";
 /// The folders topic files live in. The rest of `memory/` is not these
 /// notes' (the v1 store keeps its backups and database there): never walked,
 /// never read.
-const TOPIC_DIRS: [&str; 4] = ["person", "areas", "projects", "moments"];
+const TOPIC_DIRS: [&str; 5] = ["person", "areas", "projects", "moments", "chronicle"];
 /// Prior versions kept for each file.
 const HISTORY_KEPT: usize = 20;
 const SLUG_CHARS: usize = 60;
@@ -104,10 +104,8 @@ impl Store {
             Scope::Person => format!("person/{slug}.md"),
             Scope::Area(a) => format!("areas/{}/{slug}.md", a.word()),
             Scope::Project(p) => format!("projects/{}/{slug}.md", encode_project_path(p)),
-            Scope::Moments => {
-                let year: String = slug.chars().take(4).collect();
-                format!("moments/{year}/{slug}.md")
-            }
+            Scope::Moments => by_year("moments", slug),
+            Scope::Chronicle => by_year("chronicle", slug),
         }
     }
 
@@ -260,6 +258,12 @@ pub(crate) fn slug(name: &str) -> String {
         true => "notes".to_string(),
         false => out,
     }
+}
+
+/// A file named for its month (or year), in that year's folder.
+fn by_year(dir: &str, slug: &str) -> String {
+    let year: String = slug.chars().take(4).collect();
+    format!("{dir}/{year}/{slug}.md")
 }
 
 fn slug_of_rel(rel: &str) -> String {

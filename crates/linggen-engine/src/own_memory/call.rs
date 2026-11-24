@@ -82,10 +82,10 @@ fn need<'a>(args: &'a Value, key: &str) -> Result<&'a str, String> {
 fn write_of(args: &Value, caller: &Caller) -> Result<Write, String> {
     let action = match text(args, "action").unwrap_or(if args.get("id").is_some() { "update" } else { "add" }) {
         "add" => Action::Add {
-            scope: Scope::parse(need(args, "scope")?).ok_or("`scope` is person, area:<body|mind|people|music|money|play|home>, project:<absolute path> or moments")?,
+            scope: Scope::parse(need(args, "scope")?).ok_or("`scope` is person, area:<body|mind|people|music|money|play|home>, project:<absolute path>, moments or chronicle")?,
             topic: text(args, "topic").unwrap_or("notes").to_string(),
             summary: need(args, "summary")?.to_string(),
-            kind: Kind::parse(need(args, "kind")?).ok_or("`kind` is person, rule, decision, gotcha or moment")?,
+            kind: Kind::parse(need(args, "kind")?).ok_or("`kind` is person, rule, decision, gotcha, moment or chronicle")?,
             voice: text(args, "voice").map_or(Some(Voice::Agent), Voice::parse).ok_or("`voice` is user or agent")?,
             body: text(args, "body").unwrap_or_default().to_string(),
         },
@@ -94,13 +94,14 @@ fn write_of(args: &Value, caller: &Caller) -> Result<Write, String> {
             summary: text(args, "summary").map(String::from),
             body: args.get("body").and_then(Value::as_str).map(String::from),
             kind: match text(args, "kind") {
-                Some(k) => Some(Kind::parse(k).ok_or("`kind` is person, rule, decision, gotcha or moment")?),
+                Some(k) => Some(Kind::parse(k).ok_or("`kind` is person, rule, decision, gotcha, moment or chronicle")?),
                 None => None,
             },
         },
         "void" => Action::Void { id: need(args, "id")?.to_string(), reason: need(args, "reason")?.to_string() },
         "no_raise" => Action::NoRaise { id: need(args, "id")?.to_string(), on: flag(args, "on").unwrap_or(true) },
-        other => return Err(format!("unknown action `{other}`: add, update, void or no_raise")),
+        "yearly" => Action::Yearly { id: need(args, "id")?.to_string(), day: text(args, "day").map(String::from) },
+        other => return Err(format!("unknown action `{other}`: add, update, void, no_raise or yearly")),
     };
     Ok(Write {
         action,
@@ -114,7 +115,7 @@ fn entry_json(e: &Entry, with_body: bool) -> Value {
     let mut v = json!({
         "id": e.id, "summary": e.summary, "kind": e.kind.word(), "voice": e.voice.word(),
         "created": e.created, "updated": e.updated, "source": e.source,
-        "void": e.void, "no_raise": e.no_raise,
+        "void": e.void, "no_raise": e.no_raise, "yearly": e.yearly,
     });
     if with_body {
         v["body"] = json!(e.body);

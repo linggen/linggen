@@ -26,8 +26,10 @@ mod sources;
 #[cfg(test)]
 mod tests;
 
-pub use access::{read, search, Hit, Note, ReadError};
+pub use access::{read, search, touched, Hit, Note, ReadError, Touched};
 pub use redact::Clean;
+// The chronicle cleans what it quotes of the person's sessions the same way.
+pub(crate) use redact::clean;
 pub use slice::{slice, Slice, SourceNote, BUDGET_BYTES};
 pub use sources::{reports, SourceReport};
 // Linggen's own memory (`own_memory`) files its project notes the same way

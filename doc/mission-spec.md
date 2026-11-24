@@ -202,7 +202,8 @@ Work a run needs done before its first turn, which the run itself should not be 
 
 - **What** — a list of arguments to the engine's own binary: `prepare: [mem, scan, $DAY]` runs the running `ling` (never one found on `PATH`) with those words. No shell parses them, so a mission file can name a `ling` verb and nothing else. `$DAY` in a word is the run's day.
 - **When** — on every run, a person's trigger too (unlike `run-if`): after the run is recorded as running, before any model call. It runs in the mission's `cwd`, with the engine's environment, for at most 5 minutes.
-- **Failure** — a non-zero exit, a timeout, or a `$DAY` with no day given: the run ends `failed`, no model call. Its record keeps the step as a failure (`tool: "prepare"`, its exit status, the last two lines of its stderr) and the session gets one line saying why.
+- **Nothing to do** — exit status 3 (`missions::NOTHING_TO_DO`) ends the run `completed` with no model call and no fault: the step found no work (the chronicle with memory v2 off, or no month waiting).
+- **Failure** — any other non-zero exit, a timeout, or a `$DAY` with no day given: the run ends `failed`, no model call. Its record keeps the step as a failure (`tool: "prepare"`, its exit status, the last two lines of its stderr) and the session gets one line saying why.
 
 ### run-if
 

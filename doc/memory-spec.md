@@ -360,7 +360,8 @@ person and the work, as plain Markdown under `$LINGGEN_HOME/memory/`
 which memory Linggen's own sessions have; v1 is everything above, unchanged.
 
 - **Files** — `person/`, `areas/<body|mind|people|music|money|play|home>/`,
-  `projects/<encoded path>/`, `moments/<yyyy>/<yyyy-mm>.md`; one topic per
+  `projects/<encoded path>/`, `moments/<yyyy>/<yyyy-mm>.md`,
+  `chronicle/<yyyy>/<yyyy-mm>.md` (and `<yyyy>.md`); one topic per
   file, one note per `##` entry with an id, kind (person, rule, decision,
   gotcha, moment), voice (user, agent), dates, source. A topic file stays
   under 200 lines and 16 KB: the oldest notes move to `<topic>-part2.md`.
@@ -376,17 +377,46 @@ which memory Linggen's own sessions have; v1 is everything above, unchanged.
   the rest newest first; at most 200 lines and 25 KB. What does not fit is
   forgotten, not gone: `op=search` (Chinese and English, and other agents'
   memory) finds it, and reading a note keeps it in the index.
-- **Privacy fence** — notes about body, mind and people, and moments, reach
-  Yinyue (outside a coding session) alone: not Ling, not an app, not Claude
-  Code or Codex. One decision (`own_memory::fence`), at every way out.
+- **Privacy fence** — notes about body, mind and people, moments and the
+  chronicle reach Yinyue (outside a coding session) alone: not Ling, not an
+  app, not Claude Code or Codex. A third audience, the chronicler (the
+  chronicle mission's agent), reads all and may write the chronicle only.
+  One decision (`own_memory::fence`), at every way out.
 - **A v2 session** has the index in its prompt and `memory_notes` instead of
   the memory server's tools, its protocol, the per-turn recall and the
-  capture reminder. Missions stay on v1. An app gets the index of its own
+  capture reminder. Missions stay on v1, but the chronicle's own run, which
+  has `memory_notes` alone. An app gets the index of its own
   folder (and the person's, with core) and no tool.
 - **Outside hosts** — the same tool is on the MCP door (`mcp-spec.md`) for a
   host with no memory of its own, served when `outside_agents = "v2"`.
-- **Not built yet** — migration of v1 rows, the chronicle, Yinyue's daily
-  context, the Settings page, phone sync.
+- **The chronicle** (`own_memory::chronicle`, `missions/chronicle`,
+  `agents/chronicler.md`) — what the person did and how far they came, month
+  by month, for years. A built-in mission (1st of the month, catch-up in a
+  quiet window; the model is the mission default) whose engine step
+  `ling chronicle prepare` READS the sources — Linggen's notes and moments
+  (not void, not no-raise), the sessions the person made and spoke in, the
+  first lines of other agents' notes changed that month — into
+  `memory/.chronicle-input.jsonl`, and lists the months that have ended and
+  have no file (at most 12 a run, oldest first) and past years whose months
+  are all written. The agent writes dated lines (`YYYY-MM-DD what`, source in
+  the body) through `memory_notes op=write scope=chronicle`, the same one
+  writer; a month with a file is never offered again, so the person's edits
+  stand and deleting the file has it written afresh. Only under v2: with v2
+  off or nothing waiting the step exits "nothing to do"
+  (`missions::NOTHING_TO_DO`) and the run ends with no model call.
+  Backfill is the same run by hand: `ling chronicle backfill` (repeat until
+  nothing waits). Only the companion and the chronicler read it; not in the
+  index; `op=search` finds it. Other agents' session logs are not read yet.
+- **Yinyue's day** (`own_memory::companion::today`, called by
+  `prompt::owner_block` for the companion only) — "on this day" lines
+  (moments and dated chronicle lines of the same date in past years) and
+  recurring days within a week (`op=write action=yearly day=MM-DD`, or
+  `YYYY-MM-DD`; kept as `yearly:` in the note's meta line). No-raise and void
+  notes never appear in it, and her guidance says she never raises a
+  no-raise note herself. Facts only: whether, when and how gently to speak is
+  hers.
+- **Not built yet** — migration of v1 rows, the Settings page, phone sync,
+  other agents' session logs in the chronicle.
 
 ## Open / next
 

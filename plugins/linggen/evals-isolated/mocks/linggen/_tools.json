@@ -815,7 +815,7 @@
     },
     {
       "name": "memory_notes",
-      "description": "Linggen's own notes about the person and the work. op=index lists the notes for a project; op=read opens one note (id) or a topic file (path); op=search finds notes by words, any language, and what other agents remember; op=write adds a note (scope, topic, summary, kind, body) or changes one by id (action update, void, no_raise). Write only a fact the person asked to remember, a decision or rule with its why, or a gotcha — never what was done or where work stands. A note in the person's own voice changes only after you show it and they agree (user_directed true). Notes about the body, mind and people close to the person, and life moments, are Yinyue's alone.",
+      "description": "Linggen's own notes about the person and the work. op=index lists the notes for a project; op=read opens one note (id) or a topic file (path); op=search finds notes by words, any language, and what other agents remember; op=write adds a note (scope, topic, summary, kind, body) or changes one by id (action update, void, no_raise, yearly). Write only a fact the person asked to remember, a decision or rule with its why, or a gotcha — never what was done or where work stands. A note in the person's own voice changes only after you show it and they agree (user_directed true). Notes about the body, mind and people close to the person, life moments, and the chronicle (what the person did, month by month) are Yinyue's alone.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -827,7 +827,7 @@
               "search",
               "write"
             ],
-            "description": "index: cwd?, host? · read: id?, path? · search: words?, limit? · write: action?, scope?, topic?, summary?, kind?, voice?, body?, id?, reason?, on?, user_directed?, base?, host?"
+            "description": "index: cwd?, host? · read: id?, path? · search: words?, limit? · write: action?, scope?, topic?, summary?, kind?, voice?, body?, id?, reason?, on?, user_directed?, base?, day?, host?"
           },
           "cwd": {
             "type": "string",
@@ -859,17 +859,18 @@
               "add",
               "update",
               "void",
-              "no_raise"
+              "no_raise",
+              "yearly"
             ],
             "description": "Default add (update when an id is given)"
           },
           "scope": {
             "type": "string",
-            "description": "add: person | area:<body|mind|people|music|money|play|home> | project:<absolute path> | moments"
+            "description": "add: person | area:<body|mind|people|music|money|play|home> | project:<absolute path> | moments | chronicle"
           },
           "topic": {
             "type": "string",
-            "description": "add: the topic file's name"
+            "description": "add: the topic file's name; in the chronicle a month (2026-11) or a year (2026)"
           },
           "summary": {
             "type": "string",
@@ -882,7 +883,8 @@
               "rule",
               "decision",
               "gotcha",
-              "moment"
+              "moment",
+              "chronicle"
             ]
           },
           "voice": {
@@ -912,6 +914,10 @@
           "base": {
             "type": "string",
             "description": "The version of the topic file you read"
+          },
+          "day": {
+            "type": "string",
+            "description": "yearly: the day the note repeats every year, MM-DD or YYYY-MM-DD (a birthday, an anniversary); empty clears it"
           }
         },
         "additionalProperties": false,

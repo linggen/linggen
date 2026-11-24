@@ -123,6 +123,33 @@ pub fn search(env: &Env, words: &str, limit: usize) -> Vec<Hit> {
         .collect()
 }
 
+/// One of another agent's notes, as the chronicle sees it: when it last
+/// changed and its first line.
+#[derive(Clone, Debug)]
+pub struct Touched {
+    pub source: &'static str,
+    pub path: PathBuf,
+    /// Seconds since the epoch the file last changed.
+    pub changed: u64,
+    pub first_line: Clean,
+}
+
+/// Every note of every source with the time it last changed and its first
+/// line (a heading's `#` dropped) — what the monthly chronicle reads to say
+/// what other agents learned that month. Read-only, like the rest.
+pub fn touched(env: &Env) -> Vec<Touched> {
+    note_files(env)
+        .into_iter()
+        .filter_map(|(source, path)| {
+            let changed = fs::metadata(&path).and_then(|m| m.modified()).ok()?.duration_since(UNIX_EPOCH).ok()?.as_secs();
+            let head = read_head(&path, 4096).ok()?;
+            let text = String::from_utf8_lossy(&head);
+            let line = text.lines().map(|l| l.trim().trim_start_matches('#').trim()).find(|l| !l.is_empty())?;
+            Some(Touched { source, path, changed, first_line: clean(&shorten(line, HIT_CHARS)) })
+        })
+        .collect()
+}
+
 fn expand(env: &Env, path: &str) -> Option<PathBuf> {
     let path = path.trim();
     if let Some(rest) = path.strip_prefix("~/") {

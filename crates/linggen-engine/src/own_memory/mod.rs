@@ -10,11 +10,16 @@
 //! - Who may see what: [`fence`], by [`fence::Audience`]. Every way out of
 //!   the store ends there (`tests::only_the_fence_loads_and_only_write_saves`).
 //! - What is written and how: [`write::write`], the only saver.
-//! - What a session is shown at start: [`index::index`].
+//! - What a session is shown at start: [`index::index`]; and what Yinyue is
+//!   told of today's date: [`companion::today`].
+//! - What the chronicle reads and what it asks the model to write:
+//!   [`chronicle`] (it saves nothing itself; the writer does).
 //! - Which memory a session has, v1 or v2: [`Mode`] (`[memory] linggen`).
 //!   The tool's ops: [`call::call`].
 
 pub mod call;
+pub mod chronicle;
+pub mod companion;
 pub mod fence;
 pub mod find;
 pub mod format;
@@ -27,7 +32,7 @@ mod tests;
 pub mod write;
 
 pub use call::{call, Caller};
-pub use fence::{audience_of, Audience};
+pub use fence::{agent_audience, audience_of, Audience};
 pub use store::Store;
 
 /// The tool's name, in a Linggen session and on the MCP door.

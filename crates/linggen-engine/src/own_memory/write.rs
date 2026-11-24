@@ -1,4 +1,4 @@
-//! The one writer: add, update by id, void, no-raise. Ling, Yinyue, the
+//! The one writer: add, update by id, void, no-raise, yearly. Ling, Yinyue, the
 //! phone and an outside host with no memory of its own all write through
 //! [`write`], and nothing else saves into the store.
 //!
@@ -10,13 +10,16 @@
 //! - The caller says which version of the topic file it saw. A different
 //!   version is merged by entry: another entry changed — fine; the same
 //!   entry changed since — a [`Refusal::Conflict`] with the current text.
-//! - What the audience may not see ([`super::fence`]) cannot be written
-//!   either, nor found by id.
+//! - What the audience may not see or write ([`super::fence`]) cannot be
+//!   written, nor found by id.
+//! - A chronicle line (kind chronicle) goes only in the chronicle, into the
+//!   file of its month or year, and is not held to the status rule — what
+//!   the person did is what it is for.
 //! - The old file is kept under `.state/history`; a topic past the limits is
 //!   split by [`Store::save`].
 
 use super::fence::{self, Audience};
-use super::format::{safe_body, one_line, meta_text, Entry, Kind, Scope, Topic, Voice, BODY_CHARS, SUMMARY_CHARS};
+use super::format::{safe_body, one_line, meta_text, yearly_day, Entry, Kind, Scope, Topic, Voice, BODY_CHARS, SUMMARY_CHARS};
 use super::store::{slug, Store};
 use regex::Regex;
 use std::sync::{LazyLock, Mutex};
@@ -44,6 +47,9 @@ pub enum Action {
     Update { id: String, summary: Option<String>, body: Option<String>, kind: Option<Kind> },
     Void { id: String, reason: String },
     NoRaise { id: String, on: bool },
+    /// Set the day the note repeats every year (`MM-DD` or `YYYY-MM-DD`), or
+    /// clear it (`None`).
+    Yearly { id: String, day: Option<String> },
 }
 
 /// What a write did.
@@ -66,8 +72,13 @@ pub enum Refusal {
     NotFound,
     /// The scope is not one this audience may write.
     Fenced,
-    /// A moment is Yinyue's, in `moments`; a rule or a gotcha is not.
-    MomentMismatch,
+    /// A moment is Yinyue's, in `moments`, and a chronicle line is in the
+    /// chronicle; a rule or a gotcha is in neither.
+    KindMismatch,
+    /// A chronicle file is a month (`2026-11`) or a year (`2026`).
+    NotAPeriod,
+    /// A yearly day is `MM-DD` or `YYYY-MM-DD`.
+    NotADay,
     /// An entry in the person's own voice: show it and ask first.
     UserVoice { id: String, summary: String, updated: String },
     /// Another topic of a different scope has that file name.
@@ -88,9 +99,11 @@ impl std::fmt::Display for Refusal {
             Refusal::TooLong(what) => write!(f, "the {what} is too long"),
             Refusal::NotFound => f.write_str("no note with that id"),
             Refusal::Fenced => f.write_str("this reader may not write there"),
-            Refusal::MomentMismatch => {
-                f.write_str("kind moment goes with scope moments, and only those")
-            }
+            Refusal::KindMismatch => f.write_str(
+                "kind moment goes with scope moments, kind chronicle with scope chronicle, and only those",
+            ),
+            Refusal::NotAPeriod => f.write_str("a chronicle topic is a month (2026-11) or a year (2026)"),
+            Refusal::NotADay => f.write_str("a yearly day is MM-DD, or YYYY-MM-DD when the first year is known"),
             Refusal::UserVoice { id, summary, updated } => write!(
                 f,
                 "note {id} (\"{summary}\", {updated}) is in the person's own voice: show it to them and ask; \
@@ -153,6 +166,16 @@ pub fn write(store: &Store, audience: Audience, now: i64, w: &Write) -> Result<W
                 Ok(())
             }, &today)
         }
+        Action::Yearly { id, day } => {
+            let day = match day.as_deref() {
+                Some(text) => Some(yearly_day(text).ok_or(Refusal::NotADay)?),
+                None => None,
+            };
+            change(store, audience, w, id, move |e| {
+                e.yearly = day.clone();
+                Ok(())
+            }, &today)
+        }
     }
 }
 
@@ -169,14 +192,15 @@ fn add(
     voice: Voice,
     body: &str,
 ) -> Result<Written, Refusal> {
-    if !audience.sees(scope) {
+    if !audience.can_write(scope) {
         return Err(Refusal::Fenced);
     }
-    if (kind == Kind::Moment) != (*scope == Scope::Moments) {
-        return Err(Refusal::MomentMismatch);
+    if !kind.fits(scope) {
+        return Err(Refusal::KindMismatch);
     }
     let name = match scope {
         Scope::Moments => today.chars().take(7).collect(),
+        Scope::Chronicle => period_of(topic).ok_or(Refusal::NotAPeriod)?,
         _ => one_line(topic, 80),
     };
     let rel = Store::rel_of(scope, &slug(&name));
@@ -208,6 +232,9 @@ fn change(
     today: &str,
 ) -> Result<Written, Refusal> {
     let found = fence::find(store, audience, id).ok_or(Refusal::NotFound)?;
+    if !audience.can_write(&found.scope) {
+        return Err(Refusal::Fenced);
+    }
     if found.entry.voice == Voice::User && !w.user_directed {
         return Err(Refusal::UserVoice {
             id: found.entry.id,
@@ -229,8 +256,8 @@ fn change(
     let mut topic = file.topic;
     let entry = topic.entries.iter_mut().find(|e| e.id == found.entry.id).ok_or(Refusal::NotFound)?;
     edit(entry)?;
-    if (entry.kind == Kind::Moment) != (found.scope == Scope::Moments) {
-        return Err(Refusal::MomentMismatch);
+    if !entry.kind.fits(&found.scope) {
+        return Err(Refusal::KindMismatch);
     }
     entry.updated = today.to_string();
     entry.source = one_line(&w.source, 40);
@@ -265,10 +292,23 @@ fn checked(e: &Entry) -> Result<(), Refusal> {
     if e.body.chars().count() > BODY_CHARS {
         return Err(Refusal::TooLong("body"));
     }
-    match e.kind != Kind::Moment && is_status(&e.summary, &e.body) {
+    let reads_as_status = !matches!(e.kind, Kind::Moment | Kind::Chronicle) && is_status(&e.summary, &e.body);
+    match reads_as_status {
         true => Err(Refusal::Status),
         false => Ok(()),
     }
+}
+
+/// A chronicle file's name: `2026-11` or `2026`, nothing else.
+fn period_of(topic: &str) -> Option<String> {
+    let topic = topic.trim();
+    let (year, month) = match topic.split_once('-') {
+        Some((year, month)) => (year, Some(month)),
+        None => (topic, None),
+    };
+    let digits = |s: &str, n: usize| s.len() == n && s.bytes().all(|b| b.is_ascii_digit());
+    let month_ok = month.map_or(true, |m| digits(m, 2) && (1..=12).contains(&m.parse::<u32>().unwrap_or(0)));
+    (digits(year, 4) && month_ok).then(|| topic.to_string())
 }
 
 fn new_id(store: &Store) -> String {

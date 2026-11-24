@@ -2,8 +2,9 @@
 //! else.
 //!
 //! What a person says about their body, their mind, the people close to them,
-//! and Yinyue's dated life moments never go to a coding host (Claude Code,
-//! Codex, a coding session): [`Audience::Work`] does not see them. Every way
+//! Yinyue's dated life moments and the chronicle (which holds all of those
+//! in a line a month) never go to a coding host (Claude Code, Codex, a
+//! coding session): [`Audience::Work`] does not see them. Every way
 //! out of the store — the index, a read by id, a read by path, a search hit,
 //! and the lookup a write does by id — goes through this file, and what comes
 //! out is a [`Seen`] or a [`SeenFile`], which only this file can make
@@ -21,6 +22,9 @@ pub enum Audience {
     Companion,
     /// Everyone else: Ling, apps, Claude Code, Codex, any host on the door.
     Work,
+    /// The chronicle's own run (a mission): reads the whole record to write
+    /// the months down, and may write nothing but the chronicle.
+    Chronicler,
 }
 
 /// The audience of a Linggen session: the companion's, unless a coding
@@ -32,14 +36,33 @@ pub fn audience_of(is_companion: bool, is_coding_session: bool) -> Audience {
     }
 }
 
+/// The audience of a Linggen session by its agent: the companion's (unless a
+/// coding session), the chronicler's, or work's. The one place that names
+/// which agents keep the person's whole record.
+pub fn agent_audience(agent_id: Option<&str>, is_coding_session: bool) -> Audience {
+    match agent_id {
+        Some(crate::agent_ids::CHRONICLER_AGENT_ID) => Audience::Chronicler,
+        other => audience_of(other == Some(crate::agent_ids::COMPANION_AGENT_ID), is_coding_session),
+    }
+}
+
 impl Audience {
     /// Whether this audience may see a topic of `scope`. The one decision.
     pub fn sees(self, scope: &Scope) -> bool {
         match (self, scope) {
-            (Audience::Companion, _) => true,
+            (Audience::Companion | Audience::Chronicler, _) => true,
             (Audience::Work, Scope::Person | Scope::Project(_)) => true,
-            (Audience::Work, Scope::Moments) => false,
+            (Audience::Work, Scope::Moments | Scope::Chronicle) => false,
             (Audience::Work, Scope::Area(area)) => !matches!(area, Area::Body | Area::Mind | Area::People),
+        }
+    }
+
+    /// Whether this audience may write a topic of `scope`: what it sees,
+    /// except the chronicler, who writes the chronicle and nothing else.
+    pub fn can_write(self, scope: &Scope) -> bool {
+        match self {
+            Audience::Chronicler => *scope == Scope::Chronicle,
+            Audience::Companion | Audience::Work => self.sees(scope),
         }
     }
 }

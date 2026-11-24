@@ -246,9 +246,9 @@ fn the_persons_own_words_change_only_when_they_direct_it() {
 fn a_moment_is_a_moment_in_moments_and_nothing_else_is() {
     let (_d, store) = scratch();
     let wrong = add_action(Scope::Person, "t", "Felt sad", Kind::Moment, Voice::Agent, "");
-    assert_eq!(write(&store, Audience::Companion, NOW, &w(wrong)).unwrap_err(), Refusal::MomentMismatch);
+    assert_eq!(write(&store, Audience::Companion, NOW, &w(wrong)).unwrap_err(), Refusal::KindMismatch);
     let wrong = add_action(Scope::Moments, "", "A rule", Kind::Rule, Voice::Agent, "");
-    assert_eq!(write(&store, Audience::Companion, NOW, &w(wrong)).unwrap_err(), Refusal::MomentMismatch);
+    assert_eq!(write(&store, Audience::Companion, NOW, &w(wrong)).unwrap_err(), Refusal::KindMismatch);
     let ok = add_action(Scope::Moments, "ignored", "Black Friday: regretted the spend", Kind::Moment, Voice::Agent, "Felt regret; concluded: wait a day.");
     let done = write(&store, Audience::Companion, NOW, &w(ok)).unwrap();
     assert_eq!(done.rel, format!("moments/2026/{}.md", super::day_of(NOW).chars().take(7).collect::<String>()));
@@ -259,11 +259,11 @@ fn a_note_cannot_become_a_moment_or_stop_being_one() {
     let (_d, store) = scratch();
     let id = rule(&store, Scope::Person, "t", "A rule", "", NOW);
     let edit = w(Action::Update { id, summary: None, body: None, kind: Some(Kind::Moment) });
-    assert_eq!(write(&store, Audience::Companion, NOW, &edit).unwrap_err(), Refusal::MomentMismatch);
+    assert_eq!(write(&store, Audience::Companion, NOW, &edit).unwrap_err(), Refusal::KindMismatch);
     let moment = add_action(Scope::Moments, "", "A day", Kind::Moment, Voice::Agent, "felt fine");
     let id = write(&store, Audience::Companion, NOW, &w(moment)).unwrap().id;
     let edit = w(Action::Update { id, summary: None, body: None, kind: Some(Kind::Rule) });
-    assert_eq!(write(&store, Audience::Companion, NOW, &edit).unwrap_err(), Refusal::MomentMismatch);
+    assert_eq!(write(&store, Audience::Companion, NOW, &edit).unwrap_err(), Refusal::KindMismatch);
 }
 
 /// The v1 store keeps its backups and database in the same `memory/`
@@ -514,15 +514,15 @@ fn source_of(file: &str) -> String {
 /// store, and the fence or the writer's rules no longer hold.
 #[test]
 fn only_the_fence_loads_and_only_write_saves() {
-    for file in ["call.rs", "find.rs", "format.rs", "index.rs", "mod.rs", "write.rs"] {
+    for file in ["call.rs", "chronicle.rs", "companion.rs", "find.rs", "format.rs", "index.rs", "mod.rs", "write.rs"] {
         let src = source_of(file);
         assert!(!src.contains("load_all_unfiltered("), "{file} loads topics around the fence");
         assert!(!src.contains("fs::write") && !src.contains("fs::rename") && !src.contains("File::create"), "{file} writes a file itself");
     }
-    for file in ["call.rs", "find.rs", "format.rs", "index.rs", "mod.rs", "fence.rs"] {
+    for file in ["call.rs", "chronicle.rs", "companion.rs", "find.rs", "format.rs", "index.rs", "mod.rs", "fence.rs"] {
         assert!(!source_of(file).contains(".save("), "{file} saves a topic; only write.rs does");
     }
-    for file in ["find.rs", "index.rs", "call.rs"] {
+    for file in ["find.rs", "index.rs", "call.rs", "chronicle.rs", "companion.rs"] {
         assert!(!source_of(file).contains(".load("), "{file} reads a file around the fence");
     }
 }
@@ -531,15 +531,16 @@ fn only_the_fence_loads_and_only_write_saves() {
 /// names a fenced area.
 #[test]
 fn the_only_audience_decision_is_in_the_fence() {
-    for file in ["call.rs", "find.rs", "index.rs", "write.rs", "store.rs"] {
+    for file in ["call.rs", "chronicle.rs", "companion.rs", "find.rs", "index.rs", "write.rs", "store.rs"] {
         let src = source_of(file);
         assert!(!src.contains("Area::Body") && !src.contains("Area::Mind"), "{file} names a fenced area");
     }
 }
 
 /// Who reads `[memory] linggen`: the engine's settings map, its prompt (and
-/// the tools it offers), and the turn's recall. A fourth reader is a second
-/// place deciding which memory a session has.
+/// the tools it offers), the turn's recall, and the chronicle's own step
+/// (`ling chronicle`, which keeps the chronicle only under v2). Another
+/// reader is a second place deciding which memory Linggen has.
 #[test]
 fn the_switch_is_read_in_the_listed_places_only() {
     fn walk(base: &Path, dir: &Path, found: &mut Vec<String>) {
@@ -575,8 +576,8 @@ fn the_switch_is_read_in_the_listed_places_only() {
     found.sort();
     assert_eq!(
         found,
-        ["src/engine/prompt/mod.rs", "src/engine/types.rs", "src/server/chat/runtime.rs"],
-        "the switch is read in the engine's settings map, its prompt and the turn's recall alone"
+        ["src/cli/chronicle.rs", "src/engine/prompt/mod.rs", "src/engine/types.rs", "src/server/chat/runtime.rs"],
+        "the switch is read in the engine's settings map, its prompt, the turn's recall and the chronicle's step alone"
     );
 }
 
@@ -615,4 +616,245 @@ fn the_switch_is_v1_unless_the_file_says_v2() {
     use super::Mode;
     assert_eq!(Mode::default(), Mode::V1);
     assert_eq!((Mode::V1.word(), Mode::V2.word()), ("v1", "v2"));
+}
+
+// ── the chronicle ──────────────────────────────────────────────────────────
+
+use super::chronicle::{self, period_of_rel};
+use super::format::yearly_day;
+use crate::state_fs::sessions::{ChatMsg, SessionMeta, SessionStore};
+
+fn chronicle_line(store: &Store, topic: &str, summary: &str, at: i64) -> Result<super::write::Written, Refusal> {
+    let action = add_action(Scope::Chronicle, topic, summary, Kind::Chronicle, Voice::Agent, "Source: a note.");
+    write(store, Audience::Chronicler, at, &w(action))
+}
+
+#[test]
+fn the_chronicler_writes_the_chronicle_into_its_month_and_nothing_else() {
+    let (_d, store) = scratch();
+    // What was done is what a chronicle holds: the status rule does not apply.
+    let done = chronicle_line(&store, "2026-10", "2026-10-03 Finished the move to Berlin", NOW).unwrap();
+    assert_eq!(done.rel, "chronicle/2026/2026-10.md");
+    let year = chronicle_line(&store, "2025", "2025 The year of the research", NOW).unwrap();
+    assert_eq!(year.rel, "chronicle/2025/2025.md");
+    assert_eq!(chronicle_line(&store, "october", "x", NOW).unwrap_err(), Refusal::NotAPeriod);
+    assert_eq!(chronicle_line(&store, "2026-13", "x", NOW).unwrap_err(), Refusal::NotAPeriod);
+    // No other scope, and no other kind in the chronicle.
+    let person = add_action(Scope::Person, "t", "A fact", Kind::Person, Voice::Agent, "");
+    assert_eq!(write(&store, Audience::Chronicler, NOW, &w(person)).unwrap_err(), Refusal::Fenced);
+    let wrong = add_action(Scope::Chronicle, "2026-10", "A rule", Kind::Rule, Voice::Agent, "");
+    assert_eq!(write(&store, Audience::Companion, NOW, &w(wrong)).unwrap_err(), Refusal::KindMismatch);
+    let id = rule(&store, Scope::Person, "t", "A rule", "", NOW);
+    let edit = w(Action::Update { id, summary: Some("Changed".into()), body: None, kind: None });
+    assert_eq!(write(&store, Audience::Chronicler, NOW, &edit).unwrap_err(), Refusal::Fenced);
+    // A coding host cannot write it, and a month split in parts is still its month.
+    let sneaky = add_action(Scope::Chronicle, "2026-10", "2026-10-04 x", Kind::Chronicle, Voice::Agent, "");
+    assert_eq!(write(&store, Audience::Work, NOW, &w(sneaky)).unwrap_err(), Refusal::Fenced);
+    assert_eq!(period_of_rel("chronicle/2026/2026-10-part2.md").as_deref(), Some("2026-10"));
+    assert_eq!(period_of_rel("chronicle/2025/2025.md").as_deref(), Some("2025"));
+}
+
+#[test]
+fn only_the_companion_and_the_chronicler_see_the_chronicle() {
+    let (_d, store) = scratch();
+    person(&store, "Name is Alex", NOW);
+    let id = chronicle_line(&store, "2026-10", "2026-10-03 Moved to Berlin", NOW).unwrap().id;
+    for audience in [Audience::Companion, Audience::Chronicler] {
+        assert_eq!(search(&store, audience, "Berlin", 5, NOW).len(), 1, "{audience:?}");
+        assert!(read(&store, audience, "chronicle/2026/2026-10.md", NOW).is_ok());
+    }
+    assert!(search(&store, Audience::Work, "Berlin", 5, NOW).is_empty());
+    assert!(read(&store, Audience::Work, &id, NOW).is_err());
+    assert!(read(&store, Audience::Work, "chronicle/2026/2026-10.md", NOW).is_err());
+    // Long, and found by search: not in anyone's index.
+    for audience in [Audience::Companion, Audience::Work] {
+        assert!(!index(&store, audience, None, NOW).text.contains("Berlin"));
+    }
+}
+
+fn user_session(id: &str, creator: &str, skill: Option<&str>) -> SessionMeta {
+    SessionMeta {
+        id: id.into(),
+        title: format!("title of {id}"),
+        created_at: 1,
+        creator: creator.into(),
+        skill: skill.map(String::from),
+        cwd: "/work/app".into(),
+        ..Default::default()
+    }
+}
+
+fn say(store: &SessionStore, id: &str, from: &str, text: &str, at: i64) {
+    let row = json!({"agent_id": "ling", "from_id": from, "to_id": "ling", "content": text, "timestamp": at, "is_observation": false});
+    store.add_chat_message(id, &serde_json::from_value::<ChatMsg>(row).unwrap()).unwrap();
+}
+
+fn scratch_sessions(dir: &tempfile::TempDir) -> SessionStore {
+    SessionStore::with_sessions_dir(dir.path().join("sessions"))
+}
+
+#[test]
+fn the_months_still_to_write_are_those_with_something_to_say_and_no_file() {
+    let (dir, store) = scratch();
+    let sessions = scratch_sessions(&dir);
+    // July: only a session the person spoke in (a mission's, an app's and a
+    // hidden shell row are not their words). August: a void and a no-raise
+    // note, which say nothing. September, October: notes. November: this month.
+    for (id, creator, skill) in [("s-mine", "user", None), ("s-mission", "mission", None), ("s-app", "user", Some("diary"))] {
+        sessions.add_session(&user_session(id, creator, skill)).unwrap();
+        say(&sessions, id, "user", "Let us plan the trip to Kyoto", NOW - 120 * DAY);
+    }
+    say(&sessions, "s-mine", "user", "[HIDDEN] greeting", NOW - 120 * DAY);
+    say(&sessions, "s-mine", "ling", "Sure.", NOW - 120 * DAY);
+    let gone = rule(&store, Scope::Person, "t", "Wrong fact", "", NOW - 90 * DAY);
+    write(&store, Audience::Companion, NOW - 90 * DAY, &w(Action::Void { id: gone, reason: "no".into() })).unwrap();
+    let quiet = rule(&store, Scope::Person, "t", "Private matter", "", NOW - 90 * DAY);
+    write(&store, Audience::Companion, NOW - 90 * DAY, &w(Action::NoRaise { id: quiet, on: true })).unwrap();
+    rule(&store, Scope::Person, "t", "Chose Rust for the engine", "Why: one binary.", NOW - 60 * DAY);
+    rule(&store, Scope::Person, "t2", "Prefers just over make", "", NOW - 30 * DAY);
+    rule(&store, Scope::Person, "t3", "Made this month", "", NOW);
+
+    let got = chronicle::prepare(&store, &sessions, NOW).expect("months wait");
+    assert_eq!(got.months, ["2026-07", "2026-09", "2026-10"]);
+    assert!(got.years.is_empty(), "this year is not over");
+    let lines: Vec<serde_json::Value> = got.text.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+    assert_eq!(lines[0]["header"], true);
+    let july = &lines[1];
+    assert_eq!(july["month"], "2026-07");
+    let said = july["sessions"].as_array().unwrap();
+    assert_eq!(said.len(), 1, "{july}");
+    assert_eq!(said[0]["title"], "title of s-mine");
+    assert_eq!(said[0]["turns"], 1);
+    assert!(!got.text.contains("Wrong fact") && !got.text.contains("Private matter") && !got.text.contains("Made this month"));
+    assert!(got.text.contains("Chose Rust for the engine"));
+
+    // A month with a file is not offered again, however little it says.
+    chronicle_line(&store, "2026-09", "2026-09 quiet month", NOW).unwrap();
+    assert_eq!(chronicle::prepare(&store, &sessions, NOW).unwrap().months, ["2026-07", "2026-10"]);
+}
+
+#[test]
+fn nothing_waiting_is_none_and_a_run_is_capped_oldest_first() {
+    let (dir, store) = scratch();
+    let sessions = scratch_sessions(&dir);
+    assert!(chronicle::prepare(&store, &sessions, NOW).is_none(), "an empty store has nothing to write");
+    for back in 1..=14 {
+        rule(&store, Scope::Person, "t", &format!("Note {back}"), "", NOW - back * 31 * DAY);
+    }
+    let got = chronicle::prepare(&store, &sessions, NOW).unwrap();
+    assert_eq!(got.months.len(), chronicle::MONTHS_PER_RUN);
+    assert!(got.months.windows(2).all(|m| m[0] < m[1]), "{:?}", got.months);
+}
+
+#[test]
+fn a_past_year_is_summed_up_once_all_its_months_are_written() {
+    let (dir, store) = scratch();
+    let sessions = scratch_sessions(&dir);
+    rule(&store, Scope::Person, "t", "Started the research", "", NOW - 365 * DAY);
+    rule(&store, Scope::Person, "t", "Wrote up the research paper", "", NOW - 335 * DAY);
+    // Two months of 2025 wait, and the year waits for them in the same run.
+    let got = chronicle::prepare(&store, &sessions, NOW).unwrap();
+    assert_eq!(got.months, ["2025-11", "2025-12"]);
+    assert_eq!(got.years, ["2025"]);
+    let year: serde_json::Value = serde_json::from_str(got.text.lines().last().unwrap()).unwrap();
+    assert_eq!(year["month_files"], json!(["chronicle/2025/2025-11.md", "chronicle/2025/2025-12.md"]));
+    // Months written, the year still is.
+    chronicle_line(&store, "2025-11", "2025-11-24 Started the research", NOW).unwrap();
+    chronicle_line(&store, "2025-12", "2025-12-24 Wrote up the research paper", NOW).unwrap();
+    let after = chronicle::prepare(&store, &sessions, NOW).unwrap();
+    assert!(after.months.is_empty() && after.years == ["2025"], "{after:?}");
+    chronicle_line(&store, "2025", "2025 Research, from start to paper", NOW).unwrap();
+    assert!(chronicle::prepare(&store, &sessions, NOW).is_none());
+}
+
+// ── Yinyue's day ───────────────────────────────────────────────────────────
+
+use super::companion;
+
+fn moment_at(store: &Store, summary: &str, at: i64) -> String {
+    let action = add_action(Scope::Moments, "", summary, Kind::Moment, Voice::Agent, "Felt regret; concluded: wait a day.");
+    write(store, Audience::Companion, at, &w(action)).unwrap().id
+}
+
+fn yearly(store: &Store, summary: &str, day: &str) -> String {
+    let action = add_action(Scope::Person, "days", summary, Kind::Person, Voice::Agent, "");
+    let id = write(store, Audience::Companion, NOW, &w(action)).unwrap().id;
+    write(store, Audience::Companion, NOW, &w(Action::Yearly { id: id.clone(), day: Some(day.into()) })).unwrap();
+    id
+}
+
+#[test]
+fn the_day_has_the_same_date_in_past_years_and_the_recurring_days_near_it() {
+    let (_d, store) = scratch();
+    // 2026-11-25 today. Same date a year and two years ago; an other date; a chronicle line.
+    moment_at(&store, "Black Friday: regretted the spend", NOW - 365 * DAY);
+    moment_at(&store, "A quiet Sunday", NOW - 370 * DAY);
+    chronicle_line(&store, "2024-11", "2024-11-25 Moved to Berlin", NOW).unwrap();
+    chronicle_line(&store, "2024-11", "2024-11 Settled in", NOW).unwrap();
+    yearly(&store, "Mom's birthday", "1966-11-27");
+    yearly(&store, "Our anniversary", "11-25");
+    yearly(&store, "A day far off", "03-01");
+    let text = companion::today(&store, NOW);
+    assert!(text.contains("1 year ago (2025-11-25) · Black Friday: regretted the spend"), "{text}");
+    assert!(text.contains("2 years ago (2024-11-25) · Moved to Berlin"), "{text}");
+    assert!(!text.contains("A quiet Sunday") && !text.contains("Settled in"), "{text}");
+    assert!(text.contains("in 2 days · Mom's birthday (every year 11-27, 60 years"), "{text}");
+    assert!(text.contains("today · Our anniversary"), "{text}");
+    assert!(!text.contains("A day far off"));
+    // Nothing near today: nothing said.
+    assert_eq!(companion::today(&store, NOW + 100 * DAY), "");
+}
+
+#[test]
+fn what_she_must_not_raise_is_never_in_her_day() {
+    let (_d, store) = scratch();
+    let hurt = moment_at(&store, "The break-up", NOW - 365 * DAY);
+    let gone = moment_at(&store, "A wrong memory", NOW - 730 * DAY);
+    let birthday = yearly(&store, "A birthday not to mention", "11-26");
+    assert!(companion::today(&store, NOW).contains("The break-up"));
+    write(&store, Audience::Companion, NOW, &w(Action::NoRaise { id: hurt, on: true })).unwrap();
+    write(&store, Audience::Companion, NOW, &w(Action::NoRaise { id: birthday, on: true })).unwrap();
+    write(&store, Audience::Companion, NOW, &w(Action::Void { id: gone, reason: "wrong".into() })).unwrap();
+    let text = companion::today(&store, NOW);
+    for hidden in ["The break-up", "A wrong memory", "A birthday not to mention"] {
+        assert!(!text.contains(hidden), "{hidden} is in her day: {text}");
+    }
+    // Her index still tells her it is there, marked, so she can answer if asked.
+    let block = super::prompt::owner_block(&store, Audience::Companion, Path::new("/"), NOW);
+    assert!(block.contains("The break-up") && block.contains("don't raise"), "{block}");
+    assert!(block.contains("never bring up yourself"), "{block}");
+}
+
+#[test]
+fn only_the_companions_prompt_has_her_day_and_one_place_builds_it() {
+    let (_d, store) = scratch();
+    yearly(&store, "Our anniversary", "11-25");
+    let hers = super::prompt::owner_block(&store, Audience::Companion, Path::new("/"), NOW);
+    assert!(hers.contains("today · Our anniversary") && hers.contains("action=yearly"), "{hers}");
+    for audience in [Audience::Work, Audience::Chronicler] {
+        let block = super::prompt::owner_block(&store, audience, Path::new("/"), NOW);
+        assert!(!block.contains("Today, ") && !block.contains("action=yearly"), "{audience:?}: {block}");
+    }
+    for file in ["call.rs", "chronicle.rs", "fence.rs", "find.rs", "index.rs", "write.rs"] {
+        assert!(!source_of(file).contains("companion::today"), "{file} builds her day; only prompt.rs asks for it");
+    }
+    assert!(source_of("prompt.rs").contains("companion::today"));
+}
+
+#[test]
+fn a_yearly_day_is_a_real_day_and_survives_the_file() {
+    assert_eq!(yearly_day("11-26").as_deref(), Some("11-26"));
+    assert_eq!(yearly_day("02-29").as_deref(), Some("02-29"));
+    assert_eq!(yearly_day("1966-11-26").as_deref(), Some("1966-11-26"));
+    for bad in ["", "13-01", "11-31", "1966/11/26", "tomorrow", "1966-13-01"] {
+        assert_eq!(yearly_day(bad), None, "{bad}");
+    }
+    let (_d, store) = scratch();
+    let id = yearly(&store, "Mom's birthday", "1966-11-26");
+    let got = read_entry(&store, Audience::Companion, &id);
+    assert_eq!(got.entry.yearly.as_deref(), Some("1966-11-26"));
+    let bad = w(Action::Yearly { id: id.clone(), day: Some("someday".into()) });
+    assert_eq!(write(&store, Audience::Companion, NOW, &bad).unwrap_err(), Refusal::NotADay);
+    write(&store, Audience::Companion, NOW, &w(Action::Yearly { id: id.clone(), day: None })).unwrap();
+    assert_eq!(read_entry(&store, Audience::Companion, &id).entry.yearly, None);
 }

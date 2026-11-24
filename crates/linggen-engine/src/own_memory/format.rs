@@ -27,10 +27,14 @@ pub enum Kind {
     Gotcha,
     /// A dated life moment, Yinyue's: what happened, how it felt, what was concluded.
     Moment,
+    /// One line of the chronicle: what the person did, with its date. Only
+    /// in the chronicle's files, and only there.
+    Chronicle,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 5] = [Kind::Person, Kind::Rule, Kind::Decision, Kind::Gotcha, Kind::Moment];
+    pub const ALL: [Kind; 6] =
+        [Kind::Person, Kind::Rule, Kind::Decision, Kind::Gotcha, Kind::Moment, Kind::Chronicle];
 
     pub fn word(self) -> &'static str {
         match self {
@@ -39,11 +43,27 @@ impl Kind {
             Kind::Decision => "decision",
             Kind::Gotcha => "gotcha",
             Kind::Moment => "moment",
+            Kind::Chronicle => "chronicle",
         }
     }
 
     pub fn parse(word: &str) -> Option<Kind> {
         Kind::ALL.into_iter().find(|k| k.word() == word.trim())
+    }
+
+    /// Whether a note of this kind may be filed under `scope`: a moment only
+    /// in `moments`, a chronicle line only in the chronicle, every other kind
+    /// anywhere else. The one rule; the writer asks it on every change.
+    pub fn fits(self, scope: &Scope) -> bool {
+        let home = match self {
+            Kind::Moment => Some(Scope::Moments),
+            Kind::Chronicle => Some(Scope::Chronicle),
+            _ => None,
+        };
+        match home {
+            Some(home) => home == *scope,
+            None => !matches!(scope, Scope::Moments | Scope::Chronicle),
+        }
     }
 }
 
@@ -113,15 +133,19 @@ pub enum Scope {
     Project(PathBuf),
     /// Yinyue's dated life moments, one file a month.
     Moments,
+    /// The chronicle: what the person did, one file a month and one for a
+    /// year (`chronicle/<yyyy>/<yyyy-mm>.md`).
+    Chronicle,
 }
 
 impl Scope {
-    /// `person`, `area:body`, `project:/abs/path`, `moments`.
+    /// `person`, `area:body`, `project:/abs/path`, `moments`, `chronicle`.
     pub fn parse(text: &str) -> Option<Scope> {
         let text = text.trim();
         match text {
             "person" => return Some(Scope::Person),
             "moments" => return Some(Scope::Moments),
+            "chronicle" => return Some(Scope::Chronicle),
             _ => {}
         }
         if let Some(area) = text.strip_prefix("area:") {
@@ -137,6 +161,7 @@ impl Scope {
             Scope::Area(a) => format!("area:{}", a.word()),
             Scope::Project(p) => format!("project:{}", p.display()),
             Scope::Moments => "moments".to_string(),
+            Scope::Chronicle => "chronicle".to_string(),
         }
     }
 }
@@ -156,6 +181,10 @@ pub struct Entry {
     pub void: Option<String>,
     /// Yinyue never brings it up herself.
     pub no_raise: bool,
+    /// The day this note repeats every year (a birthday, an anniversary), as
+    /// [`yearly_day`] writes it: `MM-DD`, or `YYYY-MM-DD` when the first year
+    /// is known.
+    pub yearly: Option<String>,
     pub body: String,
     /// Meta keys this build does not know, kept so another writer's survive.
     pub extra: Vec<(String, String)>,
@@ -184,6 +213,7 @@ impl Entry {
             source: one_line(source, 40),
             void: None,
             no_raise: false,
+            yearly: None,
             body: safe_body(body),
             extra: Vec::new(),
         }
@@ -204,9 +234,30 @@ impl Entry {
         if self.no_raise {
             parts.push("no-raise".to_string());
         }
+        if let Some(day) = &self.yearly {
+            parts.push(format!("yearly: {day}"));
+        }
         parts.extend(self.extra.iter().map(|(k, v)| format!("{k}: {v}")));
         format!("<!-- {} -->", parts.join(SEP))
     }
+}
+
+/// A day that repeats every year, as the file keeps it: `MM-DD` (February 29
+/// allowed), or `YYYY-MM-DD` when the first year is known. `None` when `text`
+/// is neither.
+pub fn yearly_day(text: &str) -> Option<String> {
+    let text = text.trim();
+    let (year, month_day) = match text.len() {
+        5 => (None, text),
+        10 => (Some(text.get(..4)?), text.get(5..)?),
+        _ => return None,
+    };
+    let (month, day) = month_day.split_once('-')?;
+    let digits = |s: &str, n: usize| s.len() == n && s.bytes().all(|b| b.is_ascii_digit());
+    let year_ok = year.map_or(true, |y| digits(y, 4) && text.as_bytes().get(4) == Some(&b'-'));
+    // Year 2000 has a February 29, so any real MM-DD passes.
+    let real = digits(month, 2) && digits(day, 2) && chrono::NaiveDate::from_ymd_opt(2000, month.parse().ok()?, day.parse().ok()?).is_some();
+    (year_ok && real).then(|| text.to_string())
 }
 
 /// A void reason or any meta value: one line, no separator, no comment end.
@@ -317,6 +368,7 @@ impl Topic {
                     source: String::new(),
                     void: None,
                     no_raise: false,
+                    yearly: None,
                     body: String::new(),
                     extra: Vec::new(),
                 });
@@ -374,6 +426,7 @@ fn read_meta(entry: &mut Entry, line: &str) -> Result<(), String> {
             "updated" => entry.updated = value,
             "source" => entry.source = value,
             "void" => entry.void = Some(value),
+            "yearly" => entry.yearly = Some(yearly_day(&value).ok_or("yearly is MM-DD or YYYY-MM-DD")?),
             other => entry.extra.push((other.to_string(), value)),
         }
     }

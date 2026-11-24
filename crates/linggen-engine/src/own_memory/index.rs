@@ -6,7 +6,8 @@
 //! Order (design § 4a): the person's notes (all) → the session's own scope
 //! (the nearest project first; for the companion, her areas) → notes read in
 //! the last 90 days, most read first → the rest, newest first. Budget: 200
-//! lines and 25 KB, Claude Code's own limit for its index.
+//! lines and 25 KB, Claude Code's own limit for its index. The chronicle is
+//! not in it: it is long, and found by search when the past is asked about.
 
 use super::fence::{self, Audience, Seen};
 use super::format::Scope;
@@ -61,7 +62,7 @@ fn index_in(store: &super::Store, audience: Audience, cwd: Option<&Path>, now: i
     let chain = cwd.map(|c| project_chain(store.env(), c)).unwrap_or_default();
     let mut ranked: Vec<(Rank, Seen)> = all
         .into_iter()
-        .filter(|s| s.entry.void.is_none() && reaches(reach, &s.scope, &chain))
+        .filter(|s| s.entry.void.is_none() && s.scope != Scope::Chronicle && reaches(reach, &s.scope, &chain))
         .map(|s| (rank(&s, audience, &chain, &uses), s))
         .collect();
     ranked.sort_by(|(ra, a), (rb, b)| {

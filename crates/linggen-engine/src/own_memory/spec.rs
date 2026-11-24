@@ -36,10 +36,10 @@ impl Op {
 pub const DESCRIPTION: &str = "Linggen's own notes about the person and the work. \
 op=index lists the notes for a project; op=read opens one note (id) or a topic file (path); \
 op=search finds notes by words, any language, and what other agents remember; \
-op=write adds a note (scope, topic, summary, kind, body) or changes one by id (action update, void, no_raise). \
+op=write adds a note (scope, topic, summary, kind, body) or changes one by id (action update, void, no_raise, yearly). \
 Write only a fact the person asked to remember, a decision or rule with its why, or a gotcha — never what was done or where work stands. \
 A note in the person's own voice changes only after you show it and they agree (user_directed true). \
-Notes about the body, mind and people close to the person, and life moments, are Yinyue's alone.";
+Notes about the body, mind and people close to the person, life moments, and the chronicle (what the person did, month by month) are Yinyue's alone.";
 
 /// The fields `op` takes, with their definitions.
 pub fn fields(op: Op) -> Vec<(&'static str, Value)> {
@@ -47,7 +47,7 @@ pub fn fields(op: Op) -> Vec<(&'static str, Value)> {
         Op::Index => &["cwd"],
         Op::Read => &["id", "path"],
         Op::Search => &["words", "limit"],
-        Op::Write => &["action", "scope", "topic", "summary", "kind", "voice", "body", "id", "reason", "on", "user_directed", "base"],
+        Op::Write => &["action", "scope", "topic", "summary", "kind", "voice", "body", "id", "reason", "on", "user_directed", "base", "day"],
     };
     names.iter().map(|name| (*name, definition(name))).collect()
 }
@@ -59,16 +59,17 @@ fn definition(name: &str) -> Value {
         "path" => json!({"type": "string", "description": "A topic file inside the store, e.g. person/diet.md"}),
         "words" => json!({"type": "string", "description": "Words to find (any language, any case); a note with more of them ranks higher"}),
         "limit" => json!({"type": "integer", "description": "Most hits (default 10, at most 30)"}),
-        "action" => json!({"type": "string", "enum": ["add", "update", "void", "no_raise"], "description": "Default add (update when an id is given)"}),
-        "scope" => json!({"type": "string", "description": "add: person | area:<body|mind|people|music|money|play|home> | project:<absolute path> | moments"}),
-        "topic" => json!({"type": "string", "description": "add: the topic file's name"}),
+        "action" => json!({"type": "string", "enum": ["add", "update", "void", "no_raise", "yearly"], "description": "Default add (update when an id is given)"}),
+        "scope" => json!({"type": "string", "description": "add: person | area:<body|mind|people|music|money|play|home> | project:<absolute path> | moments | chronicle"}),
+        "topic" => json!({"type": "string", "description": "add: the topic file's name; in the chronicle a month (2026-11) or a year (2026)"}),
         "summary" => json!({"type": "string", "description": "One line, at most 80 characters"}),
-        "kind" => json!({"type": "string", "enum": ["person", "rule", "decision", "gotcha", "moment"]}),
+        "kind" => json!({"type": "string", "enum": ["person", "rule", "decision", "gotcha", "moment", "chronicle"]}),
         "voice" => json!({"type": "string", "enum": ["user", "agent"], "description": "add: user for the person's own words"}),
         "body" => json!({"type": "string", "description": "What, and for a rule, decision or gotcha the why"}),
         "reason" => json!({"type": "string", "description": "void: why the note is wrong"}),
         "on" => json!({"type": "boolean", "description": "no_raise: true (default) = never bring it up unasked"}),
         "user_directed" => json!({"type": "boolean", "description": "true only after the person agreed to change a note in their own voice"}),
+        "day" => json!({"type": "string", "description": "yearly: the day the note repeats every year, MM-DD or YYYY-MM-DD (a birthday, an anniversary); empty clears it"}),
         "base" => json!({"type": "string", "description": "The version of the topic file you read"}),
         other => panic!("memory_notes has no field {other}"),
     }

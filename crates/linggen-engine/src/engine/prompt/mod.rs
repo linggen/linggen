@@ -1452,16 +1452,15 @@ impl AgentEngine {
     // reminder (`chat::runtime::recall_into_thread`). v2 is `own_memory`: its
     // index in the prompt and the `memory_notes` tool, and none of those.
     // Only a person's session (`include_memory`) and an app's own (its place)
-    // change; a mission stays on v1. These methods and `recall_into_thread`
-    // are the only readers of the mode.
+    // change; a mission stays on v1, but for the chronicle's own run, which
+    // has the notes tool alone (`is_chronicling`). These methods and
+    // `recall_into_thread` are the only readers of the mode.
 
     /// Who reads the notes this session writes and reads: Yinyue, outside a
-    /// coding session, is the companion (`own_memory::audience_of`).
+    /// coding session, is the companion; the chronicler reads all and writes
+    /// the chronicle (`own_memory::agent_audience`).
     pub(crate) fn memory_audience(&self) -> own_memory::Audience {
-        own_memory::audience_of(
-            self.agent_id.as_deref() == Some(crate::agent_ids::COMPANION_AGENT_ID),
-            self.is_coding_session(),
-        )
+        own_memory::agent_audience(self.agent_id.as_deref(), self.is_coding_session())
     }
 
     /// The prompt's memory section for a person's session.
@@ -1510,9 +1509,17 @@ impl AgentEngine {
     /// session is not a person's; v1's memory server's tools where v2 is on.
     fn memory_tool_is_withheld(&self, tool: &str) -> bool {
         match tool == own_memory::TOOL {
-            true => !self.has_v2_memory(),
+            true => !(self.has_v2_memory() || self.is_chronicling()),
             false => self.v1_memory_is_replaced(tool),
         }
+    }
+
+    /// The chronicle's own run under v2: a mission that has `memory_notes`
+    /// (when its `allowed-tools` list it) though it carries no person's
+    /// memory — to write the chronicle, the one thing the fence lets it write.
+    fn is_chronicling(&self) -> bool {
+        self.cfg.memory_linggen == own_memory::Mode::V2
+            && self.memory_audience() == own_memory::Audience::Chronicler
     }
 
     /// `tool` is one of v1's memory server's, and this session has v2.
