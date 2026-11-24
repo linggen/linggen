@@ -150,5 +150,6 @@ fn rel_inside(store: &Store, path: &str) -> Option<String> {
         .collect::<Option<_>>()?;
     let plain = !parts.is_empty() && !parts.iter().any(|p| p.starts_with('.'));
     let rel = parts.join("/");
-    (plain && Path::new(&rel).extension().is_some_and(|e| e == "md")).then_some(rel)
+    let note = Path::new(&rel).extension().is_some_and(|e| e == "md") && Store::is_topic_path(&rel);
+    (plain && note).then_some(rel)
 }

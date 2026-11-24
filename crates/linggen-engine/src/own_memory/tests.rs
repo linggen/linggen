@@ -254,6 +254,36 @@ fn a_moment_is_a_moment_in_moments_and_nothing_else_is() {
     assert_eq!(done.rel, format!("moments/2026/{}.md", super::day_of(NOW).chars().take(7).collect::<String>()));
 }
 
+#[test]
+fn a_note_cannot_become_a_moment_or_stop_being_one() {
+    let (_d, store) = scratch();
+    let id = rule(&store, Scope::Person, "t", "A rule", "", NOW);
+    let edit = w(Action::Update { id, summary: None, body: None, kind: Some(Kind::Moment) });
+    assert_eq!(write(&store, Audience::Companion, NOW, &edit).unwrap_err(), Refusal::MomentMismatch);
+    let moment = add_action(Scope::Moments, "", "A day", Kind::Moment, Voice::Agent, "felt fine");
+    let id = write(&store, Audience::Companion, NOW, &w(moment)).unwrap().id;
+    let edit = w(Action::Update { id, summary: None, body: None, kind: Some(Kind::Rule) });
+    assert_eq!(write(&store, Audience::Companion, NOW, &edit).unwrap_err(), Refusal::MomentMismatch);
+}
+
+/// The v1 store keeps its backups and database in the same `memory/`
+/// folder: none of it is a note, listed or read.
+#[test]
+fn the_rest_of_the_memory_folder_is_not_ours() {
+    let (_d, store) = scratch();
+    rule(&store, Scope::Person, "t", "A rule", "", NOW);
+    for stray in ["backups/x.md", "lancedb/x.md", "README.md", "person-old/x.md"] {
+        let path = store.root().join(stray);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "---\ntopic: x\nscope: person\n---\n\n## Stray\n<!-- id: s000000001 · kind: rule · voice: agent · created: d · updated: d · source: x -->\n").unwrap();
+        assert!(read(&store, Audience::Companion, stray, NOW).is_err(), "{stray} is readable");
+    }
+    let (seen, problems) = super::fence::seen(&store, Audience::Companion);
+    assert_eq!(seen.len(), 1);
+    assert!(problems.is_empty(), "{problems:?}");
+    assert!(read(&store, Audience::Companion, "s000000001", NOW).is_err());
+}
+
 // ── void and no-raise ──────────────────────────────────────────────────────
 
 #[test]

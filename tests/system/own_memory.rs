@@ -158,3 +158,29 @@ async fn at_the_door_a_host_keeps_notes_as_itself_and_never_sees_the_fenced_ones
     assert!(refused.unwrap_err().contains("may not write there"));
     assert!(notes(&w, json!({"op": "read", "path": "areas/mind/past.md"})).await.is_err());
 }
+
+/// Yinyue, through `/api/yinyue/chat`: she writes a life moment and reads her
+/// own mind note — what Ling's session is refused — and the moment is signed
+/// as hers.
+#[tokio::test]
+async fn yinyue_keeps_a_moment_and_reads_her_mind_notes_through_the_tool() {
+    let moment = json!({"op": "write", "scope": "moments", "summary": "Black Friday: regretted the spend", "kind": "moment", "body": "Felt regret; concluded to wait a day."});
+    let read = json!({"op": "read", "id": "m000000001"});
+    let w = World::start_with_home(
+        Setup { config_append: V2, ..Setup::default() }.script(Agent::Yinyue, vec![tool("memory_notes", moment), tool("memory_notes", read), text("Noted.")]),
+        seed,
+    )
+    .await;
+    let mark = w.mark();
+    w.api.post("/api/yinyue/chat", json!({"text": "I regret what I bought today."})).await;
+    w.wait_agent(Agent::Yinyue, mark).await;
+    let calls = w.model.calls_of(Agent::Yinyue);
+    assert_eq!(calls.len(), 3, "write, read, answer");
+    assert!(calls[2].text().contains("concluded to rest more"), "she could not read her mind note: {}", calls[2].text());
+    let moments = w.home.linggen_home().join("memory/moments");
+    let year = std::fs::read_dir(&moments).expect("a moments folder").flatten().next().unwrap().path();
+    let month = std::fs::read_dir(year).unwrap().flatten().next().unwrap().path();
+    let file = std::fs::read_to_string(month).unwrap();
+    assert!(file.contains("regretted the spend") && file.contains("source: yinyue"), "{file}");
+    w.assert_all_scripted();
+}

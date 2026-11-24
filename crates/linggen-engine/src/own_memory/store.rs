@@ -12,6 +12,10 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 const STATE: &str = ".state";
+/// The folders topic files live in. The rest of `memory/` is not these
+/// notes' (the v1 store keeps its backups and database there): never walked,
+/// never read.
+const TOPIC_DIRS: [&str; 4] = ["person", "areas", "projects", "moments"];
 /// Prior versions kept for each file.
 const HISTORY_KEPT: usize = 20;
 const SLUG_CHARS: usize = 60;
@@ -79,12 +83,19 @@ impl Store {
         Ok(Some(Loaded { rel: rel.to_string(), version: version_of(&text), topic }))
     }
 
-    /// Paths (with `/`) of every `.md` under the store but `.state`, sorted.
+    /// Paths (with `/`) of every `.md` under the topic folders, sorted.
     fn topic_files(&self) -> Vec<String> {
         let mut out = Vec::new();
-        collect(&self.root, "", &mut out);
+        for dir in TOPIC_DIRS {
+            collect(&self.root.join(dir), dir, &mut out);
+        }
         out.sort();
         out
+    }
+
+    /// Whether `rel` is inside one of the topic folders.
+    pub(super) fn is_topic_path(rel: &str) -> bool {
+        TOPIC_DIRS.iter().any(|dir| rel.starts_with(&format!("{dir}/")))
     }
 
     /// Where a topic of `scope` named `slug` lives.

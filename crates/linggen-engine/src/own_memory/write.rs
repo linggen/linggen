@@ -229,6 +229,9 @@ fn change(
     let mut topic = file.topic;
     let entry = topic.entries.iter_mut().find(|e| e.id == found.entry.id).ok_or(Refusal::NotFound)?;
     edit(entry)?;
+    if (entry.kind == Kind::Moment) != (found.scope == Scope::Moments) {
+        return Err(Refusal::MomentMismatch);
+    }
     entry.updated = today.to_string();
     entry.source = one_line(&w.source, 40);
     store.save(&found.rel, topic).map_err(|e| Refusal::Disk(e.to_string()))?;
