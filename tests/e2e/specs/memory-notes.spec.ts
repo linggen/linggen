@@ -85,11 +85,11 @@ test('a long press opens the same menu, and delete asks first', async ({ page, w
   await expect(menu.getByRole('menuitem')).toHaveText(['Edit', 'Mark right again', 'Never bring up', 'Delete']);
 
   await menu.getByRole('menuitem', { name: 'Delete' }).click();
-  await page.getByRole('dialog').getByRole('button', { name: 'Cancel' }).click();
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Cancel' }).click();
   await expect(row).toBeVisible();
   await row.getByRole('button', { name: 'Options' }).click();
   await page.getByRole('menuitem', { name: 'Delete' }).click();
-  await page.getByRole('dialog').getByRole('button', { name: 'OK' }).click();
+  await page.getByRole('alertdialog').getByRole('button', { name: 'OK' }).click();
   await expect(row).toHaveCount(0);
   await expect.poll(() => readFileSync(own, 'utf8')).not.toContain('Old wrong thing');
 });
