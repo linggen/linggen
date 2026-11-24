@@ -263,7 +263,7 @@ impl Provider for AnthropicClient {
         opts: TurnOptions<'_>,
     ) -> Result<ChunkStream> {
         let max_tokens = opts.max_output.unwrap_or(FALLBACK_OUTPUT_TOKENS);
-        let stream = self.chat_text_stream(&cfg.model, messages, max_tokens).await?;
+        let stream = self.chat_text_stream(&cfg.model, messages, max_tokens, opts.effort.wire()).await?;
         Ok(Box::pin(stream))
     }
 
@@ -275,7 +275,7 @@ impl Provider for AnthropicClient {
         opts: TurnOptions<'_>,
     ) -> Result<ChunkStream> {
         let max_tokens = opts.max_output.unwrap_or(FALLBACK_OUTPUT_TOKENS);
-        let stream = self.chat_tool_stream(&cfg.model, messages, tools, max_tokens).await?;
+        let stream = self.chat_tool_stream(&cfg.model, messages, tools, max_tokens, opts.effort.wire()).await?;
         Ok(Box::pin(stream))
     }
 

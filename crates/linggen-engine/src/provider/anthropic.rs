@@ -180,8 +180,9 @@ impl AnthropicClient {
         model: &str,
         messages: &[ChatMessage],
         max_tokens: u32,
+        effort: Option<&str>,
     ) -> Result<impl Stream<Item = Result<StreamChunk>> + Send> {
-        self.stream_messages(model, messages, vec![], max_tokens).await
+        self.stream_messages(model, messages, vec![], max_tokens, effort).await
     }
 
     /// A request with tools; `max_tokens` is the output limit it carries.
@@ -191,25 +192,31 @@ impl AnthropicClient {
         messages: &[ChatMessage],
         tools: Vec<serde_json::Value>,
         max_tokens: u32,
+        effort: Option<&str>,
     ) -> Result<impl Stream<Item = Result<StreamChunk>> + Send> {
         let anthro_tools: Vec<serde_json::Value> = tools.iter().filter_map(wire_tool_def).collect();
-        self.stream_messages(model, messages, anthro_tools, max_tokens).await
+        self.stream_messages(model, messages, anthro_tools, max_tokens, effort).await
     }
 
     // -----------------------------------------------------------------
     // Shared streaming implementation
     // -----------------------------------------------------------------
 
-    async fn stream_messages(
+    /// The effort levels the Messages API takes in `output_config.effort`
+    /// (platform.claude.com/docs/en/build-with-claude/effort); which of them
+    /// a model takes is its catalog's (`provider::models::effort`).
+    pub(crate) const EFFORT_VALUES: [&'static str; 5] = ["low", "medium", "high", "xhigh", "max"];
+
+    /// The request body of one call. With no `effort` it is exactly the body
+    /// that was sent before effort existed.
+    fn request_body(
         &self,
         model: &str,
-        messages: &[ChatMessage],
+        translated: Translated,
         anthro_tools: Vec<serde_json::Value>,
         max_tokens: u32,
-    ) -> Result<impl Stream<Item = Result<StreamChunk>> + Send> {
-        let url = format!("{}/v1/messages", self.base_url);
-        let translated = translate_messages(messages);
-
+        effort: Option<&str>,
+    ) -> serde_json::Value {
         let mut req = serde_json::json!({
             "model": model,
             "max_tokens": max_tokens,
@@ -229,6 +236,22 @@ impl AnthropicClient {
         if !anthro_tools.is_empty() {
             req["tools"] = serde_json::Value::Array(anthro_tools);
         }
+        if let Some(effort) = effort {
+            req["output_config"] = serde_json::json!({ "effort": effort });
+        }
+        req
+    }
+
+    async fn stream_messages(
+        &self,
+        model: &str,
+        messages: &[ChatMessage],
+        anthro_tools: Vec<serde_json::Value>,
+        max_tokens: u32,
+        effort: Option<&str>,
+    ) -> Result<impl Stream<Item = Result<StreamChunk>> + Send> {
+        let url = format!("{}/v1/messages", self.base_url);
+        let mut req = self.request_body(model, translate_messages(messages), anthro_tools, max_tokens, effort);
 
         tracing::info!(
             "Anthropic stream: model={} msgs={} tools={} chars={}",
@@ -809,6 +832,46 @@ mod tests {
         assert_eq!(a.system, Some(serde_json::json!("You are Ling.")));
         assert_eq!(a.system, b.system);
         assert_eq!(a.messages[..], b.messages[..a.messages.len()]);
+    }
+
+    fn body(base: &str, tools: Vec<serde_json::Value>, effort: Option<&str>) -> serde_json::Value {
+        let client = AnthropicClient::new(base.to_string(), Some("k".into()));
+        let translated = translate_messages(&[ChatMessage::new("system", "You are Ling."), ChatMessage::new("user", "hi")]);
+        client.request_body("claude-sonnet-5-5", translated, tools, 4096, effort)
+    }
+
+    /// A request fixture: with no effort chosen the body is what it was
+    /// before effort existed (written from that construction), on Anthropic's
+    /// own host and on a gateway, with and without tools.
+    #[test]
+    fn a_request_without_effort_is_the_body_it_always_was() {
+        let tool = serde_json::json!({"name": "Read", "description": "d", "input_schema": {"type": "object"}});
+        let own = serde_json::json!({
+            "model": "claude-sonnet-5-5", "max_tokens": 4096, "stream": true,
+            "messages": [{"role": "user", "content": "hi"}],
+            "system": "You are Ling.", "cache_control": {"type": "ephemeral"},
+        });
+        assert_eq!(body("https://api.anthropic.com", vec![], None), own);
+        let mut with_tools = own.clone();
+        with_tools["tools"] = serde_json::json!([tool.clone()]);
+        assert_eq!(body("https://api.anthropic.com", vec![tool.clone()], None), with_tools);
+        let mut gateway = own;
+        gateway.as_object_mut().unwrap().remove("cache_control");
+        assert_eq!(body("https://gateway.invalid", vec![], None), gateway);
+    }
+
+    /// With effort the one addition is `output_config.effort`
+    /// (platform.claude.com/docs/en/build-with-claude/effort); nothing else
+    /// in the body moves, and no `thinking` field is sent.
+    #[test]
+    fn effort_adds_only_output_config_effort() {
+        let plain = body("https://api.anthropic.com", vec![], None);
+        for value in AnthropicClient::EFFORT_VALUES {
+            let mut expected = plain.clone();
+            expected["output_config"] = serde_json::json!({ "effort": value });
+            assert_eq!(body("https://api.anthropic.com", vec![], Some(value)), expected);
+        }
+        assert!(plain.get("thinking").is_none());
     }
 }
 

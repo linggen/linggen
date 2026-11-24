@@ -23,6 +23,7 @@
 
 use super::{family_catalog, ModelManager};
 use crate::config::{ModelConfig, ProviderKind, SignIn};
+use crate::provider::anthropic::AnthropicClient;
 use crate::provider::openai::OpenAiClient;
 
 /// What the caller of a call has to say about effort, by who says it.
@@ -95,8 +96,9 @@ fn candidates<'a>(ask: &EffortAsk<'a>, row: &'a ModelConfig) -> [(Source, Option
 fn wire_values(kind: ProviderKind) -> &'static [&'static str] {
     match kind {
         ProviderKind::OpenAiCompatible | ProviderKind::ChatGpt => &OpenAiClient::EFFORT_VALUES,
-        // Nothing is forwarded to these today.
-        ProviderKind::Anthropic | ProviderKind::Ollama | ProviderKind::Proxy => &[],
+        ProviderKind::Anthropic => &AnthropicClient::EFFORT_VALUES,
+        // Nothing is forwarded to either today.
+        ProviderKind::Ollama | ProviderKind::Proxy => &[],
     }
 }
 
@@ -178,8 +180,8 @@ mod tests {
         })).unwrap()
     }
 
-    fn gpt(model: &str, effort: Option<&str>) -> ModelConfig {
-        row(model, "openai", "https://api.openai.com/v1", None, effort)
+    fn claude(model: &str) -> ModelConfig {
+        row(model, "anthropic", "https://api.anthropic.com", None, None)
     }
 
     fn sent(row: &ModelConfig, ask: EffortAsk<'_>) -> Option<String> {
@@ -188,7 +190,7 @@ mod tests {
 
     #[test]
     fn only_the_overlap_of_exact_catalog_values_and_wire_values_is_offered() {
-        let mut row = gpt("gpt-5.4-pro", None);
+        let mut row = row("gpt-5.4-pro", "openai", "https://api.openai.com/v1", None, None);
         assert_eq!(choices(&row), ["medium", "high"]);
         row.provider = "ollama".into();
         assert!(choices(&row).is_empty());
@@ -198,26 +200,39 @@ mod tests {
     }
 
     #[test]
+    fn claude_offers_what_the_catalog_lists_and_the_wire_carries() {
+        assert_eq!(choices(&claude("claude-sonnet-5-5")), ["low", "medium", "high", "xhigh", "max"]);
+        assert_eq!(choices(&claude("claude-opus-4-6")), ["low", "medium", "high", "max"]);
+        assert_eq!(choices(&claude("claude-opus-4-5")), ["low", "medium", "high"]);
+        // Budget-token-only models have no effort field.
+        assert!(choices(&claude("claude-haiku-4-5")).is_empty());
+        // Another host behind the same wire is not Anthropic's catalog.
+        assert!(choices(&row("claude-sonnet-5-5", "anthropic", "https://gateway.invalid", None, None)).is_empty());
+    }
+
+    #[test]
     fn a_sign_in_offers_nothing_until_its_own_backend_says() {
+        // The Claude sign-in: the docs name no sign-in for the field, so none is sent.
+        assert!(choices(&row("claude-sonnet-5-5", "anthropic", "", Some("claude_oauth"), None)).is_empty());
         // ChatGPT's capabilities come from its backend, not the API-facts file.
         assert!(choices(&row("gpt-6.2-sol", "chatgpt", "", Some("chatgpt_oauth"), None)).is_empty());
     }
 
     #[test]
     fn the_order_is_forced_session_agent_chat_row() {
-        let r = gpt("gpt-5", Some("high"));
-        let all = EffortAsk { forced: Some("low"), session: Some("high"), agent: Some("medium"), chat_default: Some("low") };
-        assert_eq!(sent(&r, all).as_deref(), Some("low"), "forced");
-        assert_eq!(sent(&r, EffortAsk { forced: None, ..all }).as_deref(), Some("high"), "session");
-        assert_eq!(sent(&r, EffortAsk { forced: None, session: None, ..all }).as_deref(), Some("medium"), "agent");
-        assert_eq!(sent(&r, EffortAsk { agent: None, forced: None, session: None, ..all }).as_deref(), Some("low"), "chat default");
-        assert_eq!(sent(&r, EffortAsk::default()).as_deref(), Some("high"), "the legacy row value");
-        assert_eq!(sent(&gpt("gpt-5", None), EffortAsk::default()), None, "provider default");
+        let r = row("claude-sonnet-5-5", "anthropic", "https://api.anthropic.com", None, Some("max"));
+        let all = EffortAsk { forced: Some("low"), session: Some("high"), agent: Some("medium"), chat_default: Some("xhigh") };
+        assert_eq!(sent(&r, all).as_deref(), Some("low"));
+        assert_eq!(sent(&r, EffortAsk { forced: None, ..all }).as_deref(), Some("high"));
+        assert_eq!(sent(&r, EffortAsk { forced: None, session: None, ..all }).as_deref(), Some("medium"));
+        assert_eq!(sent(&r, EffortAsk { agent: None, forced: None, session: None, ..all }).as_deref(), Some("xhigh"));
+        assert_eq!(sent(&r, EffortAsk::default()).as_deref(), Some("max"), "the legacy row value");
+        assert_eq!(sent(&claude("claude-sonnet-5-5"), EffortAsk::default()), None, "provider default");
     }
 
     #[test]
     fn auto_is_the_provider_default_and_stops_the_walk() {
-        let r = gpt("gpt-5", Some("high"));
+        let r = row("claude-sonnet-5-5", "anthropic", "https://api.anthropic.com", None, Some("max"));
         let chat_auto = EffortAsk { chat_default: Some("auto"), ..EffortAsk::default() };
         assert_eq!(resolve(&r, &chat_auto), Resolved { effort: Effort(None), held_back: None });
         let session_auto = EffortAsk { session: Some("auto"), chat_default: Some("high"), ..EffortAsk::default() };
@@ -226,31 +241,32 @@ mod tests {
 
     #[test]
     fn a_value_the_model_lacks_is_the_provider_default_and_is_kept_and_told() {
-        // gpt-5.4-pro takes medium and high: the person's low stays; this call omits it.
-        let r = gpt("gpt-5.4-pro", None);
-        let ask = EffortAsk { session: Some("low"), ..EffortAsk::default() };
-        assert_eq!(resolve(&r, &ask), Resolved { effort: Effort(None), held_back: Some("low".into()) });
+        // Opus 4.5 has no xhigh: the person's choice stays; this call omits it.
+        let r = claude("claude-opus-4-5");
+        let ask = EffortAsk { session: Some("xhigh"), ..EffortAsk::default() };
+        assert_eq!(resolve(&r, &ask), Resolved { effort: Effort(None), held_back: Some("xhigh".into()) });
         // It does not fall through to a lower step.
-        let ask = EffortAsk { session: Some("low"), chat_default: Some("high"), ..EffortAsk::default() };
+        let ask = EffortAsk { session: Some("xhigh"), chat_default: Some("low"), ..EffortAsk::default() };
         assert_eq!(sent(&r, ask), None);
         // The same value on a model that has it is sent, with nothing held back.
-        let ask = EffortAsk { session: Some("low"), ..EffortAsk::default() };
-        let on_gpt5 = resolve(&gpt("gpt-5", None), &ask);
-        assert_eq!((on_gpt5.effort.wire(), on_gpt5.held_back), (Some("low"), None));
+        let ask = EffortAsk { session: Some("xhigh"), ..EffortAsk::default() };
+        let on_sonnet = resolve(&claude("claude-sonnet-5-5"), &ask);
+        assert_eq!((on_sonnet.effort.wire(), on_sonnet.held_back), (Some("xhigh"), None));
         // A model with no effort at all, and the chat default's value there.
         let ask = EffortAsk { chat_default: Some("high"), ..EffortAsk::default() };
-        assert_eq!(resolve(&gpt("gpt-4o", None), &ask).held_back.as_deref(), Some("high"));
+        assert_eq!(resolve(&claude("claude-haiku-4-5"), &ask).held_back.as_deref(), Some("high"));
     }
 
     #[test]
     fn legacy_and_forced_values_keep_the_openai_adapters_own_gate_and_are_never_told() {
-        let gateway = row("gpt-5.4", "openai", "https://gateway.invalid/v1", None, None);
+        let gpt = row("gpt-5.4", "openai", "https://gateway.invalid/v1", None, None);
         let agent = EffortAsk::agent(Some("low"));
-        assert_eq!(resolve(&gateway, &agent), Resolved { effort: Effort(Some("low".into())), held_back: None });
-        assert_eq!(resolve(&gateway, &EffortAsk::forced("low")).effort.wire(), Some("low"));
+        assert_eq!(resolve(&gpt, &agent), Resolved { effort: Effort(Some("low".into())), held_back: None });
+        assert_eq!(resolve(&gpt, &EffortAsk::forced("low")).effort.wire(), Some("low"));
+        // Where no gate exists, a legacy value was never sent and still is not.
         let sol = row("gpt-6.2-sol", "chatgpt", "", Some("chatgpt_oauth"), None);
         assert_eq!(resolve(&sol, &agent).effort.wire(), Some("low"), "the Responses gate is the old one");
-        // Where no backend takes effort, a legacy value was never sent and still is not.
+        assert_eq!(sent(&claude("claude-haiku-4-5"), agent), None);
         let ollama = row("llama", "ollama", "http://localhost:11434", None, Some("high"));
         assert_eq!(sent(&ollama, EffortAsk::forced("low")), None);
         assert_eq!(resolve(&ollama, &agent).held_back, None);
