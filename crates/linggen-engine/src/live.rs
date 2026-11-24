@@ -360,9 +360,9 @@ pub fn in_order(pref: Option<&str>) -> impl Iterator<Item = &'static Provider> {
     preferred.into_iter().chain(PROVIDERS.iter().filter(move |p| Some(p.id) != preferred.map(|p| p.id)))
 }
 
-/// Lingyu offers only the first declared provider. Explicit token requests
+/// The one provider a page is offered: the first declared. Explicit token requests
 /// can still name a development provider.
-pub fn for_lingyu() -> Option<&'static Provider> {
+pub fn offered_to_pages() -> Option<&'static Provider> {
     PROVIDERS.first()
 }
 

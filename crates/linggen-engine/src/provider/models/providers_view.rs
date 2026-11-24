@@ -220,7 +220,7 @@ impl ModelManager {
             group.mark_key(set);
             group.connected |= set && group.models.is_empty();
         }
-        for voice in live::for_lingyu() {
+        for voice in live::offered_to_pages() {
             let ready = live::key_ready(voice, &config.models, creds);
             let Some(preset) = PRESETS.iter().find(|p| p.serves_live(voice)) else { continue };
             let id = provider_id(SignIn::Key, preset.name, preset.url);

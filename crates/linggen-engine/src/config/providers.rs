@@ -74,7 +74,7 @@ impl Preset {
     }
 
     pub fn offered_live_models(&self) -> Vec<&'static str> {
-        crate::live::for_lingyu().filter(|p| self.serves_live(p)).map(|p| p.model).into_iter().collect()
+        crate::live::offered_to_pages().filter(|p| self.serves_live(p)).map(|p| p.model).into_iter().collect()
     }
 
     pub(crate) fn serves_live(&self, provider: &crate::live::Provider) -> bool {
