@@ -13,6 +13,8 @@ pub(super) struct Listed {
     /// The effort values it offers (`ModelManager::effort_choices`): the one
     /// answer of both wire projections; the chat's effort chip lists these.
     pub effort: Vec<&'static str>,
+    pub remembered_effort: Option<String>,
+    pub name: String,
 }
 
 pub(super) async fn for_person(
@@ -22,6 +24,7 @@ pub(super) async fn for_person(
     people: &People,
     room_shared: Option<&[String]>,
 ) -> Vec<Listed> {
+    let saved = state.manager.get_config_snapshot().await.uses.model_effort;
     let manager = state.manager.models.read().await;
     manager.list_of_kind(kind).into_iter()
         .filter(|m| match room_shared {
@@ -36,7 +39,7 @@ pub(super) async fn for_person(
             };
             let mut config = m.clone();
             config.api_key = None;
-            Listed { config, auth_ok, effort: manager.effort_choices(&m.id) }
+            Listed { config, auth_ok, effort: manager.effort_choices(&m.id), remembered_effort: saved.get(&m.id).cloned(), name: manager.display_name(m) }
         })
         .collect()
 }

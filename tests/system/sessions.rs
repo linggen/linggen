@@ -503,8 +503,8 @@ async fn a_page_removes_only_its_own_apps_sessions() {
 }
 
 /// The conversation's effort: only a value the answering model offers is
-/// kept, it stays through a model change and an engine restart, and "" gives
-/// it back to the chat default. The models list tells the chip what is offered.
+/// kept across a restart. A model change clears it so the new model can use
+/// its saved default. The models list tells the slider what is offered.
 #[tokio::test]
 async fn a_sessions_effort_is_kept_checked_and_survives_a_restart() {
     const ROW: &str = r#"
@@ -534,13 +534,11 @@ api_key = "test-not-a-key"
     // A value no wire carries is refused and the kept one stays.
     assert_eq!(w.api.patch_status("/api/sessions", json!({"session_id": sid, "effort": "xhigh"})).await, 400);
     assert_eq!(work_meta(&w, &sid)["effort"], "high");
-    // A model change leaves it alone, even to a model without it.
-    let other = json!({"session_id": sid, "agent_id": "ling", "model_id": "fake-ling"});
-    assert_eq!(w.api.patch_status("/api/sessions", other).await, 200);
-    assert_eq!(work_meta(&w, &sid)["effort"], "high");
-
     w.engine.restart(&w.home).await;
     assert_eq!(work_meta(&w, &sid)["effort"], "high");
+    let other = json!({"session_id": sid, "agent_id": "ling", "model_id": "fake-ling"});
+    assert_eq!(w.api.patch_status("/api/sessions", other).await, 200);
+    assert!(work_meta(&w, &sid).get("effort").is_none());
     let back = json!({"session_id": sid, "effort": ""});
     assert_eq!(w.api.patch_status("/api/sessions", back).await, 200);
     assert!(work_meta(&w, &sid).get("effort").is_none());

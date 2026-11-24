@@ -528,13 +528,6 @@ pub(crate) async fn rename_session_api(
             return (StatusCode::GONE, crate::server::old_claude::READ_ONLY).into_response();
         }
     }
-    if let Some(ref effort) = req.effort {
-        let value = (!effort.is_empty()).then(|| effort.clone());
-        if let Err(e) = state.manager.global_sessions.set_effort(&req.session_id, value) {
-            tracing::warn!("effort not set on '{}': {e}", req.session_id);
-            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-        }
-    }
     if let Some(allowed) = req.model_fallback {
         if let Err(e) = state
             .manager
@@ -594,6 +587,13 @@ pub(crate) async fn rename_session_api(
                     tracing::warn!("mission '{mission_id}' model not updated: {e}");
                 }
             }
+        }
+    }
+    if let Some(ref effort) = req.effort {
+        let value = (!effort.is_empty()).then(|| effort.clone());
+        if let Err(e) = state.manager.global_sessions.set_effort(&req.session_id, value) {
+            tracing::warn!("effort not set on '{}': {e}", req.session_id);
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     }
     let _ = state

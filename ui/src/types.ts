@@ -243,6 +243,8 @@ export interface ModelInfo {
   auth_ok?: boolean;
   /** The thinking-effort values this model offers (the engine's answer, `effort_choices`); none or absent: the chat shows no chip. */
   effort?: string[];
+  remembered_effort?: string | null;
+  name?: string;
   /** The engine's answer (`ModelConfig::sign_in`): this model runs on the ChatGPT sign-in. */
   signs_in_with_chatgpt?: boolean;
 }

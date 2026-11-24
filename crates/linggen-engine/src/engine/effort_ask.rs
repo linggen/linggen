@@ -16,13 +16,13 @@ impl AgentEngine {
     }
 
     /// Everything this engine says about the effort of a call in its own
-    /// conversation. The chat default is asked for interactive chat only.
+    /// conversation. The resolver looks up the actual model in the saved map.
     pub(crate) fn effort_ask<'a>(&'a self, session: Option<&'a str>) -> EffortAsk<'a> {
         EffortAsk {
             forced: self.forced_effort,
             session,
             agent: self.reasoning_effort.as_deref(),
-            chat_default: self.session_permissions.interactive.then_some(self.cfg.chat_effort.as_deref()).flatten(),
+            remembered: Some(&self.cfg.model_effort),
         }
     }
 

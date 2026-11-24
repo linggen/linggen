@@ -45,7 +45,7 @@ api_key = "test-not-a-key"
     assert_eq!(live["providers"][0]["id"], "alibaba");
     for edit in [
         json!({"use":"chat","choice":"reasoning"}),
-        json!({"use":"effort","choice":"medium"}),
+        json!({"use":"effort","model":"reasoning","choice":"medium"}),
         json!({"use":"speak","choice":"system"}),
         json!({"use":"voice","choice":"serena"}),
         json!({"use":"draw","choice":"chatgpt"}),
@@ -56,8 +56,8 @@ api_key = "test-not-a-key"
     }
     let after = w.api.get("/api/uses").await;
     assert_eq!(after["chain"], json!(["reasoning"]));
-    assert_eq!(after["effort"]["choice"], "medium");
-    let effort = after["effort"]["options"].as_array().unwrap();
+    assert_eq!(after["effort"]["reasoning"]["choice"], "medium");
+    let effort = after["effort"]["reasoning"]["options"].as_array().unwrap();
     assert!(!effort.is_empty());
     for option in effort {
         assert!(matches!(option["name"].as_str(), Some("low" | "medium" | "high")), "{option}");
@@ -65,12 +65,12 @@ api_key = "test-not-a-key"
     }
     assert_eq!(after["speak"]["effective"], "system");
     assert_eq!(after["draw"]["effective"], "chatgpt");
-    assert_eq!(w.api.put_json("/api/uses", json!({"use":"effort","choice":"xhigh"})).await.0, 400);
+    assert_eq!(w.api.put_json("/api/uses", json!({"use":"effort","model":"reasoning","choice":"xhigh"})).await.0, 400);
     assert_eq!(w.api.put_json("/api/uses", json!({"use":"app","id":"model-lesson","choice":"live:google"})).await.0, 400);
     assert_eq!(w.api.get("/api/uses").await, after);
     let saved = std::fs::read_to_string(w.home.config_path()).unwrap();
     let config = linggen_engine::config::Config::from_toml(&saved).unwrap();
-    assert_eq!(config.uses.chat_effort.as_deref(), Some("medium"));
+    assert_eq!(config.uses.model_effort["reasoning"], "medium");
     assert_eq!(config.pet.voice, "serena");
 }
 
@@ -113,9 +113,17 @@ model = "test"
 }
 
 #[test]
-fn retired_app_choices_load_but_are_not_saved() {
-    let config = linggen_engine::config::Config::from_toml("[uses]\nspeak = 'system'\n[uses.apps]\nmodel-lesson = 'fake-eye'\n").unwrap();
+fn old_use_settings_migrate_effort_and_drop_app_and_live_choices() {
+    use linggen_engine::config::Config;
+    let mut base = Config::default();
+    base.routing.default_models = vec!["reasoning".into()];
+    let old = toml::to_string(&base).unwrap() + "\n[uses]\nspeak = 'system'\nlive = 'google'\nchat_effort = 'high'\n[uses.apps]\nmodel-lesson = 'fake-eye'\n";
+    let config = Config::from_toml(&old).unwrap();
+    assert_eq!(config.uses.model_effort["reasoning"], "high");
     assert_eq!(config.uses.speak.as_deref(), Some("system"));
     let saved = toml::to_string(&config).unwrap();
     assert!(!saved.contains("[uses.apps]"));
+    assert!(!saved.contains("chat_effort"));
+    assert!(!saved.contains("live ="));
+    assert_eq!(linggen_engine::config::Config::from_toml(&saved).unwrap().uses, config.uses);
 }

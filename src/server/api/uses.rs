@@ -81,7 +81,7 @@ struct Table {
     chat: Use,
     chain: Vec<String>,
     model_fallback: bool,
-    effort: Use,
+    effort: std::collections::BTreeMap<String, Use>,
     speak: Use,
     voice: Use,
     draw: Use,
@@ -110,9 +110,10 @@ async fn table(state: &ServerState, config: &Config) -> Table {
     let first = chain.first().map(String::as_str);
     let mut chat: Vec<_> = models.list_models().into_iter().map(|row| chat_row(&models, row)).collect();
     chat.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.id.cmp(&b.id)));
-    let effort = chat.iter().find(|row| Some(row.id.as_str()) == first)
-        .map(|row| models.effort_choices(&row.id).into_iter().map(|id| OptionRow::new(id, id, row.source.clone(), "ready")).collect())
-        .unwrap_or_default();
+    let effort = chat.iter().map(|row| {
+        let options: Vec<_> = models.effort_choices(&row.id).into_iter().map(|id| OptionRow::new(id, id, row.source.clone(), "ready")).collect();
+        (row.id.clone(), Use::new(config.uses.model_effort.get(&row.id).map(String::as_str), options, None))
+    }).collect();
     let speech = tts::Source::readiness();
     let speak = tts::Source::ALL.into_iter().zip(speech).filter(|(s, _)| s.exists()).map(|(source, ready)| {
         match source {
@@ -134,7 +135,7 @@ async fn table(state: &ServerState, config: &Config) -> Table {
     Table {
         chat: Use::new(first, chat, first), chain,
         model_fallback: config.routing.model_fallback,
-        effort: Use::new(config.uses.chat_effort.as_deref(), effort, None),
+        effort,
         speak: Use::new(config.uses.speak.as_deref(), speak, tts::default_provider(config.uses.speak.as_deref(), speech).map(|s| s.id())),
         voice: Use::new(Some(&config.pet.voice), super::tts_mlx::SPEAKERS.iter().map(|id| OptionRow::new(id, id, Source::new(Way::Local, None), "ready")).collect(), None),
         draw: Use::new(config.uses.draw.as_deref(), drawing, drawer),
@@ -148,7 +149,7 @@ enum Edit {
     Chat { choice: String },
     ChatFallbacks { choices: Vec<String> },
     ModelFallback { enabled: bool },
-    Effort { choice: String },
+    Effort { model: String, choice: String },
     Speak { choice: Option<String> },
     Voice { choice: String },
     Draw { choice: Option<String> },
@@ -172,8 +173,10 @@ impl Edit {
         match self {
             Self::Chat { choice } if view.chat.accepts(&choice, &["ready"]) => config.make_default(&choice),
             Self::ChatFallbacks { choices } => set_chat_fallbacks(view, config, choices)?,
-            Self::ModelFallback { enabled } => config.routing.model_fallback = enabled,
-            Self::Effort { choice } if choice == "auto" || view.effort.accepts(&choice, &["ready"]) => config.uses.chat_effort = Some(choice),
+            Self::ModelFallback { enabled } => config.set_model_fallback(enabled),
+            Self::Effort { model, choice } if view.effort.get(&model).is_some_and(|row|
+                !row.options.is_empty() && (choice == "auto" || row.accepts(&choice, &["ready"]))
+            ) => { config.uses.model_effort.insert(model, choice); }
             Self::Speak { choice } if choice.as_ref().is_none_or(|id| view.speak.accepts(id, &["ready", "download"])) => config.uses.speak = choice,
             Self::Voice { choice } if view.voice.accepts(&choice, &["ready"]) => config.pet.voice = choice,
             Self::Draw { choice } if choice.as_ref().is_none_or(|id| view.draw.accepts(id, &["ready", "download"])) => config.uses.draw = choice,

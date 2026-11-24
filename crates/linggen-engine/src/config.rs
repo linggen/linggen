@@ -19,8 +19,10 @@ pub struct Uses {
     pub speak: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub draw: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub chat_effort: Option<String>,
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub model_effort: std::collections::BTreeMap<String, String>,
+    #[serde(rename = "chat_effort", skip_serializing)]
+    legacy_chat_effort: Option<String>,
     // Retired preference: accept any old value without retaining it.
     #[serde(rename = "apps", skip_serializing, deserialize_with = "ignore_preference")]
     _retired_apps: (),
@@ -582,6 +584,15 @@ impl Config {
         Ok((Config::default(), None))
     }
 
+    /// Keep the model fallback switch when a different settings page saves.
+    pub fn keep_model_fallback(&mut self, current: &Self) {
+        self.set_model_fallback(current.routing.model_fallback);
+    }
+
+    pub fn set_model_fallback(&mut self, enabled: bool) {
+        self.routing.model_fallback = enabled;
+    }
+
     /// A config file's text, read and brought up to date.
     pub fn from_toml(content: &str) -> Result<Self> {
         let mut config: Config = toml::from_str(content)?;
@@ -589,6 +600,9 @@ impl Config {
         config.migrate_retired_chatgpt_builtins();
         config.migrate_retired_cloud_ids();
         config.migrate_retired_claude_default();
+        if let (Some(model), Some(value)) = (config.routing.default_models.first(), config.uses.legacy_chat_effort.take()) {
+            config.uses.model_effort.entry(model.clone()).or_insert(value);
+        }
         config.drop_bad_prices();
         Ok(config)
     }

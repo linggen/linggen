@@ -34,7 +34,7 @@ pub struct EffortAsk<'a> {
     pub session: Option<&'a str>,
     pub agent: Option<&'a str>,
     /// `[uses] chat_effort`; the caller passes it for interactive chat only.
-    pub chat_default: Option<&'a str>,
+    pub remembered: Option<&'a std::collections::BTreeMap<String, String>>,
 }
 
 impl<'a> EffortAsk<'a> {
@@ -86,7 +86,7 @@ fn candidates<'a>(ask: &EffortAsk<'a>, row: &'a ModelConfig) -> [(Source, Option
         (Source::Forced, ask.forced),
         (Source::Choice, ask.session),
         (Source::Legacy, ask.agent),
-        (Source::Choice, ask.chat_default),
+        (Source::Choice, ask.remembered.and_then(|values| values.get(&row.id)).map(String::as_str)),
         (Source::Legacy, row.reasoning_effort.as_deref()),
     ]
 }
@@ -190,6 +190,10 @@ mod tests {
         })).unwrap()
     }
 
+    fn remembered(value: &str) -> std::collections::BTreeMap<String, String> {
+        [("r".into(), value.into())].into()
+    }
+
     fn claude(model: &str) -> ModelConfig {
         row(model, "anthropic", "https://api.anthropic.com", None, None)
     }
@@ -253,7 +257,8 @@ mod tests {
     #[test]
     fn the_order_is_forced_session_agent_chat_row() {
         let r = row("claude-sonnet-5-5", "anthropic", "https://api.anthropic.com", None, Some("max"));
-        let all = EffortAsk { forced: Some("low"), session: Some("high"), agent: Some("medium"), chat_default: Some("xhigh") };
+        let saved = remembered("xhigh");
+        let all = EffortAsk { forced: Some("low"), session: Some("high"), agent: Some("medium"), remembered: Some(&saved) };
         assert_eq!(sent(&r, all).as_deref(), Some("low"));
         assert_eq!(sent(&r, EffortAsk { forced: None, ..all }).as_deref(), Some("high"));
         assert_eq!(sent(&r, EffortAsk { forced: None, session: None, ..all }).as_deref(), Some("medium"));
@@ -265,9 +270,9 @@ mod tests {
     #[test]
     fn auto_is_the_provider_default_and_stops_the_walk() {
         let r = row("claude-sonnet-5-5", "anthropic", "https://api.anthropic.com", None, Some("max"));
-        let chat_auto = EffortAsk { chat_default: Some("auto"), ..EffortAsk::default() };
+        let chat_auto = EffortAsk { remembered: Some(&remembered("auto")), ..EffortAsk::default() };
         assert_eq!(resolve(&r, &chat_auto), Resolved { effort: Effort(None), held_back: None });
-        let session_auto = EffortAsk { session: Some("auto"), chat_default: Some("high"), ..EffortAsk::default() };
+        let session_auto = EffortAsk { session: Some("auto"), remembered: Some(&remembered("high")), ..EffortAsk::default() };
         assert_eq!(sent(&r, session_auto), None);
     }
 
@@ -278,14 +283,14 @@ mod tests {
         let ask = EffortAsk { session: Some("xhigh"), ..EffortAsk::default() };
         assert_eq!(resolve(&r, &ask), Resolved { effort: Effort(None), held_back: Some("xhigh".into()) });
         // It does not fall through to a lower step.
-        let ask = EffortAsk { session: Some("xhigh"), chat_default: Some("low"), ..EffortAsk::default() };
+        let ask = EffortAsk { session: Some("xhigh"), remembered: Some(&remembered("low")), ..EffortAsk::default() };
         assert_eq!(sent(&r, ask), None);
         // The same value on a model that has it is sent, with nothing held back.
         let ask = EffortAsk { session: Some("xhigh"), ..EffortAsk::default() };
         let on_sonnet = resolve(&claude("claude-sonnet-5-5"), &ask);
         assert_eq!((on_sonnet.effort.wire(), on_sonnet.held_back), (Some("xhigh"), None));
         // A model with no effort at all, and the chat default's value there.
-        let ask = EffortAsk { chat_default: Some("high"), ..EffortAsk::default() };
+        let ask = EffortAsk { remembered: Some(&remembered("high")), ..EffortAsk::default() };
         assert_eq!(resolve(&claude("claude-haiku-4-5"), &ask).held_back.as_deref(), Some("high"));
     }
 
@@ -307,9 +312,9 @@ mod tests {
     #[test]
     fn chatgpt_without_levels_sends_a_baseline_choice_but_not_an_unadvertised_extra() {
         let sol = row("gpt-6.2-sol", "chatgpt", "", Some("chatgpt_oauth"), None);
-        let ask = EffortAsk { chat_default: Some("high"), ..EffortAsk::default() };
+        let ask = EffortAsk { remembered: Some(&remembered("high")), ..EffortAsk::default() };
         assert_eq!(resolve(&sol, &ask), Resolved { effort: Effort(Some("high".into())), held_back: None });
-        let ask = EffortAsk { chat_default: Some("xhigh"), ..EffortAsk::default() };
+        let ask = EffortAsk { remembered: Some(&remembered("xhigh")), ..EffortAsk::default() };
         assert_eq!(resolve(&sol, &ask), Resolved { effort: Effort(None), held_back: Some("xhigh".into()) });
         assert_eq!(sent(&sol, EffortAsk::agent(Some("ultra"))), None);
     }
@@ -336,7 +341,9 @@ mod tests {
             ("crates/linggen-engine/src/provider/models/effort.rs", 1, "the resolver reads the row's legacy value"),
             ("crates/linggen-engine/src/engine/effort_ask.rs", 3, "the engine's two ask builders"),
             ("crates/linggen-engine/src/engine/types.rs", 4, "the agent's value is set from its spec; the chat default is copied from settings"),
-            ("src/server/api/uses.rs", 2, "the default card shows and saves the person's default; it builds no request"),
+            ("src/server/api/uses.rs", 2, "the default card shows and saves the person's per-model value"),
+            ("src/server/model_list.rs", 1, "the chat slider displays the remembered value"),
+            ("crates/linggen-engine/src/config.rs", 1, "migrate the old value once"),
         ];
         fn files(dir: &Path, out: &mut Vec<PathBuf>) {
             for entry in std::fs::read_dir(dir).unwrap().flatten() {
@@ -354,7 +361,7 @@ mod tests {
             files(&root.join(dir), &mut all);
         }
         // Built in two halves so this file's own text does not match.
-        let fields = [concat!(".reasoning", "_effort"), concat!(".chat", "_effort")];
+        let fields = [concat!(".reasoning", "_effort"), concat!(".model", "_effort")];
         let reads = |text: &str| fields.iter().map(|p| text.matches(p).count()).sum::<usize>();
         let mut found: Vec<(String, usize)> = all.iter().filter_map(|path| {
             let rel = path.strip_prefix(&root).unwrap().to_string_lossy().replace('\\', "/");

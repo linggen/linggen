@@ -27,28 +27,24 @@ test('the chip appears for a model that offers effort, keeps its choice over a r
 
   await model.selectOption('reasoning');
   await expect(chip).toBeVisible();
-  const labels = await chip.locator('option').allTextContents();
-  expect(labels).toEqual(['思考: 自动', '思考: 低', '思考: 中', '思考: 高']);
-  await expect(chip).toHaveValue('');
-
-  await chip.selectOption('medium');
-  await expect(chip).toHaveValue('medium');
+  await expect(chip.getByRole('slider')).toHaveAttribute('max', '2');
+  await expect(chip).toHaveAttribute('data-choice', 'auto');
+  await chip.getByRole('slider').press('ArrowRight');
+  await expect(chip).toHaveAttribute('data-choice', 'medium');
   await page.reload();
   await expectWebRtc(page, httpRequests);
   await expect(page.getByTestId('session-model')).toHaveValue('reasoning');
-  await expect(page.getByTestId('session-effort')).toHaveValue('medium');
+  await expect(chip).toHaveAttribute('data-choice', 'medium');
 
-  // A model without it hides the chip; the choice is kept for a model that has it.
-  await page.getByTestId('session-model').selectOption('fake-ling');
-  await expect(page.getByTestId('session-effort')).toHaveCount(0);
-  await page.getByTestId('session-model').selectOption('reasoning');
-  await expect(page.getByTestId('session-effort')).toHaveValue('medium');
-
-  // 自动 gives it back to the chat default.
-  await page.getByTestId('session-effort').selectOption('');
-  await page.reload();
-  await expectWebRtc(page, httpRequests);
-  await expect(page.getByTestId('session-effort')).toHaveValue('');
+  // Changing models drops the session override and uses the new model's saved effort.
+  await model.selectOption('fake-ling');
+  await expect(chip).toHaveCount(0);
+  await model.selectOption('reasoning');
+  await expect(chip).toHaveAttribute('data-choice', 'auto');
+  await chip.getByRole('slider').press('End');
+  await expect(chip).toHaveAttribute('data-choice', 'high');
+  await chip.getByRole('button', { name: '恢复自动' }).click();
+  await expect(chip).toHaveAttribute('data-choice', 'auto');
 });
 
 test('a ChatGPT sign-in row offers low, medium and high before catalog metadata arrives', async ({ page, world, httpRequests }) => {
@@ -57,9 +53,9 @@ test('a ChatGPT sign-in row offers low, medium and high before catalog metadata 
   await page.getByTestId('session-model').selectOption('fake-sol');
   const chip = page.getByTestId('session-effort');
   await expect(chip).toBeVisible();
-  await expect(chip.locator('option')).toHaveText(['思考: 自动', '思考: 低', '思考: 中', '思考: 高']);
-  await chip.selectOption('high');
-  await expect(chip).toHaveValue('high');
+  await expect(chip.getByRole('slider')).toHaveAttribute('max', '2');
+  await chip.getByRole('slider').press('End');
+  await expect(chip).toHaveAttribute('data-choice', 'high');
 });
 
 const CLAUDE = `
@@ -79,12 +75,23 @@ test.describe('the default model is a Claude model', () => {
     await expectWebRtc(page, httpRequests);
     const pick = page.getByTestId('default-effort');
     await expect(pick).toBeVisible();
-    expect(await pick.locator('option').allTextContents()).toEqual(['自动', '低', '中', '高', '超高', '最高']);
-    await pick.selectOption('xhigh');
-    await expect(pick).toHaveValue('xhigh');
-    await expect(pick).toBeEnabled();
+    const slider = pick.getByRole('slider');
+    await expect(slider).toHaveAttribute('max', '4');
+    await slider.press('End');
+    await expect(pick).toHaveAttribute('data-choice', 'max');
+    await expect(slider).toBeEnabled();
+    await slider.press('ArrowLeft');
+    await expect(pick).toHaveAttribute('data-choice', 'xhigh');
     await page.reload();
     await expectWebRtc(page, httpRequests);
-    await expect(page.getByTestId('default-effort')).toHaveValue('xhigh');
+    await expect(pick).toHaveAttribute('data-choice', 'xhigh');
+    const model = page.getByTestId('default-chat');
+    await model.selectOption('fake-sol');
+    await expect(pick).toHaveAttribute('data-choice', 'auto');
+    await slider.press('End');
+    await expect(pick).toHaveAttribute('data-choice', 'high');
+    await expect(slider).toBeEnabled();
+    await model.selectOption('claude');
+    await expect(pick).toHaveAttribute('data-choice', 'xhigh');
   });
 });

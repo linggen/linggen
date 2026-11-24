@@ -71,6 +71,7 @@ pub async fn set_model(
             let members = effective(meta, skill.as_ref());
             let stored = std::mem::replace(&mut meta.agents, members);
             if meta.set_member_model(id, model) {
+                meta.effort = None;
                 return true;
             }
             meta.agents = stored;

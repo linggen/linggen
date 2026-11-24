@@ -207,7 +207,7 @@ const SWITCH_READS: &[(&str, &[(&str, usize, &str)])] = &[
         // stored session's (`meta.model_fallback`) and the copy a spec carries.
         ".model_fallback",
         &[
-            ("crates/linggen-engine/src/config.rs", 8, "the config's own tests of its switch"),
+            ("crates/linggen-engine/src/config.rs", 9, "the config's own tests and preservation of its switch on a full save"),
             ("crates/linggen-engine/src/engine/types.rs", 3, "the engine takes the config's switch when it reads its settings (`read_settings`); its default; a test"),
             ("crates/linggen-engine/src/engine/streaming.rs", 1, "a comment"),
             ("crates/linggen-engine/src/state_fs/sessions.rs", 3, "the store's getter of a session's switch (`allows_model_fallback`); a comment; a test"),
@@ -215,7 +215,6 @@ const SWITCH_READS: &[(&str, &[(&str, usize, &str)])] = &[
             ("crates/linggen-engine/src/engine/session_spec/tests.rs", 1, "a test of that copy"),
             ("crates/linggen-engine/src/engine/agent/mod.rs", 1, "standing model selection skips the explicit fallbacks when routing fallback is off"),
             ("src/server/api/uses.rs", 1, "Settings displays the existing routing switch"),
-            ("src/server/api/config.rs", 1, "full config saves preserve the routing switch edited by /api/uses"),
             ("src/server/api/sessions.rs", 1, "the picker's request field, written to the store"),
             ("src/server/mcp_agent.rs", 3, "tests of a delegated run's new session"),
         ],

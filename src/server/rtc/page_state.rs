@@ -356,7 +356,7 @@ pub async fn build_page_state(
         ps.models = Some(
             models
                 .into_iter()
-                .map(|Listed { config, auth_ok, effort }| model_row(&config, auth_ok, &effort))
+                .map(|Listed { config, auth_ok, effort, remembered_effort, name }| model_row(&config, auth_ok, &effort, remembered_effort.as_deref(), &name))
                 .collect(),
         );
 
@@ -547,7 +547,7 @@ pub async fn build_page_state(
 /// so the pickers can mark a model that would only bail AUTH_REQUIRED; what
 /// the model signs in with is the engine's answer (`ModelConfig::sign_in`),
 /// told, not worked out again in the UI.
-fn model_row(m: &crate::config::ModelConfig, auth_ok: bool, effort: &[&str]) -> serde_json::Value {
+fn model_row(m: &crate::config::ModelConfig, auth_ok: bool, effort: &[&str], remembered_effort: Option<&str>, name: &str) -> serde_json::Value {
     serde_json::json!({
         "id": m.id,
         "provider": m.provider,
@@ -557,6 +557,8 @@ fn model_row(m: &crate::config::ModelConfig, auth_ok: bool, effort: &[&str]) -> 
         "provided_by": m.provided_by,
         "auth_ok": auth_ok,
         "effort": effort,
+        "remembered_effort": remembered_effort,
+        "name": name,
         "signs_in_with_chatgpt": m.signs_in_with_chatgpt(),
     })
 }
@@ -578,7 +580,7 @@ mod tests {
             }))
             .unwrap();
             m.auth_mode = auth.map(Into::into);
-            model_row(&m, true, &[])["signs_in_with_chatgpt"].clone()
+            model_row(&m, true, &[], None, "model")["signs_in_with_chatgpt"].clone()
         };
         assert_eq!(row("openai", Some("chatgpt_oauth")), true);
         assert_eq!(row("chatgpt", None), true);

@@ -4,11 +4,13 @@ import type { Way } from './providers.mts';
 export type UseSource = { way: Way; provider?: string; size_gb?: number; free?: boolean };
 export type UseOption = { id: string; name: string; source: UseSource; model_id?: string; state: 'ready' | 'download' | 'no_key' | 'signed_out' | 'unavailable'; reason?: NotReady };
 export type UseRow = { choice: string | null; effective: string | null; options: UseOption[] };
-export type Uses = Record<'chat' | 'effort' | 'speak' | 'voice' | 'draw' | 'hear', UseRow> & {
+export type Uses = Record<'chat' | 'speak' | 'voice' | 'draw' | 'hear', UseRow> & {
+  effort: Record<string, UseRow>;
   chain: string[];
   model_fallback: boolean;
 };
-export type UseEdit = { use: 'chat' | 'effort' | 'voice'; choice: string }
+export type UseEdit = { use: 'chat' | 'voice'; choice: string }
+  | { use: 'effort'; model: string; choice: string }
   | { use: 'chat_fallbacks'; choices: string[] }
   | { use: 'model_fallback'; enabled: boolean }
   | { use: 'speak' | 'draw'; choice: string | null };

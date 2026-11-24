@@ -3,7 +3,7 @@ import { ChevronDown } from 'lucide-react';
 import { W, say } from '../../lib/modelsWords.mts';
 import { ChatFallbacks } from './ChatFallbacks';
 import type { UseEdit, UseOption, UseRow, Uses } from '../../lib/modelUses';
-import { EFFORT_WORD } from '../../lib/effortChip.mts';
+import { EffortSlider } from './EffortSlider';
 import { translate } from '../../lib/i18n';
 import { ModelSourceTag, modelName, nativeModelLabel, sourceText } from './UseOptionLabel';
 import { cardCls, headingCls, hintCls, inputCls } from './shell';
@@ -53,7 +53,7 @@ function UseLine({ id, label, purpose, row, busy, onPick, automatic, downloadabl
               </select>
             </>}
           </div>
-          {inline}
+          {inline && <div className="basis-full md:basis-auto">{inline}</div>}
         </div>
         {note}
         {!!facts.length && <div data-testid="use-line" className={`${hintCls} mt-1 flex flex-wrap gap-x-3 gap-y-0.5`}>
@@ -76,16 +76,12 @@ function UseLine({ id, label, purpose, row, busy, onPick, automatic, downloadabl
   );
 }
 
-function Effort({ row, busy, onPick }: { row: UseRow; busy: boolean; onPick: (choice: string) => void }) {
-  if (!row.options.length) return null;
-  const current = row.options.some((o) => o.id === row.choice) ? row.choice! : '';
-  return <label className={`${hintCls} flex shrink-0 items-center gap-1.5`}>
-    <span>{W.thinking}</span>
-    <select data-testid="default-effort" aria-label={W.effort} className={`${inputCls} px-2 py-1 dark:[color-scheme:dark]`} value={current} disabled={busy} onChange={(e) => onPick(e.target.value || 'auto')}>
-      <option value="">{W.automatic}</option>
-      {row.options.map((o) => <option key={o.id} value={o.id}>{EFFORT_WORD[o.id] ?? o.name}</option>)}
-    </select>
-  </label>;
+function Effort({ view, busy, pick }: { view: Uses; busy: boolean; pick: (edit: UseEdit) => void }) {
+  const model = view.chat.options.find((option) => option.id === view.chat.choice);
+  if (!model) return null;
+  const row = view.effort[model.id];
+  if (!row) return null;
+  return <EffortSlider id="default-effort" name={modelName(model)} values={row.options.map((o) => o.id)} choice={row.choice} disabled={busy} onPick={(choice) => pick({ use: 'effort', model: model.id, choice })} />;
 }
 
 export function DefaultCard({ view, busy, failed, retry, pick }: {
@@ -99,7 +95,7 @@ export function DefaultCard({ view, busy, failed, retry, pick }: {
       {!view && !failed && <p className={`${hintCls} mt-2`}>{W.loading}</p>}
       {view && <div className="mt-3">
         <UseLine busy={busy} id="chat" label={W.chat} purpose={W.chatPurpose} row={view.chat} onPick={(choice) => pick({ use: 'chat', choice })}
-          inline={<Effort row={view.effort} busy={busy} onPick={(choice) => pick({ use: 'effort', choice })} />}
+          inline={<Effort view={view} busy={busy} pick={pick} />}
           note={<ChatFallbacks view={view} busy={busy} pick={pick} />} />
         <UseLine busy={busy} id="speak" label={W.readAloud} purpose={W.speakPurpose} row={view.speak} automatic={W.automatic} downloadable onPick={(choice) => pick({ use: 'speak', choice: choice || null })}
           note={view.voice.options.length >= 2 && <label className={`${hintCls} mt-1 flex flex-wrap items-center gap-1.5`}>
