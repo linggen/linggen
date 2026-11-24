@@ -51,9 +51,13 @@ export const SessionModelSelector: React.FC = () => {
   // "owner default" available to them — the server picks the first shared
   // model when no override is sent. Use that as the Default label.
   const isConsumer = userType === 'consumer';
+  // A row's id can be an internal handle (a family row is `fam-…`): people see
+  // the engine's readable name, with the source as a small tag (the rule the
+  // Models page follows).
+  const nameOf = (id: string) => models.find((m) => m.id === id)?.name ?? id;
   const defaultLabel = isConsumer
-    ? (models[0]?.id ?? 'shared')
-    : (defaultModels.length > 0 ? defaultModels[0] : 'default');
+    ? (models[0] ? nameOf(models[0].id) : 'shared')
+    : (defaultModels.length > 0 ? nameOf(defaultModels[0]) : 'default');
 
   if (isOldClaude(session)) return null;
 
@@ -94,7 +98,7 @@ export const SessionModelSelector: React.FC = () => {
           switch off it (the only escape is an explicit, non-"Default" pin). */}
       {models.map((m) => (
         <option key={m.id} value={m.id}>
-          {m.id}{m.provided_by ? ` (${m.provided_by})` : ''}{defaultModels.includes(m.id) ? ' — default' : ''}{m.auth_ok === false ? ' — sign in required' : ''}
+          {m.name ?? m.id}{m.provided_by ? ` (${m.provided_by})` : ''}{defaultModels[0] === m.id ? ' — default' : ''}{m.auth_ok === false ? ' — sign in required' : ''}
         </option>
       ))}
     </select>
