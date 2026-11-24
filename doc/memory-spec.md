@@ -350,6 +350,44 @@ real scorecard is the write-side eval (six axes: extraction, routing,
 dedup, reconcile, decay, secrets), which drives each scenario through
 a real engine against a throwaway store and judges the end state.
 
+## Memory V2 — Linggen's own notes (built; off by default)
+
+Design: the memory-v2 design (§ 4a is the build spec). Other agents' memory
+is read, never written (`outside_memory`, `mcp-spec.md` § memory_agents).
+This is the memory Linggen writes: what Ling and Yinyue keep about the
+person and the work, as plain Markdown under `$LINGGEN_HOME/memory/`
+(module `own_memory`). `[memory] linggen = "v1" | "v2"` (absent: v1) says
+which memory Linggen's own sessions have; v1 is everything above, unchanged.
+
+- **Files** — `person/`, `areas/<body|mind|people|music|money|play|home>/`,
+  `projects/<encoded path>/`, `moments/<yyyy>/<yyyy-mm>.md`; one topic per
+  file, one note per `##` entry with an id, kind (person, rule, decision,
+  gotcha, moment), voice (user, agent), dates, source. A topic file stays
+  under 200 lines and 16 KB: the oldest notes move to `<topic>-part2.md`.
+  Prior versions and use counts are under `.state/` (local, not synced).
+- **One writer** — `memory_notes op=write` (add, update by id, void,
+  no_raise), the only thing that saves. It refuses status and progress with
+  one fixed reason, never changes a note in the person's own voice without
+  `user_directed`, and merges by entry against the version the caller read
+  (the same note changed since = a conflict, shown). Yinyue alone writes
+  moments.
+- **Index** — made by the engine at session start, never by hand: the
+  person's notes, the session's own scope, notes read in the last 90 days,
+  the rest newest first; at most 200 lines and 25 KB. What does not fit is
+  forgotten, not gone: `op=search` (Chinese and English, and other agents'
+  memory) finds it, and reading a note keeps it in the index.
+- **Privacy fence** — notes about body, mind and people, and moments, reach
+  Yinyue (outside a coding session) alone: not Ling, not an app, not Claude
+  Code or Codex. One decision (`own_memory::fence`), at every way out.
+- **A v2 session** has the index in its prompt and `memory_notes` instead of
+  the memory server's tools, its protocol, the per-turn recall and the
+  capture reminder. Missions stay on v1. An app gets the index of its own
+  folder (and the person's, with core) and no tool.
+- **Outside hosts** — the same tool is on the MCP door (`mcp-spec.md`) for a
+  host with no memory of its own, served when `outside_agents = "v2"`.
+- **Not built yet** — migration of v1 rows, the chronicle, Yinyue's daily
+  context, the Settings page, phone sync.
+
 ## Open / next
 
 - Scope on Codex is read-side only: its hook runner cannot rewrite

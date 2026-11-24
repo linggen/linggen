@@ -35,6 +35,7 @@ mod live_token;
 mod missions;
 mod notes;
 mod outside_memory;
+mod own_memory;
 mod person_lan;
 mod pictures;
 mod place_rules;
