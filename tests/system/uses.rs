@@ -14,11 +14,12 @@ api_key = "test-not-a-key"
     let w = World::start(Setup { config_append: Some(ROW), ..Setup::default() }).await;
     let before = w.api.get("/api/uses").await;
     assert_eq!(before["chain"], json!(["fake-ling"]));
-    assert!(before["live"]["choice"].is_null());
+    assert!(before.get("live").is_none());
+    assert_eq!(w.api.put_json("/api/uses", json!({"use":"live","choice":"google"})).await.0, 400);
     assert!(before["speak"]["choice"].is_null());
     assert!(before["draw"]["choice"].is_null());
     assert_eq!(before["hear"]["options"][0]["id"], "local-stt");
-    for kind in ["chat", "live", "speak", "voice", "draw", "hear"] {
+    for kind in ["chat", "speak", "voice", "draw", "hear"] {
         let options = before[kind]["options"].as_array().unwrap();
         assert!(!options.is_empty(), "{kind}");
         for option in options {
@@ -39,17 +40,12 @@ api_key = "test-not-a-key"
     assert_eq!(option("speak", "qwen")["name"], "Qwen3-TTS 0.6B");
     assert_eq!(option("speak", "system")["name"], "macOS system voices");
     assert_eq!(option("hear", "local-stt")["name"], "Whisper large-v3 turbo");
-    assert_eq!(option("live", "alibaba")["name"], "qwen-audio-3.1-realtime-flash");
-    assert_eq!(option("live", "alibaba")["source"]["provider"], "Qwen Cloud");
-    assert_eq!(w.api.get("/api/live").await["providers"][0]["id"], "alibaba");
-    assert_eq!(w.api.put_json("/api/credentials", json!({"endpoints":[
-        {"provider":"qwen","url":"https://ap-southeast-1.maas.qwencloudapi.com/compatible-mode/v1","api_key":"test-only"},
-        {"provider":"gemini","url":"https://generativelanguage.googleapis.com/v1beta/openai","api_key":"test-only"}
-    ]})).await.0, 200);
+    let live = w.api.get("/api/live").await;
+    assert_eq!(live["providers"].as_array().unwrap().len(), 1);
+    assert_eq!(live["providers"][0]["id"], "alibaba");
     for edit in [
         json!({"use":"chat","choice":"reasoning"}),
         json!({"use":"effort","choice":"medium"}),
-        json!({"use":"live","choice":"google"}),
         json!({"use":"speak","choice":"system"}),
         json!({"use":"voice","choice":"serena"}),
         json!({"use":"draw","choice":"chatgpt"}),
@@ -67,10 +63,8 @@ api_key = "test-not-a-key"
         assert!(matches!(option["name"].as_str(), Some("low" | "medium" | "high")), "{option}");
         assert_eq!(option["source"]["way"], "key");
     }
-    assert_eq!(after["live"]["effective"], "google");
     assert_eq!(after["speak"]["effective"], "system");
     assert_eq!(after["draw"]["effective"], "chatgpt");
-    assert_eq!(w.api.get("/api/live").await["providers"][0]["id"], "google");
     assert_eq!(w.api.put_json("/api/uses", json!({"use":"effort","choice":"xhigh"})).await.0, 400);
     assert_eq!(w.api.put_json("/api/uses", json!({"use":"app","id":"model-lesson","choice":"live:google"})).await.0, 400);
     assert_eq!(w.api.get("/api/uses").await, after);

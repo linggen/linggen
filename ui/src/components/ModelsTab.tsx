@@ -61,7 +61,7 @@ export const ModelsTab: React.FC<{
   const pickUse = (edit: UseEdit) => run(async () => {
     setUses(await usesApi.put(edit));
     setUsesFailed(false);
-    if (edit.use === 'chat' || edit.use === 'chat_fallbacks' || edit.use === 'live') return providersApi.list();
+    if (edit.use === 'chat' || edit.use === 'chat_fallbacks') return providersApi.list();
   }).then(() => undefined);
   const makeDefault = (choice: string) => pickUse({ use: 'chat', choice });
 

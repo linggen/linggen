@@ -117,7 +117,7 @@ export const W = {
   liveTag: 'Live voice',
   liveAvailable: 'Available',
   liveMissingKey: 'Missing key',
-  liveFirst: 'Use first',
+  lingyuUses: 'Used by Lingyu',
   providerBill: 'See provider bill for pricing',
   mergeRows: 'Merge',
   holdChoose: 'Pick a version',

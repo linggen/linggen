@@ -452,7 +452,7 @@ export const ZH: Record<string, string> = {
   'Live voice': '实时语音',
   'Available': '可用',
   'Missing key': '缺密钥',
-  'Use first': '先用',
+  'Used by Lingyu': '灵语使用',
   'See provider bill for pricing': '价格见服务商账单',
   'Read aloud': '朗读',
   'Dictation': '听写',

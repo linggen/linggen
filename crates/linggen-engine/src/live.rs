@@ -360,14 +360,10 @@ pub fn in_order(pref: Option<&str>) -> impl Iterator<Item = &'static Provider> {
     preferred.into_iter().chain(PROVIDERS.iter().filter(move |p| Some(p.id) != preferred.map(|p| p.id)))
 }
 
-/// The declarations with readiness, in the same order the live page tries them.
-pub fn readiness<'a>(pref: Option<&str>, configured: &'a [ModelConfig], creds: &'a Credentials) -> impl Iterator<Item = (&'static Provider, bool, bool)> + 'a {
-    let mut found_ready = false;
-    in_order(pref).map(move |p| {
-        let ready = key_ready(p, configured, creds);
-        let first = ready && !std::mem::replace(&mut found_ready, true);
-        (p, ready, first)
-    })
+/// Lingyu offers only the first declared provider. Explicit token requests
+/// can still name a development provider.
+pub fn for_lingyu() -> Option<&'static Provider> {
+    PROVIDERS.first()
 }
 
 /// The knob wins when set and not blank; otherwise what is stored.

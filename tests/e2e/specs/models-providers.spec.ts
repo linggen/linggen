@@ -206,6 +206,11 @@ for (const [label, model] of [['Google Gemini', 'gemini-3.8-live'], ['Qwen Cloud
     const row = provider(page, label);
     await row.getByRole('button').first().click();
     const line = row.getByTestId('live-model');
+    if (label === 'Google Gemini') {
+      await expect(line).toHaveCount(0);
+      await expect(row).not.toContainText(model);
+      return;
+    }
     await expect(line).toHaveCount(1);
     await expect(line).toContainText(model);
     await expect(line).toContainText('实时语音');
@@ -213,7 +218,7 @@ for (const [label, model] of [['Google Gemini', 'gemini-3.8-live'], ['Qwen Cloud
     await row.getByTestId('key-input').fill(KEY);
     await row.getByTestId('key-input').press('Enter');
     await expect(line).toContainText('可用');
-    await expect(line).toContainText('先用');
+    await expect(line).toContainText('灵语使用');
     await expect(line.getByRole('checkbox')).toHaveCount(0);
     await expect(page.getByTestId('default-chat').locator('option').filter({hasText: model})).toHaveCount(0);
   });

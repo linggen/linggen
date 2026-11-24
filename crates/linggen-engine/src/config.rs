@@ -13,8 +13,8 @@ pub use sign_in::{AuthMode, ProviderKind, SignIn};
 #[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize, Clone)]
 #[serde(default, deny_unknown_fields)]
 pub struct Uses {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub live: Option<String>,
+    #[serde(rename = "live", skip_serializing, deserialize_with = "ignore_preference")]
+    _retired_live: (),
     #[serde(skip_serializing_if = "Option::is_none")]
     pub speak: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

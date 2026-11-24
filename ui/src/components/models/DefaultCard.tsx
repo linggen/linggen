@@ -101,7 +101,6 @@ export function DefaultCard({ view, busy, failed, retry, pick }: {
         <UseLine busy={busy} id="chat" label={W.chat} purpose={W.chatPurpose} row={view.chat} onPick={(choice) => pick({ use: 'chat', choice })}
           inline={<Effort row={view.effort} busy={busy} onPick={(choice) => pick({ use: 'effort', choice })} />}
           note={<ChatFallbacks view={view} busy={busy} pick={pick} />} />
-        <UseLine busy={busy} id="live" label={W.liveVoice} purpose={W.livePurpose} row={view.live} automatic={W.automatic} onPick={(choice) => pick({ use: 'live', choice: choice || null })} />
         <UseLine busy={busy} id="speak" label={W.readAloud} purpose={W.speakPurpose} row={view.speak} automatic={W.automatic} downloadable onPick={(choice) => pick({ use: 'speak', choice: choice || null })}
           note={view.voice.options.length >= 2 && <label className={`${hintCls} mt-1 flex flex-wrap items-center gap-1.5`}>
             <span>{W.speaker}</span>

@@ -3,32 +3,23 @@ import { test, expect, expectWebRtc } from '../support/world';
 
 test.use({ viewport: { width: 1280, height: 1000 }, colorScheme: 'light' });
 
-test('default voice engine and live order survive reload', async ({ page, world, httpRequests, request }) => {
-  const response = await request.put(`${world.url}/api/credentials`, { data: { endpoints: [
-    { provider: 'qwen', url: 'https://ap-southeast-1.maas.qwencloudapi.com/compatible-mode/v1', api_key: 'test-only-marker' },
-    { provider: 'gemini', url: 'https://generativelanguage.googleapis.com/v1beta/openai', api_key: 'test-only-marker' },
-  ] } });
-  expect(response.ok()).toBeTruthy();
+test('default voice engine survives reload', async ({ page, world, httpRequests }) => {
   await page.goto(`${world.url}/settings/models?lang=zh`);
   await expectWebRtc(page, httpRequests);
   const card = page.getByTestId('default-card');
-  await expect(card.getByText('自动（现在用 qwen-audio-3.1-realtime-flash）', { exact: true })).toBeVisible();
-  await expect(card.getByText('Qwen Cloud', { exact: true }).first()).toBeVisible();
+  await expect(card).not.toContainText('实时语音');
   await expect(card.getByText('Whisper large-v3 turbo', { exact: true })).toBeVisible();
   await expect(card.locator('span').filter({ hasText: /^(?:FLUX\.2 klein 4B|自动（现在用 FLUX\.2 klein 4B）)$/ })).toBeVisible();
   await expect(card.getByText('本机 · 4.3 GB · 免费', { exact: true })).toBeVisible();
   await expect(card.locator('span').filter({ hasText: /^(?:ChatGPT 画图|自动（现在用 ChatGPT 画图）)$/ })).toBeVisible();
   await expect(page.getByTestId('default-speak').locator('option[value="system"]')).toHaveText('macOS 系统声音 · 本机 · 免费');
-  const picks = [['speak', 'system'], ['live', 'google']];
-  for (const [id, value] of picks) {
-    const select = page.getByTestId(`default-${id}`);
-    await select.selectOption(value);
-    await expect(select).toHaveValue(value);
-    await expect(select).toBeEnabled();
-  }
+  const speak = page.getByTestId('default-speak');
+  await speak.selectOption('system');
+  await expect(speak).toHaveValue('system');
+  await expect(speak).toBeEnabled();
   await page.reload();
   await expectWebRtc(page, httpRequests);
-  for (const [id, value] of picks) await expect(page.getByTestId(`default-${id}`)).toHaveValue(value);
+  await expect(speak).toHaveValue('system');
   await expect(card).not.toContainText('应用用的模型');
   await expect(card).toContainText('听写');
   const dir = process.env.MODELS_SHOTS_DIR;

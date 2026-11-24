@@ -220,7 +220,8 @@ impl ModelManager {
             group.mark_key(set);
             group.connected |= set && group.models.is_empty();
         }
-        for (voice, ready, first) in live::readiness(config.uses.live.as_deref(), &config.models, creds) {
+        for voice in live::for_lingyu() {
+            let ready = live::key_ready(voice, &config.models, creds);
             let Some(preset) = PRESETS.iter().find(|p| p.serves_live(voice)) else { continue };
             let id = provider_id(SignIn::Key, preset.name, preset.url);
             let group = groups.entry(id).or_insert_with(|| ProviderView::new(SignIn::Key, preset.name, preset.url));
@@ -228,7 +229,7 @@ impl ModelManager {
             group.mark_key(ready);
             group.add(ProviderModel {
                 id: format!("live:{}", voice.id), model: voice.model.into(), kind: Kind::LiveVoice.as_str(),
-                ready, why: (!ready).then_some(NotReady::NoKey), builtin: true, first,
+                ready, why: (!ready).then_some(NotReady::NoKey), builtin: true, first: false,
             });
         }
         let mut providers: Vec<_> = groups.into_values().collect();

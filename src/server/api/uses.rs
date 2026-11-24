@@ -8,7 +8,7 @@ use linggen_engine::pictures;
 
 use super::{providers::{owner_refusal, parse, save_config, Failure, BAD}, tts};
 use crate::{
-    config::{Config, ModelConfig, providers::Way}, credentials::{self, Credentials}, live,
+    config::{Config, ModelConfig, providers::Way},
     provider::models::{ModelManager, NotReady, providers_view::provider_source}, runtime, server::ServerState,
 };
 
@@ -82,7 +82,6 @@ struct Table {
     chain: Vec<String>,
     model_fallback: bool,
     effort: Use,
-    live: Use,
     speak: Use,
     voice: Use,
     draw: Use,
@@ -114,13 +113,6 @@ async fn table(state: &ServerState, config: &Config) -> Table {
     let effort = chat.iter().find(|row| Some(row.id.as_str()) == first)
         .map(|row| models.effort_choices(&row.id).into_iter().map(|id| OptionRow::new(id, id, row.source.clone(), "ready")).collect())
         .unwrap_or_default();
-    let creds = Credentials::load_with(&credentials::credentials_file(), &config.models);
-    let mut preferred = None;
-    let services = live::readiness(config.uses.live.as_deref(), &config.models, &creds).map(|(p, ready, first)| {
-        if first { preferred = Some(p.id); }
-        let provider = crate::config::providers::label_for(p.id, &format!("https://{}", p.key_host()));
-        OptionRow::new(p.id, p.model, Source::new(Way::Key, Some(provider)), if ready { "ready" } else { "no_key" })
-    }).collect();
     let speech = tts::Source::readiness();
     let speak = tts::Source::ALL.into_iter().zip(speech).filter(|(s, _)| s.exists()).map(|(source, ready)| {
         match source {
@@ -143,7 +135,6 @@ async fn table(state: &ServerState, config: &Config) -> Table {
         chat: Use::new(first, chat, first), chain,
         model_fallback: config.routing.model_fallback,
         effort: Use::new(config.uses.chat_effort.as_deref(), effort, None),
-        live: Use::new(config.uses.live.as_deref(), services, preferred),
         speak: Use::new(config.uses.speak.as_deref(), speak, tts::default_provider(config.uses.speak.as_deref(), speech).map(|s| s.id())),
         voice: Use::new(Some(&config.pet.voice), super::tts_mlx::SPEAKERS.iter().map(|id| OptionRow::new(id, id, Source::new(Way::Local, None), "ready")).collect(), None),
         draw: Use::new(config.uses.draw.as_deref(), drawing, drawer),
@@ -158,7 +149,6 @@ enum Edit {
     ChatFallbacks { choices: Vec<String> },
     ModelFallback { enabled: bool },
     Effort { choice: String },
-    Live { choice: Option<String> },
     Speak { choice: Option<String> },
     Voice { choice: String },
     Draw { choice: Option<String> },
@@ -184,7 +174,6 @@ impl Edit {
             Self::ChatFallbacks { choices } => set_chat_fallbacks(view, config, choices)?,
             Self::ModelFallback { enabled } => config.routing.model_fallback = enabled,
             Self::Effort { choice } if choice == "auto" || view.effort.accepts(&choice, &["ready"]) => config.uses.chat_effort = Some(choice),
-            Self::Live { choice } if choice.as_ref().is_none_or(|id| view.live.accepts(id, &["ready"])) => config.uses.live = choice,
             Self::Speak { choice } if choice.as_ref().is_none_or(|id| view.speak.accepts(id, &["ready", "download"])) => config.uses.speak = choice,
             Self::Voice { choice } if view.voice.accepts(&choice, &["ready"]) => config.pet.voice = choice,
             Self::Draw { choice } if choice.as_ref().is_none_or(|id| view.draw.accepts(id, &["ready", "download"])) => config.uses.draw = choice,

@@ -123,7 +123,7 @@ const Models: React.FC<Props> = (props) => {
             <span className="font-semibold" data-no-i18n>{m.model}</span>
             <Tag>{W.liveTag}</Tag>
             <span className={hintCls}>{m.ready ? W.liveAvailable : W.liveMissingKey}</span>
-            {m.first && <Tag tone="green">{W.liveFirst}</Tag>}
+            <span className={hintCls}>{W.lingyuUses}</span>
           </div>
         ))}
         {catalog && !p.families?.rates_unavailable && p.families!.families.length > 0 && (
