@@ -19,6 +19,7 @@ pub(super) async fn run(deps: &McpDeps<'_>, branch: &Branch<Dispatch>, args: Val
         Dispatch::DreamRun => dream_run(deps, args).await,
         Dispatch::Memory(verb) => memory(verb, args, branch.timeout_ms).await,
         Dispatch::App(op) => super::app::run(deps, op, args).await,
+        Dispatch::Outside(op) => super::outside::run(deps, op, args).await,
     }
 }
 

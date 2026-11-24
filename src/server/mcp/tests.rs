@@ -1,4 +1,4 @@
-//! The door's published surface and RPC: the thirteen tools and their
+//! The door's published surface and RPC: the fourteen tools and their
 //! definitions, the server text per view, the answers to an old plugin,
 //! and the door's own posture (origin, keep-alive, who comes in).
 
@@ -199,6 +199,80 @@ async fn the_server_text_fits_and_carries_what_a_caller_acts_on() {
     assert!(remote.contains("with your own model"));
 }
 
+/// The v2 server text for this machine: it fits, still carries delegation,
+/// the usage limit, the browser and the apps, says where other agents'
+/// memory is read, and no longer asks the host to save into Linggen's store
+/// or run its upkeep. An approved computer reads the same text either way.
+#[test]
+fn the_v2_server_text_drops_the_save_rules_and_keeps_the_rest() {
+    let v2 = server_text(View::Local, OutsideAgents::V2);
+    assert!(v2.chars().count() <= 2048, "{} characters", v2.chars().count());
+    for fact in [
+        "memory_agents op=index",
+        "never edits it",
+        "new background watcher",
+        "Outward requests take allow_once or deny only",
+        "On a usage limit, read its reset time",
+        "per-site permission in Chrome",
+        "app op=list",
+    ] {
+        assert!(v2.contains(fact), "v2 misses {fact}");
+    }
+    for gone in ["Core is tiny", "Save durable facts", "memory_add + replace_ids", "dream", "episodic"] {
+        assert!(!v2.contains(gone), "v2 still says {gone}");
+    }
+    assert_ne!(v2, server_text(View::Local, OutsideAgents::V1));
+    for mode in [OutsideAgents::V1, OutsideAgents::V2] {
+        assert_eq!(server_text(View::Remote, mode), instructions(View::Remote));
+    }
+}
+
+/// Who may read `memory.outside_agents`: the config that holds it, the
+/// server text and the tool's `mode` op at the door, and the settings save
+/// that keeps it. A fifth file reading it is a second place deciding.
+#[test]
+fn only_the_door_and_the_config_read_the_outside_agents_switch() {
+    fn walk(dir: &std::path::Path, found: &mut Vec<String>) {
+        for entry in std::fs::read_dir(dir).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, found);
+                continue;
+            }
+            let name = path.file_name().unwrap().to_string_lossy().to_string();
+            if !name.ends_with(".rs") || name.contains("test") || name == "repo_check.rs" {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).unwrap();
+            let code: String = text
+                .split("#[cfg(test)]\nmod ")
+                .next()
+                .unwrap_or_default()
+                .lines()
+                .filter(|l| !l.trim_start().starts_with("//"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            if code.contains("outside_agents") {
+                found.push(path.to_string_lossy().replace(env!("CARGO_MANIFEST_DIR"), "").to_string());
+            }
+        }
+    }
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut found = Vec::new();
+    walk(&root.join("src"), &mut found);
+    walk(&root.join("crates/linggen-engine/src"), &mut found);
+    found.sort();
+    assert_eq!(
+        found,
+        [
+            "/crates/linggen-engine/src/config.rs",
+            "/src/server/mcp/mod.rs",
+            "/src/server/mcp/outside.rs",
+        ],
+        "the switch is read at the door and in the config alone"
+    );
+}
+
 /// Each view's list, from the one table.
 #[tokio::test]
 async fn tools_list_is_the_views_catalogue() {
@@ -212,8 +286,8 @@ async fn tools_list_is_the_views_catalogue() {
     };
     let list = json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" });
     let local = names(rpc(View::Local, list.clone()).await);
-    assert_eq!(local.len(), 13);
-    assert_eq!(local.last().map(String::as_str), Some("app"));
+    assert_eq!(local.len(), 14);
+    assert_eq!(local.last().map(String::as_str), Some("memory_agents"));
     assert_eq!(
         &local[..5],
         [
@@ -317,7 +391,7 @@ fn fingerprint(v: &Value) -> String {
     digest.iter().take(8).map(|b| format!("{b:02x}")).collect()
 }
 
-/// The thirteen tools this door publishes to this machine and the five to an
+/// The fourteen tools this door publishes to this machine and the five to an
 /// approved computer, each with its whole definition (name, description,
 /// input schema) fingerprinted, and both server texts: a change here is a
 /// change every connected host sees.
@@ -358,6 +432,7 @@ async fn the_published_surface_is_locked() {
         ("browser_read", "f9802d55ffbe79be"),
         ("browser_act", "258452acd0f37bb6"),
         ("app", "f58f64ed75697d7a"),
+        ("memory_agents", "8194defe0bc3d985"),
     ];
     assert_eq!(local, want(expected_local), "local:\n{}", print(&local));
     let remote = shown(View::Remote);

@@ -44,6 +44,10 @@ min_score="${LINGGEN_RECALL_MIN_SCORE:-0}"
 # shellcheck source=./mcp.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/mcp.sh" 2>/dev/null || exit 0
 
+# v2: other agents keep their own memory and get the index once, at session
+# start (autostart.sh). Nothing per turn: no recall, no capture reminder.
+[ "$(outside_agents_mode)" = v2 ] && exit 0
+
 # Scope the search to where this session stands, as its root (git root, or
 # where the session started): rows under it, rows at its parents, and rows
 # about the person. A skill's own dir sees only its rows; $HOME, ~/.linggen

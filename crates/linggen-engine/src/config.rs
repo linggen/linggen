@@ -95,12 +95,58 @@ pub struct Config {
     #[serde(default, skip_serializing_if = "crate::provider::models::families::FamilyStarts::is_empty")]
     #[cfg_attr(any(test, feature = "test-support"), ts(skip))]
     pub family_starts: crate::provider::models::families::FamilyStarts,
+    /// What agents outside Linggen (Claude Code, Codex, …) get as memory
+    /// from Linggen — `[memory]` on disk. Hand-edited; a saved settings page
+    /// keeps what it holds (`api::config`).
+    #[serde(default, skip_serializing_if = "MemoryConfig::is_default")]
+    #[cfg_attr(any(test, feature = "test-support"), ts(skip))]
+    pub memory: MemoryConfig,
     /// What was wrong in the file and was set right on load rather than
     /// refusing the whole config (a bad model `price` is dropped, that
     /// model alone). Runtime-only — never read from or written to the file —
     /// so the log and `ling status` can say it.
     #[serde(skip)]
     pub problems: Vec<String>,
+}
+
+/// How Linggen serves memory to agents outside it. The one place that
+/// decides: the MCP door's server text, the plugin's hooks (they ask the
+/// door, `memory_agents op=mode`) and the index it forwards all read it here.
+/// Linggen's own agents (Ling, Yinyue, Linggen's sessions) are the same in
+/// both.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OutsideAgents {
+    /// Today's way: the plugin has the host write into Linggen's store and
+    /// recalls from it every turn.
+    #[default]
+    V1,
+    /// Each agent keeps its own memory; Linggen reads it (never writes it)
+    /// and forwards the other agents' index at session start.
+    V2,
+}
+
+impl OutsideAgents {
+    /// The word the door and the hooks use for it.
+    pub fn word(self) -> &'static str {
+        match self {
+            OutsideAgents::V1 => "v1",
+            OutsideAgents::V2 => "v2",
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MemoryConfig {
+    /// `outside_agents = "v1" | "v2"`; absent: v1.
+    pub outside_agents: OutsideAgents,
+}
+
+impl MemoryConfig {
+    fn is_default(&self) -> bool {
+        self == &Self::default()
+    }
 }
 
 /// Settings for Yinyue, the companion agent (`[pet]` on disk). The recall fields
@@ -1043,6 +1089,7 @@ impl Default for Config {
             mcp_servers: Default::default(),
             outside_apps: Vec::new(),
             family_starts: Default::default(),
+            memory: MemoryConfig::default(),
             problems: Vec::new(),
         }
     }
@@ -1086,6 +1133,20 @@ fn is_valid_go_duration(s: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `[memory] outside_agents` is v1 unless the file says v2, and a
+    /// config on the default is written back without the section.
+    #[test]
+    fn outside_agents_is_v1_unless_the_file_says_v2() {
+        let base = toml::to_string(&Config::default()).unwrap();
+        let v1: Config = toml::from_str(&base).unwrap();
+        assert_eq!(v1.memory.outside_agents, OutsideAgents::V1);
+        assert!(!toml::to_string(&v1).unwrap().contains("outside_agents"));
+        let v2: Config = toml::from_str(&format!("{base}\n[memory]\noutside_agents = \"v2\"\n")).unwrap();
+        assert_eq!(v2.memory.outside_agents, OutsideAgents::V2);
+        assert!(toml::to_string(&v2).unwrap().contains("outside_agents = \"v2\""));
+        assert_eq!(OutsideAgents::V2.word(), "v2");
+    }
 
     #[test]
     fn retired_tool_permission_key_is_ignored() {

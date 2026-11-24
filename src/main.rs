@@ -9,7 +9,7 @@ mod server;
 // (`crate::engine::…`, `crate::config::…`).
 use linggen_engine::{
     account, assets, cannot_run, config, credentials, engine, extensions, hf_fetch, hf_mirror, js_runtime, language,
-    live, logging, mcp_client, memory_host, message, mirror, notes, paths, perception,
+    live, logging, mcp_client, memory_host, message, mirror, notes, outside_memory, paths, perception,
     provider, reach, runtime, senses, state_fs, telemetry, util,
 };
 

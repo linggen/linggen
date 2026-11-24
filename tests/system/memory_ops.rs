@@ -727,7 +727,7 @@ fn the_scan_reads_a_session_the_person_spoke_in() {
 }
 
 /// Memory on the engine's port: a host reaches it at the one door `/mcp`
-/// (thirteen tools, memory's five among them, and a store's answer through
+/// (fourteen tools, memory's five among them, and a store's answer through
 /// them); an old plugin's `/mcp/memory` is told to update and runs nothing;
 /// the engine's own agents reach memory's five tools at `/mem/mcp`, where a
 /// retired name is unknown and nothing of the engine's dream, agents or
@@ -746,7 +746,7 @@ async fn hosts_reach_memory_at_the_one_door_and_the_engines_own_at_its_own() {
     let rpc = |method: &str, params: Value| json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params});
     let door = w.api.post("/mcp", rpc("tools/list", json!({}))).await;
     let door = names(&door);
-    assert_eq!(door.len(), 13, "{door:?}");
+    assert_eq!(door.len(), 14, "{door:?}");
     assert!(door.contains(&"memory_upkeep".to_string()) && door.contains(&"agent_run".to_string()));
     let call = rpc("tools/call", json!({"name": "memory_upkeep", "arguments": {"op": "days"}}));
     let days = w.api.post("/mcp", call).await;
