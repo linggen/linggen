@@ -12,6 +12,9 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { suppressPermissionSync } from '../../lib/eventDispatcher';
 import { apiErrorMessage } from '../../lib/api';
 import { sessionApi } from '../../lib/endpoints';
+import { translate } from '../../lib/i18n';
+import { EFFORT_WORD, effortChip } from '../../lib/effortChip.mts';
+import { W } from '../../lib/modelsWords.mts';
 import type { SessionInfo } from '../../types';
 import { SessionSpend } from './SessionSpend';
 import { isOldClaude } from '../../lib/oldClaude.mts';
@@ -96,6 +99,45 @@ export const SessionModelSelector: React.FC = () => {
           {m.id}{m.provided_by ? ` (${m.provided_by})` : ''}{defaultModels.includes(m.id) ? ' — default' : ''}{m.auth_ok === false ? ' — sign in required' : ''}
         </option>
       ))}
+    </select>
+  );
+};
+
+/** The conversation's thinking effort, beside its model: only the values the
+ *  model offers (the engine's list), nothing when it offers none. 自动 = the chat
+ *  default. A kept value the model lacks reads as 自动 and stays kept. */
+export const SessionEffortChip: React.FC = () => {
+  const models = useServerStore((s) => s.models);
+  const defaultModels = useServerStore((s) => s.defaultModels);
+  const sessionModel = useUiStore((s) => s.sessionModel);
+  const sessionId = useSessionStore((s) => s.activeSessionId);
+  const session = useSessionStore((s) => s.allSessions.find((item) => item.id === s.activeSessionId));
+  if (!sessionId || !session || isOldClaude(session)) return null;
+  const chip = effortChip(models, sessionModel ?? defaultModels[0], session.effort);
+  if (!chip) return null;
+  const t = (text: string) => translate(text) ?? text;
+  const word = (value: string) => `${t(W.thinking)}: ${t(value ? EFFORT_WORD[value] : W.automatic)}`;
+  const change = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const value = e.target.value;
+    const previous = session.effort ?? null;
+    const set = (effort: string | null) => (item: SessionInfo) => (item.id === sessionId ? { ...item, effort } : item);
+    useSessionStore.setState((s) => ({ allSessions: s.allSessions.map(set(value || null)), sessions: s.sessions.map(set(value || null)) }));
+    const ui = useUiStore.getState();
+    const agent = chatAgentOf(useServerStore.getState().selectedAgent, ui.sessionMembers);
+    sessionApi.setEffort(sessionId, value, agent).catch((error) => {
+      useSessionStore.setState((s) => ({ allSessions: s.allSessions.map(set(previous)), sessions: s.sessions.map(set(previous)) }));
+      useUiStore.getState().addToast({ variant: 'error', message: apiErrorMessage(error) });
+    });
+  };
+  return (
+    <select
+      data-testid="session-effort"
+      value={chip.selected}
+      onChange={change}
+      onClick={(e) => e.stopPropagation()}
+      className="text-[11px] bg-white dark:bg-black/30 border border-slate-200 dark:border-white/10 rounded px-1.5 py-0.5 outline-none"
+    >
+      {['', ...chip.values].map((value) => <option key={value || 'auto'} value={value}>{word(value)}</option>)}
     </select>
   );
 };

@@ -149,6 +149,9 @@ export const sessionApi = {
   /** Let (or stop) a failed model call be answered by another model in the session. */
   setModelFallback: (sessionId: string, allowed: boolean) =>
     apiPatch<void>('/api/sessions', { session_id: sessionId, model_fallback: allowed }),
+  /** The conversation's thinking effort (`''`: back to the chat default). `agentId`: the member whose model must offer it. */
+  setEffort: (sessionId: string, effort: string, agentId?: string) =>
+    apiPatch<void>('/api/sessions', { session_id: sessionId, effort, ...(agentId ? { agent_id: agentId } : {}) }),
   setWork: (sessionId: string, work: 'code' | 'none') =>
     apiPatch<void>('/api/sessions', { session_id: sessionId, work }),
   setPermission: (sessionId: string, path: string, mode: string) =>

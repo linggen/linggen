@@ -35,7 +35,7 @@ import { isOldClaude } from '../../lib/oldClaude.mts';
 import { SubagentDrawer } from './SubagentDrawer';
 import { SubagentPane } from './SubagentPane';
 import { statusBadgeClass } from './MessageHelpers';
-import { SessionCodingToggle, SessionFallbackToggle, SessionModelSelector, SessionModeSelector, SessionStats } from './SessionSelectors';
+import { SessionCodingToggle, SessionEffortChip, SessionFallbackToggle, SessionModelSelector, SessionModeSelector, SessionStats } from './SessionSelectors';
 import { useChatActions } from '../../hooks/useChatActions';
 import { sessionApi } from '../../lib/endpoints';
 import { startNewChat } from '../../lib/newChat';
@@ -393,6 +393,7 @@ export const ChatPanel: React.FC<{
               })()}
               <SessionModeSelector />
               <SessionModelSelector />
+              <SessionEffortChip />
               <SessionFallbackToggle />
               <SessionCodingToggle />
               <SessionStats />

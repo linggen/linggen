@@ -241,6 +241,8 @@ export interface ModelInfo {
   /** Runtime reading from /api/models: credentials present right now.
    *  Absent on older payloads — treat undefined as usable. */
   auth_ok?: boolean;
+  /** The thinking-effort values this model offers (the engine's answer, `effort_choices`); none or absent: the chat shows no chip. */
+  effort?: string[];
   /** The engine's answer (`ModelConfig::sign_in`): this model runs on the ChatGPT sign-in. */
   signs_in_with_chatgpt?: boolean;
 }
@@ -339,6 +341,7 @@ export interface SessionInfo {
   agents?: SessionMember[]; // the agents at the session's table, the lead first
   permission_mode?: string | null; // effective permission mode (read/edit/admin)
   params?: Record<string, string> | null; // the values a skill session is bound to (its session params)
+  effort?: string | null;   // the conversation's thinking effort; absent = the chat default
   model_fallback?: boolean; // false: a failed model call is not answered by another model (absent = true)
   work?: import('./types/generated/Work').Work | null;
   takes_work?: boolean;     // server-derived: this kind of session may carry a work tag
