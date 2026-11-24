@@ -111,10 +111,11 @@ const Models: React.FC<Props> = (props) => {
           <div key={m.id} className="mt-1 flex flex-wrap items-center gap-1.5 text-xs" data-testid="live-model">
             <span className="font-semibold" data-no-i18n>{m.model}</span>
             <Tag>{W.liveTag}</Tag>
-            <span className={hintCls}>{m.ready ? W.ready : W.notReady}</span>
+            <span className={hintCls}>{m.ready ? W.liveAvailable : W.liveMissingKey}</span>
+            {m.first && <Tag tone="green">{W.liveFirst}</Tag>}
           </div>
         ))}
-        {catalog && p.families!.families.length > 0 && (
+        {catalog && !p.families?.rates_unavailable && p.families!.families.length > 0 && (
           <p data-testid="price-date" className={`${hintCls} mt-2`}>
             {say(W.estimatesFrom, { date: catalog.observed_at })}
             {catalog.stale && <> {say(W.listOld, { n: catalog.age_days })}</>}

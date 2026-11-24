@@ -15,6 +15,10 @@ const SHOWN: usize = 4;
 #[derive(Serialize)]
 pub struct FamiliesView {
     catalog: CatalogView,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    access: Option<&'static str>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    rates_unavailable: bool,
     families: Vec<FamilyView>,
 }
 
@@ -116,7 +120,12 @@ pub(super) fn of(f: &Families, config: &Config, creds: &Credentials, (name, url)
     let listing = result.as_ref().and_then(|entry| entry.as_deref());
     let ranked = snapshot.chat_families(endpoint.preset);
     let keys: Vec<&str> = ranked.iter().map(|(key, _)| key.as_str()).collect();
-    let families = ranked.iter().enumerate().map(|(rank, (family, _))| {
+    let borrowed = endpoint.preset.catalog.is_some_and(|b| b.borrowed);
+    let access = if borrowed && endpoint.key.is_some() {
+        match &result { None => Some("checking"), Some(None) => Some("list_failed"), _ => None }
+    } else { None };
+    let mut families = Vec::new();
+    for (family, _) in &ranked {
         let row = binding::row_of(config, endpoint.preset.key, &family);
         let current = row.map(|r| r.model.as_str());
         let answer = if matches!(result, Some(None)) {
@@ -124,6 +133,7 @@ pub(super) fn of(f: &Families, config: &Config, creds: &Credentials, (name, url)
         } else {
             endpoint.ask(&snapshot, family, current, listing, today)
         };
+        if borrowed && row.is_none() && matches!(answer, FamilyCurrent::Unavailable { .. }) { continue; }
         let (next, hold, choose) = match &answer {
             FamilyCurrent::Current { next, current } => {
                 let moves = current.is_none_or(|c| c != next.id());
@@ -155,7 +165,8 @@ pub(super) fn of(f: &Families, config: &Config, creds: &Credentials, (name, url)
                 && snapshot.entry(endpoint.preset, m.from()).is_some_and(ModelFacts::chooseable)
                 && listing.as_ref().is_some_and(|l| l.usable.contains(m.from())),
         });
-        FamilyView {
+        let folded = families.len() >= SHOWN && row.is_none() && notice.is_none();
+        families.push(FamilyView {
             ticked: row.is_some(),
             row: row.map(|r| r.id.clone()),
             mode: held.map(|b| if b.follows() { "follow" } else { "pinned" }),
@@ -163,15 +174,17 @@ pub(super) fn of(f: &Families, config: &Config, creds: &Credentials, (name, url)
             next,
             hold,
             choose,
-            folded: rank >= SHOWN && row.is_none() && notice.is_none(),
+            folded,
             notice,
             merge_into: row.and_then(|r| binding::duplicate(config, endpoint.preset, &r.model)).map(|r| r.id.clone()),
             references: row.map(|r| references(config, &r.id)).unwrap_or_default(),
             label: label_of(family, &keys),
             family: family.clone(),
-        }
-    }).collect();
+        });
+    }
     Some(FamiliesView {
+        access,
+        rates_unavailable: borrowed,
         catalog: CatalogView {
             observed_at: snapshot.observed_on().to_string(),
             age_days: snapshot.age_days(today),

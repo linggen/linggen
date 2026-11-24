@@ -174,6 +174,7 @@ pub(crate) fn price_in(cfg: &ModelConfig, facts: &Snapshot) -> Option<Priced> {
     }
     // Exact provider address and exact model: another host with the same
     // provider name, or a similar model name, inherits nothing.
+    if family_catalog::preset_for(cfg)?.catalog?.borrowed { return None; }
     let cost = facts.exact(cfg)?.cost()?;
     if cost.has_unestimated_rates() {
         return None;

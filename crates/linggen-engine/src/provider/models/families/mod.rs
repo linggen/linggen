@@ -86,9 +86,8 @@ impl Families {
 
     fn today(&self) -> NaiveDate { self.today.unwrap_or_else(|| chrono::Utc::now().date_naive()) }
 
-    /// Ask the providers whose lists the decisions under the lock need: the
-    /// endpoint of every following row, and `endpoint` when a person acts on
-    /// it. Runs outside the write lock; a failed ask is no evidence.
+    /// Ask the named endpoint for a settings action, or all filed key
+    /// endpoints for discovery. Runs outside the settings write lock.
     pub async fn gather(&self, config: &Config, creds: &Credentials, endpoint: Option<(&str, &str)>) {
         let mut asks: Vec<(&'static Preset, String)> = Vec::new();
         let named = endpoint.and_then(|(name, url)| Endpoint::of(name, url, creds));
@@ -99,9 +98,9 @@ impl Families {
                 asks.push((e.preset, key));
             }
         }
-        for (preset, key) in asks {
+        futures_util::future::join_all(asks.into_iter().map(|(preset, key)| async move {
             self.evidence.gather(preset, &key).await;
-        }
+        })).await;
     }
 
     /// Move every following row the selector says should move, with its

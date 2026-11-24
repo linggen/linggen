@@ -1,7 +1,7 @@
 //! Settings' provider groups: a projection of the existing rows and endpoint keys.
 
 use super::{ModelManager, NotReady};
-use crate::config::providers::{label_for, Way};
+use crate::config::providers::{label_for, Way, PRESETS};
 use crate::config::{Config, SignIn};
 use crate::credentials::{self, Credentials};
 use crate::provider::kinds::{kind_of, Kind};
@@ -46,6 +46,8 @@ pub struct ProviderModel {
     #[serde(skip_serializing_if = "Option::is_none")]
     why: Option<NotReady>,
     pub builtin: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    first: bool,
 }
 
 /// Identify the filed pair using the same normalization as credential matching.
@@ -132,7 +134,7 @@ impl ModelManager {
             .chain(config.chat_models()).chain(self.live_rows())
         {
             let kind = kind_of(row);
-            if kind == Kind::NoLane {
+            if !matches!(kind, Kind::Chat | Kind::LiveVoice) {
                 continue;
             }
             let sign_in = row.sign_in();
@@ -142,23 +144,14 @@ impl ModelManager {
                 continue;
             }
             group.mark_key(credentials::resolve_api_key(row, creds).is_some());
-            let why = match kind {
-                Kind::Chat => {
-                    if rows.iter().any(|m| m.id == row.id && m.is_builtin == row.is_builtin) {
-                        self.readiness(&row.id).and_then(|r| r.reason)
-                    } else {
-                        Some(NotReady::ProviderFailing)
-                    }
-                }
-                Kind::LiveVoice => {
-                    let ready = credentials::url_host(&row.url)
-                        .and_then(|host| live::at_model(&host, &row.model))
-                        .is_some_and(|p| live::key_ready(p, &config.models, creds));
-                    (!ready).then_some(NotReady::NoKey)
-                }
-                Kind::Speak | Kind::Hear | Kind::Draw | Kind::NoLane => unreachable!("not configured rows"),
+            // Legacy rows can supply credentials, but the declaration supplies the line.
+            if kind == Kind::LiveVoice { continue; }
+            let why = if rows.iter().any(|m| m.id == row.id && m.is_builtin == row.is_builtin) {
+                self.readiness(&row.id).and_then(|r| r.reason)
+            } else {
+                Some(NotReady::ProviderFailing)
             };
-            group.add(ProviderModel { id: row.id.clone(), model: row.model.clone(), kind: kind.as_str(), ready: why.is_none(), why, builtin: row.is_builtin });
+            group.add(ProviderModel { id: row.id.clone(), model: row.model.clone(), kind: kind.as_str(), ready: why.is_none(), why, builtin: row.is_builtin, first: false });
         }
         for endpoint in &creds.endpoints {
             // A credential has no sign-in field; only the key group can use it.
@@ -167,6 +160,15 @@ impl ModelManager {
             let set = creds.endpoint_key(&endpoint.provider, &endpoint.url).is_some();
             group.mark_key(set);
             group.connected |= set && group.models.is_empty();
+        }
+        for (voice, ready, first) in live::readiness(&config.models, creds) {
+            let Some(preset) = PRESETS.iter().find(|p| p.serves_live(voice)) else { continue };
+            let id = provider_id(SignIn::Key, preset.name, preset.url);
+            let group = groups.entry(id).or_insert_with(|| ProviderView::new(SignIn::Key, preset.name, preset.url));
+            group.add(ProviderModel {
+                id: format!("live:{}", voice.id), model: voice.model.into(), kind: Kind::LiveVoice.as_str(),
+                ready, why: (!ready).then_some(NotReady::NoKey), builtin: true, first,
+            });
         }
         let mut providers: Vec<_> = groups.into_values().collect();
         for group in &mut providers {
@@ -198,7 +200,7 @@ fn local_lanes() -> impl Iterator<Item = ProviderView> {
         group.label = "This Mac".into();
         group.fix = (!ready).then(|| if runtime::env_bin(hub.venv, "python3").exists() { "download" } else { "install" });
         group.disk_gb = Some(hub.need_gb);
-        group.add(ProviderModel { id: kind.as_str().into(), model: model.into(), kind: kind.as_str(), ready, why: None, builtin: true });
+        group.add(ProviderModel { id: kind.as_str().into(), model: model.into(), kind: kind.as_str(), ready, why: None, builtin: true, first: false });
         group
     })
 }

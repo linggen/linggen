@@ -163,6 +163,26 @@ test('a default made on the page keeps the fallbacks, and a later edit elsewhere
   expect(await chain()).toEqual(after);
 });
 
+for (const [label, model] of [['Google Gemini', 'gemini-3.8-live'], ['Qwen Cloud', 'qwen-audio-3.1-realtime-flash']]) {
+  test(`${label} shows its declared live model without a chat row`, async ({ page, world, httpRequests }) => {
+    await page.goto(`${world.url}/settings/models?lang=zh`);
+    await expectWebRtc(page, httpRequests);
+    const row = provider(page, label);
+    await row.getByRole('button').first().click();
+    const line = row.getByTestId('live-model');
+    await expect(line).toHaveCount(1);
+    await expect(line).toContainText(model);
+    await expect(line).toContainText('实时语音');
+    await expect(line).toContainText('缺密钥');
+    await row.getByTestId('key-input').fill(KEY);
+    await row.getByTestId('key-input').press('Enter');
+    await expect(line).toContainText('可用');
+    await expect(line).toContainText('先用');
+    await expect(line.getByRole('checkbox')).toHaveCount(0);
+    await expect(page.getByTestId('default-chat').locator('option').filter({hasText: model})).toHaveCount(0);
+  });
+}
+
 test.describe('a narrow window', () => {
   test.use({ viewport: { width: 420, height: 900 } });
 

@@ -32,7 +32,7 @@ export function useProviders(onChanged: () => Promise<void>) {
   }, []);
   useEffect(() => { void load(); }, [load]);
 
-  const checking = answer?.providers.some((p) => p.families?.families.some((f) => f.hold === 'checking'));
+  const checking = answer?.providers.some((p) => p.families?.access === 'checking' || p.families?.families.some((f) => f.hold === 'checking'));
   const tries = useRef(0);
   useEffect(() => {
     if (!checking) { tries.current = 0; return; }

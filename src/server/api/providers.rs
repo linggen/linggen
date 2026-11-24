@@ -181,7 +181,12 @@ pub(super) async fn endpoint(state: &ServerState, config: &Config, creds: &Crede
             .map(|e| (e.provider.clone(), e.url.clone())));
     let pair = match filed {
         Some(pair) => pair,
-        None => state.provider_drafts.lock().await.get(id).cloned().ok_or(MISSING)?,
+        None => {
+            let draft = state.provider_drafts.lock().await.get(id).cloned();
+            draft.or_else(|| PRESETS.iter().find(|p| !p.live_models().is_empty()
+                && provider_id(SignIn::Key, p.name, p.url) == id)
+                .map(|p| (p.name.into(), p.url.into()))).ok_or(MISSING)?
+        },
     };
     if !known_names().contains(&pair.0.as_str()) || pair.0 == "chatgpt" { return Err(BAD); }
     Ok(pair)

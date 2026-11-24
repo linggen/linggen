@@ -138,7 +138,8 @@ pub(super) fn run(f: &Families, config: &mut Config, creds: &Credentials, (name,
             let facts = snapshot.entry(preset, &model)
                 .filter(|m| m.family() == Some(family) && m.chooseable())
                 .ok_or(Refusal::Missing)?;
-            if listing.as_ref().is_some_and(|l| !l.usable.contains(&model)) {
+            if (preset.catalog.is_some_and(|b| b.borrowed) || listing.is_some())
+                && !listing.as_ref().is_some_and(|l| l.usable.contains(&model)) {
                 return Err(Refusal::NoAccess);
             }
             match row {

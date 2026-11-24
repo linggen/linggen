@@ -43,6 +43,17 @@ fn real_frontiers_are_order_independent() {
 }
 
 #[test]
+fn shipped_gemini_keeps_named_tiers_and_a_real_flash_lite_head() {
+    let s = super::super::shipped();
+    let preset = preset_for(&row("gemini")).unwrap();
+    let families = s.chat_families(preset);
+    for family in ["gemini-argon", "gemini-carbon", "gemini-hydrogen", "gemini-neon", "gemini-flash", "gemini-flash-lite", "gemini-pro", "gemma"] {
+        assert!(families.iter().any(|(id, _)| id == family), "{family}");
+    }
+    assert!(matches!(resolve(s, "gemini", "gemini-flash-lite", None, Some(1), TODAY), FamilyCurrent::Current { next, .. } if next.id() == "gemini-3.5-flash-lite"));
+}
+
+#[test]
 fn follow_requires_fresh_evidence_for_this_credential_and_a_newer_day() {
     let s = Snapshot::parse(FIXTURE.as_bytes()).unwrap();
     let decide = |current, revision, day| resolve(&s, "anthropic", "claude-opus", current, revision, day);

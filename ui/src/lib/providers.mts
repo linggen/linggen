@@ -17,6 +17,7 @@ export interface ProviderModel {
   ready: boolean;
   why?: string;
   builtin: boolean;
+  first?: boolean;
 }
 
 /** USD per million tokens, at one date. */
@@ -75,6 +76,8 @@ export interface Family {
 }
 
 export interface FamiliesView {
+  access?: 'checking' | 'list_failed';
+  rates_unavailable?: boolean;
   catalog: { observed_at: string; age_days: number; stale: boolean };
   families: Family[];
 }

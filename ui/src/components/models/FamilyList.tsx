@@ -24,6 +24,8 @@ export const FamilyList: React.FC<Props> = (props) => {
   const { shown, folded } = splitFamilies(view);
   const [query, setQuery] = useState('');
   if (!view) return null;
+  if (view.access) return <p className={hintCls}>{view.access === 'checking' ? W.checkingKey : W.listFailed}</p>;
+  if (!view.families.length) return null;
   const matches = searchFamilies(folded, query);
   return (
     <div data-testid="family-list">
@@ -47,8 +49,8 @@ export const FamilyList: React.FC<Props> = (props) => {
 };
 
 /** The estimated price, when the engine has one: input and output per million. */
-const Price: React.FC<{ price?: PriceLine }> = ({ price }) => {
-  if (!price) return <span>{W.noPrice}</span>;
+const Price: React.FC<{ price?: PriceLine; ratesUnavailable?: boolean }> = ({ price, ratesUnavailable }) => {
+  if (!price) return <span>{ratesUnavailable ? W.providerBill : W.noPrice}</span>;
   return (
     <>
       <span>{say(W.priceIn, { input: dollars(price.input), output: dollars(price.output) })}</span>
@@ -91,7 +93,7 @@ const FamilyRow: React.FC<Props & { family: Family }> = ({ provider, family: f, 
               <>
                 <span>{say(f.ticked ? W.now : W.wouldBe, { name: model.name })}</span>
                 <span aria-hidden>·</span>
-                <span><Price price={model.price} /></span>
+                <span><Price price={model.price} ratesUnavailable={provider.families?.rates_unavailable} /></span>
               </>
             ) : (
               !['checking', 'list_failed', 'no_access', 'no_key'].includes(f.hold ?? '') && <span>{W.holdChoose}</span>

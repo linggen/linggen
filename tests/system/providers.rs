@@ -38,7 +38,14 @@ model = "deepseek-chat"
     let chatgpt = provider(&body, "ChatGPT 订阅");
     assert_eq!(chatgpt["way"], "subscription");
     assert!(chatgpt.get("key").is_none());
-    assert_eq!(w.api.get("/api/providers").await, body);
+    // Background discovery may change family evidence, but never changes the grouping.
+    let groups = |mut answer: Value| {
+        for row in answer["providers"].as_array_mut().unwrap() {
+            row.as_object_mut().unwrap().remove("families");
+        }
+        answer
+    };
+    assert_eq!(groups(w.api.get("/api/providers").await), groups(body));
 }
 
 #[tokio::test]
@@ -80,11 +87,84 @@ async fn deleting_the_last_voice_row_files_its_override_as_the_endpoint_key() {
     assert_eq!(w.api.put_json("/api/credentials", json!({"models":{"voice":{"api_key":"test-only-marker"}}})).await.0, 200);
     let body = w.api.delete(&format!("{base}/voice"), json!({})).await;
     let qwen = provider(&body, "Qwen Cloud");
-    assert_eq!(qwen["models"], json!([]));
+    assert_eq!(qwen["models"].as_array().unwrap().len(), 1);
+    assert_eq!(qwen["models"][0]["id"], "live:alibaba");
     assert_eq!(qwen["key"]["set"], true);
     assert!(!body.to_string().contains("test-only-marker"));
     assert_eq!(w.api.get("/api/credentials").await["models"], json!({}));
     assert_eq!(w.api.get("/api/live").await["providers"][0]["ready"], true);
+}
+
+async fn file_key(w: &World, label: &str) -> Value {
+    let body = w.api.get("/api/providers").await;
+    let id = provider(&body, label)["id"].as_str().unwrap();
+    let (status, body) = w.api.put_json(&format!("/api/providers/{id}/key"), json!({"api_key":"test-only-marker"})).await;
+    assert_eq!(status, 200);
+    body
+}
+
+fn voice<'a>(body: &'a Value, label: &str, model: &str) -> &'a Value {
+    let rows: Vec<_> = provider(body, label)["models"].as_array().unwrap().iter()
+        .filter(|row| row["kind"] == "live_voice").collect();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["model"], model);
+    rows[0]
+}
+
+#[tokio::test]
+async fn gemini_live_is_first_when_only_google_is_ready() {
+    let w = World::start(Setup::default()).await;
+    let model = "gemini-3.8-live";
+    assert_eq!(voice(&w.api.get("/api/providers").await, "Google Gemini", model)["ready"], false);
+    let body = file_key(&w, "Google Gemini").await;
+    assert_eq!(voice(&body, "Google Gemini", model)["first"], true);
+    assert_eq!(voice(&body, "Google Gemini", model)["ready"], w.api.get("/api/live").await["providers"][1]["ready"]);
+    assert!(!w.api.get("/api/models").await.to_string().contains(model));
+}
+
+#[tokio::test]
+async fn qwen_live_is_first_when_both_are_ready() {
+    let w = World::start(Setup::default()).await;
+    let model = "qwen-audio-3.1-realtime-flash";
+    assert_eq!(voice(&w.api.get("/api/providers").await, "Qwen Cloud", model)["ready"], false);
+    file_key(&w, "Google Gemini").await;
+    let body = file_key(&w, "Qwen Cloud").await;
+    assert_eq!(voice(&body, "Qwen Cloud", model)["first"], true);
+    assert_eq!(voice(&body, "Qwen Cloud", model)["ready"], w.api.get("/api/live").await["providers"][0]["ready"]);
+    assert!(voice(&body, "Google Gemini", "gemini-3.8-live").get("first").is_none());
+    assert!(!w.api.get("/api/models").await.to_string().contains(model));
+}
+
+#[tokio::test]
+async fn qwen_cloud_borrows_only_listed_candidates_and_never_dashscope_rates() {
+    const ROW: &str = r#"
+[[models]]
+id = "my-deepseek"
+provider = "qwen"
+url = "https://ap-southeast-1.maas.qwencloudapi.com/compatible-mode/v1"
+model = "deepseek-v4.1-flash"
+"#;
+    let w = World::start_with_home(Setup { config_append: Some(ROW), ..Setup::default() }, |home| {
+        let fixture = json!({"today":"2026-11-23", "lists": {
+            "qwen-cloud": ["qwen3.8-max", "qwen-plus", "deepseek-v4-flash-0731", "kimi-k3"],
+            "dashscope-cn": ["qwen3.8-max"]
+        }});
+        std::fs::write(home.linggen_home().join("test-families.json"), fixture.to_string()).unwrap();
+    }).await;
+    let before = w.api.get("/api/providers").await;
+    assert_eq!(provider(&before, "Qwen Cloud")["families"]["families"], json!([]));
+    let body = file_key(&w, "Qwen Cloud").await;
+    let qwen = provider(&body, "Qwen Cloud");
+    let families = qwen["families"]["families"].as_array().unwrap();
+    assert_eq!(families.len(), 4, "{families:?}");
+    assert!(families.iter().all(|f| f["next"].get("price").is_none()));
+    assert!(families.iter().any(|f| f["next"]["model"] == "qwen-plus"));
+    assert!(qwen["models"].as_array().unwrap().iter().any(|m| m["id"] == "my-deepseek" && m["ready"] == true));
+    w.api.post("/api/providers", json!({"preset":"通义千问 (DashScope)"})).await;
+    let body = file_key(&w, "通义千问 (DashScope)").await;
+    let dashscope = provider(&body, "通义千问 (DashScope)");
+    let max = dashscope["families"]["families"].as_array().unwrap().iter().find(|f| f["family"] == "qwen-max").unwrap();
+    assert_eq!(max["next"]["price"]["source"], "catalog");
 }
 
 /// The page types a model name only; the engine makes the row's id, and a

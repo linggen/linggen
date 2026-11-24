@@ -354,6 +354,16 @@ pub(crate) fn key_ready(p: &Provider, configured: &[ModelConfig], creds: &Creden
     provider_key(p, || stored_key(p, configured, creds)).is_some()
 }
 
+/// The declarations with readiness, in the same order the live page tries them.
+pub(crate) fn readiness<'a>(configured: &'a [ModelConfig], creds: &'a Credentials) -> impl Iterator<Item = (&'static Provider, bool, bool)> + 'a {
+    let mut found_ready = false;
+    PROVIDERS.iter().map(move |p| {
+        let ready = key_ready(p, configured, creds);
+        let first = ready && !std::mem::replace(&mut found_ready, true);
+        (p, ready, first)
+    })
+}
+
 /// The knob wins when set and not blank; otherwise what is stored.
 fn pick_key(knob: Option<String>, stored: impl FnOnce() -> Option<String>) -> Option<Secret> {
     knob.map(|k| k.trim().to_string())

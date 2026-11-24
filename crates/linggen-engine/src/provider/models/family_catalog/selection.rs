@@ -99,6 +99,7 @@ pub(crate) fn family_current<'a>(
     // Aliases stay in the catalog as exact facts, not in the candidate set.
     let mut family: Vec<_> = models.values().filter(|m| {
         m.family.as_deref() == Some(family) && m.stability != Stability::Alias
+            && (!binding.borrowed || usable.is_some_and(|ids| ids.contains(&m.id)))
     }).collect();
     if family.is_empty() {
         return FamilyCurrent::Unavailable { current };
