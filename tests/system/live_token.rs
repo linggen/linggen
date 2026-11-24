@@ -208,7 +208,7 @@ async fn the_owner_is_given_a_token_for_one_session_and_never_the_key() {
     let listed = w.api.get("/api/live").await;
     assert_eq!(
         listed,
-        json!({"providers": [{"id": "alibaba", "ready": false, "why": "no_key"}, {"id": "google", "ready": true}]}),
+        json!({"providers": [{"id": "alibaba", "ready": false, "why": "no_key"}]}),
         "{listed}"
     );
     assert!(
@@ -289,7 +289,7 @@ async fn no_key_is_not_ready_and_a_refusal_that_calls_nobody() {
     let listed = w.api.get("/api/live").await;
     assert_eq!(
         listed,
-        json!({"providers": [{"id": "alibaba", "ready": false, "why": "no_key"}, {"id": "google", "ready": false, "why": "no_key"}]}),
+        json!({"providers": [{"id": "alibaba", "ready": false, "why": "no_key"}]}),
         "{listed}"
     );
     let (status, got) = post_token(&w, json!({"provider": "google"})).await;
@@ -429,7 +429,7 @@ async fn a_phone_that_is_not_the_owner_is_refused_and_told_why() {
             .unwrap();
         assert_eq!(
             listed,
-            json!({"providers": [{"id": "alibaba", "ready": false, "why": "not_owner"}, {"id": "google", "ready": false, "why": "not_owner"}]}),
+            json!({"providers": [{"id": "alibaba", "ready": false, "why": "not_owner"}]}),
             "{listed}"
         );
     }
@@ -500,7 +500,7 @@ async fn the_owner_is_given_a_qwen_short_key_address_and_never_the_long_lived_ke
     let listed = w.api.get("/api/live").await;
     assert_eq!(
         listed,
-        json!({"providers": [{"id": "alibaba", "ready": true}, {"id": "google", "ready": false, "why": "no_key"}]}),
+        json!({"providers": [{"id": "alibaba", "ready": true}]}),
         "{listed}"
     );
     assert!(
@@ -557,7 +557,7 @@ async fn the_providers_are_listed_alibaba_first_then_google() {
     let listed = w.api.get("/api/live").await;
     assert_eq!(
         listed,
-        json!({"providers": [{"id": "alibaba", "ready": true}, {"id": "google", "ready": true}]}),
+        json!({"providers": [{"id": "alibaba", "ready": true}]}),
         "{listed}"
     );
     // Each provider's key goes to its own service alone.
@@ -576,7 +576,7 @@ async fn a_mac_with_only_a_gemini_key_has_google_ready_and_alibaba_not() {
     let listed = w.api.get("/api/live").await;
     assert_eq!(
         listed,
-        json!({"providers": [{"id": "alibaba", "ready": false, "why": "no_key"}, {"id": "google", "ready": true}]}),
+        json!({"providers": [{"id": "alibaba", "ready": false, "why": "no_key"}]}),
         "{listed}"
     );
     let (status, got) = post_token(&w, json!({"provider": "alibaba"})).await;

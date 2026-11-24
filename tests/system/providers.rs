@@ -112,13 +112,12 @@ fn voice<'a>(body: &'a Value, label: &str, model: &str) -> &'a Value {
 }
 
 #[tokio::test]
-async fn gemini_live_is_first_when_only_google_is_ready() {
+async fn gemini_live_is_not_offered_even_when_google_has_a_key() {
     let w = World::start(Setup::default()).await;
     let model = "gemini-3.8-live";
-    assert_eq!(voice(&w.api.get("/api/providers").await, "Google Gemini", model)["ready"], false);
     let body = file_key(&w, "Google Gemini").await;
-    assert_eq!(voice(&body, "Google Gemini", model)["first"], true);
-    assert_eq!(voice(&body, "Google Gemini", model)["ready"], w.api.get("/api/live").await["providers"][1]["ready"]);
+    assert!(!body.to_string().contains(model));
+    assert_eq!(w.api.get("/api/live").await["providers"][0]["ready"], false);
     assert!(!w.api.get("/api/models").await.to_string().contains(model));
 }
 
@@ -129,7 +128,7 @@ async fn qwen_live_is_first_when_both_are_ready() {
     assert_eq!(voice(&w.api.get("/api/providers").await, "Qwen Cloud", model)["ready"], false);
     file_key(&w, "Google Gemini").await;
     let body = file_key(&w, "Qwen Cloud").await;
-    assert_eq!(voice(&body, "Qwen Cloud", model)["first"], true);
+    assert!(voice(&body, "Qwen Cloud", model).get("first").is_none());
     assert_eq!(voice(&body, "Qwen Cloud", model)["ready"], w.api.get("/api/live").await["providers"][0]["ready"]);
     assert!(voice(&body, "Google Gemini", "gemini-3.8-live").get("first").is_none());
     assert!(!w.api.get("/api/models").await.to_string().contains(model));
@@ -161,7 +160,11 @@ model = "gemini-3.8-live"
         assert_eq!(groups.len(), 1, "{label}: {groups:?}");
         assert_eq!(groups[0]["label"], label);
         assert!(groups[0]["families"].is_object());
-        voice(&body, label, model);
+        if label == "Qwen Cloud" {
+            voice(&body, label, model);
+        } else {
+            assert!(!groups[0].to_string().contains(model));
+        }
     }
 }
 

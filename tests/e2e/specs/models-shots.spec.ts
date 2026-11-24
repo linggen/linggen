@@ -66,7 +66,8 @@ for (const [width, theme] of [[1280, 'light'], [420, 'light'], [1280, 'dark'], [
     await expect(summary).toContainText('→');
     await shot('fallbacks');
 
-    await row.getByTestId('advanced').locator('summary').click();
+    await expect(row.getByTestId('custom-models')).toBeVisible();
+    await expect(row.getByTestId('provider-address')).toBeVisible();
     await shot('claude-open');
 
     await page.getByTestId('add-provider-button').click();

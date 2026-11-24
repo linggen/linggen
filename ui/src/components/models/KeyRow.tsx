@@ -36,7 +36,7 @@ export const KeyRow: React.FC<Props> = (props) => {
       detail={p.key?.set ? <span>{say(W.billedBy, { provider: p.label })}</span> : <span className="rounded-md border border-slate-200 bg-white px-2 py-0.5 font-semibold dark:border-white/10 dark:bg-white/5">{W.fillKey}</span>}>
       <KeyField {...props} />
       <Models {...props} />
-      <Advanced {...props} />
+      <Address {...props} />
     </Row>
   );
 };
@@ -93,7 +93,7 @@ const KeyField: React.FC<Props> = ({ provider: p, run, busy }) => {
 
 /** The models: the families, what was added by name, the live-voice lines, the price date. */
 const Models: React.FC<Props> = (props) => {
-  const { provider: p, run, busy, makeDefault } = props;
+  const { provider: p } = props;
   const typed = addedByName(p);
   const live = liveModels(p);
   const catalog = p.families?.catalog;
@@ -104,20 +104,7 @@ const Models: React.FC<Props> = (props) => {
       <div className="min-w-0 flex-1">
         {none && <p className={hintCls}>{W.noModelsYet}</p>}
         <FamilyList {...props} />
-        {typed.length > 0 && (
-          <div data-testid="typed-models" className="mt-2">
-            <div className="text-[11px] font-bold text-slate-400">{W.addedByName}</div>
-            {typed.map((m) => (
-              <div key={m.id} className="flex items-center gap-2 py-1 text-xs" data-testid="typed-model">
-                <span className="min-w-0 flex-1 truncate font-semibold" data-no-i18n>{m.model}</span>
-                <RowMenu disabled={busy} items={[
-                  { label: W.makeDefault, run: () => void makeDefault(m.id) },
-                  { label: W.removeModel, run: () => void run(() => providersApi.removeModel(p.id, m.id)) },
-                ]} />
-              </div>
-            ))}
-          </div>
-        )}
+
         {live.map((m) => (
           <div key={m.id} className="mt-1 flex flex-wrap items-center gap-1.5 text-xs" data-testid="live-model">
             <span className="font-semibold" data-no-i18n>{m.model}</span>
@@ -126,6 +113,7 @@ const Models: React.FC<Props> = (props) => {
             <span className={hintCls}>{W.lingyuUses}</span>
           </div>
         ))}
+        <CustomModels {...props} />
         {catalog && !p.families?.rates_unavailable && p.families!.families.length > 0 && (
           <p data-testid="price-date" className={`${hintCls} mt-2`}>
             {say(W.estimatesFrom, { date: catalog.observed_at })}
@@ -137,26 +125,36 @@ const Models: React.FC<Props> = (props) => {
   );
 };
 
-/** Folded: a model the list does not have, and the address. */
-const Advanced: React.FC<Props> = ({ provider: p, run, busy }) => {
+const CustomModels: React.FC<Props> = ({ provider: p, run, busy, makeDefault }) => {
   const [name, setName] = useState('');
-  const [url, setUrl] = useState(p.url);
   const add = async () => {
     if (!name.trim()) return;
     if (await run(() => providersApi.addModel(p.id, name.trim()))) setName('');
   };
   return (
-    <details data-testid="advanced" className={`${sectionRule} sm:pl-[4.5rem]`}>
-      <summary className={`${hintCls} cursor-pointer`}>{W.advanced}</summary>
-      <div className="mt-2 space-y-3">
-        <div>
-          <div className={hintCls}>{W.notInList}</div>
+    <div data-testid="custom-models" className="mt-2">
+          <div className={hintCls}>{W.custom}</div>
+          {addedByName(p).map((m) => (
+            <div key={m.id} className="flex items-center gap-2 py-1 text-xs" data-testid="typed-model">
+              <span className="min-w-0 flex-1 truncate font-semibold" data-no-i18n>{m.model}</span>
+              <RowMenu disabled={busy} items={[
+                { label: W.makeDefault, run: () => void makeDefault(m.id) },
+                { label: W.removeModel, run: () => void run(() => providersApi.removeModel(p.id, m.id)) },
+              ]} />
+            </div>
+          ))}
           <div className="mt-1 flex flex-wrap items-center gap-2">
             <input className={`${inputCls} w-64 max-w-full flex-1`} placeholder={W.modelName} aria-label={W.modelName} value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void add(); }} />
             <button type="button" className={ghostBtn} disabled={busy || !name.trim()} onClick={() => void add()}>{W.add}</button>
           </div>
-        </div>
-        <div>
+    </div>
+  );
+};
+
+const Address: React.FC<Props> = ({ provider: p, run, busy }) => {
+  const [url, setUrl] = useState(p.url);
+  return (
+        <div data-testid="provider-address" className={`${sectionRule} sm:pl-[4.5rem]`}>
           <div className={hintCls}>{W.address}</div>
           <div className="mt-1 flex flex-wrap items-center gap-2">
             <input className={`${inputCls} w-64 max-w-full flex-1 font-mono`} aria-label={W.address} value={url} onChange={(e) => setUrl(e.target.value)} />
@@ -164,7 +162,5 @@ const Advanced: React.FC<Props> = ({ provider: p, run, busy }) => {
           </div>
           <div className={`${hintCls} mt-1`}>{W.addressNote}</div>
         </div>
-      </div>
-    </details>
   );
 };

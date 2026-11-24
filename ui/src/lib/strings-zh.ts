@@ -453,6 +453,7 @@ export const ZH: Record<string, string> = {
   'Available': '可用',
   'Missing key': '缺密钥',
   'Used by Lingyu': '灵语使用',
+  'Custom': '自定义',
   'See provider bill for pricing': '价格见服务商账单',
   'Read aloud': '朗读',
   'Dictation': '听写',

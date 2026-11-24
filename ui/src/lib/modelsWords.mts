@@ -143,7 +143,7 @@ export const W = {
   estimatesFrom: 'Prices are estimates, from the list of {date}.',
   listOld: 'The price list is {n} days old.',
   // ── Advanced ──
-  advanced: 'Advanced',
+  custom: 'Custom',
   notInList: 'A model that is not in the list',
   modelName: 'Model name',
   add: 'Add',

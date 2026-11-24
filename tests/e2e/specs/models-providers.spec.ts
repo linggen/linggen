@@ -151,7 +151,7 @@ test('a provider is added from the list with one key; a model is added by name u
   await expect(family(row, 'Opus').getByRole('checkbox')).not.toBeChecked();
   await expect(family(row, 'Opus')).toContainText('Would be Claude Opus 5.5');
 
-  await row.getByTestId('advanced').locator('summary').click();
+  await expect(row.getByTestId('custom-models')).toBeVisible();
   await row.getByLabel('Model name').fill('claude-typed-test');
   await row.getByRole('button', { name: 'Add', exact: true }).click();
   await expect(row.getByTestId('typed-model')).toContainText('claude-typed-test');
@@ -235,7 +235,7 @@ test.describe('a narrow window', () => {
     await row.getByTestId('key-input').fill(KEY);
     await row.getByRole('button', { name: 'Save key' }).click();
     await expect(family(row, 'Sonnet').getByRole('checkbox')).toBeChecked();
-    await row.getByTestId('advanced').locator('summary').click();
+    await expect(row.getByTestId('custom-models')).toBeVisible();
     // The page, and every box around it up to the window, is no wider than what it shows.
     const wider = await page.getByTestId('models-page').evaluate((el) => {
       const out: string[] = [];
