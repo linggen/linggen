@@ -108,7 +108,7 @@ impl Surface {
 /// app names a usage count may carry: any other skill — one a person wrote
 /// or installed — is counted as `custom`, because its name may be personal.
 /// Adding a shipped app is one line here.
-pub const OFFICIAL_APPS: &[&str] = &["apple-shifu", "cfo", "dj", "health", "lingjing", "pulse"];
+pub const OFFICIAL_APPS: &[&str] = &["apple-shifu", "cfo", "dj", "health", "lingjing", "lingyu", "pulse"];
 
 /// The name an app is counted under: its own when Linggen ships it, else
 /// `custom`. The one place that decides; `structure_lock_tests::
