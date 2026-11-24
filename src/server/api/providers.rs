@@ -230,10 +230,13 @@ async fn apply(state: &Arc<ServerState>, edit: Edit) -> Result<(Config, Credenti
                         serde_json::Value::String(key) if !key.trim().is_empty() && key != "***" => Some(key),
                         _ => return Err(BAD),
                     };
-                    // One card holds one key: a replace or remove reaches every name filed there.
+                    // One card holds one key: a replace or remove reaches every name filed there,
+                    // so a row filed under any of those names keeps finding the card's key.
                     let filed: Vec<_> = group_keys(&creds, &id).map(|e| (e.provider.clone(), e.url.clone())).collect();
-                    for (other, at) in filed { creds.set_endpoint_key(&other, &at, None); }
-                    creds.set_endpoint_key(&name, &url, key);
+                    for (other, at) in &filed { creds.set_endpoint_key(other, at, key.clone()); }
+                    if !filed.iter().any(|(other, at)| credentials::same_endpoint(other, at, &name, &url)) {
+                        creds.set_endpoint_key(&name, &url, key);
+                    }
                 }
             }
             creds.save(&path).map_err(|_| SAVE)?;

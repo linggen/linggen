@@ -206,6 +206,35 @@ async fn removing_the_key_of_a_card_removes_it_under_every_name() {
 }
 
 #[tokio::test]
+async fn replacing_the_key_of_a_card_keeps_every_row_under_every_name_ready() {
+    const ROWS: &str = concat!(r#"
+[[models]]
+id = "own-flash"
+provider = "openai"
+url = "https://ap-southeast-1.maas.qwencloudapi.com/compatible-mode/v1"
+model = "deepseek-v4.1-flash"
+
+[[models]]
+id = "own-plus"
+provider = "qwen"
+url = "https://ap-southeast-1.maas.qwencloudapi.com/compatible-mode/v1"
+model = "qwen-plus"
+"#);
+    let w = World::start(Setup { config_append: Some(ROWS), ..Setup::default() }).await;
+    assert_eq!(w.api.put_json("/api/credentials", json!({"endpoints":[
+        {"provider":"qwen", "url":QWEN_URL, "api_key":"old-key-marker"},
+        {"provider":"openai", "url":QWEN_URL, "api_key":"old-key-marker"}
+    ]})).await.0, 200);
+    let body = w.api.get("/api/providers").await;
+    let route = format!("/api/providers/{}/key", provider(&body, "Qwen Cloud")["id"].as_str().unwrap());
+    let (status, body) = w.api.put_json(&route, json!({"api_key": "new-key-marker"})).await;
+    assert_eq!(status, 200);
+    let qwen = provider(&body, "Qwen Cloud");
+    assert_eq!(qwen["key"], json!({"set":true}));
+    assert!(qwen["models"].as_array().unwrap().iter().all(|m| m["ready"] == true), "{qwen}");
+}
+
+#[tokio::test]
 async fn cleanup_refuses_when_two_model_rows_use_different_keys() {
     const ROWS: &str = concat!(r#"
 [[models]]
