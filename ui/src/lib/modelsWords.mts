@@ -70,6 +70,8 @@ export const W = {
   usedAgent: 'Agent {who}',
   liveTag: 'Live voice',
   holdChoose: 'Pick a version',
+  checkingKey: 'Checking this key…',
+  listFailed: 'Could not connect. Try again later.',
   chooseVersion: 'Choose a version',
   options: 'Options',
   pinVersion: 'Pin to this version',

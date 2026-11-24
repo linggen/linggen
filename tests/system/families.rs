@@ -69,6 +69,30 @@ async fn act(w: &World, id: &str, family: &str, body: Value) -> (u16, String) {
 }
 
 #[tokio::test]
+async fn startup_checks_an_existing_key_without_a_tick() {
+    let w = World::start_with_home(setup(Some(BOUND_ROW), None), |home| {
+        let fixture = json!({"today": TODAY, "delay_ms": 3000, "lists": {"anthropic": ["claude-opus-5-5"]}});
+        std::fs::write(home.linggen_home().join("test-families.json"), fixture.to_string()).unwrap();
+        let creds = json!({"endpoints": [{"provider":"anthropic", "url":"https://api.anthropic.com", "api_key":KEY}]});
+        std::fs::write(home.linggen_home().join("credentials.json"), creds.to_string()).unwrap();
+    }).await;
+    let body = w.api.get("/api/providers").await;
+    let opus = family(&body, "claude-opus");
+    assert_eq!(opus["hold"], "checking");
+    assert_eq!(opus["next"]["price"]["source"], "catalog");
+    for _ in 0..50 {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let body = w.api.get("/api/providers").await;
+        if family(&body, "claude-opus").get("hold").is_none() {
+            assert_eq!(family(&body, "claude-opus")["next"]["model"], "claude-opus-5-5");
+            assert_eq!(family(&body, "claude-sonnet")["hold"], "no_access");
+            return;
+        }
+    }
+    panic!("the key was never checked");
+}
+
+#[tokio::test]
 async fn a_key_ticks_the_starter_family_once_and_never_again() {
     let mut w = world(setup(None, None), ALL).await;
     let (id, body) = connect(&w).await;
@@ -254,5 +278,5 @@ async fn a_provider_without_a_list_gives_a_choice_not_a_tick() {
     assert_eq!(anthropic(&body)["models"], json!([]));
     assert_eq!(w.api.get("/api/config").await.get("family_starts"), None, "a key not proven records nothing");
     assert_eq!(act(&w, &id, "claude-opus", json!({"action": "tick"})).await, (409, "needs_choice".into()));
-    assert_eq!(family(&w.api.get("/api/providers").await, "claude-opus")["hold"], "no_access");
+    assert_eq!(family(&w.api.get("/api/providers").await, "claude-opus")["hold"], "list_failed");
 }

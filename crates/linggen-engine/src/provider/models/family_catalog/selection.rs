@@ -17,6 +17,13 @@ pub(crate) struct AccessEvidence<'a> {
     pub usable: &'a BTreeSet<String>,
 }
 
+pub(crate) enum Access<'a> {
+    NoKey,
+    Unchecked,
+    Failed,
+    Listed(&'a AccessEvidence<'a>),
+}
+
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub(crate) enum Hold {
     NonStable(Stability),
@@ -59,6 +66,9 @@ pub(crate) struct Choice<'a> {
 pub(crate) enum FamilyCurrent<'a> {
     Current { current: Option<&'a str>, next: &'a ModelFacts },
     Choose { current: Option<&'a str>, reason: Hold, choices: Vec<Choice<'a>> },
+    Checking { next: &'a ModelFacts },
+    ListFailed,
+    NoKey,
     Unavailable { current: Option<&'a str> },
 }
 
@@ -69,7 +79,7 @@ pub(crate) fn family_current<'a>(
     connection: Connection<'_>,
     family: &str,
     current: Option<&'a str>,
-    evidence: Option<&AccessEvidence<'_>>,
+    access: Access<'_>,
     today: NaiveDate,
 ) -> FamilyCurrent<'a> {
     let Some(preset) = preset_for(connection.endpoint) else {
@@ -81,10 +91,11 @@ pub(crate) fn family_current<'a>(
     let Some(models) = snapshot.providers.get(binding.source_id) else {
         return FamilyCurrent::Unavailable { current };
     };
-    let usable = evidence.filter(|e| {
-        e.connection.credential_revision == connection.credential_revision
-            && preset_for(e.connection.endpoint).is_some_and(|p| p.key == preset.key)
-    }).map(|e| e.usable);
+    let usable = match access {
+        Access::Listed(e) if e.connection.credential_revision == connection.credential_revision
+            && preset_for(e.connection.endpoint).is_some_and(|p| p.key == preset.key) => Some(e.usable),
+        _ => None,
+    };
     let mut family: Vec<_> = models.values().filter(|m| m.family.as_deref() == Some(family)).collect();
     if family.is_empty() {
         return FamilyCurrent::Unavailable { current };
@@ -101,7 +112,7 @@ pub(crate) fn family_current<'a>(
         if day(m).is_none() { return Some(Hold::MissingDate); }
         if !m.text_chat() { return Some(Hold::NoChatLane); }
         if day(m) != head { return Some(Hold::Older); }
-        if !usable.is_some_and(|ids| ids.contains(&m.id)) { return Some(Hold::NoAccess); }
+        if usable.is_some_and(|ids| !ids.contains(&m.id)) { return Some(Hold::NoAccess); }
         None
     };
     let choose = |reason| FamilyCurrent::Choose {
@@ -118,6 +129,13 @@ pub(crate) fn family_current<'a>(
     };
     if let Some(reason) = hold_row(next) {
         return choose(reason);
+    }
+    if usable.is_none() {
+        return match access {
+            Access::NoKey => FamilyCurrent::NoKey,
+            Access::Failed => FamilyCurrent::ListFailed,
+            Access::Unchecked | Access::Listed(_) => FamilyCurrent::Checking { next },
+        };
     }
     if let Some(id) = current {
         if next.id != id {

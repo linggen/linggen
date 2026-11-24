@@ -15,10 +15,15 @@ pub(crate) async fn list(State(state): State<Arc<ServerState>>, headers: HeaderM
     if let Some(refused) = owner_refusal(&headers) {
         return refused;
     }
-    let _write = state.settings_write.lock().await;
-    let config = state.manager.get_config_snapshot().await;
-    let creds = Credentials::load_with(&credentials::credentials_file(), &config.models);
-    answer(&state, &config, &creds).await
+    let (config, creds, response) = {
+        let _write = state.settings_write.lock().await;
+        let config = state.manager.get_config_snapshot().await;
+        let creds = Credentials::load_with(&credentials::credentials_file(), &config.models);
+        let response = answer(&state, &config, &creds).await;
+        (config, creds, response)
+    };
+    tokio::spawn(async move { state.manager.families.gather(&config, &creds, None).await });
+    response
 }
 
 pub(super) fn owner_refusal(headers: &HeaderMap) -> Option<Response> {

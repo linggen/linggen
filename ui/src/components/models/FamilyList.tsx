@@ -94,8 +94,12 @@ const FamilyRow: React.FC<Props & { family: Family }> = ({ provider, family: f, 
                 <span><Price price={model.price} /></span>
               </>
             ) : (
-              <span>{f.hold === 'no_access' ? W.failNoAccess : W.holdChoose}</span>
+              !['checking', 'list_failed', 'no_access', 'no_key'].includes(f.hold ?? '') && <span>{W.holdChoose}</span>
             )}
+            {f.hold === 'checking' && <span>{W.checkingKey}</span>}
+            {f.hold === 'list_failed' && <span>{W.listFailed}</span>}
+            {f.hold === 'no_access' && <span>{W.failNoAccess}</span>}
+            {f.hold === 'no_key' && <span>{W.failNoKey}</span>}
           </div>
           {f.choose.some((c) => c.chooseable) && (
             <select className={`${inputCls} mt-1.5 max-w-full`} aria-label={W.chooseVersion} value="" disabled={busy} onChange={(e) => e.target.value && void act({ action: 'choose', model: e.target.value })}>

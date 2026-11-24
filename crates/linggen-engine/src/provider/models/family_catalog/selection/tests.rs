@@ -13,7 +13,7 @@ fn resolve<'a>(s: &'a Snapshot, preset: &str, family: &str, current: Option<&'a 
     let evidence = revision.map(|credential_revision| AccessEvidence {
         connection: Connection { endpoint: &endpoint, credential_revision }, usable: &usable,
     });
-    family_current(s, Connection { endpoint: &endpoint, credential_revision: 1 }, family, current, evidence.as_ref(), date(today).unwrap())
+    family_current(s, Connection { endpoint: &endpoint, credential_revision: 1 }, family, current, evidence.as_ref().map_or(Access::Unchecked, Access::Listed), date(today).unwrap())
 }
 
 const TODAY: &str = "2026-11-23";
@@ -51,7 +51,7 @@ fn follow_requires_fresh_evidence_for_this_credential_and_a_newer_day() {
     let s = Snapshot::parse(FIXTURE.as_bytes()).unwrap();
     let decide = |current, revision, day| resolve(&s, "anthropic", "claude-opus", current, revision, day);
     for revision in [None, Some(2)] {
-        assert!(matches!(decide(Some("claude-opus-5"), revision, TODAY), FamilyCurrent::Choose { current: Some("claude-opus-5"), reason: Hold::NoAccess, .. }));
+        assert!(matches!(decide(Some("claude-opus-5"), revision, TODAY), FamilyCurrent::Checking { next } if next.id() == "claude-opus-5-5"));
     }
     // 21 days after the observation still follows; 22 does not.
     assert!(matches!(decide(Some("claude-opus-5"), Some(1), "2026-12-14"), FamilyCurrent::Current { .. }));
@@ -59,6 +59,18 @@ fn follow_requires_fresh_evidence_for_this_credential_and_a_newer_day() {
     assert!(matches!(decide(None, Some(1), "2026-12-15"), FamilyCurrent::Current { current: None, .. }));
     assert!(matches!(decide(Some("claude-opus-5"), Some(1), TODAY), FamilyCurrent::Current { next, .. } if next.id() == "claude-opus-5-5"));
     assert!(matches!(resolve(&s, "anthropic", "never-seen", None, Some(1), TODAY), FamilyCurrent::Unavailable { current: None }));
+}
+
+#[test]
+fn an_unreadable_list_is_not_an_empty_list() {
+    let s = Snapshot::parse(FIXTURE.as_bytes()).unwrap();
+    let endpoint = row("anthropic");
+    let connection = || Connection { endpoint: &endpoint, credential_revision: 1 };
+    let usable = BTreeSet::new();
+    let evidence = AccessEvidence { connection: connection(), usable: &usable };
+    let decide = |access| family_current(&s, connection(), "claude-opus", None, access, date(TODAY).unwrap());
+    assert!(matches!(decide(Access::Failed), FamilyCurrent::ListFailed));
+    assert!(matches!(decide(Access::Listed(&evidence)), FamilyCurrent::Choose { reason: Hold::NoAccess, .. }));
 }
 
 #[test]

@@ -110,12 +110,18 @@ pub(super) fn of(f: &Families, config: &Config, creds: &Credentials, (name, url)
     let endpoint = Endpoint::of(name, url, creds)?;
     let snapshot = f.catalog();
     let today = f.today();
-    let listing = endpoint.listing(f);
+    let result = endpoint.read_result(f);
+    let listing = result.as_ref().and_then(|entry| entry.as_deref());
     let ranked = snapshot.chat_families(endpoint.preset);
     let keys: Vec<&str> = ranked.iter().map(|(key, _)| key.as_str()).collect();
     let families = ranked.iter().enumerate().map(|(rank, (family, _))| {
         let row = binding::row_of(config, endpoint.preset.key, &family);
-        let answer = endpoint.ask(&snapshot, &family, row.map(|r| r.model.as_str()), listing.as_deref(), today);
+        let current = row.map(|r| r.model.as_str());
+        let answer = if matches!(result, Some(None)) {
+            endpoint.select(&snapshot, family, current, super::Access::Failed, today)
+        } else {
+            endpoint.ask(&snapshot, family, current, listing, today)
+        };
         let (next, hold, choose) = match &answer {
             FamilyCurrent::Current { next, current } => {
                 let moves = current.is_none_or(|c| c != next.id());
@@ -128,6 +134,9 @@ pub(super) fn of(f: &Families, config: &Config, creds: &Credentials, (name, url)
                 held: c.held.map(|h| h.code()),
                 chooseable: c.facts.chooseable(),
             }).collect()),
+            FamilyCurrent::Checking { next } => (Some(line(&endpoint, &snapshot, next)), Some("checking"), Vec::new()),
+            FamilyCurrent::ListFailed => (None, Some("list_failed"), Vec::new()),
+            FamilyCurrent::NoKey => (None, Some("no_key"), Vec::new()),
             FamilyCurrent::Unavailable { .. } => (None, Some("unavailable"), Vec::new()),
         };
         let held = row.and_then(|r| r.family_binding.as_ref());

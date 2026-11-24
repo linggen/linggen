@@ -9,7 +9,7 @@ use std::{collections::{BTreeMap, BTreeSet}, sync::OnceLock};
 
 mod refresh;
 mod selection;
-pub(crate) use selection::{family_current, AccessEvidence, Connection, FamilyCurrent};
+pub(crate) use selection::{family_current, Access, AccessEvidence, Connection, FamilyCurrent};
 #[cfg(test)]
 mod tests;
 pub(crate) use refresh::start;

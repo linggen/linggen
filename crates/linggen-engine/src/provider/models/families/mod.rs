@@ -24,7 +24,7 @@ pub use binding::{FamilyBinding, FamilyStarts, LastMove, Mode, MoveKind};
 pub use view::FamiliesView;
 use binding::keep_bindings;
 
-use super::family_catalog::{self, family_current, preset_for, AccessEvidence, Connection, FamilyCurrent, Snapshot};
+use super::family_catalog::{self, family_current, preset_for, Access, AccessEvidence, Connection, FamilyCurrent, Snapshot};
 use crate::config::{providers::Preset, Config, ModelConfig};
 use crate::credentials::{self, Credentials};
 use chrono::NaiveDate;
@@ -92,8 +92,9 @@ impl Families {
     pub async fn gather(&self, config: &Config, creds: &Credentials, endpoint: Option<(&str, &str)>) {
         let mut asks: Vec<(&'static Preset, String)> = Vec::new();
         let named = endpoint.and_then(|(name, url)| Endpoint::of(name, url, creds));
-        let rows = binding::following(config).into_iter().filter_map(|row| Endpoint::of_row(row, creds));
-        for e in named.into_iter().chain(rows) {
+        let rows = config.models.iter().filter_map(|row| Endpoint::of_row(row, creds));
+        let filed = creds.endpoints.iter().filter_map(|e| Endpoint::of(&e.provider, &e.url, creds));
+        for e in named.into_iter().chain(rows.chain(filed).filter(|_| endpoint.is_none())) {
             if let Some(key) = e.key.filter(|_| !asks.iter().any(|(p, _)| p.key == e.preset.key)) {
                 asks.push((e.preset, key));
             }
@@ -203,12 +204,25 @@ impl Endpoint {
     /// Ask the selector about `family` for this endpoint. `listing` is the
     /// held evidence; it counts only for this endpoint's current key.
     fn ask<'a>(&self, snapshot: &'a Snapshot, family: &str, current: Option<&'a str>, listing: Option<&Listing>, today: NaiveDate) -> FamilyCurrent<'a> {
-        let revision = self.key.as_deref().map_or(0, evidence::revision_of);
         let evidence = listing.map(|l| AccessEvidence {
             connection: Connection { endpoint: &self.probe, credential_revision: l.revision },
             usable: &l.usable,
         });
-        family_current(snapshot, Connection { endpoint: &self.probe, credential_revision: revision }, family, current, evidence.as_ref(), today)
+        let access = match (&self.key, evidence.as_ref()) {
+            (_, Some(evidence)) => Access::Listed(evidence),
+            (Some(_), None) => Access::Unchecked,
+            (None, None) => Access::NoKey,
+        };
+        self.select(snapshot, family, current, access, today)
+    }
+
+    fn select<'a>(&self, snapshot: &'a Snapshot, family: &str, current: Option<&'a str>, access: Access<'_>, today: NaiveDate) -> FamilyCurrent<'a> {
+        let credential_revision = self.key.as_deref().map_or(0, evidence::revision_of);
+        family_current(snapshot, Connection { endpoint: &self.probe, credential_revision }, family, current, access, today)
+    }
+
+    fn read_result(&self, families: &Families) -> Option<Option<Arc<Listing>>> {
+        families.evidence.result(self.preset, self.key.as_deref()?)
     }
 
     fn listing(&self, families: &Families) -> Option<Arc<Listing>> {

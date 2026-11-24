@@ -54,7 +54,8 @@ pub(crate) fn revision_of(key: &str) -> u64 {
 }
 
 struct Held {
-    listing: Arc<Listing>,
+    revision: u64,
+    listing: Option<Arc<Listing>>,
     at: Instant,
 }
 
@@ -63,11 +64,12 @@ pub(crate) struct Evidence {
     fresh_for: Duration,
     /// By preset key (one endpoint each). A new key replaces the entry.
     held: Mutex<HashMap<&'static str, Held>>,
+    gates: Mutex<HashMap<&'static str, Arc<tokio::sync::Mutex<()>>>>,
 }
 
 impl Evidence {
     pub(crate) fn new(lister: Arc<dyn ModelLister>, fresh_for: Duration) -> Self {
-        Self { lister, fresh_for, held: Default::default() }
+        Self { lister, fresh_for, held: Default::default(), gates: Default::default() }
     }
 
     #[cfg_attr(feature = "test-support", allow(dead_code))]
@@ -89,24 +91,33 @@ impl Evidence {
     /// The list already held for this endpoint and key, if it is fresh. Never
     /// asks: what a page read and a decision under the lock use.
     pub(crate) fn held(&self, preset: &Preset, key: &str) -> Option<Arc<Listing>> {
+        self.result(preset, key).flatten()
+    }
+
+    /// None means unchecked; Some(None) means an attempt failed.
+    pub(crate) fn result(&self, preset: &Preset, key: &str) -> Option<Option<Arc<Listing>>> {
         let revision = revision_of(key);
         let held = self.held.lock().unwrap_or_else(|e| e.into_inner());
         let entry = held.get(preset.key)?;
-        (entry.listing.revision == revision && entry.at.elapsed() <= self.fresh_for).then(|| entry.listing.clone())
+        let ttl = if entry.listing.is_some() { self.fresh_for } else { Duration::from_secs(30) };
+        (entry.revision == revision && entry.at.elapsed() <= ttl).then(|| entry.listing.clone())
     }
 
     /// Ask the provider unless a fresh list for this key is held. Call it
     /// outside the write lock.
     pub(crate) async fn gather(&self, preset: &'static Preset, key: &str) -> Option<Arc<Listing>> {
-        if let Some(listing) = self.held(preset, key) {
-            return Some(listing);
+        let gate = self.gates.lock().unwrap_or_else(|e| e.into_inner())
+            .entry(preset.key).or_default().clone();
+        let _read = gate.lock().await;
+        if let Some(result) = self.result(preset, key) {
+            return result;
         }
         let target = Target { url: preset.url, native_anthropic: preset.key == "anthropic", key };
-        let usable = self.lister.list(&target).await.ok()?;
-        let listing = Arc::new(Listing { revision: revision_of(key), usable });
+        let revision = revision_of(key);
+        let listing = self.lister.list(&target).await.ok().map(|usable| Arc::new(Listing { revision, usable }));
         self.held.lock().unwrap_or_else(|e| e.into_inner())
-            .insert(preset.key, Held { listing: listing.clone(), at: Instant::now() });
-        Some(listing)
+            .insert(preset.key, Held { revision, listing: listing.clone(), at: Instant::now() });
+        listing
     }
 }
 
@@ -192,6 +203,9 @@ impl ModelLister for FileLister {
     async fn list(&self, target: &Target<'_>) -> Result<BTreeSet<String>, ListFailed> {
         let text = std::fs::read_to_string(&self.0).map_err(|_| ListFailed)?;
         let file: serde_json::Value = serde_json::from_str(&text).map_err(|_| ListFailed)?;
+        if let Some(ms) = file.get("delay_ms").and_then(|v| v.as_u64()) {
+            tokio::time::sleep(Duration::from_millis(ms)).await;
+        }
         let preset = crate::config::providers::PRESETS.iter().find(|p| p.url == target.url).ok_or(ListFailed)?;
         let ids = file.get("lists").and_then(|l| l.get(preset.key)).and_then(|l| l.as_array()).ok_or(ListFailed)?;
         Ok(ids.iter().filter_map(|id| id.as_str().map(str::to_string)).collect())

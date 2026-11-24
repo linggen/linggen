@@ -97,6 +97,9 @@ const FOLLOW_FIRST: std::time::Duration = std::time::Duration::from_secs(60);
 pub(crate) fn spawn(state: &Arc<ServerState>) {
     let followers = state.clone();
     tokio::spawn(async move {
+        let config = followers.manager.get_config_snapshot().await;
+        let creds = Credentials::load_with(&credentials::credentials_file(), &config.models);
+        followers.manager.families.gather(&config, &creds, None).await;
         tokio::time::sleep(FOLLOW_FIRST).await;
         loop {
             follow_once(&followers).await;
