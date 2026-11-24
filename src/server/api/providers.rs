@@ -44,7 +44,8 @@ pub(super) async fn answer(state: &ServerState, config: &Config, creds: &Credent
     }
     let presets: Vec<_> = PRESETS.iter().map(|p| json!({
         "name": p.name, "label": p.label, "url": p.url, "way": p.way.as_str(),
-        "default_model": p.default_model, "placeholder": p.placeholder, "live": p.live_models(),
+        "default_model": p.default_model, "placeholder": p.placeholder,
+        "live": p.offered_live_models(),
     })).collect();
     Json(json!({"presets": presets, "providers": providers})).into_response()
 }

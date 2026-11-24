@@ -96,6 +96,11 @@ async fn deleting_the_last_voice_row_files_its_override_as_the_endpoint_key() {
 }
 
 async fn file_key(w: &World, label: &str) -> Value {
+    if label == "Google Gemini" {
+        let (status, _) = w.api.put_json("/api/credentials", json!({"endpoints":[{"provider":"gemini","url":"https://generativelanguage.googleapis.com/v1beta/openai","api_key":"test-only-marker"}]})).await;
+        assert_eq!(status, 200);
+        return w.api.get("/api/providers").await;
+    }
     let body = w.api.get("/api/providers").await;
     let id = provider(&body, label)["id"].as_str().unwrap();
     let (status, body) = w.api.put_json(&format!("/api/providers/{id}/key"), json!({"api_key":"test-only-marker"})).await;
@@ -130,7 +135,7 @@ async fn qwen_live_is_first_when_both_are_ready() {
     let body = file_key(&w, "Qwen Cloud").await;
     assert!(voice(&body, "Qwen Cloud", model).get("first").is_none());
     assert_eq!(voice(&body, "Qwen Cloud", model)["ready"], w.api.get("/api/live").await["providers"][0]["ready"]);
-    assert!(voice(&body, "Google Gemini", "gemini-3.8-live").get("first").is_none());
+    assert!(!body.to_string().contains("gemini-3.8-live"));
     assert!(!w.api.get("/api/models").await.to_string().contains(model));
 }
 
@@ -157,14 +162,14 @@ model = "gemini-3.8-live"
     ] {
         let groups: Vec<_> = body["providers"].as_array().unwrap().iter()
             .filter(|p| p["url"].as_str().is_some_and(|url| url.contains(host))).collect();
+        if label == "Google Gemini" {
+            assert!(groups.is_empty(), "{groups:?}");
+            continue;
+        }
         assert_eq!(groups.len(), 1, "{label}: {groups:?}");
         assert_eq!(groups[0]["label"], label);
         assert!(groups[0]["families"].is_object());
-        if label == "Qwen Cloud" {
-            voice(&body, label, model);
-        } else {
-            assert!(!groups[0].to_string().contains(model));
-        }
+        voice(&body, label, model);
     }
 }
 

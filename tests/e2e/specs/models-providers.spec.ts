@@ -203,14 +203,14 @@ for (const [label, model] of [['Google Gemini', 'gemini-3.8-live'], ['Qwen Cloud
   test(`${label} shows its declared live model without a chat row`, async ({ page, world, httpRequests }) => {
     await page.goto(`${world.url}/settings/models?lang=zh`);
     await expectWebRtc(page, httpRequests);
+    if (label === 'Google Gemini') {
+      await expect(page.getByTestId('models-page')).toBeVisible();
+      await expect(page.getByText(model, { exact: true })).toHaveCount(0);
+      return;
+    }
     const row = provider(page, label);
     await row.getByRole('button').first().click();
     const line = row.getByTestId('live-model');
-    if (label === 'Google Gemini') {
-      await expect(line).toHaveCount(0);
-      await expect(row).not.toContainText(model);
-      return;
-    }
     await expect(line).toHaveCount(1);
     await expect(line).toContainText(model);
     await expect(line).toContainText('实时语音');

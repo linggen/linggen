@@ -73,6 +73,10 @@ impl Preset {
         crate::live::PROVIDERS.iter().filter(|p| self.serves_live(p)).map(|p| p.model).collect()
     }
 
+    pub fn offered_live_models(&self) -> Vec<&'static str> {
+        crate::live::for_lingyu().filter(|p| self.serves_live(p)).map(|p| p.model).into_iter().collect()
+    }
+
     pub(crate) fn serves_live(&self, provider: &crate::live::Provider) -> bool {
         url_host(self.url).is_some_and(|host| provider.key_host().eq_ignore_ascii_case(&host))
     }
