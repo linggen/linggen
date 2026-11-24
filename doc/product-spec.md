@@ -74,6 +74,30 @@ The browser and the Mac app open the same full-window settings page. In the Mac 
 
 ## Design Principles
 
+### 0. Design for five years from now — build what stronger models will not take away
+
+Hanli, 2026-11-24: 「设计要面向未来5年. 5年后llm会强大到, agent可以做得很薄, 只给简单工具就能让llm完成任务.
+因此linggen的设计要能提供差异化, focus在不会被吃掉的部分, 比如用户的情绪价值, yinyue对llm不做的部分的,
+面向人类的设计, 情感第一, 人情世故第二.」
+
+Assume that in five years a model with a handful of simple tools does what today needs a thick harness. Whatever a
+stronger model, or the model makers' own free agents, will do by themselves is not where Linggen spends its effort.
+
+**Invest in what stays human:**
+1. **Feeling first** — the emotional value of a companion: Yinyue's warmth, continuity, presence (voice, face,
+   phone), being remembered as a person (body, mind, family, small moments), play that people come back to.
+2. **人情世故 second** — social sense: when to speak and when to stay quiet, tact, timing, care for the people around
+   the person, the things a good friend remembers without being asked.
+3. **What only the person's own devices hold** — their life data and senses (health, music, money, play), kept on
+   their devices, and the trust that comes with that.
+
+**Keep thin, do not race:** agent loops, tool orchestration, prompt tricks, coding-agent features, task delegation,
+retrieval plumbing, model routing. Keep them general and small (Hanli 2026-11-15: 「工具要底层通用, 数量尽量少, 尽量让agent去做」 — few
+low-level tools, the model judges), take the vendors' improvements, and do not build a moat there.
+
+**The test for every design:** if models were ten times stronger, would this still matter, and would it still make
+Linggen different? If not, build the thinnest version or none.
+
 ### 1. Skills-first architecture
 
 Skills are the primary extension mechanism. Built-in tools only for core operations needing safety/state/performance. Everything else (web search, APIs, git workflows) is a skill.
