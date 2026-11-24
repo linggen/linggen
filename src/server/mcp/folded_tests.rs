@@ -1,4 +1,4 @@
-//! The fourteen-tool door's branches: its views, every browser, agent and
+//! The fifteen-tool door's branches: its views, every browser, agent and
 //! engine-upkeep branch resolved to its dispatcher, bridge op, arguments
 //! and timeout, the refusals, and memory reached through the engine's own
 //! path with no account and no model.
@@ -52,13 +52,13 @@ fn text(result: &Value) -> &str {
     result["content"][0]["text"].as_str().unwrap()
 }
 
-/// This machine sees fourteen tools; an approved computer the five memory
+/// This machine sees fifteen tools; an approved computer the five memory
 /// tools, and of memory_upkeep everything but dream_run. A phone or an
 /// unknown caller gets no view at all.
 #[test]
 fn each_caller_sees_its_view() {
     use crate::memory_host::caller::Caller;
-    assert_eq!(names(View::Local).len(), 14);
+    assert_eq!(names(View::Local).len(), 15);
     assert_eq!(
         names(View::Remote),
         [

@@ -215,14 +215,14 @@ fn only_the_catalogue_defines_and_serves_mcp_tools() {
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
 
-/// The catalogue is exactly fourteen tools, and the list and the dispatch are
+/// The catalogue is exactly fifteen tools, and the list and the dispatch are
 /// the same table: every (tool, op) a view lists resolves to exactly that
 /// branch, and every branch a view may call is listed — no branch is
 /// reachable that the list does not show, and none listed runs nothing.
 #[test]
 fn the_list_and_the_dispatch_are_one_table() {
     let cat = catalog();
-    assert_eq!(cat.tools().len(), 14);
+    assert_eq!(cat.tools().len(), 15);
     for view in [View::Local, View::Remote] {
         let mut listed = Vec::new();
         for tool in cat.tools_list(view) {

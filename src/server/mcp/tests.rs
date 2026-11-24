@@ -1,4 +1,4 @@
-//! The door's published surface and RPC: the fourteen tools and their
+//! The door's published surface and RPC: the fifteen tools and their
 //! definitions, the server text per view, the answers to an old plugin,
 //! and the door's own posture (origin, keep-alive, who comes in).
 
@@ -286,8 +286,8 @@ async fn tools_list_is_the_views_catalogue() {
     };
     let list = json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" });
     let local = names(rpc(View::Local, list.clone()).await);
-    assert_eq!(local.len(), 14);
-    assert_eq!(local.last().map(String::as_str), Some("memory_agents"));
+    assert_eq!(local.len(), 15);
+    assert_eq!(local.last().map(String::as_str), Some("memory_notes"));
     assert_eq!(
         &local[..5],
         [
@@ -391,7 +391,7 @@ fn fingerprint(v: &Value) -> String {
     digest.iter().take(8).map(|b| format!("{b:02x}")).collect()
 }
 
-/// The fourteen tools this door publishes to this machine and the five to an
+/// The fifteen tools this door publishes to this machine and the five to an
 /// approved computer, each with its whole definition (name, description,
 /// input schema) fingerprinted, and both server texts: a change here is a
 /// change every connected host sees.
@@ -433,6 +433,7 @@ async fn the_published_surface_is_locked() {
         ("browser_act", "258452acd0f37bb6"),
         ("app", "f58f64ed75697d7a"),
         ("memory_agents", "8194defe0bc3d985"),
+        ("memory_notes", "391c2978b5c260cb"),
     ];
     assert_eq!(local, want(expected_local), "local:\n{}", print(&local));
     let remote = shown(View::Remote);
@@ -747,6 +748,29 @@ async fn app_is_refused_away_from_this_mac_and_without_a_daemon() {
     assert!(text(&res).contains("unavailable"), "{res}");
 }
 
+/// `memory_notes` is one definition: the door's text is a session's, and
+/// every field the door takes is the session's own, word for word (the door
+/// adds only the calling host).
+#[test]
+fn the_door_and_a_session_say_the_same_about_memory_notes() {
+    use crate::engine::tool_registry::ToolRegistry;
+    use crate::engine::tools::Tools;
+    let session = ToolRegistry::new(Tools::new(std::path::PathBuf::from(".")).unwrap()).oai_tool_definitions(None);
+    let ours = session
+        .iter()
+        .find(|d| d["function"]["name"] == crate::own_memory::TOOL)
+        .expect("a session is offered memory_notes");
+    let door = catalog().tools_list(View::Local);
+    let theirs = door.iter().find(|t| t["name"] == crate::own_memory::TOOL).expect("the door lists memory_notes");
+    assert_eq!(ours["function"]["description"], theirs["description"]);
+    let (mine, door_fields) = (&ours["function"]["parameters"]["properties"], theirs["inputSchema"]["properties"].as_object().unwrap());
+    assert_eq!(door_fields["op"]["enum"], mine["op"]["enum"]);
+    for (name, field) in door_fields.iter().filter(|(n, _)| !["op", "host"].contains(&n.as_str())) {
+        assert_eq!(field, &mine[name], "{name}");
+    }
+    assert!(mine.get("host").is_none(), "a session knows who it is");
+}
+
 /// No file or shell tool is at the door: no tool, and no op of one, is
 /// named as a built-in tool of Linggen's sessions — but the browser's three,
 /// which a session and the door are both offered from one definition
@@ -754,7 +778,13 @@ async fn app_is_refused_away_from_this_mac_and_without_a_daemon() {
 #[test]
 fn no_built_in_tool_of_a_session_is_a_name_at_the_door() {
     use crate::engine::tools::{browser_def, builtin_tier};
-    let shared: Vec<&str> = browser_def::TOOLS.iter().map(|t| t.name).collect();
+    // `memory_notes` too: one definition (`own_memory::spec`), word for word
+    // in both (`the_door_and_a_session_say_the_same_about_memory_notes`).
+    let shared: Vec<&str> = browser_def::TOOLS
+        .iter()
+        .map(|t| t.name)
+        .chain([crate::own_memory::TOOL])
+        .collect();
     for name in &shared {
         assert!(builtin_tier(name).is_some(), "{name}: shared, so a session offers it");
     }

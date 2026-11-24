@@ -30,6 +30,9 @@ pub use access::{read, search, Hit, Note, ReadError};
 pub use redact::Clean;
 pub use slice::{slice, Slice, SourceNote, BUDGET_BYTES};
 pub use sources::{reports, SourceReport};
+// Linggen's own memory (`own_memory`) files its project notes the same way
+// Claude Code does and walks a session's folder up the same chain.
+pub(crate) use sources::{encode_project_path, project_chain};
 
 use std::path::{Path, PathBuf};
 
