@@ -32,9 +32,9 @@
 //! marker file is forwarded verbatim (`installer_version`, `installed_at`,
 //! `app_id`). Full design: linggensite/doc/analytics-spec.md.
 //!
-//! On every meaningful action (wired separately):
-//! - `command` event with payload.verb = "skill.<name>.open" / "session.start"
-//!   / etc. Verbs are stable strings; the server stores them verbatim.
+//! Once per machine, when it happens (`step` event, payload `{step}` from the
+//! closed list [`Step`]; latched in `~/.linggen/.linggen-telemetry`):
+//! - `phone_paired` — a phone was paired to this Mac.
 //!
 //! Daily digest (one `digest` event per completed UTC day, sent on the first
 //! activity of a later day; up to 14 days of offline backlog):
@@ -45,8 +45,15 @@
 //!   - `engine.start` — daemon starts that day
 //!   - `chat.turn_ok` — model turns that completed successfully
 //!   - `update.ok` — self-update applied
+//!   - `use.<app>.open.mac_ui` — a skill app's page was opened on this Mac.
+//!     `<app>` is the skill's name as declared, normalized to `[a-z0-9_-]`
+//!     (32 chars): a skill you wrote yourself reports its name too — opt out
+//!     below to send nothing.
+//!   - `use.chat.turn.<surface>` — a person's chat message, by where it came
+//!     from: `mac_ui` (this Mac's own page), `phone` (a paired phone), `other`.
+//!     Never who, what, or how long.
 //!   - `error.<stage>.<code>` — failure buckets; stage ∈ {start, model,
-//!     search}, code is a coarse cause (`auth_required`, `model_not_found`,
+//!     search, update}, code is a coarse cause (`auth_required`, `model_not_found`,
 //!     `provider_http`, `network`, `quota`, `config`, `other`). Never an
 //!     error message, model name the user typed, URL, or any free text —
 //!     codes are normalized to `[a-z0-9_-]` and capped at 32 chars.
@@ -75,6 +82,43 @@
 //!
 //! Every field sent is listed above. Receiver source lives in
 //! `linggensite/functions/api/_lib/analytics.ts`. No third-party analytics.
+
+/// Where a counted action happened. Closed: the receiver refuses any other
+/// surface in a `use.*` key (linggensite `analyticsSchema.ts`, `SURFACES`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Surface {
+    /// This Mac's own page or window.
+    MacUi,
+    /// A paired phone.
+    Phone,
+    /// Any other door (a room guest, a plugin, a script).
+    Other,
+}
+
+impl Surface {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Surface::MacUi => "mac_ui",
+            Surface::Phone => "phone",
+            Surface::Other => "other",
+        }
+    }
+}
+
+/// A one-time milestone on this machine: the closed list of `step` events the
+/// engine sends (the receiver's list is `STEP_NAMES`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Step {
+    PhonePaired,
+}
+
+impl Step {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Step::PhonePaired => "phone_paired",
+        }
+    }
+}
 
 #[cfg(feature = "telemetry")]
 mod digest;
@@ -112,4 +156,6 @@ impl Telemetry {
     pub fn command_with_payload(&self, _verb: &str, _extra: serde_json::Value) {}
     pub fn bump(&self, _key: &str) {}
     pub fn error(&self, _stage: &str, _code: &str) {}
+    pub fn used(&self, _app: &str, _verb: &str, _surface: Surface) {}
+    pub fn step(&self, _step: Step) {}
 }

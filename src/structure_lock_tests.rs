@@ -33,6 +33,11 @@
 //!   it: no other production code builds a `ChatMsg` with `heard` anything
 //!   but a literal `false`.
 //!
+//! - A skill app's page being opened is counted (`Telemetry::used(app,
+//!   "open", surface)`) only where its page is served, `app_pages::serve_app_file`:
+//!   every way an app comes up (the Mac window, `/api/apps/launch`, `RunApp`)
+//!   ends there, so a second counting site would count an open twice.
+//!
 //! The module walk is the same as `permission_lock_tests.rs`'s; new locks of
 //! this kind are added to this walker, not a third one.
 
@@ -55,6 +60,8 @@ const REACH_WORDS_DECIDER: &str = "crates/linggen-engine/src/engine/skill/reach.
 /// The one place an app action's level is judged.
 const CLASS_JUDGE: &str = "crates/linggen-engine/src/engine/skill/judge.rs";
 /// The two writers of a row's `heard` mark, and the one rule they ask.
+/// The one place a skill app's page opening is counted.
+const APP_OPEN_COUNTER: &str = "src/server/app_pages.rs::serve_app_file";
 const HEARD_WRITERS: [&str; 2] = [
     "src/server/chat/helpers.rs::persist_and_emit_with_images <- heard_mark",
     "src/server/chat/helpers.rs::persist_user_line <- heard_mark",
@@ -104,6 +111,8 @@ struct Found {
     /// `file::fn <- what` of every production `ChatMsg { heard: … }` whose
     /// value is not the literal `false` (what: the fn called, or `value`).
     heard_marks: Vec<String>,
+    /// `file::fn` of every production `.used(app, "open", surface)` call.
+    app_opens: Vec<String>,
 }
 
 /// The permission-mode words, the `write` alias with them.
@@ -231,6 +240,12 @@ impl<'ast> Visit<'ast> for Scan<'_> {
         if call.method == "level_needed" || call.method == "destroys" {
             let here = self.here();
             self.found.class_levels.push(here);
+        }
+        let verb = call.args.iter().nth(1);
+        let says_open = matches!(verb, Some(Expr::Lit(l)) if matches!(&l.lit, Lit::Str(v) if v.value() == "open"));
+        if call.method == "used" && call.args.len() == 3 && says_open {
+            let here = self.here();
+            self.found.app_opens.push(here);
         }
         visit::visit_expr_method_call(self, call);
     }
@@ -541,6 +556,29 @@ fn the_spoken_mark_on_a_row_is_decided_in_one_place() {
         HEARD_WRITERS,
         "a row's `heard` is `false`, or `chat::helpers::heard_mark(..)` in the two writers of a chat line; never set from a request here"
     );
+}
+
+#[test]
+fn an_app_opening_is_counted_in_one_place() {
+    assert_eq!(
+        production().app_opens,
+        [APP_OPEN_COUNTER],
+        "count an app's page opening only where the page is served; a second site counts an open twice"
+    );
+}
+
+#[test]
+fn the_scan_finds_an_open_count_but_not_other_verbs() {
+    let parsed = syn::parse_file(
+        r#"fn a() { t.used(app, "open", S::MacUi); }
+           fn b() { t.used(app, "turn", S::Phone); t.used(app, verb, S::Phone); }
+           #[test] fn c() { t.used(app, "open", S::MacUi); }"#,
+    )
+    .unwrap();
+    let mut found = Found::default();
+    Scan { root: Path::new(""), file: Path::new("lib.rs"), modules: Path::new(""), func: String::new(), found: &mut found }
+        .visit_file(&parsed);
+    assert_eq!(found.app_opens, ["lib.rs::a"]);
 }
 
 #[test]

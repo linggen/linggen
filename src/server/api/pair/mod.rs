@@ -52,6 +52,10 @@ fn commit_paired(
         .and_then(|did| load_devices().into_iter().find(|d| d.device_id.as_deref() == Some(did)))
         .map(|d| crate::server::person::of_row(&d));
     let device = crate::state_fs::devices::commit_device(name, device_id, account)?;
+    // Both pairings end here: the one place a first phone pairing is told.
+    if device.kind() == crate::state_fs::devices::DeviceKind::Phone {
+        crate::telemetry::global().step(crate::telemetry::Step::PhonePaired);
+    }
     if let Some(before) = before {
         crate::server::people::person_changed(&before, &crate::server::person::of_row(&device));
     }
