@@ -95,6 +95,14 @@ stronger model, or the model makers' own free agents, will do by themselves is n
 retrieval plumbing, model routing. Keep them general and small (Hanli 2026-11-15: 「工具要底层通用, 数量尽量少, 尽量让agent去做」 — few
 low-level tools, the model judges), take the vendors' improvements, and do not build a moat there.
 
+**The goal this serves — a personal companion, people first** (Hanli, 2026-11-24): 「linggen不仅是用户的情感伴侣,
+还是人生导师… yinyue要像人, linggen要以人为本.」 Linggen grows up with the person over years and, like a good friend
+and mentor, connects what it has seen: two years after a break-up the person has thrown themselves into research and
+done well — now and then she may say it is also time to think of their own life; last Black Friday they regretted a
+1,000 spend — this Black Friday she reminds them. These are examples, not features: Yinyue gets the person's long
+record (memory and chronicle) and the date, and judges for herself when and how to speak (Hanli 2026-11-15: no tool or
+coded condition per scenario).
+
 **The test for every design:** if models were ten times stronger, would this still matter, and would it still make
 Linggen different? If not, build the thinnest version or none.
 
