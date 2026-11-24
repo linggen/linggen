@@ -27,14 +27,15 @@ test('the chip appears for a model that offers effort, keeps its choice over a r
 
   await model.selectOption('reasoning');
   await expect(chip).toBeVisible();
-  await expect(chip.getByRole('slider')).toHaveAttribute('max', '2');
+  // 自动 is the leftmost stop, before the model's three levels.
+  await expect(chip.getByRole('slider')).toHaveAttribute('max', '3');
   await expect(chip).toHaveAttribute('data-choice', 'auto');
   await chip.getByRole('slider').press('ArrowRight');
-  await expect(chip).toHaveAttribute('data-choice', 'medium');
+  await expect(chip).toHaveAttribute('data-choice', 'low');
   await page.reload();
   await expectWebRtc(page, httpRequests);
   await expect(page.getByTestId('session-model')).toHaveValue('reasoning');
-  await expect(chip).toHaveAttribute('data-choice', 'medium');
+  await expect(chip).toHaveAttribute('data-choice', 'low');
 
   // Changing models drops the session override and uses the new model's saved effort.
   await model.selectOption('fake-ling');
@@ -43,7 +44,7 @@ test('the chip appears for a model that offers effort, keeps its choice over a r
   await expect(chip).toHaveAttribute('data-choice', 'auto');
   await chip.getByRole('slider').press('End');
   await expect(chip).toHaveAttribute('data-choice', 'high');
-  await chip.getByRole('button', { name: '恢复自动' }).click();
+  await chip.getByRole('slider').press('Home');
   await expect(chip).toHaveAttribute('data-choice', 'auto');
 });
 
@@ -53,7 +54,7 @@ test('a ChatGPT sign-in row offers low, medium and high before catalog metadata 
   await page.getByTestId('session-model').selectOption('fake-sol');
   const chip = page.getByTestId('session-effort');
   await expect(chip).toBeVisible();
-  await expect(chip.getByRole('slider')).toHaveAttribute('max', '2');
+  await expect(chip.getByRole('slider')).toHaveAttribute('max', '3');
   await chip.getByRole('slider').press('End');
   await expect(chip).toHaveAttribute('data-choice', 'high');
 });
@@ -76,7 +77,7 @@ test.describe('the default model is a Claude model', () => {
     const pick = page.getByTestId('default-effort');
     await expect(pick).toBeVisible();
     const slider = pick.getByRole('slider');
-    await expect(slider).toHaveAttribute('max', '4');
+    await expect(slider).toHaveAttribute('max', '5');
     await slider.press('End');
     await expect(pick).toHaveAttribute('data-choice', 'max');
     await expect(slider).toBeEnabled();
