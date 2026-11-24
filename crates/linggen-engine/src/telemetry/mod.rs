@@ -46,9 +46,8 @@
 //!   - `chat.turn_ok` — model turns that completed successfully
 //!   - `update.ok` — self-update applied
 //!   - `use.<app>.open.mac_ui` — a skill app's page was opened on this Mac.
-//!     `<app>` is the skill's name as declared, normalized to `[a-z0-9_-]`
-//!     (32 chars): a skill you wrote yourself reports its name too — opt out
-//!     below to send nothing.
+//!     `<app>` is a skill Linggen ships (`OFFICIAL_APPS`); any other skill
+//!     counts as `custom`, never under its own name.
 //!   - `use.chat.turn.<surface>` — a person's chat message, by where it came
 //!     from: `mac_ui` (this Mac's own page), `phone` (a paired phone), `other`.
 //!     Never who, what, or how long.
@@ -103,6 +102,24 @@ impl Surface {
             Surface::Other => "other",
         }
     }
+}
+
+/// The app skills Linggen ships (the linggen/skills repo's apps). The only
+/// app names a usage count may carry: any other skill — one a person wrote
+/// or installed — is counted as `custom`, because its name may be personal.
+/// Adding a shipped app is one line here.
+pub const OFFICIAL_APPS: &[&str] = &["apple-shifu", "cfo", "dj", "health", "lingjing", "pulse"];
+
+/// The name an app is counted under: its own when Linggen ships it, else
+/// `custom`. The one place that decides; `structure_lock_tests::
+/// an_app_opening_is_counted_in_one_place` holds that an open is counted
+/// through it.
+pub fn app_label(skill: &str) -> &'static str {
+    OFFICIAL_APPS
+        .iter()
+        .find(|name| **name == skill)
+        .copied()
+        .unwrap_or("custom")
 }
 
 /// A one-time milestone on this machine: the closed list of `step` events the

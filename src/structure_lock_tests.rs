@@ -113,6 +113,8 @@ struct Found {
     heard_marks: Vec<String>,
     /// `file::fn` of every production `.used(app, "open", surface)` call.
     app_opens: Vec<String>,
+    /// The `.used(app, "open", ..)` calls whose app is not `app_label(..)`.
+    unlabelled_opens: Vec<String>,
 }
 
 /// The permission-mode words, the `write` alias with them.
@@ -245,7 +247,12 @@ impl<'ast> Visit<'ast> for Scan<'_> {
         let says_open = matches!(verb, Some(Expr::Lit(l)) if matches!(&l.lit, Lit::Str(v) if v.value() == "open"));
         if call.method == "used" && call.args.len() == 3 && says_open {
             let here = self.here();
-            self.found.app_opens.push(here);
+            self.found.app_opens.push(here.clone());
+            let labelled = matches!(call.args.first(), Some(Expr::Call(c))
+                if matches!(&*c.func, Expr::Path(p) if p.path.segments.last().is_some_and(|s| s.ident == "app_label")));
+            if !labelled {
+                self.found.unlabelled_opens.push(here);
+            }
         }
         visit::visit_expr_method_call(self, call);
     }
@@ -568,6 +575,17 @@ fn an_app_opening_is_counted_in_one_place() {
 }
 
 #[test]
+fn an_app_is_counted_under_its_shipped_name_or_custom() {
+    assert!(production().unlabelled_opens.is_empty(), "count an app open as `used(app_label(skill), \"open\", ..)`: a skill's own name may be personal");
+    assert_eq!(crate::telemetry::app_label("lingjing"), "lingjing");
+    assert_eq!(crate::telemetry::app_label("my-diary"), "custom");
+    assert_eq!(crate::telemetry::app_label(""), "custom");
+    for name in crate::telemetry::OFFICIAL_APPS {
+        assert!(name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'), "{name}");
+    }
+}
+
+#[test]
 fn the_scan_finds_an_open_count_but_not_other_verbs() {
     let parsed = syn::parse_file(
         r#"fn a() { t.used(app, "open", S::MacUi); }
@@ -579,6 +597,7 @@ fn the_scan_finds_an_open_count_but_not_other_verbs() {
     Scan { root: Path::new(""), file: Path::new("lib.rs"), modules: Path::new(""), func: String::new(), found: &mut found }
         .visit_file(&parsed);
     assert_eq!(found.app_opens, ["lib.rs::a"]);
+    assert_eq!(found.unlabelled_opens, ["lib.rs::a"]);
 }
 
 #[test]

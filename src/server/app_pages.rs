@@ -189,7 +189,11 @@ pub(super) async fn serve_app_file(
     // request for its entry file; its other files are not opens. Pages are
     // this Mac's own; locked by `structure_lock_tests::an_app_opening_is_counted_in_one_place`.
     if file_path_clean == app.entry {
-        crate::telemetry::global().used(&skill_name, "open", crate::telemetry::Surface::MacUi);
+        crate::telemetry::global().used(
+            crate::telemetry::app_label(&skill_name),
+            "open",
+            crate::telemetry::Surface::MacUi,
+        );
     }
 
     let full_path = skill_dir.join(file_path_clean);
