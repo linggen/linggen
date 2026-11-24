@@ -96,7 +96,10 @@ pub(crate) fn family_current<'a>(
             && preset_for(e.connection.endpoint).is_some_and(|p| p.key == preset.key) => Some(e.usable),
         _ => None,
     };
-    let mut family: Vec<_> = models.values().filter(|m| m.family.as_deref() == Some(family)).collect();
+    // Aliases stay in the catalog as exact facts, not in the candidate set.
+    let mut family: Vec<_> = models.values().filter(|m| {
+        m.family.as_deref() == Some(family) && m.stability != Stability::Alias
+    }).collect();
     if family.is_empty() {
         return FamilyCurrent::Unavailable { current };
     }

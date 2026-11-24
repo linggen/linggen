@@ -32,17 +32,13 @@ fn real_frontiers_are_order_independent() {
             ("anthropic", "claude-haiku", "claude-haiku-5-5"),
             ("anthropic", "claude-fable", "claude-fable-5-2"),
             ("openai", "gpt-sol", "gpt-6.2-sol"),
+            ("openai", "gpt", "gpt-5.5"),
+            ("gemini", "gemini-flash", "gemini-3.8-flash"),
         ] {
             assert!(matches!(resolve(&s, p, f, None, Some(1), TODAY), FamilyCurrent::Current { next, .. } if next.id() == id), "{f}");
         }
-        for (p, f, odd, stability) in [
-            ("deepseek", "deepseek-flash", "deepseek-v4-flash-vision-exp", Stability::Experimental),
-            ("openai", "gpt", "gpt-daybreak-red-latest", Stability::Alias),
-            ("gemini", "gemini-flash", "gemini-flash-latest", Stability::Alias),
-        ] {
-            let FamilyCurrent::Choose { choices, .. } = resolve(&s, p, f, None, Some(1), TODAY) else { panic!("{f}"); };
-            assert!(choices.iter().any(|c| c.facts.id() == odd && c.held == Some(Hold::NonStable(stability))));
-        }
+        let FamilyCurrent::Choose { reason: Hold::AmbiguousHead, choices, .. } = resolve(&s, "deepseek", "deepseek-flash", None, Some(1), TODAY) else { panic!("real DeepSeek tie"); };
+        assert!(choices.iter().any(|c| c.facts.id() == "deepseek-v4-flash-vision-exp" && c.held == Some(Hold::NonStable(Stability::Experimental))));
     }
 }
 

@@ -110,6 +110,31 @@ function model(id, m, observed) {
   };
 }
 
+// Detect named tiers within the same generation of a source family. An
+// older generation joins only a tier already established by sibling names.
+function splitTiers(models) {
+  const generations = new Map();
+  const candidates = [];
+  for (const m of models) {
+    const named = /^(.*?)\s*(\d+(?:\.\d+)*)\s+([a-z][a-z-]*)$/i.exec(m.name);
+    if (!m.family || !named || m.stability !== 'stable') continue;
+    const [, stem, generation, label] = named;
+    const tier = label.toLowerCase();
+    const brand = stem.trim().toLowerCase().replace(/\s+/g, '-');
+    if (brand !== m.family || !m.id.endsWith(`-${tier}`)) continue;
+    const key = `${m.family}:${generation}`;
+    if (!generations.has(key)) generations.set(key, new Set());
+    generations.get(key).add(tier);
+    candidates.push({ key, m, tier });
+  }
+  const tierFamilies = new Set(candidates.filter(({ key }) => generations.get(key).size > 1)
+    .map(({ m, tier }) => `${m.family}-${tier}`));
+  for (const { m, tier } of candidates) {
+    const key = `${m.family}-${tier}`;
+    if (tierFamilies.has(key)) m.family = key;
+  }
+}
+
 export function generate(input, observed, ids = sourceIds()) {
   need(record(input) && date(observed) && ids.length > 0 && new Set(ids).size === ids.length, 'invalid source or observation date');
   const providers = [...ids].sort(order).map(source_id => {
@@ -122,6 +147,7 @@ export function generate(input, observed, ids = sourceIds()) {
     }
     const models = Object.keys(p.models).sort(order).map(id => model(id, p.models[id], observed));
     need(models.length > 0, `empty provider ${source_id}`);
+    splitTiers(models);
     return { source_id, name: p.name, api: p.api ?? undefined, models };
   });
   return { schema: 1, source: 'models.dev', observed_at: observed, providers };
