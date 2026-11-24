@@ -120,7 +120,6 @@ export const W = {
   liveMissingKey: 'Missing key',
   lingyuUses: 'Used by Lingyu',
   providerBill: 'See provider bill for pricing',
-  mergeRows: 'Merge',
   holdChoose: 'Pick a version',
   checkingKey: 'Checking this key…',
   listFailed: 'Could not connect. Try again later.',

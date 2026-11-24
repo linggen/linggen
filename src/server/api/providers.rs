@@ -6,8 +6,8 @@ use axum::{body::Bytes, extract::{Path, State}, http::{HeaderMap, Method, Status
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::config::{providers::{known_names, Way, PRESETS}, Config, ModelConfig, SignIn};
-use crate::provider::models::providers_view::{editable_row, filed_endpoint, group_keys, keep_model_key, provider_id, ProviderView};
+use crate::config::{providers::{known_names, Way}, Config, SignIn};
+use crate::provider::models::providers_view::{editable_row, live_card_at, preset_named, presets, filed_endpoint, group_keys, keep_model_key, provider_id, ProviderView};
 use crate::credentials::{self, Credentials};
 use crate::server::{person, ServerState};
 
@@ -42,11 +42,7 @@ pub(super) async fn answer(state: &ServerState, config: &Config, creds: &Credent
         let filed = filed_endpoint(config, creds, &provider.id).unwrap_or((&provider.provider, &provider.url));
         provider.families = state.manager.families.view(config, creds, filed);
     }
-    let presets: Vec<_> = PRESETS.iter().map(|p| json!({
-        "name": p.name, "label": p.label, "url": p.url, "way": p.way.as_str(),
-        "default_model": p.default_model, "placeholder": p.placeholder,
-        "live": p.offered_live_models(),
-    })).collect();
+    let presets = presets();
     Json(json!({"presets": presets, "providers": providers})).into_response()
 }
 
@@ -105,10 +101,9 @@ fn address(input: &str) -> Result<String, Failure> {
 fn new_endpoint(input: NewProvider) -> Result<(String, String), Failure> {
     match (input.preset, input.name, input.url) {
         (Some(selector), None, None) => {
-            let preset = PRESETS.iter().find(|p| p.label == selector || p.url == selector)
-                .or_else(|| PRESETS.iter().find(|p| p.name == selector)).ok_or(BAD)?;
-            if !matches!(preset.way, Way::Key | Way::Local) { return Err(BAD); }
-            Ok((preset.name.into(), preset.url.into()))
+            let (name, url, way) = preset_named(&selector).ok_or(BAD)?;
+            if !matches!(way, Way::Key | Way::Local) { return Err(BAD); }
+            Ok((name, url))
         }
         (None, Some(name), Some(url)) if known_names().contains(&name.as_str()) && name != "chatgpt" => {
             Ok((name, address(&url)?))
@@ -190,9 +185,9 @@ pub(super) async fn endpoint(state: &ServerState, config: &Config, creds: &Crede
         Some(pair) => pair,
         None => {
             let draft = state.provider_drafts.lock().await.get(id).cloned();
-            draft.or_else(|| PRESETS.iter().find(|p| !p.live_models().is_empty()
-                && provider_id(SignIn::Key, p.name, p.url) == id)
-                .map(|p| (p.name.into(), p.url.into()))).ok_or(MISSING)?
+            // A live voice's card has no row or key yet: the list names where it is shown.
+            let live = live_card_at(id);
+            draft.or(live).ok_or(MISSING)?
         },
     };
     if !known_names().contains(&pair.0.as_str()) || pair.0 == "chatgpt" { return Err(BAD); }

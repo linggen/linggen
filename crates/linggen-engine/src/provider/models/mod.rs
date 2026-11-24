@@ -207,7 +207,7 @@ impl ModelManager {
         // stays in the config and goes nowhere. One catalog capture decides
         // every row.
         let all_configs = configs.clone();
-        let facts = family_catalog::current();
+        let facts = curated::current();
         let (mut chat, mut live_rows) = (Vec::new(), Vec::new());
         for c in configs {
             match kind_in(&c, &facts) {

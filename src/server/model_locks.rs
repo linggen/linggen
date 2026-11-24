@@ -69,14 +69,17 @@ fn a_reports_cache_counts_are_read_only_through_tokens_of() {
     );
 }
 
+/// The v1 public catalog is retired: its file and address are named nowhere
+/// (the curated list, `provider/models/curated`, is the one reader and the one
+/// owner of its own file and address; a test there counts it).
 #[test]
-fn only_the_public_catalog_reader_owns_its_wire_file_and_fetch_address() {
+fn the_retired_v1_catalog_is_named_nowhere() {
     let found = lines_with(
         &["/model-catalog/v1.json", "model-catalog-v1.json"],
-        |rel| rel.ends_with("/family_catalog.rs") || rel.ends_with("/family_catalog/refresh.rs"),
-        "crates/linggen-engine/src/provider/models/family_catalog/refresh.rs",
+        |_| false,
+        "crates/linggen-engine/src/provider/models/family_catalog.rs",
     );
-    assert!(found.is_empty(), "use typed public catalog results: {found:?}");
+    assert!(found.is_empty(), "the v1 catalog is gone: {found:?}");
 }
 
 #[test]

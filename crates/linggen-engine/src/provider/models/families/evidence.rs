@@ -8,7 +8,7 @@
 //! evidence, and then nothing moves on its account. Nothing here logs, stores
 //! or returns a key: failures are one fixed value.
 
-use crate::config::providers::Preset;
+use crate::provider::models::curated::Place;
 use async_trait::async_trait;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeSet, HashMap};
@@ -22,7 +22,7 @@ const TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_PAGES: usize = 20;
 const MAX_IDS: usize = 5000;
 
-/// Where and as whom to ask. The address is a preset's, never typed.
+/// Where and as whom to ask. The address is the list's own for a row's address, never typed.
 pub(crate) struct Target<'a> {
     pub url: &'a str,
     pub native_anthropic: bool,
@@ -59,12 +59,19 @@ struct Held {
     at: Instant,
 }
 
+/// One connection's slot: its key in the list and the exact address it is asked at.
+fn held_by(place: &Place<'_>) -> String {
+    format!("{}@{}", place.endpoint_key, crate::credentials::endpoint_url(place.base).to_ascii_lowercase())
+}
+
 pub(crate) struct Evidence {
     lister: Arc<dyn ModelLister>,
     fresh_for: Duration,
-    /// By preset key (one endpoint each). A new key replaces the entry.
-    held: Mutex<HashMap<&'static str, Held>>,
-    gates: Mutex<HashMap<&'static str, Arc<tokio::sync::Mutex<()>>>>,
+    /// By connection (see `held_by`: the address is part of it, so a list
+    /// that moves an endpoint never lends a list gathered elsewhere). A new
+    /// key replaces the entry.
+    held: Mutex<HashMap<String, Held>>,
+    gates: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
 }
 
 impl Evidence {
@@ -81,7 +88,7 @@ impl Evidence {
         Self::new(Arc::new(Unreachable), FRESH_FOR)
     }
 
-    /// The lists of a fixture file (system tests): `{"lists": {"<preset key>":
+    /// The lists of a fixture file (system tests): `{"lists": {"<endpoint key>":
     /// ["<model id>", …]}}`, read at each ask.
     #[cfg(feature = "test-support")]
     pub(crate) fn from_fixture(path: std::path::PathBuf) -> Self {
@@ -90,33 +97,33 @@ impl Evidence {
 
     /// The list already held for this endpoint and key, if it is fresh. Never
     /// asks: what a page read and a decision under the lock use.
-    pub(crate) fn held(&self, preset: &Preset, key: &str) -> Option<Arc<Listing>> {
-        self.result(preset, key).flatten()
+    pub(crate) fn held(&self, place: &Place<'_>, key: &str) -> Option<Arc<Listing>> {
+        self.result(place, key).flatten()
     }
 
     /// None means unchecked; Some(None) means an attempt failed.
-    pub(crate) fn result(&self, preset: &Preset, key: &str) -> Option<Option<Arc<Listing>>> {
+    pub(crate) fn result(&self, place: &Place<'_>, key: &str) -> Option<Option<Arc<Listing>>> {
         let revision = revision_of(key);
         let held = self.held.lock().unwrap_or_else(|e| e.into_inner());
-        let entry = held.get(preset.key)?;
+        let entry = held.get(&held_by(place))?;
         let ttl = if entry.listing.is_some() { self.fresh_for } else { Duration::from_secs(30) };
         (entry.revision == revision && entry.at.elapsed() <= ttl).then(|| entry.listing.clone())
     }
 
     /// Ask the provider unless a fresh list for this key is held. Call it
     /// outside the write lock.
-    pub(crate) async fn gather(&self, preset: &'static Preset, key: &str) -> Option<Arc<Listing>> {
+    pub(crate) async fn gather(&self, place: &Place<'_>, key: &str) -> Option<Arc<Listing>> {
         let gate = self.gates.lock().unwrap_or_else(|e| e.into_inner())
-            .entry(preset.key).or_default().clone();
+            .entry(held_by(place)).or_default().clone();
         let _read = gate.lock().await;
-        if let Some(result) = self.result(preset, key) {
+        if let Some(result) = self.result(place, key) {
             return result;
         }
-        let target = Target { url: preset.url, native_anthropic: preset.key == "anthropic", key };
+        let target = Target { url: place.base, native_anthropic: place.native_anthropic(), key };
         let revision = revision_of(key);
         let listing = self.lister.list(&target).await.ok().map(|usable| Arc::new(Listing { revision, usable }));
         self.held.lock().unwrap_or_else(|e| e.into_inner())
-            .insert(preset.key, Held { revision, listing: listing.clone(), at: Instant::now() });
+            .insert(held_by(place), Held { revision, listing: listing.clone(), at: Instant::now() });
         listing
     }
 }
@@ -193,7 +200,7 @@ impl ModelLister for Unreachable {
     async fn list(&self, _: &Target<'_>) -> Result<BTreeSet<String>, ListFailed> { Err(ListFailed) }
 }
 
-/// Answers from a file, by preset url: a system test's provider.
+/// Answers from a file, by the list's endpoint key at the asked address: a system test's provider.
 #[cfg(feature = "test-support")]
 struct FileLister(std::path::PathBuf);
 
@@ -206,8 +213,9 @@ impl ModelLister for FileLister {
         if let Some(ms) = file.get("delay_ms").and_then(|v| v.as_u64()) {
             tokio::time::sleep(Duration::from_millis(ms)).await;
         }
-        let preset = crate::config::providers::PRESETS.iter().find(|p| p.url == target.url).ok_or(ListFailed)?;
-        let ids = file.get("lists").and_then(|l| l.get(preset.key)).and_then(|l| l.as_array()).ok_or(ListFailed)?;
+        let list = crate::provider::models::curated::current();
+        let place = list.place_at(target.url).ok_or(ListFailed)?;
+        let ids = file.get("lists").and_then(|l| l.get(place.endpoint_key)).and_then(|l| l.as_array()).ok_or(ListFailed)?;
         Ok(ids.iter().filter_map(|id| id.as_str().map(str::to_string)).collect())
     }
 }

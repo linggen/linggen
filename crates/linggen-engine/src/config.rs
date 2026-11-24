@@ -712,7 +712,7 @@ impl Config {
     /// `src/server/model_locks.rs` counts the readers of the raw rows).
     pub fn chat_models(&self) -> impl Iterator<Item = &ModelConfig> {
         use crate::provider::kinds::{kind_in, Kind};
-        let facts = crate::provider::models::family_catalog::current();
+        let facts = crate::provider::models::curated::current();
         self.models.iter().filter(move |m| kind_in(m, &facts) == Kind::Chat)
     }
 
@@ -1080,8 +1080,8 @@ fn is_valid_go_duration(s: &str) -> bool {
     true
 }
 
-// The provider names a model may carry are `providers::known_names()`,
-// derived from the one list of presets (`config/providers.rs`).
+// The provider names a model may carry are `providers::known_names()`, a
+// fixed list in `config/providers.rs`; what a page offers is the curated list.
 
 #[cfg(test)]
 mod tests {

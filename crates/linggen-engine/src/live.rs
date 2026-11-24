@@ -99,8 +99,8 @@ pub struct Provider {
 }
 
 impl Provider {
-    /// The host this provider's account is at: the one a preset's address
-    /// must be at (`config::providers`, a lock there).
+    /// The host this provider's account is at: the one the curated list's
+    /// address for its live entry must be at.
     pub fn key_host(&self) -> &'static str {
         self.key_host
     }

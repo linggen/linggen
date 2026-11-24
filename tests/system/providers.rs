@@ -272,7 +272,7 @@ model = "qwen-plus"
 }
 
 #[tokio::test]
-async fn qwen_cloud_borrows_only_listed_candidates_and_never_dashscope_rates() {
+async fn qwen_cloud_offers_only_what_the_list_approves_and_never_dashscope_rates() {
     const ROW: &str = r#"
 [[models]]
 id = "my-deepseek"
@@ -283,24 +283,45 @@ model = "deepseek-v4.1-flash"
     let w = World::start_with_home(Setup { config_append: Some(ROW), ..Setup::default() }, |home| {
         let fixture = json!({"today":"2026-11-23", "lists": {
             "qwen-cloud": ["qwen3.8-max", "qwen-plus", "deepseek-v4-flash-0731", "kimi-k3"],
-            "dashscope-cn": ["qwen3.8-max"]
+            "dashscope-cn": ["qwen-plus"]
         }});
         std::fs::write(home.linggen_home().join("test-families.json"), fixture.to_string()).unwrap();
     }).await;
+    // Before a key: the one entry the list approves, not yet usable; no candidate comes from the provider's own list.
     let before = w.api.get("/api/providers").await;
-    assert_eq!(provider(&before, "Qwen Cloud")["families"]["families"], json!([]));
+    let families = provider(&before, "Qwen Cloud")["families"]["families"].as_array().unwrap().clone();
+    assert_eq!(families.len(), 1, "{families:?}");
+    assert_eq!((families[0]["family"].as_str(), families[0]["hold"].as_str()), (Some("qwen-plus"), Some("no_key")));
+    // The endpoint already has a row, so the key is not a new connection and no starter is ticked;
+    // a person's tick runs the approved id, pinned, with no price borrowed.
     let body = file_key(&w, "Qwen Cloud").await;
     let qwen = provider(&body, "Qwen Cloud");
+    assert_eq!(qwen["families"]["rates_unavailable"], true);
+    assert_eq!(qwen["families"]["families"][0]["ticked"], false);
+    let qid = qwen["id"].as_str().unwrap().to_string();
+    let (status, _) = w.api.put_text(&format!("/api/providers/{qid}/families/qwen-plus"), json!({"action":"tick"})).await;
+    assert_eq!(status, 200);
+    let body = w.api.get("/api/providers").await;
+    let qwen = provider(&body, "Qwen Cloud");
     let families = qwen["families"]["families"].as_array().unwrap();
-    assert_eq!(families.len(), 4, "{families:?}");
-    assert!(families.iter().all(|f| f["next"].get("price").is_none()));
-    assert!(families.iter().any(|f| f["next"]["model"] == "qwen-plus"));
+    assert_eq!(families.len(), 1, "{families:?}");
+    assert_eq!((families[0]["ticked"].clone(), families[0]["mode"].clone()), (true.into(), "pinned".into()));
+    assert!(families[0]["current"].get("price").is_none());
     assert!(qwen["models"].as_array().unwrap().iter().any(|m| m["id"] == "my-deepseek" && m["ready"] == true));
-    w.api.post("/api/providers", json!({"preset":"通义千问 (DashScope)"})).await;
+    // DashScope CN is another list address (mainland edition): a row there is priced by its own facts alone.
+    let created = w.api.post("/api/providers", json!({"name":"qwen","url":"https://dashscope.aliyuncs.com/compatible-mode/v1"})).await;
+    assert!(provider(&created, "通义千问 (DashScope)")["id"].is_string());
     let body = file_key(&w, "通义千问 (DashScope)").await;
     let dashscope = provider(&body, "通义千问 (DashScope)");
-    let max = dashscope["families"]["families"].as_array().unwrap().iter().find(|f| f["family"] == "qwen-max").unwrap();
-    assert_eq!(max["next"]["price"]["source"], "catalog");
+    let id = dashscope["id"].as_str().unwrap().to_string();
+    let (status, _) = w.api.put_text(&format!("/api/providers/{id}/families/qwen-plus"), json!({"action":"tick"})).await;
+    assert_eq!(status, 200);
+    let body = w.api.get("/api/providers").await;
+    let dashscope = provider(&body, "通义千问 (DashScope)");
+    // Its own facts exist (so rates are not "unavailable"); this model's lists a rate we cannot estimate: no figure.
+    assert!(dashscope["families"].get("rates_unavailable").is_none());
+    assert_eq!(dashscope["families"]["families"][0]["current"]["model"], "qwen-plus");
+    assert!(dashscope["families"]["families"][0]["current"].get("price").is_none());
 }
 
 /// The page types a model name only; the engine makes the row's id, and a

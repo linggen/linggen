@@ -24,8 +24,9 @@ pub use binding::{FamilyBinding, FamilyStarts, LastMove, Mode, MoveKind};
 pub use view::FamiliesView;
 use binding::keep_bindings;
 
-use super::family_catalog::{self, family_current, preset_for, Access, AccessEvidence, Connection, FamilyCurrent, Snapshot};
-use crate::config::{providers::Preset, Config, ModelConfig};
+use super::curated::{self, Bundle, Place};
+use super::family_catalog::{family_current, Access, AccessEvidence, Connection, FamilyCurrent};
+use crate::config::{Config, ModelConfig};
 use crate::credentials::{self, Credentials};
 use chrono::NaiveDate;
 use evidence::{Evidence, Listing};
@@ -36,8 +37,8 @@ pub struct Families {
     evidence: Evidence,
     /// A fixed day for the system tests; the clock otherwise.
     today: Option<NaiveDate>,
-    /// A fixed catalog for the unit tests; the one in force otherwise.
-    fixed_catalog: Option<Arc<Snapshot>>,
+    /// A fixed list for the unit tests; the one in force otherwise.
+    fixed_catalog: Option<Arc<Bundle>>,
     /// Rows whose first call on a just-moved model was refused, waiting for
     /// the go-back under the settings write lock.
     refused: Mutex<BTreeSet<(String, String)>>,
@@ -80,8 +81,9 @@ impl Families {
         Self { evidence, today, fixed_catalog: None, refused: Default::default(), armed: Default::default(), wake: Default::default() }
     }
 
-    fn catalog(&self) -> Arc<Snapshot> {
-        self.fixed_catalog.clone().unwrap_or_else(family_catalog::current)
+    /// The list this decision is made from: read once, so one decision never mixes two.
+    fn catalog(&self) -> Arc<Bundle> {
+        self.fixed_catalog.clone().unwrap_or_else(curated::current)
     }
 
     fn today(&self) -> NaiveDate { self.today.unwrap_or_else(|| chrono::Utc::now().date_naive()) }
@@ -89,17 +91,21 @@ impl Families {
     /// Ask the named endpoint for a settings action, or all filed key
     /// endpoints for discovery. Runs outside the settings write lock.
     pub async fn gather(&self, config: &Config, creds: &Credentials, endpoint: Option<(&str, &str)>) {
-        let mut asks: Vec<(&'static Preset, String)> = Vec::new();
-        let named = endpoint.and_then(|(name, url)| Endpoint::of(name, url, creds));
-        let rows = config.models.iter().filter_map(|row| Endpoint::of_row(row, creds));
-        let filed = creds.endpoints.iter().filter_map(|e| Endpoint::of(&e.provider, &e.url, creds));
+        // A key is asked only at the address it is filed under: an endpoint is
+        // found by a row's or a credential's own address, never by a list's.
+        let list = self.catalog();
+        let mut asks: Vec<(Place<'_>, String)> = Vec::new();
+        let named = endpoint.and_then(|(name, url)| Endpoint::of(&list, name, url, creds));
+        let rows = config.models.iter().filter_map(|row| Endpoint::of_row(&list, row, creds));
+        let filed = creds.endpoints.iter().filter_map(|e| Endpoint::of(&list, &e.provider, &e.url, creds));
         for e in named.into_iter().chain(rows.chain(filed).filter(|_| endpoint.is_none())) {
-            if let Some(key) = e.key.filter(|_| !asks.iter().any(|(p, _)| p.key == e.preset.key)) {
-                asks.push((e.preset, key));
+            let address = e.place.base;
+            if let Some(key) = e.key.filter(|_| !asks.iter().any(|(p, _)| p.endpoint_key == e.place.endpoint_key && p.is_at(address))) {
+                asks.push((e.place, key));
             }
         }
-        futures_util::future::join_all(asks.into_iter().map(|(preset, key)| async move {
-            self.evidence.gather(preset, &key).await;
+        futures_util::future::join_all(asks.iter().map(|(place, key)| async move {
+            self.evidence.gather(place, key).await;
         })).await;
     }
 
@@ -177,32 +183,32 @@ impl Families {
     }
 }
 
-/// An endpoint as the families see it: its preset, and the key a row there
-/// would call with (one of the key's sources, never shown).
-struct Endpoint {
-    preset: &'static Preset,
+/// An endpoint as the families see it: where the list places it, and the key
+/// a row there would call with (one of the key's sources, never shown).
+struct Endpoint<'a> {
+    place: Place<'a>,
     probe: ModelConfig,
     key: Option<String>,
 }
 
-impl Endpoint {
-    fn of(name: &str, url: &str, creds: &Credentials) -> Option<Self> {
+impl<'a> Endpoint<'a> {
+    fn of(list: &'a Bundle, name: &str, url: &str, creds: &Credentials) -> Option<Self> {
         let probe: ModelConfig = serde_json::from_value(serde_json::json!({
             "id": "endpoint-probe", "provider": name, "url": url, "model": "-",
         })).ok()?;
-        Self::of_row(&probe, creds)
+        Self::of_row(list, &probe, creds)
     }
 
-    fn of_row(row: &ModelConfig, creds: &Credentials) -> Option<Self> {
-        let preset = preset_for(row)?;
-        // A family has a catalog; a preset with none (or OpenRouter's search list) has none.
-        preset.catalog.filter(|b| b.source_id != "openrouter")?;
-        Some(Self { preset, probe: row.clone(), key: credentials::resolve_api_key(row, creds) })
+    fn of_row(list: &'a Bundle, row: &ModelConfig, creds: &Credentials) -> Option<Self> {
+        let place = list.place_of(row)?;
+        // Only a place with something to tick has families.
+        place.tickable().next()?;
+        Some(Self { place, probe: row.clone(), key: credentials::resolve_api_key(row, creds) })
     }
 
     /// Ask the selector about `family` for this endpoint. `listing` is the
     /// held evidence; it counts only for this endpoint's current key.
-    fn ask<'a>(&self, snapshot: &'a Snapshot, family: &str, current: Option<&'a str>, listing: Option<&Listing>, today: NaiveDate) -> FamilyCurrent<'a> {
+    fn ask(&self, list: &'a Bundle, family: &str, current: Option<&'a str>, listing: Option<&Listing>, today: NaiveDate) -> FamilyCurrent<'a> {
         let evidence = listing.map(|l| AccessEvidence {
             connection: Connection { endpoint: &self.probe, credential_revision: l.revision },
             usable: &l.usable,
@@ -212,20 +218,20 @@ impl Endpoint {
             (Some(_), None) => Access::Unchecked,
             (None, None) => Access::NoKey,
         };
-        self.select(snapshot, family, current, access, today)
+        self.select(list, family, current, access, today)
     }
 
-    fn select<'a>(&self, snapshot: &'a Snapshot, family: &str, current: Option<&'a str>, access: Access<'_>, today: NaiveDate) -> FamilyCurrent<'a> {
+    fn select(&self, list: &'a Bundle, family: &str, current: Option<&'a str>, access: Access<'_>, today: NaiveDate) -> FamilyCurrent<'a> {
         let credential_revision = self.key.as_deref().map_or(0, evidence::revision_of);
-        family_current(snapshot, Connection { endpoint: &self.probe, credential_revision }, family, current, access, today)
+        family_current(list, Connection { endpoint: &self.probe, credential_revision }, family, current, access, today)
     }
 
     fn read_result(&self, families: &Families) -> Option<Option<Arc<Listing>>> {
-        families.evidence.result(self.preset, self.key.as_deref()?)
+        families.evidence.result(&self.place, self.key.as_deref()?)
     }
 
     fn listing(&self, families: &Families) -> Option<Arc<Listing>> {
-        families.evidence.held(self.preset, self.key.as_deref()?)
+        families.evidence.held(&self.place, self.key.as_deref()?)
     }
 }
 

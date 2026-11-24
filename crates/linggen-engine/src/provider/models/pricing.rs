@@ -13,7 +13,8 @@
 //! out. A call's charge is fixed when it is made and kept in the ledger; no
 //! later price or catalog change reaches it.
 
-use super::family_catalog::{self, Rates, Snapshot};
+use super::curated::{self, Bundle};
+use super::family_catalog::Rates;
 use super::{ModelManager, TokenUsage, Tokens};
 use crate::config::{ModelConfig, ModelPrice, ProviderKind, SignIn};
 use crate::state_fs::session_usage::SessionUsage;
@@ -107,14 +108,14 @@ pub struct CallRecord {
 
 impl CallRecord {
     pub fn of(config: Option<&ModelConfig>, usage: Option<&TokenUsage>) -> CallRecord {
-        Self::of_in(config, usage, &family_catalog::current())
+        Self::of_in(config, usage, &curated::current())
     }
 
-    /// [`of`](Self::of) against one captured catalog snapshot.
+    /// [`of`](Self::of) against one captured list.
     pub(crate) fn of_in(
         config: Option<&ModelConfig>,
         usage: Option<&TokenUsage>,
-        facts: &Snapshot,
+        facts: &Bundle,
     ) -> CallRecord {
         let Some(config) = config else {
             return CallRecord::default();
@@ -159,11 +160,11 @@ impl CallRecord {
 /// The model's price, if one is known: its own `price`, else the catalog in
 /// force.
 pub fn price_of(cfg: &ModelConfig) -> Option<Priced> {
-    price_in(cfg, &family_catalog::current())
+    price_in(cfg, &curated::current())
 }
 
 /// [`price_of`] against one captured catalog snapshot.
-pub(crate) fn price_in(cfg: &ModelConfig, facts: &Snapshot) -> Option<Priced> {
+pub(crate) fn price_in(cfg: &ModelConfig, facts: &Bundle) -> Option<Priced> {
     if let Some(configured) = cfg.price.as_ref() {
         let price = Price::from(configured);
         return Some(Priced {
@@ -174,13 +175,12 @@ pub(crate) fn price_in(cfg: &ModelConfig, facts: &Snapshot) -> Option<Priced> {
     }
     // Exact provider address and exact model: another host with the same
     // provider name, or a similar model name, inherits nothing.
-    if family_catalog::preset_for(cfg)?.catalog?.borrowed { return None; }
     let cost = facts.exact(cfg)?.cost()?;
     if cost.has_unestimated_rates() {
         return None;
     }
     let base = usable(cost.base())?;
-    let day = cost.as_of().unwrap_or_else(|| facts.observed_on());
+    let day = cost.as_of().unwrap_or_else(|| facts.facts_observed_on());
     Some(Priced {
         base,
         tiers: cost.tiers().map(|(over, rates)| (over, usable(rates))).collect(),
@@ -407,12 +407,12 @@ mod tests {
     }
 
     /// Anthropic's address, observed on 2026-11-23, with these entries.
-    fn anthropic(models: Vec<serde_json::Value>) -> Snapshot {
-        Snapshot::for_tests("2026-11-23", "anthropic", models.into())
+    fn anthropic(models: Vec<serde_json::Value>) -> Bundle {
+        Bundle::for_tests("2026-11-23", API, models.into())
     }
 
     /// The four models the retired hand table listed, at its rates.
-    fn four() -> Snapshot {
+    fn four() -> Bundle {
         let flat = |i: f64, o: f64, r: f64, w: f64| {
             serde_json::json!({"input": i, "output": o, "cache_read": r, "cache_write": w})
         };
@@ -429,7 +429,7 @@ mod tests {
         ])
     }
 
-    fn priced(facts: &Snapshot, url: &str, name: &str) -> Option<Priced> {
+    fn priced(facts: &Bundle, url: &str, name: &str) -> Option<Priced> {
         price_in(&model("anthropic", url, name), facts)
     }
 
@@ -456,7 +456,7 @@ mod tests {
     /// same four models at the same address.
     #[test]
     fn the_shipped_catalog_prices_the_four_models_the_hand_table_listed() {
-        let shipped = family_catalog::current();
+        let shipped = curated::current();
         for name in ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-2"] {
             assert!(priced(&shipped, API, name).is_some(), "{name}");
             assert!(priced(&shipped, "", name).is_some(), "{name} at the default base");

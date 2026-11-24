@@ -1,92 +1,117 @@
 use super::*;
+use crate::provider::models::curated::{self, Bundle};
 
-const FIXTURE: &str = include_str!("../family-fixture.json");
+const ANTHROPIC: &str = "https://api.anthropic.com";
+const TODAY: &str = "2026-11-23";
 
-fn row(preset: &str) -> ModelConfig {
-    let p = crate::config::providers::PRESETS.iter().find(|p| p.key == preset).unwrap();
-    serde_json::from_value(serde_json::json!({"id":"m", "provider":p.name, "url":p.url, "model":""})).unwrap()
+fn row(url: &str) -> ModelConfig {
+    serde_json::from_value(serde_json::json!({"id":"m", "provider":"anthropic", "url":url, "model":""})).unwrap()
 }
 
-fn resolve<'a>(s: &'a Snapshot, preset: &str, family: &str, current: Option<&'a str>, revision: Option<u64>, today: &str) -> FamilyCurrent<'a> {
-    let endpoint = row(preset);
-    let usable = s.providers.values().flat_map(|p| p.keys().cloned()).collect();
+fn today() -> NaiveDate { TODAY.parse().unwrap() }
+
+/// The shipped list, with the anthropic entry of `family` approving `model`.
+fn approving(family: &str, model: &str) -> Bundle {
+    Bundle::variant(|v| {
+        let providers = v["international"].as_array_mut().unwrap();
+        let anthropic = providers.iter_mut().find(|p| p["key"] == "anthropic").unwrap();
+        let entry = anthropic["entries"].as_array_mut().unwrap().iter_mut().find(|e| e["family"]["name"] == family).unwrap();
+        entry["model"] = model.into();
+    })
+}
+
+/// Ask about `family`, the provider listing exactly `usable`.
+fn ask<'a>(list: &'a Bundle, family: &str, current: Option<&'a str>, usable: &[&str], revision: Option<u64>) -> FamilyCurrent<'a> {
+    let endpoint = row(ANTHROPIC);
+    let usable: BTreeSet<String> = usable.iter().map(|s| s.to_string()).collect();
     let evidence = revision.map(|credential_revision| AccessEvidence {
         connection: Connection { endpoint: &endpoint, credential_revision }, usable: &usable,
     });
-    family_current(s, Connection { endpoint: &endpoint, credential_revision: 1 }, family, current, evidence.as_ref().map_or(Access::Unchecked, Access::Listed), date(today).unwrap())
+    family_current(list, Connection { endpoint: &endpoint, credential_revision: 1 }, family, current, evidence.as_ref().map_or(Access::Unchecked, Access::Listed), today())
 }
 
-const TODAY: &str = "2026-11-23";
+fn every_id(list: &Bundle) -> Vec<&str> {
+    list.facts_at("anthropic").map(ModelFacts::id).collect()
+}
 
 #[test]
-fn real_frontiers_are_order_independent() {
-    let mut shuffled: serde_json::Value = serde_json::from_str(FIXTURE).unwrap();
-    for p in shuffled["providers"].as_array_mut().unwrap() {
-        p["models"].as_array_mut().unwrap().reverse();
-    }
-    for input in [FIXTURE.as_bytes().to_vec(), serde_json::to_vec(&shuffled).unwrap()] {
-        let s = Snapshot::parse(&input).unwrap();
-        for (p, f, id) in [
-            ("anthropic", "claude-sonnet", "claude-sonnet-5-5"),
-            ("anthropic", "claude-opus", "claude-opus-5-5"),
-            ("anthropic", "claude-haiku", "claude-haiku-5-5"),
-            ("anthropic", "claude-fable", "claude-fable-5-2"),
-            ("openai", "gpt-sol", "gpt-6.2-sol"),
-            ("openai", "gpt", "gpt-5.5"),
-            ("gemini", "gemini-flash", "gemini-3.8-flash"),
-        ] {
-            assert!(matches!(resolve(&s, p, f, None, Some(1), TODAY), FamilyCurrent::Current { next, .. } if next.id() == id), "{f}");
-        }
-        let FamilyCurrent::Choose { reason: Hold::AmbiguousHead, choices, .. } = resolve(&s, "deepseek", "deepseek-flash", None, Some(1), TODAY) else { panic!("real DeepSeek tie"); };
-        assert!(choices.iter().any(|c| c.facts.id() == "deepseek-v4-flash-vision-exp" && c.held == Some(Hold::NonStable(Stability::Experimental))));
+fn the_approved_id_is_the_target_in_every_order_of_the_facts() {
+    let list = curated::shipped();
+    let ids = every_id(list);
+    for (family, id) in [
+        ("claude-sonnet", "claude-sonnet-5-5"), ("claude-opus", "claude-opus-5-5"),
+        ("claude-haiku", "claude-haiku-5-5"), ("claude-fable", "claude-fable-5-2"),
+    ] {
+        assert!(matches!(ask(list, family, None, &ids, Some(1)), FamilyCurrent::Current { next, .. } if next.id == id), "{family}");
     }
 }
 
 #[test]
-fn shipped_gemini_keeps_named_tiers_and_a_real_flash_lite_head() {
-    let s = super::super::shipped();
-    let preset = preset_for(&row("gemini")).unwrap();
-    let families = s.chat_families(preset);
-    for family in ["gemini-argon", "gemini-carbon", "gemini-hydrogen", "gemini-neon", "gemini-flash", "gemini-flash-lite", "gemini-pro", "gemma"] {
-        assert!(families.iter().any(|(id, _)| id == family), "{family}");
-    }
-    assert!(matches!(resolve(s, "gemini", "gemini-flash-lite", None, Some(1), TODAY), FamilyCurrent::Current { next, .. } if next.id() == "gemini-3.5-flash-lite"));
+fn an_unapproved_newer_version_never_wins() {
+    // The list approves an OLDER Opus; the provider lists a newer, dated, stable one too.
+    let list = approving("claude-opus", "claude-opus-5");
+    let ids = every_id(&list);
+    assert!(ids.contains(&"claude-opus-5-5"));
+    let FamilyCurrent::Current { next, .. } = ask(&list, "claude-opus", None, &ids, Some(1)) else { panic!("approved id is usable") };
+    assert_eq!(next.id, "claude-opus-5");
+    // A row already on the newer one is moved to the approved one: a deliberate rollback is a new list revision.
+    let FamilyCurrent::Current { next, current } = ask(&list, "claude-opus", Some("claude-opus-5-5"), &ids, Some(1)) else { panic!() };
+    assert_eq!((next.id, current), ("claude-opus-5", Some("claude-opus-5-5")));
 }
 
 #[test]
-fn follow_requires_fresh_evidence_for_this_credential_and_a_newer_day() {
-    let s = Snapshot::parse(FIXTURE.as_bytes()).unwrap();
-    let decide = |current, revision, day| resolve(&s, "anthropic", "claude-opus", current, revision, day);
-    for revision in [None, Some(2)] {
-        assert!(matches!(decide(Some("claude-opus-5"), revision, TODAY), FamilyCurrent::Checking { next } if next.id() == "claude-opus-5-5"));
-    }
-    // 21 days after the observation still follows; 22 does not.
-    assert!(matches!(decide(Some("claude-opus-5"), Some(1), "2026-12-14"), FamilyCurrent::Current { .. }));
-    assert!(matches!(decide(Some("claude-opus-5"), Some(1), "2026-12-15"), FamilyCurrent::Choose { reason: Hold::Stale, .. }));
-    assert!(matches!(decide(None, Some(1), "2026-12-15"), FamilyCurrent::Current { current: None, .. }));
-    assert!(matches!(decide(Some("claude-opus-5"), Some(1), TODAY), FamilyCurrent::Current { next, .. } if next.id() == "claude-opus-5-5"));
-    assert!(matches!(resolve(&s, "anthropic", "never-seen", None, Some(1), TODAY), FamilyCurrent::Unavailable { current: None }));
+fn an_approved_same_day_or_undated_version_works() {
+    // DeepSeek's approved Flash shares its day with two siblings: no tie.
+    let list = curated::shipped();
+    let deepseek = ModelConfig { url: "https://api.deepseek.com/v1".into(), provider: "deepseek".into(), ..row(ANTHROPIC) };
+    let usable: BTreeSet<String> = list.facts_at("deepseek").map(|m| m.id().to_string()).collect();
+    let evidence = AccessEvidence { connection: Connection { endpoint: &deepseek, credential_revision: 1 }, usable: &usable };
+    let answer = family_current(list, Connection { endpoint: &deepseek, credential_revision: 1 }, "deepseek-flash", None, Access::Listed(&evidence), today());
+    assert!(matches!(answer, FamilyCurrent::Current { next, .. } if next.id == "deepseek-flash"));
+    // An approved id the facts do not know at all: it runs, with no facts.
+    let list = approving("claude-opus", "claude-opus-6-brand-new");
+    let FamilyCurrent::Current { next, .. } = ask(&list, "claude-opus", None, &["claude-opus-6-brand-new"], Some(1)) else { panic!("undated approved id works") };
+    assert!(next.id == "claude-opus-6-brand-new" && next.facts.is_none());
 }
 
 #[test]
-fn an_unreadable_list_is_not_an_empty_list() {
-    let s = Snapshot::parse(FIXTURE.as_bytes()).unwrap();
-    let endpoint = row("anthropic");
-    let connection = || Connection { endpoint: &endpoint, credential_revision: 1 };
-    let usable = BTreeSet::new();
-    let evidence = AccessEvidence { connection: connection(), usable: &usable };
-    let decide = |access| family_current(&s, connection(), "claude-opus", None, access, date(TODAY).unwrap());
-    assert!(matches!(decide(Access::Failed), FamilyCurrent::ListFailed));
-    assert!(matches!(decide(Access::Listed(&evidence)), FamilyCurrent::Choose { reason: Hold::NoAccess, .. }));
+fn a_missing_or_refused_target_holds_and_never_chooses_another() {
+    let list = curated::shipped();
+    // The provider lists the siblings of Sonnet but not the approved one.
+    let others: Vec<&str> = every_id(list).into_iter().filter(|id| *id != "claude-sonnet-5-5").collect();
+    assert!(others.contains(&"claude-sonnet-5") && others.contains(&"claude-sonnet-4-6"));
+    for current in [None, Some("claude-sonnet-5")] {
+        let FamilyCurrent::Choose { reason, choices, .. } = ask(list, "claude-sonnet", current, &others, Some(1)) else { panic!("held") };
+        assert_eq!(reason, Hold::NoAccess);
+        // The approved one is first and held; every other version is only "not approved".
+        assert_eq!(choices[0].facts.id(), "claude-sonnet-5-5");
+        assert!(choices.iter().skip(1).all(|c| c.held == Some(Hold::NotApproved)));
+    }
+    // Unproven access never moves anything: asking, no key, failed list.
+    assert!(matches!(ask(list, "claude-sonnet", None, &[], None), FamilyCurrent::Checking { .. }));
+    let endpoint = row(ANTHROPIC);
+    let held = |access| family_current(list, Connection { endpoint: &endpoint, credential_revision: 1 }, "claude-sonnet", None, access, today());
+    assert!(matches!(held(Access::NoKey), FamilyCurrent::NoKey));
+    assert!(matches!(held(Access::Failed), FamilyCurrent::ListFailed));
+    // A family the list does not carry, and an address it does not know.
+    assert!(matches!(ask(list, "claude-unknown", None, &[], Some(1)), FamilyCurrent::Unavailable { .. }));
+    let elsewhere = row("https://gateway.example.com");
+    assert!(matches!(family_current(list, Connection { endpoint: &elsewhere, credential_revision: 1 }, "claude-sonnet", None, Access::Unchecked, today()), FamilyCurrent::Unavailable { .. }));
 }
 
 #[test]
-fn same_day_and_missing_date_hold_without_trying_the_runner_up() {
-    for (day, expected) in [(Some("2026-09-22"), Hold::AmbiguousHead), (None, Hold::MissingDate)] {
-        let mut s = Snapshot::parse(FIXTURE.as_bytes()).unwrap();
-        s.providers.get_mut("anthropic").unwrap().get_mut("claude-opus-5").unwrap().release_date = day.map(str::to_string);
-        assert!(matches!(resolve(&s, "anthropic", "claude-opus", None, Some(1), TODAY), FamilyCurrent::Choose { reason, .. } if reason == expected));
-    }
-    let s = Snapshot::parse(FIXTURE.as_bytes()).unwrap();
-    assert!(matches!(resolve(&s, "anthropic", "claude-opus", Some("claude-fable-5-2"), Some(1), TODAY), FamilyCurrent::Choose { reason: Hold::NotNewer, .. }));
+fn a_stale_list_shows_but_does_not_move_a_row_and_a_key_change_is_not_evidence() {
+    let list = curated::shipped();
+    let ids = every_id(list);
+    let later = |days| today() + chrono::Days::new(days);
+    let endpoint = row(ANTHROPIC);
+    let evidence = AccessEvidence { connection: Connection { endpoint: &endpoint, credential_revision: 1 }, usable: &BTreeSet::from_iter(ids.iter().map(|s| s.to_string())) };
+    let answer = |current, day| family_current(list, Connection { endpoint: &endpoint, credential_revision: 1 }, "claude-opus", current, Access::Listed(&evidence), day);
+    assert!(matches!(answer(Some("claude-opus-5"), later(21)), FamilyCurrent::Current { .. }));
+    assert!(matches!(answer(Some("claude-opus-5"), later(22)), FamilyCurrent::Choose { reason: Hold::Stale, .. }));
+    // Already on the approved id: staleness holds nothing.
+    assert!(matches!(answer(Some("claude-opus-5-5"), later(60)), FamilyCurrent::Current { .. }));
+    // A list held for another key is not evidence for this one.
+    let other_key = family_current(list, Connection { endpoint: &endpoint, credential_revision: 2 }, "claude-opus", None, Access::Listed(&evidence), today());
+    assert!(matches!(other_key, FamilyCurrent::Checking { .. }));
 }

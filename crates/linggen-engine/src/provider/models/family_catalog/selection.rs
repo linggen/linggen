@@ -1,7 +1,16 @@
-//! Public BYOK family choice. No probing, mutation, or ambient clock.
+//! Which model a family means: the one the list approves. No probing,
+//! mutation, or ambient clock.
+//!
+//! The owner's list names one exact wire id per family (and per exact
+//! entry). That id is the only target: there is no ranking by release date,
+//! no tie, no runner-up. A newer sibling the list does not approve never
+//! wins; an approved id the provider does not list for this key holds the
+//! row where it is and never picks another. A deliberate rollback is a new
+//! list revision that approves the older id.
 
-use super::{date, preset_for, ModelFacts, Snapshot, Stability};
+use super::{ModelFacts, Stability};
 use crate::config::ModelConfig;
+use crate::provider::models::curated::Bundle;
 use chrono::NaiveDate;
 use std::collections::BTreeSet;
 
@@ -26,34 +35,41 @@ pub(crate) enum Access<'a> {
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub(crate) enum Hold {
-    NonStable(Stability),
-    MissingDate,
+    /// The facts say the approved model is not a plain chat model.
     NoChatLane,
+    /// The provider's list for this key does not hold the approved model.
     NoAccess,
-    Older,
-    AmbiguousHead,
+    /// The list is too old to move a row by itself.
     Stale,
-    NotNewer,
+    /// A version the list does not approve: a person may pick it, nothing follows it.
+    NotApproved,
 }
 
 impl Hold {
     /// The word a settings answer carries for why a model is held back.
     pub(crate) fn code(self) -> &'static str {
         match self {
-            Hold::NonStable(Stability::Preview) => "preview",
-            Hold::NonStable(Stability::Experimental) => "experimental",
-            Hold::NonStable(Stability::Alias) => "alias",
-            Hold::NonStable(Stability::Deprecated) => "deprecated",
-            Hold::NonStable(_) => "not_stable",
-            Hold::MissingDate => "missing_date",
             Hold::NoChatLane => "not_chat",
             Hold::NoAccess => "no_access",
-            Hold::Older => "older",
-            Hold::AmbiguousHead => "same_day",
             Hold::Stale => "stale_catalog",
-            Hold::NotNewer => "not_newer",
+            Hold::NotApproved => "not_approved",
         }
     }
+}
+
+/// The approved model of a family: its exact wire id, and what the list
+/// knows of it. Facts may be missing (a missing fact is not a missing row).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Target<'a> {
+    pub id: &'a str,
+    pub facts: Option<&'a ModelFacts>,
+}
+
+impl Target<'_> {
+    pub(crate) fn name(&self) -> &str { self.facts.map_or(self.id, ModelFacts::name) }
+    /// Whether a plain chat conversation can run on it: unknown facts do not say no.
+    pub(crate) fn is_chat(&self) -> bool { self.facts.is_none_or(ModelFacts::text_chat) }
+    pub(crate) fn released(&self) -> Option<&str> { self.facts.and_then(ModelFacts::release_date) }
 }
 
 #[derive(Debug)]
@@ -64,75 +80,45 @@ pub(crate) struct Choice<'a> {
 
 #[derive(Debug)]
 pub(crate) enum FamilyCurrent<'a> {
-    Current { current: Option<&'a str>, next: &'a ModelFacts },
-    Choose { current: Option<&'a str>, reason: Hold, choices: Vec<Choice<'a>> },
-    Checking { next: &'a ModelFacts },
+    Current { current: Option<&'a str>, next: Target<'a> },
+    Choose { reason: Hold, choices: Vec<Choice<'a>> },
+    Checking { next: Target<'a> },
     ListFailed,
     NoKey,
-    Unavailable { current: Option<&'a str> },
+    Unavailable,
 }
 
-/// Answer for one family at one approved key endpoint. `current` is the
-/// existing exact ID, not the endpoint model used to describe a connection.
+/// Answer for one family at one listed address. `current` is the existing
+/// exact ID, not the endpoint model used to describe a connection.
 pub(crate) fn family_current<'a>(
-    snapshot: &'a Snapshot,
+    list: &'a Bundle,
     connection: Connection<'_>,
     family: &str,
     current: Option<&'a str>,
     access: Access<'_>,
     today: NaiveDate,
 ) -> FamilyCurrent<'a> {
-    let Some(preset) = preset_for(connection.endpoint) else {
-        return FamilyCurrent::Unavailable { current };
+    let Some(place) = list.place_of(connection.endpoint) else {
+        return FamilyCurrent::Unavailable;
     };
-    let Some(binding) = preset.catalog.filter(|b| b.source_id != "openrouter") else {
-        return FamilyCurrent::Unavailable { current };
+    let Some(entry) = place.entry_for(family) else {
+        return FamilyCurrent::Unavailable;
     };
-    let Some(models) = snapshot.providers.get(binding.source_id) else {
-        return FamilyCurrent::Unavailable { current };
-    };
+    let next = Target { id: &entry.model, facts: list.facts_for(place.endpoint_key, &entry.model) };
     let usable = match access {
         Access::Listed(e) if e.connection.credential_revision == connection.credential_revision
-            && preset_for(e.connection.endpoint).is_some_and(|p| p.key == preset.key) => Some(e.usable),
+            && list.place_of(e.connection.endpoint).is_some_and(|p| p.endpoint_key == place.endpoint_key && p.is_at(&place.base)) => Some(e.usable),
         _ => None,
     };
-    // Aliases stay in the catalog as exact facts, not in the candidate set.
-    let mut family: Vec<_> = models.values().filter(|m| {
-        m.family.as_deref() == Some(family) && m.stability != Stability::Alias
-            && (!binding.borrowed || usable.is_some_and(|ids| ids.contains(&m.id)))
-    }).collect();
-    if family.is_empty() {
-        return FamilyCurrent::Unavailable { current };
+    let choose = |reason| FamilyCurrent::Choose { reason, choices: choices(list, place.endpoint_key, family, next.id, reason) };
+    // The owner approved this id, so its stability, date and release state do
+    // not matter; only a fact that says it is not a chat model, or a provider
+    // that does not list it for this key, holds it.
+    if !next.is_chat() {
+        return choose(Hold::NoChatLane);
     }
-    family.sort_by(|a, b| b.release_date.cmp(&a.release_date).then_with(|| a.id.cmp(&b.id)));
-    let head = family.iter().filter_map(|m| day(m)).max();
-    let frontier: Vec<_> = family.iter().copied().filter(|m| day(m) == head).collect();
-    // A normally deprecated version is harmless beside a stable release on
-    // the same date. A deprecated experiment was normalized as experimental.
-    let contenders: Vec<_> = frontier.iter().copied()
-        .filter(|m| m.stability != Stability::Deprecated).collect();
-    let hold_row = |m: &ModelFacts| {
-        if m.stability != Stability::Stable { return Some(Hold::NonStable(m.stability)); }
-        if day(m).is_none() { return Some(Hold::MissingDate); }
-        if !m.text_chat() { return Some(Hold::NoChatLane); }
-        if day(m) != head { return Some(Hold::Older); }
-        if usable.is_some_and(|ids| !ids.contains(&m.id)) { return Some(Hold::NoAccess); }
-        None
-    };
-    let choose = |reason| FamilyCurrent::Choose {
-        current, reason,
-        choices: family.iter().map(|m| Choice { facts: m, held: hold_row(m).or(Some(reason)) }).collect(),
-    };
-    if family.iter().any(|m| m.stability != Stability::Deprecated && day(m).is_none()) {
-        return choose(Hold::MissingDate);
-    }
-    let next = match contenders.as_slice() {
-        [only] => *only,
-        [] => return choose(Hold::NonStable(Stability::Deprecated)),
-        _ => return choose(Hold::AmbiguousHead),
-    };
-    if let Some(reason) = hold_row(next) {
-        return choose(reason);
+    if usable.is_some_and(|ids| !ids.contains(next.id)) {
+        return choose(Hold::NoAccess);
     }
     if usable.is_none() {
         return match access {
@@ -141,18 +127,25 @@ pub(crate) fn family_current<'a>(
             Access::Unchecked | Access::Listed(_) => FamilyCurrent::Checking { next },
         };
     }
-    if let Some(id) = current {
-        if next.id != id {
-            if snapshot.is_stale(today) { return choose(Hold::Stale); }
-            let Some(previous) = models.get(id).and_then(day) else { return choose(Hold::MissingDate); };
-            if Some(previous) >= head { return choose(Hold::NotNewer); }
-        }
+    if current.is_some_and(|id| id != next.id) && list.is_stale(today) {
+        return choose(Hold::Stale);
     }
     FamilyCurrent::Current { current, next }
 }
 
-fn day(model: &ModelFacts) -> Option<NaiveDate> {
-    model.release_date.as_deref().and_then(date)
+/// The versions of a family a person may pick by hand: the facts' members of
+/// the family at this address, the approved one first. The approved one
+/// carries `reason` when it is held; every other one is simply not approved.
+fn choices<'a>(list: &'a Bundle, endpoint_key: &str, family: &str, approved: &str, reason: Hold) -> Vec<Choice<'a>> {
+    let mut members: Vec<_> = list.facts_at(endpoint_key)
+        .filter(|m| m.family() == Some(family) && m.stability != Stability::Alias)
+        .collect();
+    members.sort_by(|a, b| (a.id() != approved).cmp(&(b.id() != approved))
+        .then_with(|| b.release_date().cmp(&a.release_date())).then_with(|| a.id().cmp(b.id())));
+    members.into_iter().map(|facts| Choice {
+        facts,
+        held: Some(if facts.id() == approved { reason } else { Hold::NotApproved }),
+    }).collect()
 }
 
 #[cfg(test)]

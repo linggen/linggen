@@ -1,31 +1,25 @@
 //! The last good list: shipped copy, disk cache, and (off) refresh.
 //!
-//! Same shape as the v1 refresh in `family_catalog/refresh.rs`, which this
-//! replaces when the settings page moves to the curated list (slice 2); the
-//! transport and the ETag rule are shared, not copied. A list and its detached
-//! signature are fetched, checked and stored as one unit: a body paired with
-//! the wrong signature fails the check and the last good copy stays.
+//! The transport and the ETag rule are in `transport`. No
+//! signature is read or fetched (the owner's decision, 2026-11-24: the list
+//! travels over HTTPS). A list that fails the check, or is older than the last
+//! good one, is refused as a unit and the last good copy stays.
 
 use super::bundle::{accept, Bundle};
-use super::trust::{OWNER_KEY_IS_PLACEHOLDER, OWNER_PUBLIC_KEY};
-use super::super::family_catalog::{valid_etag, Reply, Transport, CHECK_EVERY_DAYS};
+use super::transport::{valid_etag, Reply, Transport, CHECK_EVERY_DAYS, MAX_ETAG};
 use anyhow::Result;
 use chrono::{DateTime, Duration, Utc};
 use std::{io::{self, Read, Write}, path::{Path, PathBuf}, sync::{Arc, LazyLock, OnceLock, RwLock}};
 
 const SHIPPED: &[u8] = include_bytes!("model-catalog-v2.json");
-const SHIPPED_SIGNATURE: &str = include_str!("model-catalog-v2.json.sig");
 const URL: &str = "https://linggen.dev/model-catalog/v2.json";
-const SIGNATURE_URL: &str = "https://linggen.dev/model-catalog/v2.json.sig";
-const MAX_SIGNATURE: usize = 256;
-const MAX_ETAG: usize = 512;
 const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
-/// Whether this engine asks the site for a newer list. Off, as the v1
-/// catalog is, until the static files are deployed and approved.
+/// Whether this engine asks the site for a newer list. Off until the owner
+/// says so (the static file is not deployed yet).
 const PUBLISHED: bool = false;
-// Refresh must not be turned on while the list is trusted from the throwaway key.
-const _: () = assert!(!(PUBLISHED && OWNER_KEY_IS_PLACEHOLDER), "replace the placeholder owner key first");
+// The endpoint rule: the list is fetched over HTTPS only.
+const _: () = assert!(URL.as_bytes().len() > 8 && matches!(URL.as_bytes(), [b'h', b't', b't', b'p', b's', b':', b'/', b'/', ..]), "the list is fetched over HTTPS");
 
 type View = Arc<Bundle>;
 static CURRENT: LazyLock<RwLock<Option<View>>> = LazyLock::new(|| RwLock::new(None));
@@ -35,7 +29,7 @@ pub(crate) fn shipped() -> &'static View {
     static SEED: OnceLock<View> = OnceLock::new();
     SEED.get_or_init(|| {
         let today = Utc::now().date_naive();
-        Arc::new(accept(SHIPPED, SHIPPED_SIGNATURE, &OWNER_PUBLIC_KEY, &[], today).expect("shipped curated list"))
+        Arc::new(accept(SHIPPED, &[], today).expect("shipped curated list"))
     })
 }
 
@@ -55,7 +49,7 @@ pub(crate) fn start() {
     STARTED.call_once(|| {
         let path = crate::paths::linggen_home().join("cache/model-catalog-v2");
         std::thread::spawn(move || {
-            let mut cache = Cache::open(path, &OWNER_PUBLIC_KEY, shipped().clone(), Utc::now());
+            let mut cache = Cache::open(path, shipped().clone(), Utc::now());
             if let Some(bundle) = cache.bundle.clone() { publish(bundle); }
             let list = current();
             tracing::info!(revision = list.revision(), list_revision = list.list_revision(), "curated model list loaded");
@@ -77,21 +71,19 @@ pub(crate) fn start() {
     });
 }
 
-/// What one refresh brings: nothing new, or a body with its signature.
+/// What one refresh brings: nothing new, or a body.
 pub(super) enum Fetched {
     Unchanged,
-    Body { bytes: Vec<u8>, signature: String, etag: Option<String> },
+    Body { bytes: Vec<u8>, etag: Option<String> },
 }
 
-/// The disk object holds the check time, ETag, signature and the exact bytes
-/// together, so a crash cannot pair a validator or signature with another body.
+/// The disk object holds the check time, ETag and the exact bytes together,
+/// so a crash cannot pair a validator with another body.
 pub(super) struct Cache {
     path: PathBuf,
-    key: [u8; 32],
     /// The compiled-in list: a floor no refresh may go under.
     seed: View,
     pub(super) bundle: Option<View>,
-    signature: String,
     etag: Option<String>,
     checked: Option<DateTime<Utc>>,
     retry_at: Option<DateTime<Utc>>,
@@ -100,13 +92,13 @@ pub(super) struct Cache {
 
 fn read(path: &Path) -> io::Result<Vec<u8>> {
     let mut bytes = Vec::new();
-    let limit = super::bundle::MAX_BYTES + MAX_ETAG + MAX_SIGNATURE + 81;
+    let limit = super::bundle::MAX_BYTES + MAX_ETAG + 64;
     std::fs::File::open(path)?.take(limit as u64).read_to_end(&mut bytes)?;
     Ok(bytes)
 }
 
-/// `checked \n etag \n signature \n body`.
-fn unpack(bytes: &[u8]) -> Option<(DateTime<Utc>, Option<String>, &str, &[u8])> {
+/// `checked \n etag \n body`.
+fn unpack(bytes: &[u8]) -> Option<(DateTime<Utc>, Option<String>, &[u8])> {
     let mut rest = bytes;
     let mut line = || {
         let end = rest.iter().position(|&b| b == b'\n')?;
@@ -120,18 +112,16 @@ fn unpack(bytes: &[u8]) -> Option<(DateTime<Utc>, Option<String>, &str, &[u8])> 
         tag if valid_etag(tag) => Some(tag.to_string()),
         _ => return None,
     };
-    let signature = line()?;
-    Some((checked, etag, signature, rest))
+    Some((checked, etag, rest))
 }
 
 impl Cache {
-    pub(super) fn open(path: PathBuf, key: &[u8; 32], seed: View, now: DateTime<Utc>) -> Self {
-        let mut cache = Self { path, key: *key, seed, bundle: None, signature: String::new(), etag: None, checked: None, retry_at: None, failures: 0 };
+    pub(super) fn open(path: PathBuf, seed: View, now: DateTime<Utc>) -> Self {
+        let mut cache = Self { path, seed, bundle: None, etag: None, checked: None, retry_at: None, failures: 0 };
         let Ok(bytes) = read(&cache.path) else { return cache };
-        let Some((checked, etag, signature, body)) = unpack(&bytes) else { return cache };
-        let Ok(good) = accept(body, signature, key, &[&cache.seed], now.date_naive()) else { return cache };
+        let Some((checked, etag, body)) = unpack(&bytes) else { return cache };
+        let Ok(good) = accept(body, &[&cache.seed], now.date_naive()) else { return cache };
         cache.bundle = Some(Arc::new(good));
-        cache.signature = signature.to_string();
         cache.etag = etag;
         cache.checked = Some(checked.min(now));
         cache
@@ -144,31 +134,30 @@ impl Cache {
         )
     }
 
-    fn keep(&self, now: DateTime<Utc>, etag: Option<&str>, signature: &str, body: &[u8]) -> io::Result<()> {
+    fn keep(&self, now: DateTime<Utc>, etag: Option<&str>, body: &[u8]) -> io::Result<()> {
         let parent = self.path.parent().ok_or(io::ErrorKind::InvalidInput)?;
         std::fs::create_dir_all(parent)?;
         let mut tmp = tempfile::NamedTempFile::new_in(parent)?;
-        writeln!(tmp, "{}\n{}\n{}", now.to_rfc3339(), etag.unwrap_or(""), signature.trim())?;
+        writeln!(tmp, "{}\n{}", now.to_rfc3339(), etag.unwrap_or(""))?;
         tmp.write_all(body)?;
         tmp.as_file().sync_all()?;
         tmp.persist(&self.path)?;
         Ok(())
     }
 
-    /// A 304 changes neither the list nor its signature, only the check time.
+    /// A 304 changes the check time only.
     pub(super) fn apply(&mut self, now: DateTime<Utc>, fetched: Fetched) -> Result<Option<View>> {
         let next = match fetched {
             Fetched::Unchanged => {
                 let good = self.bundle.clone().filter(|_| self.etag.is_some()).ok_or_else(|| anyhow::anyhow!("unsolicited 304"))?;
-                self.keep(now, self.etag.as_deref(), &self.signature, good.raw())?;
+                self.keep(now, self.etag.as_deref(), good.raw())?;
                 None
             }
-            Fetched::Body { bytes, signature, etag } => {
+            Fetched::Body { bytes, etag } => {
                 let baseline = self.bundle.clone().unwrap_or_else(|| self.seed.clone());
-                let good = Arc::new(accept(&bytes, &signature, &self.key, &[&self.seed, &baseline], now.date_naive())?);
+                let good = Arc::new(accept(&bytes, &[&self.seed, &baseline], now.date_naive())?);
                 let etag = etag.filter(|tag| valid_etag(tag));
-                self.keep(now, etag.as_deref(), &signature, &bytes)?;
-                self.signature = signature;
+                self.keep(now, etag.as_deref(), &bytes)?;
                 self.etag = etag;
                 self.bundle = Some(good.clone());
                 Some(good)
@@ -186,16 +175,11 @@ impl Cache {
         self.retry_at = Some(now + Duration::minutes(minutes));
     }
 
-    /// The list, then its signature: the pair is checked together or dropped together.
     async fn fetch(&self, fetch: &impl Transport) -> Result<Fetched> {
-        let bytes = match fetch.get(URL, self.etag.as_deref(), super::bundle::MAX_BYTES).await? {
-            Reply::Unchanged => return Ok(Fetched::Unchanged),
-            Reply::Body { bytes, etag } => (bytes, etag),
-        };
-        let Reply::Body { bytes: signature, .. } = fetch.get(SIGNATURE_URL, None, MAX_SIGNATURE).await? else {
-            anyhow::bail!("signature not available");
-        };
-        Ok(Fetched::Body { bytes: bytes.0, signature: String::from_utf8(signature)?, etag: bytes.1 })
+        match fetch.get(URL, self.etag.as_deref(), super::bundle::MAX_BYTES).await? {
+            Reply::Unchanged => Ok(Fetched::Unchanged),
+            Reply::Body { bytes, etag } => Ok(Fetched::Body { bytes, etag }),
+        }
     }
 
     pub(super) async fn refresh(&mut self, now: DateTime<Utc>, fetch: &impl Transport) -> Option<View> {

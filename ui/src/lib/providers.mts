@@ -72,7 +72,6 @@ export interface Family {
   notice?: Notice;
   folded: boolean;
   references: Reference[];
-  merge_into?: string;
 }
 
 export interface FamiliesView {
@@ -112,7 +111,6 @@ export interface ProvidersAnswer {
 /** What a family action sends (PUT /api/providers/{id}/families/{family}). */
 export type FamilyAction =
   | { action: 'tick' }
-  | { action: 'merge'; model: string }
   | { action: 'untick'; model?: string }
   | { action: 'choose'; model: string }
   | { action: 'follow' }

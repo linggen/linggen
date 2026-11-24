@@ -1,4 +1,4 @@
-use super::bundle::{accept, decode, MAX_BYTES};
+use super::bundle::{accept, decode, verify, MAX_BYTES};
 use super::store::{Cache, Fetched};
 use super::trust::OWNER_PUBLIC_KEY;
 use super::{shipped, Bundle, Edition};
@@ -36,17 +36,16 @@ impl Signer {
     fn sign(&self, bytes: &[u8]) -> String {
         base64::engine::general_purpose::STANDARD.encode(self.0.sign(bytes).as_ref())
     }
-    /// The fixture with `change` applied, signed by this signer.
-    fn variant(&self, change: impl FnOnce(&mut serde_json::Value)) -> (Vec<u8>, String) {
-        let mut value: serde_json::Value = serde_json::from_slice(FIXTURE).unwrap();
-        change(&mut value);
-        let bytes = format!("{value}\n").into_bytes();
-        let signature = self.sign(&bytes);
-        (bytes, signature)
-    }
 }
 
-fn fixture() -> Bundle { decode(FIXTURE, FIXTURE_SIGNATURE, &fixture_key()).expect("fixture reads") }
+/// The fixture with `change` applied: a list the owner could have written.
+fn variant(change: impl FnOnce(&mut serde_json::Value)) -> Vec<u8> {
+    let mut value: serde_json::Value = serde_json::from_slice(FIXTURE).unwrap();
+    change(&mut value);
+    format!("{value}\n").into_bytes()
+}
+
+fn fixture() -> Bundle { decode(FIXTURE).expect("fixture reads") }
 fn seed() -> Arc<Bundle> { Arc::new(fixture()) }
 
 // ── the shipped copy ──
@@ -60,6 +59,16 @@ fn the_shipped_list_passes_the_same_check_and_carries_both_editions() {
     assert!(mainland.iter().flat_map(|p| &p.entries).all(|e| e.unverified && !e.starter), "mainland stays unverified");
     let international = list.providers(Edition::International);
     assert!(international.iter().any(|p| p.key == "anthropic"));
+}
+
+#[test]
+fn no_signature_is_needed_to_read_and_the_kept_signing_code_still_verifies() {
+    // Reading takes bytes only.
+    assert!(decode(FIXTURE).is_ok());
+    // The kept signing code: the shipped bytes and the owner's throwaway key.
+    let shipped_signature = include_str!("model-catalog-v2.json.sig");
+    verify(include_bytes!("model-catalog-v2.json"), shipped_signature, &OWNER_PUBLIC_KEY).unwrap();
+    assert!(verify(FIXTURE, FIXTURE_SIGNATURE, &fixture_key()).is_ok());
 }
 
 #[test]
@@ -90,6 +99,47 @@ fn the_shipped_list_joins_facts_exactly_and_borrows_none_for_qwen_cloud() {
     assert!(list.facts_for("chatgpt", "gpt-6.2-sol").is_none(), "a binding has no address");
 }
 
+// ── what the list places ──
+
+fn row(provider: &str, url: &str) -> crate::config::ModelConfig {
+    serde_json::from_value(serde_json::json!({"id": "m", "provider": provider, "url": url, "model": "x"})).unwrap()
+}
+
+#[test]
+fn a_row_is_placed_only_at_the_exact_address_and_wire_the_list_names() {
+    let list = shipped();
+    let at = |provider, url: &str| list.place_of(&row(provider, url)).map(|p| p.endpoint_key.to_string());
+    assert_eq!(at("anthropic", "https://api.anthropic.com").as_deref(), Some("anthropic"));
+    assert_eq!(at("anthropic", "https://api.anthropic.com/").as_deref(), Some("anthropic"), "a trailing slash is the same address");
+    assert_eq!(at("anthropic", "").as_deref(), Some("anthropic"), "the native client's own base");
+    // Not the same address, not the same place: no host, prefix or path match.
+    for url in ["https://api.anthropic.com/v1", "http://api.anthropic.com", "https://api.anthropic.com.evil.test", "https://gateway.example.com"] {
+        assert_eq!(at("anthropic", url), None, "{url}");
+    }
+    // The wire is part of the match: a compatible client at Anthropic's address is not Anthropic's list.
+    assert_eq!(at("openai", "https://api.anthropic.com"), None);
+    // Rows kept from the other edition still have their place (label, facts, price).
+    assert_eq!(at("qwen", "https://dashscope.aliyuncs.com/compatible-mode/v1").as_deref(), Some("dashscope-cn"));
+    assert!(list.facts_for("dashscope-cn", "qwen-plus").is_some());
+    assert_eq!(list.label_for("whatever", "https://api.deepseek.com/v1"), "DeepSeek");
+    assert_eq!(list.label_for("qwen", "https://my-gateway.example/v1"), list.label_for("qwen", "https://other.example"), "by name when the address is unknown");
+}
+
+#[test]
+fn the_offered_edition_is_what_the_page_lists_and_a_new_entry_needs_no_code() {
+    let list = shipped();
+    let offered: Vec<_> = list.offered(super::OFFERED).map(|p| p.provider.key.as_str()).collect();
+    assert_eq!(offered.first(), Some(&"chatgpt"));
+    assert!(offered.contains(&"anthropic") && !offered.contains(&"zhipu"), "the international edition only");
+    let grown = Bundle::variant(|v| {
+        v["international"][2]["entries"].as_array_mut().unwrap().push(serde_json::json!({
+            "key": "brand-new", "label": "Brand New", "endpoint": "anthropic", "type": "exact", "model": "claude-brand-new", "starter": false
+        }));
+    });
+    let anthropic = grown.offered(super::OFFERED).find(|p| p.provider.key == "anthropic").unwrap();
+    assert!(anthropic.tickable().any(|(family, entry)| family == "brand-new" && entry.model == "claude-brand-new"));
+}
+
 // ── the shared fixture ──
 
 #[test]
@@ -105,26 +155,25 @@ fn the_fixture_reads_and_joins_as_the_site_built_it() {
 }
 
 #[test]
-fn a_tampered_body_signature_or_key_is_refused() {
+fn a_tampered_body_signature_or_key_fails_the_kept_check() {
     let key = fixture_key();
     let mut body = FIXTURE.to_vec();
     body[40] ^= 1;
-    assert!(decode(&body, FIXTURE_SIGNATURE, &key).is_err());
+    assert!(verify(&body, FIXTURE_SIGNATURE, &key).is_err());
     let mut sig = FIXTURE_SIGNATURE.trim().to_string();
     sig.replace_range(..4, "AAAA");
-    assert!(decode(FIXTURE, &sig, &key).is_err());
-    assert!(decode(FIXTURE, "", &key).is_err());
-    assert!(decode(FIXTURE, "not base64 !!", &key).is_err());
-    assert!(decode(FIXTURE, FIXTURE_SIGNATURE, &Signer::new().key()).is_err());
-    assert!(decode(FIXTURE, FIXTURE_SIGNATURE, &OWNER_PUBLIC_KEY).is_err(), "the fixture is not signed by the owner key");
+    assert!(verify(FIXTURE, &sig, &key).is_err());
+    assert!(verify(FIXTURE, "", &key).is_err());
+    assert!(verify(FIXTURE, "not base64 !!", &key).is_err());
+    assert!(verify(FIXTURE, FIXTURE_SIGNATURE, &Signer::new().key()).is_err());
+    assert!(verify(FIXTURE, FIXTURE_SIGNATURE, &OWNER_PUBLIC_KEY).is_err(), "the fixture is not signed by the owner key");
     let signer = Signer::new();
-    let (bytes, signature) = signer.variant(|_| {});
-    assert!(decode(&bytes, &signature, &signer.key()).is_ok());
+    let bytes = variant(|_| {});
+    assert!(verify(&bytes, &signer.sign(&bytes), &signer.key()).is_ok());
 }
 
 #[test]
-fn a_signed_but_invalid_list_is_refused_as_a_unit() {
-    let signer = Signer::new();
+fn an_invalid_list_is_refused_as_a_unit() {
     let bad: Vec<(&str, Box<dyn Fn(&mut serde_json::Value)>)> = vec![
         ("schema", Box::new(|v| v["schema"] = 3.into())),
         ("revision zero", Box::new(|v| v["revision"] = 0.into())),
@@ -149,86 +198,64 @@ fn a_signed_but_invalid_list_is_refused_as_a_unit() {
         ("facts date after the observation", Box::new(|v| v["facts"][0]["models"][0]["cost"]["as_of"] = "2026-11-21".into())),
     ];
     for (name, change) in bad {
-        let (bytes, signature) = signer.variant(change);
-        assert!(decode(&bytes, &signature, &signer.key()).is_err(), "{name}");
+        assert!(decode(&variant(change)).is_err(), "{name}");
     }
-    let oversized = vec![b' '; MAX_BYTES + 1];
-    assert!(decode(&oversized, &signer.sign(&oversized), &signer.key()).is_err());
+    assert!(decode(&vec![b' '; MAX_BYTES + 1]).is_err());
 }
 
 #[test]
 fn an_older_or_conflicting_revision_is_refused_and_a_newer_or_identical_one_is_not() {
-    let signer = Signer::new();
-    let key = signer.key();
     let floor = fixture();
-    let make = |revision: u32, note: &str| signer.variant(|v| { v["revision"] = revision.into(); v["endpoints"]["chatgpt"]["note"] = note.into(); });
-    let (older, sig) = make(6, "x");
-    assert!(accept(&older, &sig, &key, &[&floor], today()).is_err(), "older");
-    let (same_number, sig) = make(7, "different bytes");
-    assert!(accept(&same_number, &sig, &key, &[&floor], today()).is_err(), "same revision, other bytes");
-    let (newer, sig) = make(8, "x");
-    assert_eq!(accept(&newer, &sig, &key, &[&floor], today()).unwrap().revision(), 8);
-    let again = Signer::new();
-    let (same_bytes, sig) = again.variant(|_| {});
-    let floor_again = decode(&same_bytes, &sig, &again.key()).unwrap();
-    assert!(accept(&same_bytes, &sig, &again.key(), &[&floor_again], today()).is_ok(), "the identical list is not older");
-    let (future, sig) = signer.variant(|v| { v["revision"] = 9.into(); v["facts_observed_at"] = "2026-11-30".into(); });
-    assert!(accept(&future, &sig, &key, &[], today()).is_err(), "facts dated in the future");
+    let make = |revision: u32, note: &str| variant(|v| { v["revision"] = revision.into(); v["endpoints"]["chatgpt"]["note"] = note.into(); });
+    assert!(accept(&make(6, "x"), &[&floor], today()).is_err(), "older");
+    assert!(accept(&make(7, "different bytes"), &[&floor], today()).is_err(), "same revision, other bytes");
+    assert_eq!(accept(&make(8, "x"), &[&floor], today()).unwrap().revision(), 8);
+    assert!(accept(FIXTURE, &[&floor], today()).is_ok(), "the identical list is not older");
+    let future = variant(|v| { v["revision"] = 9.into(); v["facts_observed_at"] = "2026-11-30".into(); });
+    assert!(accept(&future, &[], today()).is_err(), "facts dated in the future");
 }
 
-// ── last good, 304, mismatch ──
+// ── last good, 304 ──
 
-fn cache(dir: &tempfile::TempDir, signer: &Signer) -> Cache {
-    Cache::open(dir.path().join("list"), &signer.key(), seed_for(signer), now())
+fn cache(dir: &tempfile::TempDir) -> Cache {
+    Cache::open(dir.path().join("list"), seed(), now())
 }
 
-/// A seed signed by the test signer: revision 7, the floor of the cache under test.
-fn seed_for(signer: &Signer) -> Arc<Bundle> {
-    let (bytes, signature) = signer.variant(|_| {});
-    Arc::new(decode(&bytes, &signature, &signer.key()).unwrap())
-}
-
-fn body(signer: &Signer, revision: u32) -> Fetched {
-    let (bytes, signature) = signer.variant(|v| v["revision"] = revision.into());
-    Fetched::Body { bytes, signature, etag: Some("\"r\"".into()) }
+fn body(revision: u32) -> Fetched {
+    Fetched::Body { bytes: variant(|v| v["revision"] = revision.into()), etag: Some("\"r\"".into()) }
 }
 
 #[test]
 fn a_good_refresh_is_kept_and_a_bad_one_leaves_the_last_good_bytes() {
     let dir = tempfile::tempdir().unwrap();
-    let signer = Signer::new();
-    let mut cache = cache(&dir, &signer);
+    let mut cache = cache(&dir);
     assert!(cache.bundle.is_none() && cache.due(now()));
     assert!(cache.apply(now(), Fetched::Unchanged).is_err(), "a 304 with nothing to keep");
-    assert_eq!(cache.apply(now(), body(&signer, 8)).unwrap().unwrap().revision(), 8);
+    assert_eq!(cache.apply(now(), body(8)).unwrap().unwrap().revision(), 8);
     assert!(!cache.due(now()));
     let stored = std::fs::read(dir.path().join("list")).unwrap();
-    // Older, equal-number-other-bytes, unsigned, and a body paired with another body's signature.
-    assert!(cache.apply(now(), body(&signer, 6)).is_err());
-    let (mismatched, _) = signer.variant(|v| v["revision"] = 9.into());
-    let (_, other_signature) = signer.variant(|v| v["revision"] = 10.into());
-    assert!(cache.apply(now(), Fetched::Body { bytes: mismatched, signature: other_signature, etag: None }).is_err());
-    assert!(cache.apply(now(), Fetched::Body { bytes: FIXTURE.to_vec(), signature: String::new(), etag: None }).is_err());
-    assert!(cache.apply(now(), body(&Signer::new(), 20)).is_err(), "another key");
+    assert!(cache.apply(now(), body(6)).is_err(), "older");
+    let same_number = variant(|v| { v["revision"] = 8.into(); v["endpoints"]["chatgpt"]["note"] = "other".into(); });
+    assert!(cache.apply(now(), Fetched::Body { bytes: same_number, etag: None }).is_err(), "same revision, other bytes");
+    assert!(cache.apply(now(), Fetched::Body { bytes: b"{}".to_vec(), etag: None }).is_err(), "not a list");
     assert_eq!(std::fs::read(dir.path().join("list")).unwrap(), stored, "disk untouched");
     assert_eq!(cache.bundle.as_ref().unwrap().revision(), 8);
-    let reopened = Cache::open(dir.path().join("list"), &signer.key(), seed_for(&signer), now());
+    let reopened = Cache::open(dir.path().join("list"), seed(), now());
     assert_eq!(reopened.bundle.unwrap().revision(), 8);
 }
 
 #[test]
 fn a_304_changes_the_check_time_only() {
     let dir = tempfile::tempdir().unwrap();
-    let signer = Signer::new();
-    let mut cache = cache(&dir, &signer);
-    cache.apply(now(), body(&signer, 8)).unwrap();
+    let mut cache = cache(&dir);
+    cache.apply(now(), body(8)).unwrap();
     let later = now() + Duration::days(7);
     assert!(cache.due(later));
     let before = cache.bundle.clone().unwrap();
     assert!(cache.apply(later, Fetched::Unchanged).unwrap().is_none());
     assert!(!cache.due(later));
     assert_eq!(cache.bundle.as_ref().unwrap().raw(), before.raw());
-    let reopened = Cache::open(dir.path().join("list"), &signer.key(), seed_for(&signer), later);
+    let reopened = Cache::open(dir.path().join("list"), seed(), later);
     assert_eq!(reopened.bundle.clone().unwrap().raw(), before.raw());
     assert!(!reopened.due(later), "the 304 moved the check time");
 }
@@ -236,50 +263,38 @@ fn a_304_changes_the_check_time_only() {
 #[test]
 fn a_damaged_cache_file_is_ignored_and_the_seed_stays() {
     let dir = tempfile::tempdir().unwrap();
-    let signer = Signer::new();
-    std::fs::write(dir.path().join("list"), b"2026-11-24T00:00:00Z\n\nAAAA\n{}").unwrap();
-    assert!(cache(&dir, &signer).bundle.is_none());
+    std::fs::write(dir.path().join("list"), b"2026-11-24T00:00:00Z\n\n{}").unwrap();
+    assert!(cache(&dir).bundle.is_none());
     std::fs::write(dir.path().join("list"), b"garbage").unwrap();
-    assert!(cache(&dir, &signer).bundle.is_none());
+    assert!(cache(&dir).bundle.is_none());
     assert_eq!(seed().revision(), 7);
 }
 
-// ── the transport: the list and its signature come as a pair ──
+// ── the transport ──
 
-struct Fake { list: Vec<u8>, signature: Option<Vec<u8>>, unchanged: bool }
-impl crate::provider::models::family_catalog::Transport for Fake {
-    async fn get(&self, url: &str, etag: Option<&str>, limit: usize) -> anyhow::Result<crate::provider::models::family_catalog::Reply> {
-        use crate::provider::models::family_catalog::Reply;
-        match url {
-            "https://linggen.dev/model-catalog/v2.json" if self.unchanged => { assert!(etag.is_some()); Ok(Reply::Unchanged) }
-            "https://linggen.dev/model-catalog/v2.json" => { assert_eq!(limit, MAX_BYTES); Ok(Reply::Body { bytes: self.list.clone(), etag: Some("\"r\"".into()) }) }
-            "https://linggen.dev/model-catalog/v2.json.sig" => match &self.signature {
-                Some(bytes) => { assert!(etag.is_none() && limit < 1024); Ok(Reply::Body { bytes: bytes.clone(), etag: None }) }
-                None => anyhow::bail!("not found"),
-            },
-            other => panic!("unexpected request {other}"),
-        }
+struct Fake { list: Vec<u8>, unchanged: bool }
+impl super::transport::Transport for Fake {
+    async fn get(&self, url: &str, etag: Option<&str>, limit: usize) -> anyhow::Result<super::transport::Reply> {
+        use super::transport::Reply;
+        assert_eq!(url, "https://linggen.dev/model-catalog/v2.json", "one address, no signature file");
+        if self.unchanged { assert!(etag.is_some()); return Ok(Reply::Unchanged); }
+        assert_eq!(limit, MAX_BYTES);
+        Ok(Reply::Body { bytes: self.list.clone(), etag: Some("\"r\"".into()) })
     }
 }
 
 #[tokio::test]
-async fn refresh_fetches_the_pair_and_a_missing_or_wrong_signature_keeps_the_last_good() {
+async fn refresh_takes_one_unsigned_body_and_a_bad_one_keeps_the_last_good() {
     let dir = tempfile::tempdir().unwrap();
-    let signer = Signer::new();
-    let mut cache = cache(&dir, &signer);
-    let (list, signature) = signer.variant(|v| v["revision"] = 8.into());
-    let missing = Fake { list: list.clone(), signature: None, unchanged: false };
-    assert!(cache.refresh(now(), &missing).await.is_none());
+    let mut cache = cache(&dir);
+    let bad = Fake { list: b"{}".to_vec(), unchanged: false };
+    assert!(cache.refresh(now(), &bad).await.is_none());
     assert!(cache.bundle.is_none() && !cache.due(now() + Duration::minutes(14)) && cache.due(now() + Duration::minutes(15)));
-    let at = now() + Duration::hours(1);
-    let wrong = Fake { list: list.clone(), signature: Some(b"AAAA".to_vec()), unchanged: false };
-    assert!(cache.refresh(at, &wrong).await.is_none() && cache.bundle.is_none());
-    let at = at + Duration::days(1);
-    let good = Fake { list, signature: Some(signature.into_bytes()), unchanged: false };
+    let at = now() + Duration::days(1);
+    let good = Fake { list: variant(|v| v["revision"] = 8.into()), unchanged: false };
     assert_eq!(cache.refresh(at, &good).await.unwrap().revision(), 8);
     let week = at + Duration::days(7);
-    let unchanged = Fake { list: Vec::new(), signature: None, unchanged: true };
-    assert!(cache.refresh(week, &unchanged).await.is_none());
+    assert!(cache.refresh(week, &Fake { list: Vec::new(), unchanged: true }).await.is_none());
     assert_eq!(cache.bundle.as_ref().unwrap().revision(), 8);
 }
 

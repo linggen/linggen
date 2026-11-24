@@ -1,7 +1,8 @@
 //! Settings' provider groups: a projection of the existing rows and endpoint keys.
 
 use super::{ModelManager, NotReady};
-use crate::config::providers::{label_for, Way, PRESETS};
+use crate::config::providers::Way;
+use super::curated::{self, Bundle};
 use crate::config::{Config, ModelConfig, SignIn};
 use crate::credentials::{self, Credentials};
 use crate::provider::kinds::{kind_of, Kind};
@@ -133,13 +134,17 @@ fn shown_url(url: &str) -> String {
 
 /// Source shown for a configured model, shared by provider cards and `/api/uses`.
 pub fn provider_source(sign_in: SignIn, provider: &str, url: &str) -> (String, Way) {
+    provider_source_in(&curated::current(), sign_in, provider, url)
+}
+
+fn provider_source_in(list: &Bundle, sign_in: SignIn, provider: &str, url: &str) -> (String, Way) {
     match sign_in {
         SignIn::LinggenAccount => ("Linggen Cloud".into(), Way::Account),
         SignIn::ChatGpt => ("ChatGPT 订阅".into(), Way::Subscription),
         SignIn::Claude => ("Claude 订阅".into(), Way::Subscription),
         SignIn::Key | SignIn::Unknown => {
             let way = if provider.eq_ignore_ascii_case("ollama") { Way::Local } else { Way::Key };
-            (label_for(provider, url), way)
+            (list.label_for(provider, url), way)
         }
     }
 }
@@ -147,18 +152,18 @@ pub fn provider_source(sign_in: SignIn, provider: &str, url: &str) -> (String, W
 impl ProviderView {
     /// An editable endpoint proposed by the owner, not yet filed on disk.
     pub fn draft(provider: &str, url: &str) -> Self {
-        let mut group = Self::new(SignIn::Key, provider, url);
+        let mut group = Self::new(&curated::current(), SignIn::Key, provider, url);
         if group.key.is_some() {
             group.fix = Some("add_key");
         }
         group
     }
 
-    fn new(sign_in: SignIn, provider: &str, url: &str) -> Self {
-        let (label, way) = provider_source(sign_in, provider, url);
-        let preset = (way == Way::Key).then(|| PRESETS.iter().find(|p| p.way == Way::Key
-            && credentials::same_endpoint("", p.url, "", url))).flatten();
-        let (provider, url) = preset.map_or((provider, url), |p| (p.name, p.url));
+    fn new(list: &Bundle, sign_in: SignIn, provider: &str, url: &str) -> Self {
+        let (label, way) = provider_source_in(list, sign_in, provider, url);
+        // A card at a listed address is filed under the list's name and address.
+        let place = (way == Way::Key).then(|| list.place_at(url).filter(|p| p.provider.sign_in == Way::Key)).flatten();
+        let (provider, url) = place.map_or((provider, url), |p| (p.provider.name.as_str(), p.base));
         Self {
             id: provider_id(sign_in, provider, url), label, way: way.as_str(),
             provider: provider.into(), url: shown_url(url), connected: false, fix: None,
@@ -184,10 +189,11 @@ impl ProviderView {
 
 impl ModelManager {
     pub fn providers_view(&self, config: &Config, creds: &Credentials) -> Vec<ProviderView> {
+        let list = curated::current();
         let mut groups = BTreeMap::new();
         // A user row may shadow the cloud model without removing the sign-in.
         let cloud_url = super::catalog::linggen_cloud_url();
-        let mut cloud = ProviderView::new(SignIn::LinggenAccount, super::catalog::LINGGEN_CLOUD_PROVIDER, &cloud_url);
+        let mut cloud = ProviderView::new(&list, SignIn::LinggenAccount, super::catalog::LINGGEN_CLOUD_PROVIDER, &cloud_url);
         cloud.connected = crate::account::resolve_token()
             .is_some_and(|(token, _)| !crate::account::token_rejected(&token));
         cloud.fix = (!cloud.connected).then_some("sign_in");
@@ -200,7 +206,7 @@ impl ModelManager {
             }
             let sign_in = row.sign_in();
             let id = provider_id(sign_in, row.provider_name(), &row.url);
-            let group = groups.entry(id).or_insert_with(|| ProviderView::new(sign_in, row.provider_name(), &row.url));
+            let group = groups.entry(id).or_insert_with(|| ProviderView::new(&list, sign_in, row.provider_name(), &row.url));
             if group.models.iter().any(|m| m.id == row.id) {
                 continue;
             }
@@ -215,17 +221,19 @@ impl ModelManager {
         for endpoint in &creds.endpoints {
             // A credential has no sign-in field; only the key group can use it.
             let id = provider_id(SignIn::Key, &endpoint.provider, &endpoint.url);
-            let group = groups.entry(id).or_insert_with(|| ProviderView::new(SignIn::Key, &endpoint.provider, &endpoint.url));
+            let group = groups.entry(id).or_insert_with(|| ProviderView::new(&list, SignIn::Key, &endpoint.provider, &endpoint.url));
             let set = creds.endpoint_key(&endpoint.provider, &endpoint.url).is_some();
             group.mark_key(set);
             group.connected |= set && group.models.is_empty();
         }
-        for voice in live::offered_to_pages() {
+        for voice in live::offered_to_pages().into_iter() {
             let ready = live::key_ready(voice, &config.models, creds);
-            let Some(preset) = PRESETS.iter().find(|p| p.serves_live(voice)) else { continue };
-            let id = provider_id(SignIn::Key, preset.name, preset.url);
-            let group = groups.entry(id).or_insert_with(|| ProviderView::new(SignIn::Key, preset.name, preset.url));
-            // A legacy live row can supply its key, but only the same-host preset owns the line.
+            // The line is shown where the list names the voice; a voice it does not name has none.
+            let Some((place, _)) = list.live_place(voice.id) else { continue };
+            let (name, base) = (place.provider.name.as_str(), place.base);
+            let id = provider_id(SignIn::Key, name, base);
+            let group = groups.entry(id).or_insert_with(|| ProviderView::new(&list, SignIn::Key, name, base));
+            // A legacy live row can supply its key, but only the listed provider owns the line.
             group.mark_key(ready);
             group.add(ProviderModel {
                 id: format!("live:{}", voice.id), model: voice.model.into(), kind: Kind::LiveVoice.as_str(),
@@ -253,6 +261,32 @@ impl ModelManager {
     }
 }
 
+/// What the page offers to add, as the curated list names it, in its order:
+/// a provider or a model added to the list shows here with no code change.
+pub fn presets() -> Vec<serde_json::Value> {
+    let list = curated::current();
+    list.offered(curated::OFFERED).map(|p| serde_json::json!({
+        "name": p.provider.name, "label": p.provider.label, "url": p.base, "way": p.provider.sign_in.as_str(),
+        "live": p.offered_live_models(),
+    })).collect()
+}
+
+/// The provider name and address a person's pick (a label, an address or a name) stands for.
+pub fn preset_named(selector: &str) -> Option<(String, String, Way)> {
+    let list = curated::current();
+    let place = list.offered(curated::OFFERED).find(|p| p.provider.label == selector || p.base == selector)
+        .or_else(|| list.offered(curated::OFFERED).find(|p| p.provider.name == selector))?;
+    Some((place.provider.name.clone(), place.base.to_string(), place.provider.sign_in))
+}
+
+/// Where a live voice's card sits when it has no row or key yet: the list names it.
+pub fn live_card_at(id: &str) -> Option<(String, String)> {
+    let list = curated::current();
+    let (place, _) = live::offered_to_pages().and_then(|voice| list.live_place(voice.id))?;
+    (provider_id(SignIn::Key, &place.provider.name, place.base) == id)
+        .then(|| (place.provider.name.clone(), place.base.to_string()))
+}
+
 fn local_lanes() -> impl Iterator<Item = ProviderView> {
     use runtime::{HUB_MODELS, PICTURES_LANE, PICTURE_MODEL, STT_MODEL, TTS_MODEL, VOICE_LANE};
     [
@@ -262,7 +296,7 @@ fn local_lanes() -> impl Iterator<Item = ProviderView> {
     ].into_iter().map(|(kind, model, lane, on_disk)| {
         let ready = on_disk && runtime::lane_verdict(&lane).is_ok();
         let hub = HUB_MODELS.iter().find(|m| m.repo == model).expect("local model is declared");
-        let mut group = ProviderView::new(SignIn::Key, "ollama", "");
+        let mut group = ProviderView::new(&curated::current(), SignIn::Key, "ollama", "");
         group.id = provider_id(SignIn::Key, "ollama", kind.as_str());
         group.label = "This Mac".into();
         group.fix = (!ready).then(|| if runtime::env_bin(hub.venv, "python3").exists() { "download" } else { "install" });

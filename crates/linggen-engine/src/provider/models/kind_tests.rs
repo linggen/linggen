@@ -63,19 +63,18 @@ fn a_turn_that_asks_for_a_live_voice_row_runs_the_standing_model() {
 /// card: the engine has no lane to run it.
 #[test]
 fn a_row_with_no_lane_is_in_no_list_and_never_a_live_row() {
-    use crate::config::providers::PRESETS;
-    let shipped = family_catalog::current();
-    let google = PRESETS.iter().find(|p| p.name == "gemini").unwrap();
+    let shipped = curated::current();
+    let google = shipped.place_at("https://generativelanguage.googleapis.com/v1beta/openai").unwrap();
     use crate::provider::kinds::{kind_of, Kind};
     let at_google = |id: &str, model: &str| -> ModelConfig {
         serde_json::from_value(serde_json::json!({
-            "id": id, "provider": "gemini", "url": google.url, "model": model,
+            "id": id, "provider": "gemini", "url": google.base, "model": model,
         }))
         .unwrap()
     };
     // Entries of the shipped copy, taken by the kind `kind_of` gives them.
     let pick = |want: Kind| {
-        shipped.entries_of(google).map(|e| e.id().to_string())
+        shipped.facts_at(google.endpoint_key).map(|e| e.id().to_string())
             .find(|model| kind_of(&at_google("m", model)) == want)
             .expect("the shipped catalog has both kinds")
     };

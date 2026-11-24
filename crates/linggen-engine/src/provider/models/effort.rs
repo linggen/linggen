@@ -21,7 +21,7 @@
 //! A model's effort choices come from its catalog, cut to what its wire
 //! can carry. ChatGPT sign-in uses its own catalog, not API-key facts.
 
-use super::{chatgpt_catalog, family_catalog, ModelManager};
+use super::{chatgpt_catalog, curated, ModelManager};
 use crate::config::{ModelConfig, ProviderKind, SignIn};
 use crate::provider::anthropic::AnthropicClient;
 use crate::provider::openai::{responses_api, OpenAiClient};
@@ -121,7 +121,7 @@ fn key_choices(row: &ModelConfig) -> Vec<&'static str> {
         ProviderKind::Anthropic => &AnthropicClient::EFFORT_VALUES,
         ProviderKind::OpenAiCompatible | ProviderKind::ChatGpt | ProviderKind::Ollama | ProviderKind::Proxy => return Vec::new(),
     };
-    let catalog = family_catalog::current();
+    let catalog = curated::current();
     let Some(facts) = catalog.exact(row) else { return Vec::new() };
     wire.iter().copied().filter(|value| facts.effort_values().any(|v| v == *value)).collect()
 }
@@ -159,7 +159,7 @@ pub(super) fn resolve(row: &ModelConfig, ask: &EffortAsk<'_>) -> Resolved {
 
 impl ModelManager {
     pub fn display_name(&self, row: &ModelConfig) -> String {
-        family_catalog::current().exact(row).map_or_else(|| row.model.clone(), |facts| facts.name().to_string())
+        curated::current().exact(row).map_or_else(|| row.model.clone(), |facts| facts.name().to_string())
     }
 
     /// The values the model `id` offers, in the wire's order: what the chat
