@@ -70,7 +70,7 @@ impl Refusal {
 
 pub(super) fn run(f: &Families, config: &mut Config, creds: &Credentials, (name, url): (&str, &str), family: &str, action: Action) -> Result<bool, Refusal> {
     let list = f.catalog();
-    let endpoint = Endpoint::of(&list, name, url, creds).ok_or(Refusal::Unsupported)?;
+    let endpoint = Endpoint::of(&list, config.model_catalog.offered(), name, url, creds).ok_or(Refusal::Unsupported)?;
     let today = f.today();
     let place = endpoint.place;
     let entry = place.entry_for(family).ok_or(Refusal::Missing)?;

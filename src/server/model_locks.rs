@@ -209,3 +209,40 @@ fn families_are_changed_only_by_callers_that_hold_the_settings_write_lock() {
         assert!(code.contains("settings_write.lock()"), "{file} calls the families without taking the lock");
     }
 }
+
+const CURATED_DIR: &str = "crates/linggen-engine/src/provider/models/curated";
+
+/// Which edition of the model list a person is offered is decided in
+/// `curated/edition.rs` alone: the Mac's region is read there, the choice is
+/// resolved there, and every other file asks `ModelCatalog::offered()` (or
+/// `shown()`). A second `Edition::…` literal, region read or `offered_in` call
+/// would be a second place deciding.
+#[test]
+fn the_offered_edition_is_decided_only_in_the_edition_file() {
+    let decider = format!("{CURATED_DIR}/edition.rs");
+    let found = lines_with(
+        &["Edition::Mainland", "Edition::International", "system_region(", "read_apple_locale(", "region_of_locale(", ".offered_in(", "AppleLocale"],
+        // The bundle names its two lists (and tries the offered one first), nothing more.
+        |rel| rel == decider || rel == format!("{CURATED_DIR}/bundle.rs") || rel.ends_with("/tests.rs"),
+        &decider,
+    );
+    assert!(found.is_empty(), "ask `config.model_catalog.offered()` instead:\n{}", found.join("\n"));
+    // The scan sees what it is meant to: a literal, spelled as it is spelled.
+    assert!(["Edition::Mainland"].iter().any(|w| "let e = Edition::Mainland;".contains(w)));
+}
+
+/// The owner's choice of edition is written by one route (`providers::set_edition`);
+/// every other writer of the config keeps what the engine holds. No file but
+/// those builds a `ModelCatalog` with a choice.
+#[test]
+fn only_the_owners_route_chooses_an_edition() {
+    let found = lines_with(
+        &["ModelCatalog::chosen(", "model_catalog ="],
+        |rel| matches!(rel, "src/server/api/providers.rs" | "src/server/api/config.rs")
+            || rel == format!("{CURATED_DIR}/edition.rs") || rel.ends_with("/tests.rs"),
+        "src/server/api/providers.rs",
+    );
+    assert!(found.is_empty(), "a second writer of the edition choice:\n{}", found.join("\n"));
+    let config = production_code(&["src/server/api"]).into_iter().find(|(rel, _)| rel == "src/server/api/config.rs").expect("config route").1;
+    assert!(config.contains("new_config.model_catalog = current.model_catalog.clone()"), "a saved config must keep the edition choice");
+}

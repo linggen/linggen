@@ -23,7 +23,7 @@ pub(super) fn follow_all(f: &Families, config: &mut Config, creds: &Credentials)
     let mut moves: Vec<(String, String, String)> = Vec::new();
     for row in binding::following(&list, config) {
         let Some(held) = row.family_binding.as_ref() else { continue };
-        let Some(endpoint) = Endpoint::of_row(&list, row, creds) else { continue };
+        let Some(endpoint) = Endpoint::of_row(&list, config.model_catalog.offered(), row, creds) else { continue };
         // A row moved to another address is no longer this endpoint's family.
         if endpoint.place.endpoint_key != held.preset() {
             continue;
@@ -55,7 +55,7 @@ pub(super) fn follow_all(f: &Families, config: &mut Config, creds: &Credentials)
 /// save tries again. A family starter follows; an exact starter is pinned.
 pub(super) fn start(f: &Families, config: &mut Config, creds: &Credentials, (name, url): (&str, &str)) -> bool {
     let list = f.catalog();
-    let Some(endpoint) = Endpoint::of(&list, name, url, creds) else { return false };
+    let Some(endpoint) = Endpoint::of(&list, config.model_catalog.offered(), name, url, creds) else { return false };
     let place = endpoint.place;
     if config.family_starts.contains(place.endpoint_key) {
         return false;

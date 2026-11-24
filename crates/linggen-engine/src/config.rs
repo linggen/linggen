@@ -95,6 +95,13 @@ pub struct Config {
     #[serde(default, skip_serializing_if = "crate::provider::models::families::FamilyStarts::is_empty")]
     #[cfg_attr(any(test, feature = "test-support"), ts(skip))]
     pub family_starts: crate::provider::models::families::FamilyStarts,
+    /// Which edition of the curated model list is offered (`[model_catalog]`):
+    /// only what is offered for a new setup, never what a person already has.
+    /// Absent: Auto. Written only by the owner's route (`PUT /api/providers/edition`);
+    /// a saved config keeps what it holds.
+    #[serde(default, skip_serializing_if = "crate::provider::models::ModelCatalog::is_default")]
+    #[cfg_attr(any(test, feature = "test-support"), ts(skip))]
+    pub model_catalog: crate::provider::models::ModelCatalog,
     /// What was wrong in the file and was set right on load rather than
     /// refusing the whole config (a bad model `price` is dropped, that
     /// model alone). Runtime-only — never read from or written to the file —
@@ -1043,6 +1050,7 @@ impl Default for Config {
             mcp_servers: Default::default(),
             outside_apps: Vec::new(),
             family_starts: Default::default(),
+            model_catalog: Default::default(),
             problems: Vec::new(),
         }
     }

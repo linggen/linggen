@@ -339,3 +339,123 @@ async fn a_typed_model_without_an_id_gets_one_from_the_engine() {
     assert!(rows.iter().all(|m| m["model"] == "deepseek-chat" && m["id"].as_str().unwrap().starts_with("own-")));
     assert_ne!(rows[0]["id"], rows[1]["id"]);
 }
+
+// ── editions: what is offered changes; what a person has does not ──
+
+const OWN_ROWS: &str = r#"
+[[models]]
+id = "own-deepseek"
+provider = "openai"
+url = "https://api.deepseek.com/v1"
+model = "deepseek-chat"
+
+[[models]]
+id = "own-dashscope"
+provider = "qwen"
+url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+model = "qwen-plus"
+"#;
+
+fn offers(body: &Value, label: &str) -> bool {
+    body["presets"].as_array().unwrap().iter().any(|p| p["label"] == label)
+}
+
+/// Everything a person has, read as the engine answers it: rows, defaults and the key file.
+async fn what_a_person_has(w: &World) -> (Value, Vec<u8>) {
+    let mut config = w.api.get("/api/config").await;
+    config.as_object_mut().unwrap().remove("model_catalog");
+    let keys = std::fs::read(w.home.linggen_home().join("credentials.json")).unwrap();
+    (json!({"models": config["models"], "routing": config["routing"], "uses": config["uses"], "starts": config["family_starts"]}), keys)
+}
+
+#[tokio::test]
+async fn the_edition_is_chosen_by_the_owner_and_changes_only_what_is_offered() {
+    let mut w = World::start(Setup { config_append: Some(OWN_ROWS), ..Setup::default() }).await;
+    let credentials = json!({"endpoints": [
+        {"provider": "anthropic", "url": "https://api.anthropic.com", "api_key": "test-only-marker"},
+        {"provider": "openai", "url": "https://api.deepseek.com/v1", "api_key": "test-only-marker"},
+        {"provider": "qwen", "url": "https://dashscope.aliyuncs.com/compatible-mode/v1", "api_key": "test-only-marker"}
+    ]});
+    assert_eq!(w.api.put_json("/api/credentials", credentials).await.0, 200);
+    let auto = w.api.get("/api/providers").await;
+    assert_eq!(auto["edition"]["choice"], "auto");
+    // International first: Anthropic is offered, DashScope's China address is kept, not offered.
+    let (status, intl) = w.api.put_json("/api/providers/edition", json!({"choice": "international"})).await;
+    assert_eq!((status, intl["edition"].clone()), (200, json!({"edition": "international", "choice": "international"})));
+    assert!(offers(&intl, "Anthropic") && !offers(&intl, "通义千问 (DashScope)"));
+    assert_eq!(provider(&intl, "通义千问 (DashScope)")["retained"], true);
+    assert!(provider(&intl, "Anthropic").get("retained").is_none() && provider(&intl, "DeepSeek").get("retained").is_none());
+    let had = what_a_person_has(&w).await;
+    // Mainland: the offer turns over; every card, key and row stays, the other edition's marked kept.
+    let (status, mainland) = w.api.put_json("/api/providers/edition", json!({"choice": "mainland"})).await;
+    assert_eq!((status, mainland["edition"].clone()), (200, json!({"edition": "mainland", "choice": "mainland"})));
+    assert!(offers(&mainland, "通义千问 (DashScope)") && !offers(&mainland, "Anthropic"));
+    let anthropic = provider(&mainland, "Anthropic");
+    assert_eq!((anthropic["retained"].clone(), anthropic["key"]["set"].clone()), (true.into(), true.into()));
+    assert!(provider(&mainland, "通义千问 (DashScope)").get("retained").is_none());
+    assert_eq!(provider(&mainland, "DeepSeek")["models"][0]["id"], "own-deepseek", "the row stays where it was");
+    assert!(mainland["presets"].as_array().unwrap().iter().filter(|p| p["way"] == "key").all(|p| p["unverified"] == true), "mainland entries are marked");
+    assert_eq!(what_a_person_has(&w).await, had, "no key, row, default or starter moved");
+    // The choice survives a restart and still moves nothing.
+    w.engine.restart(&w.home).await;
+    let again = w.api.get("/api/providers").await;
+    assert_eq!(again["edition"], json!({"edition": "mainland", "choice": "mainland"}));
+    assert_eq!(what_a_person_has(&w).await, had);
+    // A saved settings page keeps the choice; an unknown word is refused.
+    let config = w.api.get("/api/config").await;
+    assert_eq!(config["model_catalog"]["edition"], "mainland");
+    assert_eq!(w.api.post_status("/api/config", config).await, 200);
+    assert_eq!(w.api.get("/api/providers").await["edition"]["choice"], "mainland");
+    assert_eq!(w.api.put_json("/api/providers/edition", json!({"choice": "world"})).await.0, 400);
+    // Back to Auto: the choice is gone from the file, the cards are as they were.
+    let (_, auto) = w.api.put_json("/api/providers/edition", json!({"choice": "auto"})).await;
+    assert_eq!(auto["edition"]["choice"], "auto");
+    assert!(w.api.get("/api/config").await.get("model_catalog").is_none());
+    assert_eq!(what_a_person_has(&w).await, had);
+}
+
+/// The list the owner publishes next, with Anthropic moved to `new`, left as the last good copy.
+fn seed_moved_list(home: &crate::support::home::Home, new: &str) {
+    let shipped = concat!(env!("CARGO_MANIFEST_DIR"), "/crates/linggen-engine/src/provider/models/curated/model-catalog-v2.json");
+    let mut list: Value = serde_json::from_slice(&std::fs::read(shipped).unwrap()).unwrap();
+    let old = list["endpoints"]["anthropic"]["base"].clone();
+    list["revision"] = json!(list["revision"].as_u64().unwrap() + 1);
+    list["endpoints"]["anthropic"]["base"] = new.into();
+    for record in list["facts"].as_array_mut().unwrap() {
+        if record["address"] == old { record["address"] = new.into(); }
+    }
+    let cache = home.linggen_home().join("cache/model-catalog-v2");
+    std::fs::create_dir_all(cache.parent().unwrap()).unwrap();
+    std::fs::write(cache, format!("2026-11-24T00:00:00+00:00\n\n{list}\n")).unwrap();
+}
+
+#[tokio::test]
+async fn a_list_that_moves_an_address_shows_a_new_connection_without_a_key_and_the_old_key_stays() {
+    const OLD: &str = "https://api.anthropic.com";
+    const NEW: &str = "https://api.anthropic.example.test/v9";
+    let w = World::start_with_home(Setup::default(), |home| {
+        seed_moved_list(home, NEW);
+        let creds = json!({"version": 2, "endpoints": [{"provider": "anthropic", "url": OLD, "api_key": "test-only-marker"}]});
+        std::fs::write(home.linggen_home().join("credentials.json"), creds.to_string()).unwrap();
+    }).await;
+    let key_file = || std::fs::read(w.home.linggen_home().join("credentials.json")).unwrap();
+    let before = key_file();
+    // The list loads off the start path: wait for it to be the one in force.
+    let mut body = w.api.get("/api/providers").await;
+    for _ in 0..100 {
+        if body["presets"].as_array().unwrap().iter().any(|p| p["url"] == NEW) { break; }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        body = w.api.get("/api/providers").await;
+    }
+    assert!(body["presets"].as_array().unwrap().iter().any(|p| p["label"] == "Anthropic" && p["url"] == NEW), "the moved list is in force");
+    // The page adds the list's connection: a new card with no key, beside the old one that keeps its own.
+    let created = w.api.post("/api/providers", json!({"preset": "Anthropic"})).await;
+    let cards: Vec<&Value> = created["providers"].as_array().unwrap().iter().filter(|p| p["provider"] == "anthropic").collect();
+    // A page shows an address with its root slash; the cards are told apart by address, not spelling.
+    let at = |url: &str| cards.iter().find(|p| p["url"].as_str().unwrap().trim_end_matches('/') == url).copied().unwrap_or_else(|| panic!("no card at {url}: {created}"));
+    assert_eq!(at(NEW)["key"]["set"], false);
+    assert_eq!(at(OLD)["key"]["set"], true, "the old key stays at the old address");
+    assert_ne!(at(NEW)["id"], at(OLD)["id"]);
+    assert_eq!(key_file(), before, "nothing was copied or moved");
+    assert!(!created.to_string().contains("test-only-marker"));
+}

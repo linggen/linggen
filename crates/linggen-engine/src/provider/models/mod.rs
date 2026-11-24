@@ -19,6 +19,7 @@ mod effort;
 pub use effort::{Effort, EffortAsk, Resolved};
 pub mod families;
 pub(crate) mod curated;
+pub use curated::{EditionChoice, ModelCatalog};
 pub(crate) mod family_catalog;
 mod health;
 #[cfg(test)]

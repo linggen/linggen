@@ -14,8 +14,28 @@ use std::collections::{BTreeMap, BTreeSet};
 pub(super) const MAX_BYTES: usize = 1024 * 1024;
 
 /// The two lists a bundle carries. A closed set: a new edition is code.
+/// Which one a person is offered is decided in `edition.rs`, nowhere else.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Edition { International, Mainland }
+
+impl Edition {
+    /// The word a page is told.
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Edition::International => "international",
+            Edition::Mainland => "mainland",
+        }
+    }
+
+    /// Both editions, this one first: where a connection is looked up, the
+    /// offered edition's own line wins over the other's.
+    fn first(self) -> [Edition; 2] {
+        match self {
+            Edition::International => [Edition::International, Edition::Mainland],
+            Edition::Mainland => [Edition::Mainland, Edition::International],
+        }
+    }
+}
 
 /// Named connections the engine owns: the list says which, never where.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -79,9 +99,8 @@ pub(crate) struct Entry {
     pub family: Option<FamilyMatcher>,
     pub live: Option<LiveService>,
     pub starter: bool,
-    /// Slice 3 shows these two on the page.
+    /// The owner has not checked this entry works in this edition's region.
     #[serde(default)]
-    #[allow(dead_code)]
     pub unverified: bool,
     #[allow(dead_code)]
     pub note: Option<String>,
@@ -173,17 +192,31 @@ impl Bundle {
 
     /// The connection at `url`, whatever name a row there is filed under:
     /// the exact address, in either edition (a row kept from the other
-    /// edition still has its label, facts and price). The offered edition wins.
+    /// edition still has its label, facts and price). A caller that does not
+    /// care which edition's line it gets (every edition names an address by
+    /// the same endpoint key) asks here.
     pub(crate) fn place_at(&self, url: &str) -> Option<Place<'_>> {
-        [Edition::International, Edition::Mainland].into_iter()
+        self.place_at_in(Edition::International, url)
+    }
+
+    /// [`place_at`](Self::place_at), the line of `offered` first.
+    pub(crate) fn place_at_in(&self, offered: Edition, url: &str) -> Option<Place<'_>> {
+        offered.first().into_iter()
             .flat_map(|edition| self.offered(edition))
             .find(|place| place.is_at(url))
     }
 
     /// The key connection a row speaks to: its sign-in is a key, its wire is
     /// the one the list names for that address (Anthropic's native client or
-    /// a compatible one), and its address is exactly the list's.
+    /// a compatible one), and its address is exactly the list's. Any edition's
+    /// line (see [`place_at`](Self::place_at)).
     pub(crate) fn place_of(&self, row: &ModelConfig) -> Option<Place<'_>> {
+        self.place_of_in(Edition::International, row)
+    }
+
+    /// [`place_of`](Self::place_of), the line of `offered` first: the one a
+    /// page offers or ticks starters from (`unverified`, `starter`).
+    pub(crate) fn place_of_in(&self, offered: Edition, row: &ModelConfig) -> Option<Place<'_>> {
         if row.sign_in() != SignIn::Key || !matches!(row.provider_kind(), ProviderKind::Anthropic | ProviderKind::OpenAiCompatible) {
             return None;
         }
@@ -195,20 +228,30 @@ impl Bundle {
             let url = if row.url.trim().is_empty() && native { crate::provider::claude_auth::ANTHROPIC_API_BASE } else { row.url.as_str() };
             place.is_at(url)
         };
-        [Edition::International, Edition::Mainland].into_iter()
+        offered.first().into_iter()
             .flat_map(|edition| self.offered(edition))
             .find(|place| place.provider.sign_in == Way::Key && (place.provider.adapter == Adapter::Anthropic) == native && at(place))
     }
 
+    /// Whether a key connection a person has (a row or a key at `name`, `url`)
+    /// is one the list names, but only in the OTHER edition: kept, not offered.
+    /// An address the list does not name at all is the person's own, not kept.
+    pub(crate) fn kept_out_of(&self, offered: Edition, name: &str, url: &str) -> bool {
+        let Some(row) = probe_row(name, url) else { return false };
+        self.place_of(&row).is_some_and(|place| !self.offered(offered).any(|o| o.endpoint_key == place.endpoint_key))
+    }
+
     /// A provider's label: found by its ADDRESS first, so rows filed under a
     /// generic name at a listed address show that provider's label; then by
-    /// the name alone (the first provider of that name); else the name as written.
+    /// the name alone (the first key or local provider of that name); else the name as written.
     pub(crate) fn label_for(&self, name: &str, url: &str) -> String {
         if let Some(place) = self.place_at(url) {
             return place.provider.label.clone();
         }
         [Edition::International, Edition::Mainland].into_iter()
             .flat_map(|edition| self.providers(edition))
+            // A sign-in provider (Linggen Cloud files under the name "openai") is no key provider's label.
+            .filter(|p| matches!(p.sign_in, Way::Key | Way::Local))
             .find(|p| p.name.eq_ignore_ascii_case(name.trim()))
             .map_or_else(|| name.trim().to_string(), |p| p.label.clone())
     }
@@ -245,6 +288,12 @@ impl Bundle {
     fn is_not_older_than(&self, floor: &Bundle) -> bool {
         self.revision > floor.revision || (self.revision == floor.revision && self.raw == floor.raw)
     }
+}
+
+/// A row standing for "a key at this name and address", with no model: how a
+/// key that has no row is looked up in the list (`place_of`).
+pub(crate) fn probe_row(name: &str, url: &str) -> Option<ModelConfig> {
+    serde_json::from_value(serde_json::json!({"id": "endpoint-probe", "provider": name, "url": url, "model": "-"})).ok()
 }
 
 /// The one entry for a bundle's bytes: size, shape, rules. A bundle that
@@ -318,6 +367,13 @@ impl<'a> Place<'a> {
 
     pub(crate) fn entry_for(&self, family: &str) -> Option<&'a Entry> {
         self.tickable().find(|(key, _)| *key == family).map(|(_, e)| e)
+    }
+
+    /// Every entry here is one the owner has not checked in this edition's
+    /// region (a provider with no entry, such as a local server, is not).
+    pub(crate) fn unverified(&self) -> bool {
+        let mut entries = self.entries().peekable();
+        entries.peek().is_some() && entries.all(|e| e.unverified)
     }
 
     /// The live voices the list names here, as the page may offer them.

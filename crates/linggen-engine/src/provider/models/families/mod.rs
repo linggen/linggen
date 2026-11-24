@@ -24,7 +24,7 @@ pub use binding::{FamilyBinding, FamilyStarts, LastMove, Mode, MoveKind};
 pub use view::FamiliesView;
 use binding::keep_bindings;
 
-use super::curated::{self, Bundle, Place};
+use super::curated::{self, Bundle, Edition, Place};
 use super::family_catalog::{family_current, Access, AccessEvidence, Connection, FamilyCurrent};
 use crate::config::{Config, ModelConfig};
 use crate::credentials::{self, Credentials};
@@ -94,10 +94,11 @@ impl Families {
         // A key is asked only at the address it is filed under: an endpoint is
         // found by a row's or a credential's own address, never by a list's.
         let list = self.catalog();
+        let offered = config.model_catalog.offered();
         let mut asks: Vec<(Place<'_>, String)> = Vec::new();
-        let named = endpoint.and_then(|(name, url)| Endpoint::of(&list, name, url, creds));
-        let rows = config.models.iter().filter_map(|row| Endpoint::of_row(&list, row, creds));
-        let filed = creds.endpoints.iter().filter_map(|e| Endpoint::of(&list, &e.provider, &e.url, creds));
+        let named = endpoint.and_then(|(name, url)| Endpoint::of(&list, offered, name, url, creds));
+        let rows = config.models.iter().filter_map(|row| Endpoint::of_row(&list, offered, row, creds));
+        let filed = creds.endpoints.iter().filter_map(|e| Endpoint::of(&list, offered, &e.provider, &e.url, creds));
         for e in named.into_iter().chain(rows.chain(filed).filter(|_| endpoint.is_none())) {
             let address = e.place.base;
             if let Some(key) = e.key.filter(|_| !asks.iter().any(|(p, _)| p.endpoint_key == e.place.endpoint_key && p.is_at(address))) {
@@ -192,15 +193,14 @@ struct Endpoint<'a> {
 }
 
 impl<'a> Endpoint<'a> {
-    fn of(list: &'a Bundle, name: &str, url: &str, creds: &Credentials) -> Option<Self> {
-        let probe: ModelConfig = serde_json::from_value(serde_json::json!({
-            "id": "endpoint-probe", "provider": name, "url": url, "model": "-",
-        })).ok()?;
-        Self::of_row(list, &probe, creds)
+    /// `offered` is the edition the person is offered (`config.model_catalog.offered()`):
+    /// its line of a connection wins, so its starters and marks are the ones shown and ticked.
+    fn of(list: &'a Bundle, offered: Edition, name: &str, url: &str, creds: &Credentials) -> Option<Self> {
+        Self::of_row(list, offered, &curated::probe_row(name, url)?, creds)
     }
 
-    fn of_row(list: &'a Bundle, row: &ModelConfig, creds: &Credentials) -> Option<Self> {
-        let place = list.place_of(row)?;
+    fn of_row(list: &'a Bundle, offered: Edition, row: &ModelConfig, creds: &Credentials) -> Option<Self> {
+        let place = list.place_of_in(offered, row)?;
         Some(Self { place, probe: row.clone(), key: credentials::resolve_api_key(row, creds) })
     }
 

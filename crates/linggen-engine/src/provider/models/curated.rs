@@ -12,17 +12,15 @@
 //! one reader. Adding a provider or a model to the list changes no code.
 
 mod bundle;
+mod edition;
 mod store;
 mod transport;
 mod trust;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use bundle::{Bundle, Edition, EntryType, Place};
+pub(crate) use bundle::{probe_row, Bundle, Edition, EntryType, Place};
+pub use edition::{EditionChoice, ModelCatalog};
 pub(crate) use store::{current, start};
 #[cfg(test)]
 pub(crate) use store::shipped;
-
-/// Which edition the settings page offers. The region choice (and the
-/// override) is slice 3; until then everyone is offered the international one.
-pub(crate) const OFFERED: Edition = Edition::International;

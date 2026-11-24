@@ -83,6 +83,7 @@ const FamilyRow: React.FC<Props & { family: Family }> = ({ provider, family: f, 
           <div className="flex flex-wrap items-center gap-1.5 text-xs font-semibold">
             <span data-no-i18n>{f.label}</span>
             {f.mode === 'pinned' && <Tag tone="blue">{W.pinned}</Tag>}
+            {f.unverified && <Tag>{W.unverified}</Tag>}
             {f.references.map((r) => {
               const used = usedWords(r);
               return <Tag key={`${r.place}${r.who ?? ''}`} tone="green">{used.who ? say(used.word, { who: used.who }) : used.word}</Tag>;

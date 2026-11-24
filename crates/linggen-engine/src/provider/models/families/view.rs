@@ -48,6 +48,9 @@ struct FamilyView {
     /// newer model a following row has not moved to yet.
     #[serde(skip_serializing_if = "Option::is_none")]
     next: Option<ModelLine>,
+    /// The owner has not checked this entry in the offered edition's region.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    unverified: bool,
     /// Why the family cannot be moved or ticked by itself (a `Hold` code).
     #[serde(skip_serializing_if = "Option::is_none")]
     hold: Option<&'static str>,
@@ -113,7 +116,7 @@ struct Reference {
 
 pub(super) fn of(f: &Families, config: &Config, creds: &Credentials, (name, url): (&str, &str)) -> Option<FamiliesView> {
     let list = f.catalog();
-    let endpoint = Endpoint::of(&list, name, url, creds)?;
+    let endpoint = Endpoint::of(&list, config.model_catalog.offered(), name, url, creds)?;
     // A provider the list approves nothing at (Groq, OpenRouter) has no families to show.
     endpoint.place.tickable().next()?;
     let today = f.today();
@@ -177,6 +180,7 @@ pub(super) fn of(f: &Families, config: &Config, creds: &Credentials, (name, url)
             notice,
             references: row.map(|r| references(config, &r.id)).unwrap_or_default(),
             label: entry.label.clone(),
+            unverified: entry.unverified,
             family: family.to_string(),
         });
     }

@@ -502,7 +502,7 @@ async fn a_provider_and_a_model_added_to_the_list_are_offered_and_usable_with_no
     let mut w = world(TODAY);
     w.under(with_a_new_provider());
     // Offered: on the page's list, in the list's order, last.
-    let offered: Vec<_> = w.list.offered(curated::OFFERED).map(|p| (p.provider.label.clone(), p.base.to_string())).collect();
+    let offered: Vec<_> = w.list.offered(curated::Edition::International).map(|p| (p.provider.label.clone(), p.base.to_string())).collect();
     assert_eq!(offered.last().unwrap(), &("Example Lab".to_string(), LAB.to_string()));
     // Usable: a key at its address, a provider list that holds the models, a tick.
     w.creds.set_endpoint_key("openai", LAB, Some(KEY.into()));
@@ -637,4 +637,55 @@ async fn a_key_on_a_provider_with_nothing_approved_is_still_recorded_as_its_firs
     assert!(w.families.start_endpoint(&mut w.settings, &w.creds, ("groq", GROQ)));
     assert!(w.settings.models.is_empty() && w.settings.family_starts.contains("groq"));
     assert!(w.families.view(&w.settings, &w.creds, ("groq", GROQ)).is_none(), "nothing to tick, nothing shown");
+}
+
+// ── editions: what is offered changes, what a person has does not ──
+
+const DEEPSEEK: &str = "https://api.deepseek.com/v1";
+
+fn deepseek_world(choice: crate::provider::models::EditionChoice) -> World {
+    let mut w = world(TODAY);
+    w.creds.set_endpoint_key("deepseek", DEEPSEEK, Some(KEY.into()));
+    w.provider.lists("deepseek", &["deepseek-flash", "deepseek-v4-pro"]);
+    w.settings.model_catalog = crate::provider::models::ModelCatalog::chosen(choice);
+    w
+}
+
+#[tokio::test]
+async fn a_mainland_first_key_ticks_no_starter_and_a_later_switch_never_replays_one() {
+    use crate::provider::models::EditionChoice::{International, Mainland};
+    let mut w = deepseek_world(Mainland);
+    w.families.gather(&w.settings, &w.creds, Some(("deepseek", DEEPSEEK))).await;
+    let seen = serde_json::to_value(w.families.view(&w.settings, &w.creds, ("deepseek", DEEPSEEK)).unwrap()).unwrap();
+    assert!(seen["families"].as_array().unwrap().iter().all(|f| f["unverified"] == true && f["ticked"] == false), "{seen}");
+    assert!(w.families.start_endpoint(&mut w.settings, &w.creds, ("deepseek", DEEPSEEK)), "the first connection is recorded");
+    assert!(w.settings.models.is_empty(), "mainland entries are unverified: no starter");
+    // Now the owner picks the international edition: the record stands, nothing is ticked.
+    let (config, creds) = (toml::to_string(&w.settings).unwrap(), serde_json::to_string(&w.creds).unwrap());
+    w.settings.model_catalog = crate::provider::models::ModelCatalog::chosen(International);
+    assert!(!w.families.start_endpoint(&mut w.settings, &w.creds, ("deepseek", DEEPSEEK)), "no starter replay");
+    assert!(!w.families.follow(&mut w.settings, &w.creds));
+    assert_eq!(serde_json::to_string(&w.creds).unwrap(), creds, "no key moved or copied");
+    assert_eq!(toml::to_string(&w.settings).unwrap().replace("[model_catalog]\nedition = \"international\"\n", ""), config.replace("[model_catalog]\nedition = \"mainland\"\n", ""), "no row or default moved");
+    let seen = serde_json::to_value(w.families.view(&w.settings, &w.creds, ("deepseek", DEEPSEEK)).unwrap()).unwrap();
+    assert!(seen["families"].as_array().unwrap().iter().all(|f| f.get("unverified").is_none()), "the international line carries no mark: {seen}");
+}
+
+#[tokio::test]
+async fn a_ticked_row_follows_the_same_target_in_either_edition() {
+    use crate::provider::models::EditionChoice::{International, Mainland};
+    let mut moved = Vec::new();
+    for choice in [International, Mainland] {
+        let mut w = deepseek_world(choice);
+        w.provider.lists("deepseek", &["deepseek-flash"]);
+        let place = w.list.place_at(DEEPSEEK).unwrap();
+        binding::tick(&mut w.settings, &place, "deepseek-flash", Approved { id: "deepseek-flash", facts: None }, Mode::Follow);
+        w.families.gather(&w.settings, &w.creds, None).await;
+        w.families.follow(&mut w.settings, &w.creds);
+        let view = serde_json::to_value(w.families.view(&w.settings, &w.creds, ("deepseek", DEEPSEEK)).unwrap()).unwrap();
+        let flash = view["families"].as_array().unwrap().iter().find(|f| f["family"] == "deepseek-flash").unwrap().clone();
+        assert_eq!(flash["ticked"], true, "{choice:?}: the tick stays on the page");
+        moved.push((w.settings.models[0].model.clone(), w.settings.models[0].url.clone()));
+    }
+    assert_eq!(moved[0], moved[1], "the edition does not change what a family follows");
 }

@@ -128,7 +128,7 @@ fn a_row_is_placed_only_at_the_exact_address_and_wire_the_list_names() {
 #[test]
 fn the_offered_edition_is_what_the_page_lists_and_a_new_entry_needs_no_code() {
     let list = shipped();
-    let offered: Vec<_> = list.offered(super::OFFERED).map(|p| p.provider.key.as_str()).collect();
+    let offered: Vec<_> = list.offered(Edition::International).map(|p| p.provider.key.as_str()).collect();
     assert_eq!(offered.first(), Some(&"chatgpt"));
     assert!(offered.contains(&"anthropic") && !offered.contains(&"zhipu"), "the international edition only");
     let grown = Bundle::variant(|v| {
@@ -136,7 +136,7 @@ fn the_offered_edition_is_what_the_page_lists_and_a_new_entry_needs_no_code() {
             "key": "brand-new", "label": "Brand New", "endpoint": "anthropic", "type": "exact", "model": "claude-brand-new", "starter": false
         }));
     });
-    let anthropic = grown.offered(super::OFFERED).find(|p| p.provider.key == "anthropic").unwrap();
+    let anthropic = grown.offered(Edition::International).find(|p| p.provider.key == "anthropic").unwrap();
     assert!(anthropic.tickable().any(|(family, entry)| family == "brand-new" && entry.model == "claude-brand-new"));
 }
 
@@ -317,4 +317,46 @@ fn only_the_curated_module_reads_the_list() {
     hits.sort();
     let names: Vec<_> = hits.iter().map(|p| p.strip_prefix(env!("CARGO_MANIFEST_DIR")).unwrap().to_string_lossy().into_owned()).collect();
     assert_eq!(names, ["src/provider/models/curated/store.rs", "src/provider/models/curated/tests.rs"]);
+}
+
+// ── editions ──
+
+#[test]
+fn a_connection_the_other_edition_names_is_kept_not_offered_and_a_custom_one_is_neither() {
+    let list = shipped();
+    use super::Edition::{International, Mainland};
+    const DASHSCOPE: &str = "https://dashscope.aliyuncs.com/compatible-mode/v1";
+    // International-only and mainland-only providers are kept in the other edition.
+    assert!(list.kept_out_of(Mainland, "anthropic", "https://api.anthropic.com"));
+    assert!(list.kept_out_of(Mainland, "anthropic", ""), "Anthropic's own client at its own base");
+    assert!(!list.kept_out_of(International, "anthropic", "https://api.anthropic.com"));
+    assert!(list.kept_out_of(International, "qwen", DASHSCOPE));
+    assert!(!list.kept_out_of(Mainland, "qwen", DASHSCOPE));
+    // Both editions name DeepSeek: kept in neither. A person's own address is no one's to keep.
+    for edition in [International, Mainland] {
+        assert!(!list.kept_out_of(edition, "deepseek", "https://api.deepseek.com/v1"), "{edition:?}");
+        assert!(!list.kept_out_of(edition, "openai", "https://my-proxy.example.test/v1"), "{edition:?}");
+        assert!(!list.kept_out_of(edition, "ollama", "http://127.0.0.1:11434"), "{edition:?}");
+    }
+}
+
+#[test]
+fn the_offered_edition_is_the_line_a_connection_is_read_from() {
+    let list = shipped();
+    use super::Edition::{International, Mainland};
+    let flash = |edition| list.place_at_in(edition, "https://api.deepseek.com/v1").unwrap().tickable()
+        .map(|(family, e)| (family.to_string(), e.starter, e.unverified)).collect::<Vec<_>>();
+    assert_eq!(flash(International), [("deepseek-flash".into(), true, false), ("deepseek-pro".into(), false, false)]);
+    assert_eq!(flash(Mainland), [("deepseek-flash".into(), false, true), ("deepseek-pro".into(), false, true)]);
+    // A place of one edition only is found from either side, with the same endpoint key.
+    assert_eq!(list.place_at_in(Mainland, "https://api.anthropic.com").unwrap().endpoint_key, "anthropic");
+    assert!(list.offered(Mainland).all(|p| p.unverified() || p.provider.entries.is_empty()), "every mainland line is marked unverified");
+    assert!(list.offered(International).all(|p| !p.unverified()));
+}
+
+#[test]
+fn an_unlisted_address_filed_under_a_shared_name_is_not_labelled_as_the_sign_in_provider() {
+    // Linggen Cloud files under the name "openai"; a key row at some other address is not it.
+    assert_eq!(shipped().label_for("openai", "http://127.0.0.1:55800/v1"), "OpenAI");
+    assert_eq!(shipped().label_for("openai", "https://api.openai.com/v1"), "OpenAI");
 }
