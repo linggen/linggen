@@ -16,11 +16,13 @@ struct OptionRow {
     state: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     disk_gb: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<NotReady>,
 }
 
 impl OptionRow {
     fn new(id: &str, label: &str, state: &'static str) -> Self {
-        Self { id: id.into(), label: label.into(), state, disk_gb: None }
+        Self { id: id.into(), label: label.into(), state, disk_gb: None, reason: None }
     }
 
     fn local(id: &str, model: &str, ready: bool, supported: bool) -> Self {
@@ -60,6 +62,7 @@ struct App {
 struct Table {
     chat: Use,
     chain: Vec<String>,
+    model_fallback: bool,
     effort: Use,
     live: Use,
     speak: Use,
@@ -70,13 +73,14 @@ struct Table {
 }
 
 fn chat_row(models: &ModelManager, row: &crate::config::ModelConfig) -> OptionRow {
-    let state = match models.readiness(&row.id).and_then(|r| r.reason) {
+    let reason = models.readiness(&row.id).and_then(|r| r.reason);
+    let state = match reason {
         None => "ready",
         Some(NotReady::NoKey) => "no_key",
         Some(NotReady::NotSignedIn | NotReady::SignInExpired | NotReady::ProviderSignIn) => "signed_out",
         Some(_) => "unavailable",
     };
-    OptionRow::new(&row.id, &models.display_name(row), state)
+    OptionRow { reason, ..OptionRow::new(&row.id, &models.display_name(row), state) }
 }
 
 async fn table(state: &ServerState, config: &Config) -> Table {
@@ -119,6 +123,7 @@ async fn table(state: &ServerState, config: &Config) -> Table {
     apps.sort_by(|a, b| a.id.cmp(&b.id));
     Table {
         chat: Use::new(first, chat, first), chain,
+        model_fallback: config.routing.model_fallback,
         effort: Use::new(config.uses.chat_effort.as_deref(), effort, None),
         live: Use::new(config.uses.live.as_deref(), services, preferred),
         speak: Use::new(config.uses.speak.as_deref(), speak, tts::default_provider(config.uses.speak.as_deref(), speech).map(|s| s.id())),
@@ -133,6 +138,8 @@ async fn table(state: &ServerState, config: &Config) -> Table {
 #[serde(tag = "use", rename_all = "snake_case", deny_unknown_fields)]
 enum Edit {
     Chat { choice: String },
+    ChatFallbacks { choices: Vec<String> },
+    ModelFallback { enabled: bool },
     Effort { choice: String },
     Live { choice: Option<String> },
     Speak { choice: Option<String> },
@@ -141,10 +148,25 @@ enum Edit {
     App { id: String, choice: Option<String> },
 }
 
+fn set_chat_fallbacks(view: &Table, config: &mut Config, choices: Vec<String>) -> Result<(), Failure> {
+    let Some(default) = view.chat.choice.as_ref() else { return Err(BAD) };
+    let existing = &view.chain[1..];
+    let mut seen = std::collections::HashSet::from([default]);
+    for id in &choices {
+        if !seen.insert(id) || (!existing.contains(id) && !view.chat.accepts(id, &["ready"])) {
+            return Err(BAD);
+        }
+    }
+    config.routing.default_models = std::iter::once(default.clone()).chain(choices).collect();
+    Ok(())
+}
+
 impl Edit {
     fn apply(self, view: &Table, config: &mut Config) -> Result<(), Failure> {
         match self {
             Self::Chat { choice } if view.chat.accepts(&choice, &["ready"]) => config.make_default(&choice),
+            Self::ChatFallbacks { choices } => set_chat_fallbacks(view, config, choices)?,
+            Self::ModelFallback { enabled } => config.routing.model_fallback = enabled,
             Self::Effort { choice } if choice == "auto" || view.effort.accepts(&choice, &["ready"]) => config.uses.chat_effort = Some(choice),
             Self::Live { choice } if choice.as_ref().is_none_or(|id| view.live.accepts(id, &["ready"])) => config.uses.live = choice,
             Self::Speak { choice } if choice.as_ref().is_none_or(|id| view.speak.accepts(id, &["ready", "download"])) => config.uses.speak = choice,

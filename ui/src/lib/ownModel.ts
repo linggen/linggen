@@ -11,7 +11,7 @@
  */
 import { apiGet } from './api';
 import { billingBody } from './billing.mts';
-import { appConfig, sessionApi } from './endpoints';
+import { appConfig, sessionApi, usesApi } from './endpoints';
 import { useChatStore } from '../stores/chatStore';
 import { useSessionStore } from '../stores/sessionStore';
 import { stillOn } from './sessionLoad.mts';
@@ -77,10 +77,7 @@ export async function waitForOwnModel(before: string[], signal: AbortSignal): Pr
  *  so the re-sent turn lands on it instead of the spent cloud. Agent's pick
  *  (Hanli delegated 11-03): choosing "use your own model" makes it the default. */
 export async function adoptOwnModel(modelId: string, sessionId?: string | null, agentId?: string): Promise<void> {
-  await appConfig.update((c) => {
-    const chain = (c.routing?.default_models ?? []).filter((m) => m !== modelId);
-    return { ...c, routing: { ...c.routing, default_models: [modelId, ...chain] } };
-  }).catch(() => {});
+  await usesApi.put({ use: 'chat', choice: modelId }).catch(() => {});
   if (sessionId) await sessionApi.setModel('', sessionId, modelId, agentId).catch(() => {});
 }
 

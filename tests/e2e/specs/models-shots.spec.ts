@@ -47,6 +47,23 @@ for (const [width, theme] of [[1280, 'light'], [420, 'light'], [1280, 'dark'], [
     await opus.getByTestId('move-notice').getByRole('button', { name: '知道了' }).click();
     await expect(opus.getByTestId('move-notice')).toBeHidden();
     await shot('claude');
+
+    const summary = page.getByTestId('chat-fallback-summary');
+    await page.getByRole('button', { name: '改', exact: true }).click();
+    const add = page.getByRole('combobox', { name: '添加备用' });
+    const sonnet = row.getByRole('checkbox', { name: 'Sonnet', exact: true });
+    await sonnet.click();
+    await expect(sonnet).toBeChecked();
+    await add.selectOption({ label: 'Claude Sonnet 5.5' });
+    await expect(page.getByTestId('chat-fallback')).toHaveCount(1);
+    await add.selectOption('fake-sol');
+    await expect(page.getByTestId('chat-fallback')).toHaveCount(2);
+    await expect(page.getByText('备用只在开启自动换模型时用', { exact: true })).toBeVisible();
+    await shot('fallback-editor');
+    await page.locator('[aria-controls="chat-fallback-editor"]').click();
+    await expect(summary).toContainText('→');
+    await shot('fallbacks');
+
     await row.getByTestId('advanced').locator('summary').click();
     await shot('claude-open');
 

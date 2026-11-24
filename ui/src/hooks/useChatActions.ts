@@ -14,7 +14,7 @@ import { getTransport } from '../lib/transport';
 import { answerAsk } from '../lib/answerAsk';
 import { contentBlockSummary } from '../components/chat/utils/content-block';
 import type { AskUserAnswer, ChatMessage, ContentBlock } from '../types';
-import { appConfig, sessionApi, workspaceApi } from '../lib/endpoints';
+import { sessionApi, usesApi, workspaceApi } from '../lib/endpoints';
 import { ApiError, apiErrorMessage, apiPost } from '../lib/api';
 import { isRestartCommand, requestRestart } from '../lib/restartCommand.mts';
 import { postToParent } from '../lib/parentFrame';
@@ -193,8 +193,8 @@ export function useChatActions(
         if (!valid) { ui.setOverlay(`Unknown model: \`${modelArg}\`. Use \`/model\` to see available models.`); }
         else {
           try {
-            await appConfig.setDefaultModels([modelArg]);
-            useServerStore.setState({ defaultModels: [modelArg] });
+            const { chain } = await usesApi.put({ use: 'chat', choice: modelArg });
+            useServerStore.setState({ defaultModels: chain });
             ui.setOverlay(`Switched default model to: \`${modelArg}\``);
           } catch (e) { ui.setOverlay(`Error switching model: ${apiErrorMessage(e)}`); }
         }

@@ -27,8 +27,7 @@ export const appConfig = {
     await appConfig.save(next);
     return next;
   },
-  setDefaultModels: (ids: string[]) =>
-    appConfig.update((c) => ({ ...c, routing: { ...c.routing, default_models: ids } })),
+
 };
 
 // ── Account (linggen.dev) ───────────────────────────────────────────────

@@ -2,7 +2,7 @@ use crate::support::{Setup, World};
 use serde_json::json;
 
 #[tokio::test]
-async fn defaults_round_trip_without_changing_the_old_chain_or_exposing_live_as_chat() {
+async fn defaults_round_trip_without_adding_a_fallback_or_exposing_live_as_chat() {
     const ROW: &str = r#"
 [[models]]
 id = "reasoning"
@@ -37,7 +37,7 @@ api_key = "test-not-a-key"
         assert_eq!(answer, w.api.get("/api/uses").await);
     }
     let after = w.api.get("/api/uses").await;
-    assert_eq!(after["chain"], json!(["reasoning", "fake-ling"]));
+    assert_eq!(after["chain"], json!(["reasoning"]));
     assert_eq!(after["effort"]["choice"], "medium");
     assert_eq!(after["live"]["effective"], "google");
     assert_eq!(after["speak"]["effective"], "system");
@@ -51,6 +51,44 @@ api_key = "test-not-a-key"
     assert_eq!(config.uses.apps["model-lesson"], "fake-eye");
     assert_eq!(config.uses.chat_effort.as_deref(), Some("medium"));
     assert_eq!(config.pet.voice, "serena");
+}
+
+#[tokio::test]
+async fn chat_fallbacks_are_manual_ordered_and_survive_other_settings_saves() {
+    const NO_KEY: &str = r#"
+[[models]]
+id = "needs-key"
+provider = "openai"
+url = "https://api.example.com/v1"
+model = "test"
+"#;
+    let w = World::start(Setup { config_append: Some(NO_KEY), ..Setup::default() }).await;
+    let stale_config = w.api.get("/api/config").await;
+    for (edit, chain) in [
+        (json!({"use":"chat_fallbacks","choices":["fake-eye","fake-sol"]}), json!(["fake-ling","fake-eye","fake-sol"])),
+        (json!({"use":"chat_fallbacks","choices":["fake-sol","fake-eye"]}), json!(["fake-ling","fake-sol","fake-eye"])),
+        (json!({"use":"chat","choice":"fake-eye"}), json!(["fake-eye","fake-sol"])),
+        (json!({"use":"chat","choice":"fake-ling"}), json!(["fake-ling","fake-sol"])),
+        (json!({"use":"model_fallback","enabled":false}), json!(["fake-ling","fake-sol"])),
+    ] {
+        let (code, answer) = w.api.put_json("/api/uses", edit.clone()).await;
+        assert_eq!(code, 200, "{edit}: {answer}");
+        assert_eq!(answer["chain"], chain);
+    }
+    assert_eq!(w.api.post_status("/api/config", stale_config).await, 200);
+    let saved = w.api.get("/api/uses").await;
+    assert_eq!(saved["chain"], json!(["fake-ling","fake-sol"]));
+    assert_eq!(saved["model_fallback"], false);
+    for invalid in [json!(["fake-ling"]), json!(["fake-sol","fake-sol"]), json!(["needs-key"]), json!(["missing"])] {
+        assert_eq!(w.api.put_json("/api/uses", json!({"use":"chat_fallbacks","choices":invalid})).await.0, 400);
+        assert_eq!(w.api.get("/api/uses").await, saved);
+    }
+    let (code, answer) = w.api.put_json("/api/uses", json!({"use":"chat_fallbacks","choices":[]})).await;
+    assert_eq!(code, 200);
+    assert_eq!(answer["chain"], json!(["fake-ling"]));
+    let config = linggen_engine::config::Config::from_toml(&std::fs::read_to_string(w.home.config_path()).unwrap()).unwrap();
+    assert_eq!(config.routing.default_models, ["fake-ling"]);
+    assert!(!config.routing.model_fallback);
 }
 
 #[tokio::test]

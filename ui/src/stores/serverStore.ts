@@ -9,7 +9,7 @@ import { TOKEN_RATE_WINDOW_MS } from '../lib/messageUtils';
 import { dedupFetch } from '../lib/dedupFetch.mts';
 import { agentTracker } from '../lib/agentTracker';
 import { presentAgents, type AgentMet } from '../lib/agentsMet.mts';
-import { agentsApi, appConfig, skillsApi } from '../lib/endpoints';
+import { agentsApi, appConfig, skillsApi, usesApi } from '../lib/endpoints';
 
 export type AgentStatusValue = 'idle' | 'model_loading' | 'thinking' | 'calling_tool' | 'working';
 
@@ -211,13 +211,8 @@ export const useServerStore = create<ServerState>((set, get) => ({
 
   toggleDefaultModel: async (modelId) => {
     try {
-      // Toggle against the file's current value, not the pushed copy.
-      const saved = await appConfig.update((config) => {
-        const current: string[] = config.routing?.default_models ?? [];
-        const next = current.length === 1 && current[0] === modelId ? [] : [modelId];
-        return { ...config, routing: { ...config.routing, default_models: next } };
-      });
-      set({ defaultModels: saved.routing?.default_models ?? [] });
+      const { chain } = await usesApi.put({ use: 'chat', choice: modelId });
+      set({ defaultModels: chain });
     } catch { /* ignore */ }
   },
 

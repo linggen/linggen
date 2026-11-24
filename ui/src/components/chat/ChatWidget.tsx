@@ -15,7 +15,7 @@ import { useChatStore } from '../../stores/chatStore';
 import { useUiStore } from '../../stores/uiStore';
 import { useInteractionStore } from '../../stores/interactionStore';
 import { buildSubagentInfos } from '../../lib/messageUtils';
-import { appConfig } from '../../lib/endpoints';
+import { usesApi } from '../../lib/endpoints';
 
 export interface ChatWidgetProps {
   /** Session to connect to. Null/undefined = no session (events from all sessions are accepted). */
@@ -97,8 +97,8 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
   // --- Model switcher ---
   const switchModel = useCallback(async (modelId: string) => {
     try {
-      await appConfig.setDefaultModels([modelId]);
-      useServerStore.setState({ defaultModels: [modelId] });
+      const { chain } = await usesApi.put({ use: 'chat', choice: modelId });
+      useServerStore.setState({ defaultModels: chain });
       useUiStore.getState().setModelPickerOpen(false);
       useUiStore.getState().setOverlay(`Switched to: \`${modelId}\``);
     } catch (e) {

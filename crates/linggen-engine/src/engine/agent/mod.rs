@@ -223,11 +223,15 @@ impl AgentManager {
         // returned — a default that can only bail AUTH_REQUIRED must not
         // shadow a working model further down the chain. It is remembered,
         // though: if nothing else resolves, failing on it keeps the clear
-        // sign-in message instead of "No models configured".
+        // sign-in message instead of "No models configured". With automatic
+        // switching off, the configured fallbacks aren't standing candidates.
         let mut auth_dead_default: Option<String> = None;
-        for dm in &config.routing.default_models {
+        let chain = &config.routing.default_models;
+        let use_fallbacks = config.routing.model_fallback;
+        let candidates = if use_fallbacks { chain.as_slice() } else { &chain[..chain.len().min(1)] };
+        for dm in candidates {
             if model_ids.contains(dm.as_str()) || model_choice::is_here(models, dm) {
-                if !skip_dead_auth || models.model_auth_ok(dm) {
+                if !use_fallbacks || !skip_dead_auth || models.model_auth_ok(dm) {
                     return Ok(dm.clone());
                 }
                 if auth_dead_default.is_none() {
@@ -1234,7 +1238,7 @@ mod tests {
         assert_eq!(said.as_deref(), Some("adopt-keyed"));
         assert_eq!(manager.signed_in_default().await.as_deref(), Some("adopt-keyed"));
         let chain = manager.get_config_snapshot().await.routing.default_models;
-        assert_eq!(chain, ["adopt-keyed", crate::provider::models::LINGGEN_CLOUD_MODEL_ID]);
+        assert_eq!(chain, ["adopt-keyed"], "sign-in does not add a fallback");
         let saved = std::fs::read_to_string(crate::config::Config::runtime_config_path(Some(dir.path()))).unwrap();
         assert!(saved.contains("adopt-keyed"), "{saved}");
         assert_eq!(manager.adopt_default_after_sign_in(crate::config::SignIn::Key).await, None);

@@ -175,7 +175,7 @@ All use their respective `provider` value (or `provider = "openai"` with their e
 
 Settings → Models sets the default:
 
-- **The default-model card** — the default for new sessions (`routing.default_models`). Picking a model puts it first and keeps the chain after it as fallbacks, as `Config::make_default` does (the page's `madeDefault` says the same rule).
+- **The default-model card** — the default for new sessions, then the hand-set fallbacks in order (`routing.default_models`). Changing the default keeps the fallback list, except for the new default itself. An unavailable fallback stays listed until removed. The UI writes these choices through `/api/uses`; `Config::make_default` decides how to replace the first entry.
 
 A Claude model runs natively, with an API key or the Claude subscription
 sign-in. The 2.5.1 key for the retired Claude sessions' default,
@@ -206,7 +206,7 @@ One rule, `engine/model_choice::resolve(asked, standing, rule)`, for a chat turn
 
 ## Auto-fallback
 
-Fallback is on by default. Set `model_fallback = false` under `[routing]` to turn it off. The retired `auto_fallback` key is ignored and never saved.
+Fallback is on by default. Use the chat row’s switch in Settings → Models or set `model_fallback = false` under `[routing]` to turn it off. The retired `auto_fallback` key is ignored and never saved.
 
 When the active model refuses for a reason about itself — a rate limit or usage window, an empty wallet (402, `insufficient_quota`), a context overflow, a server error or overload, an unreachable backend, an empty answer — the engine tries the next available model. A bad request or a missing key is shown instead: another model would only hide it. On successful fallback, the engine switches to the fallback model for the rest of that run.
 

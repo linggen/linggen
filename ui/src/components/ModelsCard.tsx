@@ -51,7 +51,7 @@ export const ModelsCard: React.FC<{
       {models.map((m) => {
         const isActive = ollamaStatus?.models?.some((om) => om.name.includes(m.model) || m.model.includes(om.name));
         const activeInfo = ollamaStatus?.models?.find((om) => om.name.includes(m.model) || m.model.includes(om.name));
-        const isStarred = defaultModels.includes(m.id);
+        const isStarred = defaultModels[0] === m.id;
         // Show token rate on the model currently generating, not just any Ollama model
         const isGeneratingModel = activeModelId
           ? (m.id.toLowerCase() === activeModelId.toLowerCase() || m.model.toLowerCase() === activeModelId.toLowerCase())
@@ -76,7 +76,8 @@ export const ModelsCard: React.FC<{
                       'p-0.5 transition-colors',
                       isStarred ? 'text-amber-500 hover:text-amber-600' : 'text-slate-300 hover:text-amber-500'
                     )}
-                    title={isStarred ? 'Remove from defaults' : 'Add to defaults'}
+                    title={isStarred ? 'Default model' : 'Make default'}
+                    disabled={isStarred}
                   >
                     <Star size={11} fill={isStarred ? 'currentColor' : 'none'} />
                   </button>

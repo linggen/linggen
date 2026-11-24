@@ -735,11 +735,12 @@ impl Config {
         }
     }
 
-    /// Make `id` the default model: first in the chain, the models that were
-    /// there kept after it as fallbacks, `id` never twice.
+    /// Replace the default; only explicitly selected fallbacks stay in the chain.
     pub fn make_default(&mut self, id: &str) {
-        self.routing.default_models.retain(|m| m != id);
-        self.routing.default_models.insert(0, id.to_string());
+        let chain = std::mem::take(&mut self.routing.default_models);
+        self.routing.default_models = std::iter::once(id.to_owned())
+            .chain(chain.into_iter().skip(1).filter(|model| model != id))
+            .collect();
     }
 
     /// Upgrade from 2.5.1, kept for safe operation: the retired Claude
@@ -1236,17 +1237,19 @@ mod tests {
         );
     }
 
-    /// A model made the default goes first; the chain keeps the rest, once.
     #[test]
-    fn make_default_puts_a_model_first_and_keeps_the_rest() {
+    fn make_default_keeps_only_the_fallbacks_the_person_set() {
         let mut config = Config::default();
-        config.routing.default_models = vec!["a".into(), "b".into()];
-        config.make_default("c");
-        assert_eq!(config.routing.default_models, ["c", "a", "b"]);
+        config.routing.default_models.clear();
+        config.make_default("a");
+        assert_eq!(config.routing.default_models, ["a"]);
+        config.routing.default_models.extend(["b".into(), "c".into()]);
+        config.make_default("d");
+        assert_eq!(config.routing.default_models, ["d", "b", "c"]);
         config.make_default("b");
-        assert_eq!(config.routing.default_models, ["b", "c", "a"]);
+        assert_eq!(config.routing.default_models, ["b", "c"]);
         config.make_default("b");
-        assert_eq!(config.routing.default_models, ["b", "c", "a"]);
+        assert_eq!(config.routing.default_models, ["b", "c"]);
     }
 
     // ---- Config::validate tests ----

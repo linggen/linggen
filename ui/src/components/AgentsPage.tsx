@@ -12,9 +12,10 @@ export const AgentsPage: React.FC<{
   config: AppConfig;
   onChange: (config: AppConfig) => void;
   projectRoot: string;
-}> = ({ config, onChange, projectRoot }) => (
+  reload: () => Promise<void>;
+}> = ({ config, onChange, projectRoot, reload }) => (
   <div className="space-y-6">
-    <AgentsSection config={config} onChange={onChange} />
+    <AgentsSection config={config} onChange={onChange} reload={reload} />
     <Section title="Agent files" desc="Each agent's spec — personality, tools, prompt. Saved on its own.">
       <div className="h-[560px] rounded-lg border border-slate-200 dark:border-white/10 overflow-hidden">
         <AgentsTab projectRoot={projectRoot} />

@@ -179,12 +179,12 @@ test('a default made on the page keeps the fallbacks, and a later edit elsewhere
   await family(row, 'Haiku').getByRole('checkbox').click();
   await expect(family(row, 'Haiku').getByRole('checkbox')).toBeChecked();
 
-  // Make Haiku the default from the card: it goes first, the old chain follows.
+  // Make Haiku the default from the card, without inventing a fallback.
   await page.getByTestId('default-chat').selectOption({ label: 'Claude Haiku 5.5' });
   await expect(family(row, 'Haiku')).toContainText('Default chat');
   const after = await chain();
   expect(after[0]).not.toBe(before[0]);
-  expect(after.slice(1)).toEqual(before);
+  expect(after.slice(1)).toEqual(before.slice(1));
 
   // An edit on another tab (a save of the whole config) does not remove what was ticked.
   await page.getByRole('button', { name: 'General', exact: true }).click();

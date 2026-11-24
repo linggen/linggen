@@ -9,7 +9,7 @@ import type { AppConfig } from '../types';
 import { useServerStore } from '../stores/serverStore';
 import { useAgentPresent } from '../hooks/useAgentPresent';
 import { COMPANION_ID } from '../lib/agentsMet.mts';
-import { madeDefault } from '../lib/defaultChain.mts';
+import { usesApi } from '../lib/endpoints';
 import { Field, Grid, NumberInput, Section, inputCls } from './settings/kit';
 
 type ModelOption = { id: string; authOk: boolean };
@@ -75,7 +75,8 @@ const AgentCard: React.FC<{ name: string; role: string; children: React.ReactNod
 export const AgentsSection: React.FC<{
   config: AppConfig;
   onChange: (config: AppConfig) => void;
-}> = ({ config, onChange }) => {
+  reload: () => Promise<void>;
+}> = ({ config, onChange, reload }) => {
   const options = useModelOptions(config);
   const yinyueHere = useAgentPresent(COMPANION_ID);
   const chain = config.routing?.default_models ?? [];
@@ -83,9 +84,20 @@ export const AgentsSection: React.FC<{
   const her = config.pet ?? {};
   const setHer = (patch: Partial<NonNullable<AppConfig['pet']>>) =>
     onChange({ ...config, pet: { ...config.pet, ...patch } });
-  // Ling's pick goes to the front of the chain; the others stay her fallbacks.
-  const setLingModel = (id: string) =>
-    onChange({ ...config, routing: { ...config.routing, default_models: madeDefault(chain, id) } });
+  const [saving, setSaving] = React.useState(false);
+  const [failed, setFailed] = React.useState(false);
+  const setLingModel = async (choice: string) => {
+    setSaving(true);
+    setFailed(false);
+    try {
+      await usesApi.put({ use: 'chat', choice });
+      await reload();
+    } catch {
+      setFailed(true);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <Section title="Agents" desc="Each agent runs on its own model.">
@@ -97,10 +109,11 @@ export const AgentsSection: React.FC<{
               hint="Default for new chats. A chat can switch its own."
               details="The default model in Models. The models after it are fallbacks, tried in order."
             >
-              <select className={inputCls} value={lingModel} onChange={(e) => setLingModel(e.target.value)}>
+              <select className={inputCls} value={lingModel} disabled={saving} onChange={(e) => void setLingModel(e.target.value)}>
                 {!lingModel && <option value="">Not set (first configured model)</option>}
                 <ModelOptions options={options} current={lingModel} />
               </select>
+              {failed && <p role="alert" className="text-xs text-red-600 dark:text-red-400">Could not save.</p>}
             </Field>
           </Grid>
         </AgentCard>

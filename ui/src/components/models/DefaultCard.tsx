@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { W, say } from '../../lib/modelsWords.mts';
-import { translate } from '../../lib/i18n';
+import { ChatFallbacks } from './ChatFallbacks';
 import type { UseEdit, UseOption, UseRow, Uses } from '../../lib/modelUses';
 import { EFFORT_WORD } from '../../lib/effortChip.mts';
 import type { Provider } from '../../lib/providers.mts';
@@ -15,7 +15,6 @@ const status = (option: UseOption) => ({
   ready: W.ready, no_key: W.liveMissingKey, signed_out: W.notSignedIn, unavailable: W.notReady,
   download: option.disk_gb ? say(W.downloadSize, { n: option.disk_gb }) : W.notDownloaded,
 })[option.state];
-const t = (text: typeof W[keyof typeof W]) => (translate(text) ?? text) as typeof text;
 
 /** Join the defaults snapshot to provider metadata for display only. */
 function sourceOf(use: string, option: UseOption, providers: Provider[]) {
@@ -36,7 +35,7 @@ function UseLine({ id, label, purpose, row, providers, busy, onPick, automatic, 
   const canPick = (o: UseOption) => o.state === 'ready' || (downloadable && o.state === 'download');
   const choices = row.options.filter(canPick);
   const current = row.choice ?? (automatic ? '' : row.effective ?? '');
-  const picker = choices.length + Number(!!automatic) >= 2;
+  const picker = id === 'chat' || choices.length + Number(!!automatic) >= 2;
   const selected = row.options.find((o) => o.id === (current || row.effective));
   const source = selected && sourceOf(id, selected, providers);
   const way = source?.way ?? (id === 'speak' && selected ? 'local' : undefined);
@@ -48,11 +47,12 @@ function UseLine({ id, label, purpose, row, providers, busy, onPick, automatic, 
   return (
     <div className="grid items-center gap-1.5 border-t border-slate-100 px-1 py-2.5 first:border-t-0 md:grid-cols-[minmax(7rem,130px)_minmax(0,1fr)_minmax(8rem,30%)] md:gap-x-3.5 dark:border-white/5">
       <div>
-        <label htmlFor={picker ? `default-${id}` : undefined} className="text-[13px] font-semibold text-slate-700 dark:text-slate-200">{label}</label>
+        <span className="text-[13px] font-semibold text-slate-700 dark:text-slate-200">{label}</span>
         {purpose && <p className={hintCls}>{purpose}</p>}
       </div>
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-1.5">
+          {id === 'chat' && <label htmlFor="default-chat" className={`${hintCls} shrink-0`}>{W.chatDefault}</label>}
           <div className={`relative flex min-w-0 flex-1 basis-36 items-center gap-1.5 rounded-[10px] border px-2.5 py-1.5 text-xs focus-within:ring-2 focus-within:ring-blue-500/60 ${id === 'chat' ? 'border-amber-300 bg-amber-50/60 dark:border-amber-500/40 dark:bg-amber-500/10' : 'border-slate-200 bg-slate-50 dark:border-white/10 dark:bg-white/[0.03]'} ${!selected && !current ? 'border-dashed' : ''}`}>
             {way && <ConnectionTag way={way} />}
             <span className="min-w-0 truncate font-semibold text-slate-700 dark:text-slate-200" title={name}>{name}</span>
@@ -60,7 +60,7 @@ function UseLine({ id, label, purpose, row, providers, busy, onPick, automatic, 
             {picker && <>
               <ChevronDown aria-hidden size={12} className="ml-auto shrink-0 text-slate-400" />
               {/* Native selection and keyboard behavior; the pill paints its closed state. */}
-              <select id={`default-${id}`} data-testid={`default-${id}`} aria-label={label} className="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-default dark:[color-scheme:dark]" value={current} disabled={busy} onChange={(e) => onPick(e.target.value)}>
+              <select id={`default-${id}`} data-testid={`default-${id}`} aria-label={id === 'chat' ? W.chatDefault : label} className="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-default dark:[color-scheme:dark]" value={current} disabled={busy || choices.length === 0} onChange={(e) => onPick(e.target.value)}>
                 {automatic && <option value="">{automatic}</option>}
                 {!automatic && !current && <option value="" disabled>{W.notSet}</option>}
                 {current && !row.options.some((o) => o.id === current) && <option value={current} disabled>{current}</option>}
@@ -108,7 +108,6 @@ export function DefaultCard({ view, providers, busy, failed, retry, pick }: {
   view: Uses | null; providers: Provider[]; busy: boolean; failed: boolean; retry: () => void; pick: (edit: UseEdit) => void;
 }) {
   const shared = { busy, providers };
-  const fallbacks = view?.chain.slice(1).map((id) => view.chat.options.find((o) => o.id === id)?.label ?? id);
   const liveCanPick = (view?.live.options.filter((o) => o.state === 'ready').length ?? 0) >= 2;
   return (
     <section className={cardCls} data-testid="default-card">
@@ -119,7 +118,7 @@ export function DefaultCard({ view, providers, busy, failed, retry, pick }: {
       {view && <div className="mt-3">
         <UseLine {...shared} id="chat" label={W.chat} purpose={W.chatPurpose} row={view.chat} onPick={(choice) => pick({ use: 'chat', choice })}
           inline={<Effort row={view.effort} busy={busy} onPick={(choice) => pick({ use: 'effort', choice })} />}
-          note={!!fallbacks?.length && <p className={`${hintCls} mt-1 break-words`}>{say(t(W.fallbackChain), { models: fallbacks.join(' → ') })}</p>} />
+          note={<ChatFallbacks view={view} busy={busy} pick={pick} />} />
         <UseLine {...shared} id="live" label={W.liveVoice} purpose={W.livePurpose} row={view.live} automatic={liveCanPick ? W.automatic : undefined} onPick={(choice) => pick({ use: 'live', choice: choice || null })} />
         <UseLine {...shared} id="speak" label={W.readAloud} purpose={W.speakPurpose} row={view.speak} automatic={W.automatic} downloadable onPick={(choice) => pick({ use: 'speak', choice: choice || null })}
           note={view.voice.options.length >= 2 && <label className={`${hintCls} mt-1 flex flex-wrap items-center gap-1.5`}>
