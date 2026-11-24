@@ -136,6 +136,36 @@ async fn qwen_live_is_first_when_both_are_ready() {
 }
 
 #[tokio::test]
+async fn declared_live_rows_at_socket_addresses_belong_only_to_the_preset_groups() {
+    const ROWS: &str = r#"
+[[models]]
+id = "qwen-socket"
+provider = "qwen"
+url = "wss://ap-southeast-1.maas.qwencloudapi.com/api-ws/v1/realtime"
+model = "qwen-audio-3.1-realtime-flash"
+
+[[models]]
+id = "google-socket"
+provider = "gemini"
+url = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained"
+model = "gemini-3.8-live"
+"#;
+    let w = World::start(Setup { config_append: Some(ROWS), ..Setup::default() }).await;
+    let body = w.api.get("/api/providers").await;
+    for (host, label, model) in [
+        ("ap-southeast-1.maas.qwencloudapi.com", "Qwen Cloud", "qwen-audio-3.1-realtime-flash"),
+        ("generativelanguage.googleapis.com", "Google Gemini", "gemini-3.8-live"),
+    ] {
+        let groups: Vec<_> = body["providers"].as_array().unwrap().iter()
+            .filter(|p| p["url"].as_str().is_some_and(|url| url.contains(host))).collect();
+        assert_eq!(groups.len(), 1, "{label}: {groups:?}");
+        assert_eq!(groups[0]["label"], label);
+        assert!(groups[0]["families"].is_object());
+        voice(&body, label, model);
+    }
+}
+
+#[tokio::test]
 async fn qwen_cloud_borrows_only_listed_candidates_and_never_dashscope_rates() {
     const ROW: &str = r#"
 [[models]]

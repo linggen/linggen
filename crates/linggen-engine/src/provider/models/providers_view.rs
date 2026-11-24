@@ -130,11 +130,9 @@ impl ModelManager {
         cloud.fix = (!cloud.connected).then_some("sign_in");
         groups.insert(cloud.id.clone(), cloud);
         let rows = self.list_models();
-        for row in rows.iter().copied().filter(|row| row.is_builtin)
-            .chain(config.chat_models()).chain(self.live_rows())
-        {
+        for row in rows.iter().copied().filter(|row| row.is_builtin).chain(config.chat_models()) {
             let kind = kind_of(row);
-            if !matches!(kind, Kind::Chat | Kind::LiveVoice) {
+            if kind != Kind::Chat {
                 continue;
             }
             let sign_in = row.sign_in();
@@ -144,8 +142,6 @@ impl ModelManager {
                 continue;
             }
             group.mark_key(credentials::resolve_api_key(row, creds).is_some());
-            // Legacy rows can supply credentials, but the declaration supplies the line.
-            if kind == Kind::LiveVoice { continue; }
             let why = if rows.iter().any(|m| m.id == row.id && m.is_builtin == row.is_builtin) {
                 self.readiness(&row.id).and_then(|r| r.reason)
             } else {
@@ -165,6 +161,8 @@ impl ModelManager {
             let Some(preset) = PRESETS.iter().find(|p| p.serves_live(voice)) else { continue };
             let id = provider_id(SignIn::Key, preset.name, preset.url);
             let group = groups.entry(id).or_insert_with(|| ProviderView::new(SignIn::Key, preset.name, preset.url));
+            // A legacy live row can supply its key, but only the same-host preset owns the line.
+            group.mark_key(ready);
             group.add(ProviderModel {
                 id: format!("live:{}", voice.id), model: voice.model.into(), kind: Kind::LiveVoice.as_str(),
                 ready, why: (!ready).then_some(NotReady::NoKey), builtin: true, first,
