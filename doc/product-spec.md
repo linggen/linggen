@@ -95,6 +95,9 @@ stronger model, or the model makers' own free agents, will do by themselves is n
 retrieval plumbing, model routing. Keep them general and small (Hanli 2026-11-15: 「工具要底层通用, 数量尽量少, 尽量让agent去做」 — few
 low-level tools, the model judges), take the vendors' improvements, and do not build a moat there.
 
+**Linggen's strength is being like a person, not finishing tasks** (Hanli, 2026-11-24:
+「linggen的产品力不体现在完成任务的能力, 体现在更像一个人.」).
+
 **The goal this serves — a personal companion, people first** (Hanli, 2026-11-24): 「linggen不仅是用户的情感伴侣,
 还是人生导师… yinyue要像人, linggen要以人为本.」 Linggen grows up with the person over years and, like a good friend
 and mentor, connects what it has seen: two years after a break-up the person has thrown themselves into research and
