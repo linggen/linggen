@@ -23,11 +23,14 @@ export const LocalRow: React.FC<{ providers: Provider[] }> = ({ providers }) => 
   const [open, setOpen] = useState(false);
   const lines = providers.flatMap((p) => p.models.map((m) => ({ p, m })));
   const kinds = [...new Set(lines.map(({ m }) => m.kind))];
+  const downloaded = providers.filter((p) => p.disk_gb != null && p.models.some((m) => m.ready));
+  const size = downloaded.reduce((sum, p) => sum + (p.disk_gb ?? 0), 0);
   return (
     <Row
       testId="this-mac"
       name={W.thisMac}
-      tag={<Tag>{W.kindLocal}</Tag>}
+      way="local"
+      detail={<><span className="block font-semibold text-slate-700 dark:text-slate-300">{downloaded.length ? say(W.downloads, { n: downloaded.length }) : W.noDownloads}{size > 0 && <> · {say(W.gb, { n: size })}</>}</span><span>{W.free}</span></>}
       subtitle={kinds.map((k, i) => <React.Fragment key={k}>{i > 0 && <span aria-hidden> · </span>}<span>{KIND_WORD[k]}</span></React.Fragment>)}
       open={open}
       onToggle={() => setOpen(!open)}

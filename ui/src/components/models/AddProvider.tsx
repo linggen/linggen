@@ -4,6 +4,7 @@
  * has no list of its own.
  */
 import React from 'react';
+import { ChevronRight } from 'lucide-react';
 import { W } from '../../lib/modelsWords.mts';
 import type { Preset } from '../../lib/providers.mts';
 import { linkBtn } from './shell';
@@ -16,8 +17,8 @@ export const AddProvider: React.FC<{ presets: Preset[]; busy: boolean; onPick: (
     </div>
     <div className="mt-2 grid grid-cols-[repeat(auto-fill,minmax(9rem,1fr))] gap-1.5">
       {presets.map((p) => (
-        <button key={`${p.name}${p.url}`} type="button" disabled={busy} onClick={() => onPick(p)} className="min-w-0 truncate rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-left text-xs hover:border-blue-300 disabled:opacity-50 dark:border-white/10 dark:bg-white/5" data-no-i18n>
-          {p.label}
+        <button key={`${p.name}${p.url}`} type="button" disabled={busy} onClick={() => onPick(p)} className="flex min-w-0 items-center justify-between gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-left text-xs text-slate-700 hover:border-blue-300 disabled:opacity-50 dark:border-white/10 dark:bg-white/5 dark:text-slate-200 dark:hover:border-blue-700" data-no-i18n>
+          <span className="truncate">{p.label}</span><ChevronRight aria-hidden size={12} className="shrink-0 text-slate-400" />
         </button>
       ))}
     </div>

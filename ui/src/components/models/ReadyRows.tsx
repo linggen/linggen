@@ -11,10 +11,10 @@ import type { ModelMove } from '../../types';
 import type { Provider } from '../../lib/providers.mts';
 import { CodexUsage } from '../CodexUsage';
 import { UsageMeter } from '../UsageMeter';
-import { Row, Tag } from './shell';
+import { Row } from './shell';
 
 const CODEX = { login: '/api/auth/codex/login', logout: '/api/auth/codex/logout', status: '/api/auth/codex/status' };
-const signInBtn = 'flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-green-700 disabled:opacity-50';
+const signInBtn = 'flex items-center gap-1.5 rounded-full bg-blue-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-blue-700 disabled:opacity-50';
 
 type Props = {
   provider: Provider;
@@ -30,7 +30,8 @@ const subtitle = (p: Provider, note: string) => (
     <span>{p.fix === 'sign_in' ? W.notSignedIn : W.signedIn}</span>
     <span aria-hidden> · </span>
     <span>{note}</span>
-    <span className="mt-0.5 block break-words" data-no-i18n>{p.models.filter((m) => m.builtin).map((m) => m.id).join(' · ')}</span>
+    <span aria-hidden> · </span>
+    <span data-no-i18n>{p.models.filter((m) => m.builtin).map((m) => m.id).join(' · ')}</span>
   </>
 );
 
@@ -38,7 +39,7 @@ export const ReadyRow: React.FC<Props> = (props) => {
   const { provider: p } = props;
   if (p.way === 'account') return <CloudRow {...props} />;
   if (p.provider === 'chatgpt') return <ChatgptRow {...props} />;
-  return <Row testId={p.provider} name={p.label} tag={<Tag tone="green">{W.kindSubscription}</Tag>} subtitle={subtitle(p, '')} />;
+  return <Row testId={p.provider} name={p.label} way={p.way} subtitle={subtitle(p, '')} />;
 };
 
 const CloudRow: React.FC<Props> = ({ provider: p, changed }) => {
@@ -54,7 +55,7 @@ const CloudRow: React.FC<Props> = ({ provider: p, changed }) => {
   const right = p.fix === 'sign_in'
     ? <button type="button" className={signInBtn} disabled={waiting} onClick={() => void signIn()}><LogIn size={12} />{waiting ? W.waitingBrowser : W.signInLinggen}</button>
     : <UsageMeter />;
-  return <Row testId="linggen-cloud" name={p.label} tag={<Tag>{W.kindAccount}</Tag>} subtitle={subtitle(p, W.cloudNote)} right={right} />;
+  return <Row testId="linggen-cloud" name={p.label} way={p.way} subtitle={subtitle(p, W.cloudNote)} right={right} />;
 };
 
 const ChatgptRow: React.FC<Props> = ({ provider: p, moved, changed }) => {
@@ -89,7 +90,7 @@ const ChatgptRow: React.FC<Props> = ({ provider: p, moved, changed }) => {
   const moves = p.models.filter((m) => moved[m.id]);
   return (
     <div>
-      <Row testId="chatgpt" name={p.label} tag={<Tag tone="green">{W.kindSubscription}</Tag>} subtitle={subtitle(p, W.chatgptNote)} right={right} />
+      <Row testId="chatgpt" name={p.label} way={p.way} subtitle={subtitle(p, W.chatgptNote)} right={right} />
       {moves.map((m) => <FamilyMoved key={m.id} move={moved[m.id]!} onChanged={changed} />)}
     </div>
   );

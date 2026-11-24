@@ -18,7 +18,7 @@ import { DefaultCard } from './models/DefaultCard';
 import { KeyRow } from './models/KeyRow';
 import { LocalRow } from './models/LocalRow';
 import { ReadyRow } from './models/ReadyRows';
-import { cardCls, hintCls, linkBtn } from './models/shell';
+import { cardCls, headingCls, hintCls, linkBtn } from './models/shell';
 import { useProviders } from './models/useProviders';
 
 export const ModelsTab: React.FC<{
@@ -90,11 +90,11 @@ export const ModelsTab: React.FC<{
   const local = localProviders(providers);
   return (
     <div className="space-y-6" data-testid="models-page">
-      <DefaultCard view={uses} busy={busy} failed={usesFailed} retry={() => void loadUses()} pick={(edit) => void pickUse(edit)} />
+      <DefaultCard view={uses} providers={providers} busy={busy} failed={usesFailed} retry={() => void loadUses()} pick={(edit) => void pickUse(edit)} />
       <section className={cardCls}>
-        <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
           <div className="min-w-0">
-            <h2 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">{W.providers}</h2>
+            <h2 className={headingCls}>{W.providers}</h2>
             <p className={`${hintCls} mt-1`}>{W.providersHint}</p>
           </div>
           <button type="button" data-testid="add-provider-button" className={`${linkBtn} flex items-center gap-1`} onClick={() => setAdding(!adding)}>

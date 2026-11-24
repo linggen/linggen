@@ -9,7 +9,7 @@ import { providersApi } from '../../lib/endpoints';
 import { W, say } from '../../lib/modelsWords.mts';
 import { addedByName, liveModels, type Provider } from '../../lib/providers.mts';
 import { FamilyList } from './FamilyList';
-import { RowMenu, Row, Tag, ghostBtn, hintCls, inputCls, primaryBtn } from './shell';
+import { RowMenu, Row, Tag, ghostBtn, hintCls, inputCls, primaryBtn, sectionLabel, sectionRule } from './shell';
 import type { Run } from './useProviders';
 
 type Props = {
@@ -31,7 +31,9 @@ function summary(p: Provider): string {
 export const KeyRow: React.FC<Props> = (props) => {
   const { provider: p, open, onToggle } = props;
   return (
-    <Row testId={p.provider} name={p.label} tag={<Tag tone="blue">{W.kindKey}</Tag>} subtitle={summary(p)} open={open} onToggle={onToggle}>
+    <Row testId={p.provider} name={p.label} way={p.way} subtitle={summary(p)} open={open} onToggle={onToggle}
+      tags={<>{p.used_by.includes('chat') && <Tag tone="blue">{W.chat}</Tag>}{p.used_by.includes('live_voice') && <Tag tone="blue">{W.liveVoice}</Tag>}</>}
+      detail={p.key?.set ? <span>{say(W.billedBy, { provider: p.label })}</span> : <span className="rounded-md border border-slate-200 bg-white px-2 py-0.5 font-semibold dark:border-white/10 dark:bg-white/5">{W.fillKey}</span>}>
       <KeyField {...props} />
       <Models {...props} />
       <Advanced {...props} />
@@ -61,8 +63,8 @@ const KeyField: React.FC<Props> = ({ provider: p, run, busy }) => {
   }
   const set = !!p.key?.set;
   return (
-    <div className="flex flex-wrap items-center gap-2">
-      <span className="w-12 shrink-0 text-[11px] font-bold text-slate-500">{W.keyLabel}</span>
+    <div className={`${sectionRule} flex flex-wrap items-center gap-2`}>
+      <span className={sectionLabel}>{W.keyLabel}</span>
       {set && !replacing ? (
         <>
           <span data-testid="key-set" className={`${inputCls} font-mono`}>{W.keySet}</span>
@@ -97,8 +99,8 @@ const Models: React.FC<Props> = (props) => {
   const catalog = p.families?.catalog;
   const none = !p.families?.families.length && !typed.length && !live.length;
   return (
-    <div className="flex flex-wrap gap-2 sm:flex-nowrap">
-      <span className="w-12 shrink-0 text-[11px] font-bold text-slate-500">{W.models}</span>
+    <div className={`${sectionRule} grid gap-2 sm:grid-cols-[4rem_minmax(0,1fr)]`}>
+      <span className={sectionLabel}>{W.models}</span>
       <div className="min-w-0 flex-1">
         {none && <p className={hintCls}>{W.noModelsYet}</p>}
         <FamilyList {...props} />
@@ -144,8 +146,8 @@ const Advanced: React.FC<Props> = ({ provider: p, run, busy }) => {
     if (await run(() => providersApi.addModel(p.id, name.trim()))) setName('');
   };
   return (
-    <details data-testid="advanced">
-      <summary className="cursor-pointer text-[11px] text-slate-500">{W.advanced}</summary>
+    <details data-testid="advanced" className={`${sectionRule} sm:pl-[4.5rem]`}>
+      <summary className={`${hintCls} cursor-pointer`}>{W.advanced}</summary>
       <div className="mt-2 space-y-3">
         <div>
           <div className={hintCls}>{W.notInList}</div>
