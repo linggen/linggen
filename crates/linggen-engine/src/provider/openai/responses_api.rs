@@ -868,6 +868,59 @@ mod tests {
     }
 }
 
+/// Request fixtures: the Responses wire (ChatGPT sign-in) carries effort the
+/// same way on a text turn and a tool turn, from the one `apply_effort`.
+#[cfg(test)]
+mod effort_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn chatgpt() -> OpenAiClient {
+        OpenAiClient::new_chatgpt_oauth("https://chatgpt.test/backend-api/codex".into(), "tok".into(), Some("acct".into()))
+    }
+
+    fn body(rb: reqwest::RequestBuilder) -> Value {
+        let request = rb.build().unwrap();
+        serde_json::from_slice(request.body().unwrap().as_bytes().unwrap()).unwrap()
+    }
+
+    /// The `reasoning` object the text turn and the tool turn each send.
+    fn sent(model: &str, effort: Option<&str>) -> (Option<Value>, Option<Value>) {
+        let msgs = [ChatMessage::new("user", "hi")];
+        let text = body(text_request(&chatgpt(), model, &msgs, effort));
+        let tools = body(tool_request(&chatgpt(), model, &msgs, &[], effort));
+        (text.get("reasoning").cloned(), tools.get("reasoning").cloned())
+    }
+
+    #[test]
+    fn a_text_turn_and_a_tool_turn_carry_the_same_reasoning_effort() {
+        for value in OpenAiClient::EFFORT_VALUES {
+            let (text, tools) = sent("gpt-6.2-sol", Some(value));
+            assert_eq!(text, Some(json!({ "effort": value })));
+            assert_eq!(text, tools);
+        }
+        assert_eq!(sent("gpt-6.2-sol", Some("HIGH")).0, Some(json!({ "effort": "high" })));
+    }
+
+    #[test]
+    fn no_effort_or_one_the_wire_cannot_carry_adds_nothing() {
+        assert_eq!(sent("gpt-6.2-sol", None), (None, None));
+        // The gate is the three values and a model that reasons.
+        assert_eq!(sent("gpt-6.2-sol", Some("xhigh")), (None, None));
+        assert_eq!(sent("gpt-4o", Some("high")), (None, None));
+    }
+
+    /// Only `reasoning` differs between a request with effort and one without.
+    #[test]
+    fn effort_changes_nothing_else_in_the_text_body() {
+        let msgs = [ChatMessage::new("system", "You are Ling."), ChatMessage::new("user", "hi")];
+        let plain = body(text_request(&chatgpt(), "gpt-6.2-sol", &msgs, None));
+        let mut with = body(text_request(&chatgpt(), "gpt-6.2-sol", &msgs, Some("low")));
+        assert_eq!(with.as_object_mut().unwrap().remove("reasoning"), Some(json!({ "effort": "low" })));
+        assert_eq!(with, plain);
+    }
+}
+
 #[cfg(test)]
 mod cut_tests {
     use super::*;

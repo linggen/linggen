@@ -253,6 +253,52 @@ mod tests {
     }
 }
 
+/// Request fixtures: the OpenAI-compatible wire keeps its one scalar
+/// `reasoning_effort` (and Gemini 2.5's thinking budget) on text and tools.
+#[cfg(test)]
+mod effort_tests {
+    use super::*;
+
+    fn body(rb: reqwest::RequestBuilder) -> Value {
+        let request = rb.build().unwrap();
+        serde_json::from_slice(request.body().unwrap().as_bytes().unwrap()).unwrap()
+    }
+
+    fn both(base: &str, model: &str, effort: Option<&str>) -> [Value; 2] {
+        let client = OpenAiClient::new(base.into(), Some("k".into()));
+        let msgs = [ChatMessage::new("user", "hi")];
+        [
+            body(text_request(&client, model, &msgs, effort)),
+            body(tool_request(&client, model, &msgs, vec![], effort)),
+        ]
+    }
+
+    #[test]
+    fn a_reasoning_model_gets_the_scalar_and_others_get_nothing() {
+        for request in both("https://api.openai.com/v1", "gpt-5", Some("high")) {
+            assert_eq!(request["reasoning_effort"], "high");
+            assert!(request.get("reasoning").is_none());
+        }
+        for request in both("https://api.openai.com/v1", "gpt-5", None) {
+            assert!(request.get("reasoning_effort").is_none());
+        }
+        for request in both("https://api.openai.com/v1", "gpt-4o", Some("high")) {
+            assert!(request.get("reasoning_effort").is_none());
+        }
+        for request in both("https://api.openai.com/v1", "gpt-5", Some("xhigh")) {
+            assert!(request.get("reasoning_effort").is_none(), "four values are not on this wire");
+        }
+    }
+
+    #[test]
+    fn gemini_keeps_its_thinking_budget() {
+        for request in both("https://generativelanguage.googleapis.com/v1beta/openai", "gemini-2.5-pro", Some("low")) {
+            assert_eq!(request["generationConfig"]["thinkingConfig"]["thinkingBudget"], 1024);
+            assert!(request.get("reasoning_effort").is_none());
+        }
+    }
+}
+
 #[cfg(test)]
 mod cut_tests {
     use super::*;
