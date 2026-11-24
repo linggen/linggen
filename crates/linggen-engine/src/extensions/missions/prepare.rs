@@ -20,6 +20,18 @@ use std::time::Duration;
 /// must not hold the mission's one-run slot.
 const TIMEOUT: Duration = Duration::from_secs(300);
 
+/// The exit status that means "nothing to do": not a failure.
+pub const NOTHING_TO_DO: i32 = 3;
+
+/// What the step decided.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum Prepared {
+    /// Go on to the run's first turn.
+    Ready,
+    /// The step found no work: end the run here, quietly.
+    NothingToDo,
+}
+
 /// The name a failure is recorded under.
 const STEP: &str = "prepare";
 
@@ -30,9 +42,9 @@ pub(super) async fn run(
     mission: &Mission,
     day: Option<&str>,
     cwd: &Path,
-) -> Result<(), Box<RunEnd>> {
+) -> Result<Prepared, Box<RunEnd>> {
     if mission.prepare.is_empty() {
-        return Ok(());
+        return Ok(Prepared::Ready);
     }
     let args = arguments(&mission.prepare, day)?;
     let exe = std::env::current_exe().map_err(|e| failed_to_start(&e.to_string()))?;
@@ -48,7 +60,10 @@ pub(super) async fn run(
         Err(_) => return Err(exited(None, "prepare: no answer in time")),
     };
     if output.status.success() {
-        return Ok(());
+        return Ok(Prepared::Ready);
+    }
+    if output.status.code() == Some(NOTHING_TO_DO) {
+        return Ok(Prepared::NothingToDo);
     }
     let stderr = String::from_utf8_lossy(&output.stderr);
     Err(exited(output.status.code(), &stderr))

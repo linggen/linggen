@@ -350,6 +350,92 @@ real scorecard is the write-side eval (six axes: extraction, routing,
 dedup, reconcile, decay, secrets), which drives each scenario through
 a real engine against a throwaway store and judges the end state.
 
+## Memory V2 — Linggen's own notes (built; off by default)
+
+Design: the memory-v2 design (§ 4a is the build spec). Other agents' memory
+is read, never written (`outside_memory`, `mcp-spec.md` § memory_agents).
+This is the memory Linggen writes: what Ling and Yinyue keep about the
+person and the work, as plain Markdown under `$LINGGEN_HOME/memory/`
+(module `own_memory`). `[memory] linggen = "v1" | "v2"` (absent: v1) says
+which memory Linggen's own sessions have; v1 is everything above, unchanged.
+
+- **Files** — `person/`, `areas/<body|mind|people|music|money|play|home>/`,
+  `projects/<encoded path>/`, `moments/<yyyy>/<yyyy-mm>.md`,
+  `chronicle/<yyyy>/<yyyy-mm>.md` (and `<yyyy>.md`); one topic per
+  file, one note per `##` entry with an id, kind (person, rule, decision,
+  gotcha, moment), voice (user, agent), dates, source. A topic file stays
+  under 200 lines and 16 KB: the oldest notes move to `<topic>-part2.md`.
+  Prior versions and use counts are under `.state/` (local, not synced).
+- **One writer** — `memory_notes op=write` (add, update by id, void,
+  no_raise), the only thing that saves. It refuses status and progress with
+  one fixed reason, never changes a note in the person's own voice without
+  `user_directed`, and merges by entry against the version the caller read
+  (the same note changed since = a conflict, shown). Yinyue alone writes
+  moments.
+- **Index** — made by the engine at session start, never by hand: the
+  person's notes, the session's own scope, notes read in the last 90 days,
+  the rest newest first; at most 200 lines and 25 KB. What does not fit is
+  forgotten, not gone: `op=search` (Chinese and English, and other agents'
+  memory) finds it, and reading a note keeps it in the index.
+- **Privacy fence** — notes about body, mind and people, moments and the
+  chronicle reach Yinyue (outside a coding session) alone: not Ling, not an
+  app, not Claude Code or Codex. A third audience, the chronicler (the
+  chronicle mission's agent), reads all and may write the chronicle only.
+  One decision (`own_memory::fence`), at every way out.
+- **A v2 session** has the index in its prompt and `memory_notes` instead of
+  the memory server's tools, its protocol, the per-turn recall and the
+  capture reminder. Missions stay on v1, but the chronicle's own run, which
+  has `memory_notes` alone. An app gets the index of its own
+  folder (and the person's, with core) and no tool.
+- **Outside hosts** — the same tool is on the MCP door (`mcp-spec.md`) for a
+  host with no memory of its own, served when `outside_agents = "v2"`.
+- **The chronicle** (`own_memory::chronicle`, `missions/chronicle`,
+  `agents/chronicler.md`) — what the person did and how far they came, month
+  by month, for years. A built-in mission (1st of the month, catch-up in a
+  quiet window; the model is the mission default) whose engine step
+  `ling chronicle prepare` READS the sources — Linggen's notes and moments
+  (not void, not no-raise), the sessions the person made and spoke in, the
+  first lines of other agents' notes changed that month — into
+  `memory/.chronicle-input.jsonl`, and lists the months that have ended and
+  have no file (at most 12 a run, oldest first) and past years whose months
+  are all written. The agent writes dated lines (`YYYY-MM-DD what`, source in
+  the body) through `memory_notes op=write scope=chronicle`, the same one
+  writer; a month with a file is never offered again, so the person's edits
+  stand and deleting the file has it written afresh. Only under v2: with v2
+  off or nothing waiting the step exits "nothing to do"
+  (`missions::NOTHING_TO_DO`) and the run ends with no model call.
+  Backfill is the same run by hand: `ling chronicle backfill` (repeat until
+  nothing waits). Only the companion and the chronicler read it; not in the
+  index; `op=search` finds it. Other agents' session logs are not read yet.
+- **Yinyue's day** (`own_memory::companion::today`, called by
+  `prompt::owner_block` for the companion only) — "on this day" lines
+  (moments and dated chronicle lines of the same date in past years) and
+  recurring days within a week (`op=write action=yearly day=MM-DD`, or
+  `YYYY-MM-DD`; kept as `yearly:` in the note's meta line). No-raise and void
+  notes never appear in it, and her guidance says she never raises a
+  no-raise note herself. Facts only: whether, when and how gently to speak is
+  hers.
+- **Settings → Notes** — the owner sees and tends what Linggen remembers,
+  by source: Linggen's own notes, and each agent the registry reads (Claude
+  Code, Codex, …; the tabs come from `outside_memory::listing`, the page names
+  no agent). Linggen's notes can be edited, marked wrong and right again,
+  kept from being raised (`no-raise`), and deleted (the file's last version
+  stays in `.state/history`, which keeps 20 per file; a file left with no
+  notes goes). Each is one call to the one writer as the person
+  (`user_directed`, so a note in their own voice changes too). Un-void and
+  delete are the page's alone: the tool has no word for them. Other agents'
+  files are listed and read (redacted, as `memory_agents` does) with their
+  path, and no route changes them: the routes that change a note name a note
+  id and no source (`api/memory_sources.rs`; all admin). A review list
+  shows notes marked wrong and notes not read for 90 days and not changed in
+  them (the chronicle's lines only when marked wrong: they are never read
+  into an index, so "not read" says nothing of them). Looking counts no
+  use, or opening the page would empty that list. The
+  page reads as the person, who sees the fenced notes too (`page::OWNER`).
+  It sits beside the v1 Memory page, which stays while v1 is on.
+- **Not built yet** — migration of v1 rows, phone sync, other agents' session
+  logs in the chronicle.
+
 ## Open / next
 
 - Scope on Codex is read-side only: its hook runner cannot rewrite

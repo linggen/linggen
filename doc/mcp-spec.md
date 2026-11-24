@@ -4,7 +4,7 @@ reader: Coding agent and users
 guide: |
   Product specification — describe what the system should do and why.
   Keep it brief. Aim to guide design and implementation, not document code.
-status: 2.7 + memory v2 (in trial) — one door, fourteen tools (memory 5, agents 4, browser 3, apps 1, other agents' memory 1) at /mcp; the two-server layout (24 + 17 tools) is retired
+status: 2.7 + memory v2 (in trial) — one door, fifteen tools (memory 5, agents 4, browser 3, apps 1, other agents' memory 1, Linggen's own notes 1) at /mcp; the two-server layout (24 + 17 tools) is retired
 ---
 
 # Linggen MCP — the one door
@@ -38,7 +38,7 @@ share one door.
 
 | Caller | Sees |
 |:-------|:-----|
-| this machine (loopback) | all fourteen tools; `app` and `memory_agents` answer the owner at this Mac itself, not a tunnelled device |
+| this machine (loopback) | all fifteen tools; `app`, `memory_agents` and `memory_notes` answer the owner at this Mac itself, not a tunnelled device |
 | an approved computer (token in `x-linggen-device`) | the five memory tools only; `memory_upkeep` without `dream_run` (twelve ops). Delegation and browser control are this machine's alone |
 | a phone, or a caller with no token off this machine | refused (403 / 401 `PAIRING_REQUIRED`). Phones use `/api/memory/<verb>`, not MCP |
 
@@ -139,6 +139,19 @@ agent remembers to the others. One tool, this machine's owner at this Mac only:
   save rules. Linggen's own agents (Ling, Yinyue, Linggen's sessions) are
   unchanged in both modes. **v1** is today's behaviour. An approved computer
   sees the same as before in both.
+
+## Linggen's own notes (`memory_notes`) — memory v2, in trial
+
+Linggen's own memory (`memory-spec.md` § Memory V2), for a host that has none
+of its own to keep: one tool, ops `index` (the notes for a project), `read`
+(a note by id, or a topic file by path), `search` (words, also across other
+agents' memory), `write` (add, update, void, no_raise by id). Served to the
+owner at this Mac when `[memory] outside_agents = "v2"`; in v1 it answers
+that it is not served. A host on the door is always a coding reader: notes
+about body, mind and people, and moments, are never shown or written here.
+The tool's text and fields are one definition (`own_memory::spec`) shared with
+a Linggen session's own `memory_notes`. A host that has memory of its own
+writes there and uses this only when the person asks to let every agent know.
 
 ## Browser tools
 

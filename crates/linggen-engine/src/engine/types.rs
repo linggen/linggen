@@ -176,6 +176,11 @@ pub struct EngineConfig {
     /// A member tuned its own recall (`AgentEngine::tune_recall`): the
     /// configured recall no longer applies to this engine.
     pub recall_tuned: bool,
+    /// Which memory Linggen's own sessions have (`[memory] linggen`). Taken
+    /// from the config here and in `apply_settings` — the only place — and
+    /// matched where sessions differ (`engine::prompt::memory_section`,
+    /// `is_withheld`, `inject_memory_tools`, `recall_into_thread`).
+    pub memory_linggen: crate::own_memory::Mode,
     pub(crate) model_effort: std::collections::BTreeMap<String, String>,
 }
 
@@ -206,6 +211,7 @@ impl EngineConfig {
             memory_inject_min_score: config.agent.memory_inject_min_score,
             memory_recall_count: config.agent.memory_recall_count,
             recall_tuned: false,
+            memory_linggen: config.memory.linggen,
             model_effort: Default::default(),
         };
         cfg.apply_settings(config);
@@ -223,6 +229,7 @@ impl EngineConfig {
         self.write_safety_mode = config.agent.write_safety_mode;
         self.prompt_loop_breaker = config.agent.prompt_loop_breaker.clone();
         self.compact_threshold_default = config.agent.compact_threshold;
+        self.memory_linggen = config.memory.linggen;
         if !self.recall_tuned {
             self.memory_inject_min_score = config.agent.memory_inject_min_score;
             self.memory_recall_count = config.agent.memory_recall_count;

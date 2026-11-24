@@ -141,6 +141,10 @@ impl OutsideAgents {
 pub struct MemoryConfig {
     /// `outside_agents = "v1" | "v2"`; absent: v1.
     pub outside_agents: OutsideAgents,
+    /// `linggen = "v1" | "v2"`: which memory Linggen's own sessions (Ling,
+    /// Yinyue, apps) have; absent: v1. Read into `EngineConfig` and nowhere
+    /// else (`own_memory::Mode`).
+    pub linggen: crate::own_memory::Mode,
 }
 
 impl MemoryConfig {

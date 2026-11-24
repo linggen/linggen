@@ -5,13 +5,14 @@
 //! (`ling_mem::catalog`); the door's handlers read this table and keep no
 //! list of names of their own.
 //!
-//! `/mcp` publishes it as fourteen tools — memory 5, agents 4, browser 3,
-//! apps 1, other agents' memory 1 — with a view per caller: this machine sees all fourteen, an approved
+//! `/mcp` publishes it as fifteen tools — memory 5, agents 4, browser 3,
+//! apps 1, other agents' memory 1, Linggen's own notes 1 — with a view per caller: this machine sees all fifteen, an approved
 //! computer the five memory tools without `dream_run`. The names published
 //! before the tools were folded are [`RETIRED`] (memory's are memory's):
 //! a call by one is told to update the plugin.
 
 use crate::engine::tools::browser_def;
+use crate::own_memory;
 use ling_mem::catalog::{Branch, Catalog, Retired, ToolDoc, Views};
 use serde_json::json;
 use std::sync::LazyLock;
@@ -43,6 +44,9 @@ pub(crate) enum Dispatch {
     App(AppOp),
     /// What other agents remember, read-only (`mcp::outside`).
     Outside(OutsideOp),
+    /// Linggen's own notes (`own_memory`), one op of `memory_notes`
+    /// (`mcp::notes`): `index`, `read`, `search` or `write`.
+    Notes(&'static str),
 }
 
 /// The delegation calls (`mcp_agent`).
@@ -173,6 +177,14 @@ const OUTSIDE_TOOLS: &[ToolDoc] = &[
     },
 ];
 
+const NOTES_TOOLS: &[ToolDoc] = &[
+    ToolDoc {
+        name: "memory_notes",
+        description: own_memory::spec::DESCRIPTION,
+        implicit_op: None,
+    },
+];
+
 /// Every tool the engine adds to the door: the agents', the browser's
 /// (defined in `browser_def`), the app tool and what other agents remember.
 static TOOLS: LazyLock<Vec<ToolDoc>> = LazyLock::new(|| {
@@ -181,6 +193,7 @@ static TOOLS: LazyLock<Vec<ToolDoc>> = LazyLock::new(|| {
         .chain(browser_def::TOOLS)
         .chain(APP_TOOLS)
         .chain(OUTSIDE_TOOLS)
+        .chain(NOTES_TOOLS)
         .copied()
         .collect()
 });
@@ -537,7 +550,74 @@ const OWN_BRANCHES: &[Branch<Dispatch>] = &[
         views: Views::LOCAL,
         dispatch: Dispatch::Outside(OutsideOp::Search),
     },
+    Branch {
+        tool: "memory_notes",
+        op: "index",
+        note: "",
+        schema: || notes_schema(own_memory::spec::Op::Index),
+        extra: None,
+        hidden: &[],
+        stamps: &[],
+        fixed: &[],
+        check: None,
+        timeout_ms: 0,
+        views: Views::LOCAL,
+        dispatch: Dispatch::Notes("index"),
+    },
+    Branch {
+        tool: "memory_notes",
+        op: "read",
+        note: "",
+        schema: || notes_schema(own_memory::spec::Op::Read),
+        extra: None,
+        hidden: &[],
+        stamps: &[],
+        fixed: &[],
+        check: None,
+        timeout_ms: 0,
+        views: Views::LOCAL,
+        dispatch: Dispatch::Notes("read"),
+    },
+    Branch {
+        tool: "memory_notes",
+        op: "search",
+        note: "",
+        schema: || notes_schema(own_memory::spec::Op::Search),
+        extra: None,
+        hidden: &[],
+        stamps: &[],
+        fixed: &[],
+        check: None,
+        timeout_ms: 0,
+        views: Views::LOCAL,
+        dispatch: Dispatch::Notes("search"),
+    },
+    Branch {
+        tool: "memory_notes",
+        op: "write",
+        note: "",
+        schema: || notes_schema(own_memory::spec::Op::Write),
+        extra: None,
+        hidden: &[],
+        stamps: &[],
+        fixed: &[],
+        check: None,
+        timeout_ms: 0,
+        views: Views::LOCAL,
+        dispatch: Dispatch::Notes("write"),
+    },
 ];
+
+/// One op of `memory_notes`: the fields `own_memory::spec` defines for it,
+/// and the calling host, which only the door has (a session knows who it is).
+fn notes_schema(op: own_memory::spec::Op) -> serde_json::Value {
+    use own_memory::spec::Op;
+    let mut props = own_memory::spec::properties(op);
+    if matches!(op, Op::Index | Op::Write) {
+        props["host"] = json!({"type": "string", "description": "The calling host, e.g. claude-code or codex: recorded as the writer"});
+    }
+    json!({"type": "object", "properties": props, "required": []})
+}
 
 /// The engine's branches: the browser's, from `browser_def`, then the rest.
 static BRANCHES: LazyLock<Vec<Branch<Dispatch>>> = LazyLock::new(|| {
@@ -639,9 +719,9 @@ mod tests {
     }
 
     /// The door, from the one table: memory 5, agents 4, browser 3, apps 1,
-    /// what other agents remember 1.
+    /// what other agents remember 1, Linggen's own notes 1.
     #[test]
-    fn the_door_is_fourteen_tools() {
+    fn the_door_is_fifteen_tools() {
         assert_eq!(
             names(View::Local),
             [
@@ -659,6 +739,7 @@ mod tests {
                 "browser_act",
                 "app",
                 "memory_agents",
+                "memory_notes",
             ]
         );
     }

@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 
 const OLD_DREAM: &str = include_str!("../fixtures/missions-main/mission.md");
 const BUILTIN_MISSIONS: &[(&str, &str)] = &[
+    ("chronicle", include_str!("../../missions/chronicle/mission.md")),
     ("dream", include_str!("../../missions/dream/mission.md")),
     ("memory-scan", include_str!("../../missions/memory-scan/mission.md")),
     ("memory-solve", include_str!("../../missions/memory-solve/mission.md")),
@@ -37,7 +38,7 @@ async fn startup_refreshes_a_pre_upgrade_dream_once() {
     let split = linggen_engine::extensions::frontmatter::split;
     let snapshot = || {
         let mut files = Vec::new();
-        for dir in ["", "dream", "memory-scan", "memory-solve", "table-check"] {
+        for dir in ["", "chronicle", "dream", "memory-scan", "memory-solve", "table-check"] {
             for entry in fs::read_dir(missions.join(dir)).unwrap() {
                 let entry = entry.unwrap();
                 if entry.file_type().unwrap().is_file() {

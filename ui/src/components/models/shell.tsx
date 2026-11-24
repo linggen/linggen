@@ -2,6 +2,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ChevronRight, MoreHorizontal } from 'lucide-react';
 import { W } from '../../lib/modelsWords.mts';
+import { longPress } from '../../lib/longPress.mts';
 import type { Way } from '../../lib/providers.mts';
 
 export const cardCls = 'bg-white dark:bg-[#141414] rounded-xl border border-slate-200 dark:border-white/5 shadow-sm p-4 md:p-5';
@@ -79,8 +80,13 @@ export const Row: React.FC<{
   );
 };
 
-/** A ⋯ button and the few things it offers. */
-export const RowMenu: React.FC<{ items: { label: string; run: () => void }[]; disabled?: boolean }> = ({ items, disabled }) => {
+/** A ⋯ button and the few things it offers. With `rowRef`, a long press (or a
+ *  right click) on that row opens the same menu — two entrances, one menu. */
+export const RowMenu: React.FC<{
+  items: { label: string; run: () => void; danger?: boolean }[];
+  disabled?: boolean;
+  rowRef?: React.RefObject<HTMLElement | null>;
+}> = ({ items, disabled, rowRef }) => {
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -89,6 +95,27 @@ export const RowMenu: React.FC<{ items: { label: string; run: () => void }[]; di
     document.addEventListener('mousedown', away);
     return () => document.removeEventListener('mousedown', away);
   }, [open]);
+  useEffect(() => {
+    const row = rowRef?.current;
+    if (!row || disabled) return;
+    const hold = longPress(() => setOpen(true));
+    const down = (e: PointerEvent) => { if (!(e.target as Element).closest('button, input, textarea, a')) hold.down(e.clientX, e.clientY); };
+    const move = (e: PointerEvent) => hold.move(e.clientX, e.clientY);
+    const menu = (e: Event) => { e.preventDefault(); setOpen(true); };
+    row.addEventListener('pointerdown', down);
+    row.addEventListener('pointermove', move);
+    row.addEventListener('pointerup', hold.up);
+    row.addEventListener('pointercancel', hold.cancel);
+    row.addEventListener('contextmenu', menu);
+    return () => {
+      hold.cancel();
+      row.removeEventListener('pointerdown', down);
+      row.removeEventListener('pointermove', move);
+      row.removeEventListener('pointerup', hold.up);
+      row.removeEventListener('pointercancel', hold.cancel);
+      row.removeEventListener('contextmenu', menu);
+    };
+  }, [rowRef, disabled]);
   return (
     <div ref={box} className="relative shrink-0">
       <button type="button" aria-label={W.options} aria-haspopup="menu" aria-expanded={open} disabled={disabled} onClick={() => setOpen(!open)} className="rounded p-1 text-slate-500 hover:bg-slate-100 dark:hover:bg-white/10 disabled:opacity-50">
@@ -97,7 +124,7 @@ export const RowMenu: React.FC<{ items: { label: string; run: () => void }[]; di
       {open && (
         <div role="menu" className="absolute right-0 top-7 z-10 min-w-40 rounded-lg border border-slate-200 bg-white p-1 shadow-lg dark:border-white/10 dark:bg-[#1c1c1c]">
           {items.map((item) => (
-            <button key={item.label} type="button" role="menuitem" onClick={() => { setOpen(false); item.run(); }} className="block w-full rounded px-2.5 py-1.5 text-left text-xs hover:bg-slate-100 dark:hover:bg-white/10">
+            <button key={item.label} type="button" role="menuitem" onClick={() => { setOpen(false); item.run(); }} className={`block w-full rounded px-2.5 py-1.5 text-left text-xs hover:bg-slate-100 dark:hover:bg-white/10 ${item.danger ? 'text-red-600 dark:text-red-400' : ''}`}>
               {item.label}
             </button>
           ))}

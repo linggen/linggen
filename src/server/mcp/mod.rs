@@ -1,10 +1,10 @@
 //! Linggen's one MCP door: `POST /mcp`, a minimal streamable-HTTP MCP
 //! server (stateless JSON-RPC 2.0: `initialize`, `ping`, `tools/list`,
 //! `tools/call`) for third-party hosts — Claude Code, Codex, Cursor, … —
-//! publishing fourteen tools from one catalogue (`catalog`): memory 5,
-//! agents 4, browser 3, apps 1, other agents' memory 1.
+//! publishing fifteen tools from one catalogue (`catalog`): memory 5,
+//! agents 4, browser 3, apps 1, other agents' memory 1, Linggen's own notes 1.
 //!
-//! The caller decides the view (`view_of`): this machine sees all fourteen,
+//! The caller decides the view (`view_of`): this machine sees all fifteen,
 //! an approved computer the five memory tools (no `dream_run`), anyone else
 //! nothing. `tools/list`, `tools/call` and the server text all read that
 //! one view, so what a caller cannot see it cannot call. A tool name
@@ -31,6 +31,7 @@ use crate::server::ServerState;
 mod app;
 mod catalog;
 mod dispatch;
+mod notes;
 mod outside;
 
 use catalog::{catalog, Render};
@@ -90,7 +91,7 @@ const LOCAL_TEXT: &str = concat!(
 /// Linggen's store and no upkeep — each agent keeps its own memory and
 /// Linggen reads it; the rest as in v1.
 const LOCAL_TEXT_V2: &str = concat!(
-    "Claude Code and Codex each keep their own memory; Linggen only reads it and never edits it. memory_agents op=index lists what they remember for a project, op=read opens one note, op=search finds words. Where two disagree, the newer wins. memory_add and memory_search are for when the person asks to let every agent know something; do not save on your own.\n",
+    "Claude Code and Codex each keep their own memory; Linggen only reads it and never edits it. memory_agents op=index lists what they remember for a project, op=read opens one note, op=search finds words. Where two disagree, the newer wins. Linggen keeps its own notes too: memory_notes. A host with no memory of its own keeps its notes there (op=write: only what the person asked to remember, a decision or rule with its why, a gotcha) and reads them with op=index, read, search; a host that has its own memory writes there, and uses memory_notes only when the person asks to let every agent know something.\n",
     delegation!(),
     "\n",
     usage_limit!(),

@@ -9,7 +9,7 @@ mod server;
 // (`crate::engine::…`, `crate::config::…`).
 use linggen_engine::{
     account, assets, cannot_run, config, credentials, engine, extensions, hf_fetch, hf_mirror, js_runtime, language,
-    live, logging, mcp_client, memory_host, message, mirror, notes, outside_memory, paths, perception,
+    live, logging, mcp_client, memory_host, message, mirror, notes, outside_memory, own_memory, paths, perception,
     provider, reach, runtime, senses, state_fs, telemetry, util,
 };
 
@@ -127,6 +127,12 @@ enum Command {
         #[command(subcommand)]
         action: AccountAction,
     },
+    /// The chronicle (memory v2): `prepare` is the monthly mission's own step,
+    /// `backfill` runs the mission now over the months still waiting.
+    Chronicle {
+        #[command(subcommand)]
+        action: ChronicleVerb,
+    },
     /// Memory's data verbs: `ling mem search …`, `ling mem add …`, `ling mem list`, …
     /// (`ling mem --help` lists them). Runs against the engine when it is up,
     /// else on the store directly.
@@ -135,6 +141,14 @@ enum Command {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+}
+
+#[derive(Subcommand, Debug)]
+enum ChronicleVerb {
+    /// Write the input the chronicle mission reads (run by the mission itself)
+    Prepare,
+    /// Run the chronicle mission now, over the months still waiting
+    Backfill,
 }
 
 #[derive(Subcommand, Debug)]
@@ -249,6 +263,13 @@ async fn main() -> Result<()> {
         }
         Some(Command::Mem { args }) => {
             return cli::mem::run(args.clone()).await;
+        }
+        Some(Command::Chronicle { action }) => {
+            let action = match action {
+                ChronicleVerb::Prepare => cli::chronicle::ChronicleAction::Prepare,
+                ChronicleVerb::Backfill => cli::chronicle::ChronicleAction::Backfill,
+            };
+            return cli::chronicle::run(action, &config).await;
         }
         Some(Command::Restart { binary, wait }) => {
             return cli::restart::request(config.server.port(), binary, *wait).await;
@@ -520,6 +541,7 @@ async fn main() -> Result<()> {
         | Some(Command::Account { .. })
         | Some(Command::Claude { .. })
         | Some(Command::Mem { .. })
+        | Some(Command::Chronicle { .. })
         | Some(Command::Restart { .. })
         | Some(Command::EngineRestart { .. }) => unreachable!(),
     }

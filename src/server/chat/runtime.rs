@@ -514,7 +514,14 @@ pub(crate) async fn recall_into_thread(
     // Without this, a Pulse turn fires a recall, surfaces hits, and
     // the "🧠 N memories recalled" widget appears in a skill session that
     // shouldn't touch memory at all.
-    let recalled = if engine.prompt_profile.include_memory {
+    // Memory v2 recalls nothing per turn and sends no capture reminder: the
+    // index came with the session's start, the tool is there (`engine::prompt`,
+    // "Which memory a session has"). The app's scoped recall goes the same
+    // way — its index is in its prompt.
+    let v2 = engine.cfg.memory_linggen == crate::own_memory::Mode::V2;
+    let recalled = if v2 {
+        None
+    } else if engine.prompt_profile.include_memory {
         // Full recall — the user's biography, project-scoped (core/user sessions).
         auto_recall_memory(
             state,
@@ -568,7 +575,7 @@ pub(crate) async fn recall_into_thread(
     // sessions stay out. Not persisted to the recall widget: it's an
     // instruction to the agent, not a recalled row. Mirrors CC/Codex
     // recall.sh so the per-turn reminder is identical across hosts.
-    if engine.prompt_profile.include_memory {
+    if engine.prompt_profile.include_memory && !v2 {
         super::thread::add(
             engine,
             crate::message::ChatMessage::new(

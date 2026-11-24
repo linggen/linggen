@@ -26,10 +26,15 @@ mod sources;
 #[cfg(test)]
 mod tests;
 
-pub use access::{read, search, Hit, Note, ReadError};
+pub use access::{listing, read, search, touched, AgentMemory, Hit, Note, NoteFile, Place, ReadError, Touched};
 pub use redact::Clean;
+// The chronicle cleans what it quotes of the person's sessions the same way.
+pub(crate) use redact::clean;
 pub use slice::{slice, Slice, SourceNote, BUDGET_BYTES};
 pub use sources::{reports, SourceReport};
+// Linggen's own memory (`own_memory`) files its project notes the same way
+// Claude Code does and walks a session's folder up the same chain.
+pub(crate) use sources::{encode_project_path, project_chain};
 
 use std::path::{Path, PathBuf};
 
@@ -78,6 +83,14 @@ impl Agent {
         match self {
             Agent::ClaudeCode => "Claude Code",
             Agent::Codex => "Codex",
+        }
+    }
+
+    /// The agent's name in an address and in the page's tabs.
+    pub fn id(self) -> &'static str {
+        match self {
+            Agent::ClaudeCode => "claude-code",
+            Agent::Codex => "codex",
         }
     }
 
