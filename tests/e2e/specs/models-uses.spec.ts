@@ -3,7 +3,7 @@ import { test, expect, expectWebRtc } from '../support/world';
 
 test.use({ viewport: { width: 1280, height: 1000 }, colorScheme: 'light' });
 
-test('default voice engine, live order and app model survive reload', async ({ page, world, httpRequests, request }) => {
+test('default voice engine and live order survive reload', async ({ page, world, httpRequests, request }) => {
   const response = await request.put(`${world.url}/api/credentials`, { data: { endpoints: [
     { provider: 'qwen', url: 'https://ap-southeast-1.maas.qwencloudapi.com/compatible-mode/v1', api_key: 'test-only-marker' },
     { provider: 'gemini', url: 'https://generativelanguage.googleapis.com/v1beta/openai', api_key: 'test-only-marker' },
@@ -19,7 +19,7 @@ test('default voice engine, live order and app model survive reload', async ({ p
   await expect(card.getByText('本机 · 4.3 GB · 免费', { exact: true })).toBeVisible();
   await expect(card.locator('span').filter({ hasText: /^(?:ChatGPT 画图|自动（现在用 ChatGPT 画图）)$/ })).toBeVisible();
   await expect(page.getByTestId('default-speak').locator('option[value="system"]')).toHaveText('macOS 系统声音 · 本机 · 免费');
-  const picks = [['speak', 'system'], ['live', 'google'], ['app-model-lesson', 'fake-eye']];
+  const picks = [['speak', 'system'], ['live', 'google']];
   for (const [id, value] of picks) {
     const select = page.getByTestId(`default-${id}`);
     await select.selectOption(value);
@@ -29,7 +29,7 @@ test('default voice engine, live order and app model survive reload', async ({ p
   await page.reload();
   await expectWebRtc(page, httpRequests);
   for (const [id, value] of picks) await expect(page.getByTestId(`default-${id}`)).toHaveValue(value);
-  await expect(card).toContainText('应用用的模型');
+  await expect(card).not.toContainText('应用用的模型');
   await expect(card).toContainText('听写');
   const dir = process.env.MODELS_SHOTS_DIR;
   if (dir) await page.screenshot({ path: path.join(dir, 'uses-1280.png') });

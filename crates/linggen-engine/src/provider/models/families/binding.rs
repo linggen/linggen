@@ -145,9 +145,6 @@ pub(super) fn merge(config: &mut Config, preset: &Preset, family: &str, target: 
         !std::mem::replace(&mut seen_target, true)
     });
     if config.pet.model == source { config.pet.model = target.clone(); }
-    for model in config.uses.apps.values_mut() {
-        if *model == source { *model = target.clone(); }
-    }
     for agent in &mut config.agents {
         if agent.model.as_deref() == Some(&source) { agent.model = Some(target.clone()); }
     }

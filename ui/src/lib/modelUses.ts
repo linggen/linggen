@@ -7,10 +7,8 @@ export type UseRow = { choice: string | null; effective: string | null; options:
 export type Uses = Record<'chat' | 'effort' | 'live' | 'speak' | 'voice' | 'draw' | 'hear', UseRow> & {
   chain: string[];
   model_fallback: boolean;
-  apps: { id: string; label: string; choice: string | null }[];
 };
 export type UseEdit = { use: 'chat' | 'effort' | 'voice'; choice: string }
   | { use: 'chat_fallbacks'; choices: string[] }
   | { use: 'model_fallback'; enabled: boolean }
-  | { use: 'live' | 'speak' | 'draw'; choice: string | null }
-  | { use: 'app'; id: string; choice: string | null };
+  | { use: 'live' | 'speak' | 'draw'; choice: string | null };

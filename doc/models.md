@@ -96,7 +96,7 @@ The easiest way to add models: open **Settings → Models** in the browser, clic
 
 ### Defaults by use
 
-Settings → Models owns the chat chain, effort, live voice, reading voice, drawing, and app text models. Dictation uses local Whisper. An explicit turn or session model still wins; the app's standing choice occupies the frontmatter slot, after the agent override and before the chat chain. Removing the app override restores its normal default. Live voice and speech keep their built-in fallback order.
+Settings → Models owns the chat chain, effort, live voice, reading voice, and drawing. Dictation uses local Whisper. Apps follow the chat default unless an existing override applies, including a model declared in skill frontmatter. Live voice and speech keep their built-in fallback order.
 
 The `/api/uses` snapshot supplies each option's readable `name` and `source`, and the `effective` choice used for Automatic. Repository IDs are tooltip metadata, not option labels.
 

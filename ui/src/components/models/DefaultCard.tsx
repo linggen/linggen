@@ -113,10 +113,7 @@ export function DefaultCard({ view, busy, failed, retry, pick }: {
           </label>} />
         <UseLine busy={busy} id="hear" label={W.dictation} purpose={W.hearPurpose} row={view.hear} onPick={() => {}} />
         <UseLine busy={busy} id="draw" label={W.drawing} purpose={W.drawPurpose} row={view.draw} automatic={W.automatic} onPick={(choice) => pick({ use: 'draw', choice: choice || null })} downloadable />
-        {!!view.apps.length && <div className="mt-3 rounded-lg bg-slate-50 px-3 py-2 dark:bg-white/5">
-          <h3 className="text-xs font-semibold text-slate-600 dark:text-slate-300">{W.appsModels}</h3>
-          <div>{view.apps.map((app) => <UseLine busy={busy} key={app.id} id={`app-${app.id}`} label={app.label} row={{ ...view.chat, choice: app.choice, effective: null }} automatic={W.followChat} onPick={(choice) => pick({ use: 'app', id: app.id, choice: choice || null })} />)}</div>
-        </div>}
+
       </div>}
     </section>
   );

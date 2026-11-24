@@ -53,7 +53,6 @@ api_key = "test-not-a-key"
         json!({"use":"speak","choice":"system"}),
         json!({"use":"voice","choice":"serena"}),
         json!({"use":"draw","choice":"chatgpt"}),
-        json!({"use":"app","id":"model-lesson","choice":"fake-eye"}),
     ] {
         let (code, answer) = w.api.put_json("/api/uses", edit.clone()).await;
         assert_eq!(code, 200, "{edit}: {answer}");
@@ -77,7 +76,6 @@ api_key = "test-not-a-key"
     assert_eq!(w.api.get("/api/uses").await, after);
     let saved = std::fs::read_to_string(w.home.config_path()).unwrap();
     let config = linggen_engine::config::Config::from_toml(&saved).unwrap();
-    assert_eq!(config.uses.apps["model-lesson"], "fake-eye");
     assert_eq!(config.uses.chat_effort.as_deref(), Some("medium"));
     assert_eq!(config.pet.voice, "serena");
 }
@@ -120,19 +118,10 @@ model = "test"
     assert!(!config.routing.model_fallback);
 }
 
-#[tokio::test]
-async fn an_app_model_runs_only_in_the_app() {
-    use crate::support::{model::Agent, text};
-    let w = World::start(Setup::default().script(Agent::Ling, vec![text("Home."), text("App.")])).await;
-    assert_eq!(w.api.put_json("/api/uses", json!({"use":"app","id":"model-lesson","choice":"fake-eye"})).await.0, 200);
-    let home = w.api.create_session(json!({"title":"Home"})).await;
-    w.turn(&home, &w.work(), "Hello home.", Agent::Ling).await;
-    let app = w.api.create_session(json!({"title":"Lesson", "skill":"model-lesson"})).await;
-    let mark = w.mark();
-    let sent = w.api.post("/api/chat", json!({"session_id": app, "skill_name": "model-lesson", "project_root": w.work(), "message": "Hello lesson."})).await;
-    let sid = sent["session_id"].as_str().unwrap_or(&app);
-    w.finish_run(sid, Agent::Ling, mark).await;
-    let calls = w.model.calls_of(Agent::Ling);
-    assert_eq!(calls[0].body["model"], "fake-ling-1");
-    assert_eq!(calls[1].body["model"], "fake-eye-1");
+#[test]
+fn retired_app_choices_load_but_are_not_saved() {
+    let config = linggen_engine::config::Config::from_toml("[uses]\nspeak = 'system'\n[uses.apps]\nmodel-lesson = 'fake-eye'\n").unwrap();
+    assert_eq!(config.uses.speak.as_deref(), Some("system"));
+    let saved = toml::to_string(&config).unwrap();
+    assert!(!saved.contains("[uses.apps]"));
 }

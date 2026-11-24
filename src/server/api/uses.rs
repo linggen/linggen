@@ -77,13 +77,6 @@ impl Use {
 }
 
 #[derive(Serialize)]
-struct App {
-    id: String,
-    label: String,
-    choice: Option<String>,
-}
-
-#[derive(Serialize)]
 struct Table {
     chat: Use,
     chain: Vec<String>,
@@ -94,7 +87,6 @@ struct Table {
     voice: Use,
     draw: Use,
     hear: Use,
-    apps: Vec<App>,
 }
 
 fn chat_row(models: &ModelManager, row: &ModelConfig) -> OptionRow {
@@ -147,11 +139,6 @@ async fn table(state: &ServerState, config: &Config) -> Table {
         OptionRow::local("local", runtime::PICTURE_MODEL, lane.is_ok() && runtime::pictures_ready(), lane.is_ok()),
     ];
     let drawer = pictures::Source::select(config.uses.draw.as_deref(), signed_in, lane).ok().map(|source| source.id());
-    let mut apps: Vec<_> = state.skills.list_skills().await.into_iter().filter_map(|skill| {
-        let app = skill.text_model_app()?;
-        Some(App { label: app.title.clone().unwrap_or_else(|| skill.name.clone()), choice: config.uses.apps.get(&skill.name).cloned(), id: skill.name })
-    }).collect();
-    apps.sort_by(|a, b| a.id.cmp(&b.id));
     Table {
         chat: Use::new(first, chat, first), chain,
         model_fallback: config.routing.model_fallback,
@@ -161,7 +148,6 @@ async fn table(state: &ServerState, config: &Config) -> Table {
         voice: Use::new(Some(&config.pet.voice), super::tts_mlx::SPEAKERS.iter().map(|id| OptionRow::new(id, id, Source::new(Way::Local, None), "ready")).collect(), None),
         draw: Use::new(config.uses.draw.as_deref(), drawing, drawer),
         hear: Use::new(None, vec![OptionRow::local("local-stt", runtime::STT_MODEL, runtime::hearing_ready(), runtime::lane_verdict(&runtime::VOICE_LANE).is_ok())], Some("local-stt")),
-        apps,
     }
 }
 
@@ -176,7 +162,6 @@ enum Edit {
     Speak { choice: Option<String> },
     Voice { choice: String },
     Draw { choice: Option<String> },
-    App { id: String, choice: Option<String> },
 }
 
 fn set_chat_fallbacks(view: &Table, config: &mut Config, choices: Vec<String>) -> Result<(), Failure> {
@@ -203,13 +188,6 @@ impl Edit {
             Self::Speak { choice } if choice.as_ref().is_none_or(|id| view.speak.accepts(id, &["ready", "download"])) => config.uses.speak = choice,
             Self::Voice { choice } if view.voice.accepts(&choice, &["ready"]) => config.pet.voice = choice,
             Self::Draw { choice } if choice.as_ref().is_none_or(|id| view.draw.accepts(id, &["ready", "download"])) => config.uses.draw = choice,
-            Self::App { id, choice } if view.apps.iter().any(|app| app.id == id)
-                && choice.as_ref().is_none_or(|model| view.chat.accepts(model, &["ready"])) => {
-                match choice {
-                    Some(model) => { config.uses.apps.insert(id, model); }
-                    None => { config.uses.apps.remove(&id); }
-                }
-            }
             _ => return Err(BAD),
         }
         Ok(())

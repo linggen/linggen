@@ -21,8 +21,13 @@ pub struct Uses {
     pub draw: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub chat_effort: Option<String>,
-    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
-    pub apps: std::collections::BTreeMap<String, String>,
+    // Retired preference: accept any old value without retaining it.
+    #[serde(rename = "apps", skip_serializing, deserialize_with = "ignore_preference")]
+    _retired_apps: (),
+}
+
+fn ignore_preference<'de, D: serde::Deserializer<'de>>(value: D) -> Result<(), D::Error> {
+    serde::de::IgnoredAny::deserialize(value).map(|_| ())
 }
 
 impl Uses {
