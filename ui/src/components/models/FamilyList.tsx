@@ -108,6 +108,7 @@ const FamilyRow: React.FC<Props & { family: Family }> = ({ provider, family: f, 
             </select>
           )}
         </div>
+        {f.merge_into && <button type="button" disabled={busy} className={linkBtn} onClick={() => void act({ action: 'merge', model: f.merge_into! })}>{W.mergeRows}</button>}
         {menu.length > 0 && <RowMenu items={menu} disabled={busy} />}
       </div>
       {f.notice && <MoveNotice family={f} act={act} busy={busy} />}

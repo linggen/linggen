@@ -69,6 +69,7 @@ export const W = {
   usedCompanion: 'Companion',
   usedAgent: 'Agent {who}',
   liveTag: 'Live voice',
+  mergeRows: 'Merge',
   holdChoose: 'Pick a version',
   checkingKey: 'Checking this key…',
   listFailed: 'Could not connect. Try again later.',

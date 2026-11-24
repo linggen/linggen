@@ -11,6 +11,8 @@ use super::super::family_catalog::FamilyCurrent;
 pub enum Action {
     /// Tick the family: its row runs the model it means now.
     Tick,
+    /// Consolidate an existing duplicate into the ordinary row shown.
+    Merge { target: String },
     /// Remove the family's row. Refused while the row is the first default
     /// chat model, unless `replacement` names the model that takes its place.
     Untick { replacement: Option<String> },
@@ -87,11 +89,19 @@ pub(super) fn run(f: &Families, config: &mut Config, creds: &Credentials, (name,
             let listing = listing.ok_or(Refusal::NeedsChoice)?;
             match endpoint.ask(&snapshot, family, None, Some(&listing), today) {
                 FamilyCurrent::Current { next, .. } => {
-                    binding::tick(config, preset, family, next, binding::Mode::Follow);
+                    if !binding::adopt(config, preset, family, next) {
+                        binding::tick(config, preset, family, next, binding::Mode::Follow);
+                    }
                     Ok(true)
                 }
                 _ => Err(Refusal::NeedsChoice),
             }
+        }
+        Action::Merge { target } => {
+            let Some(source) = binding::merge(config, preset, family, &target) else { return Ok(false) };
+            if f.is_armed(&source) { f.arm(&target); }
+            f.disarm(&source);
+            Ok(true)
         }
         Action::Untick { replacement } => {
             let Some((id, _)) = row else { return Ok(false) };

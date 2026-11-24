@@ -52,6 +52,8 @@ struct FamilyView {
     /// Past the first few, unticked and without a notice: under 「更多」.
     folded: bool,
     references: Vec<Reference>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    merge_into: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -163,6 +165,7 @@ pub(super) fn of(f: &Families, config: &Config, creds: &Credentials, (name, url)
             choose,
             folded: rank >= SHOWN && row.is_none() && notice.is_none(),
             notice,
+            merge_into: row.and_then(|r| binding::duplicate(config, endpoint.preset, &r.model)).map(|r| r.id.clone()),
             references: row.map(|r| references(config, &r.id)).unwrap_or_default(),
             label: label_of(family, &keys),
             family: family.clone(),

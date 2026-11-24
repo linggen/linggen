@@ -108,6 +108,50 @@ fn run_on(row: &mut ModelConfig, facts: &ModelFacts) {
     row.supports_tools = facts.tool_call();
 }
 
+fn new_binding(preset: &Preset, family: &str, facts: &ModelFacts, mode: Mode) -> FamilyBinding {
+    FamilyBinding {
+        family: family.into(), preset: preset.key.into(), mode,
+        released: facts.release_date().map(str::to_string), moves: 0, last_move: None,
+    }
+}
+
+fn ordinary_at(row: &ModelConfig, preset: &Preset, model: &str) -> bool {
+    !row.is_builtin && row.family_binding.is_none() && row.model == model
+        && preset_for(row).is_some_and(|p| p.key == preset.key)
+}
+
+pub(super) fn duplicate<'a>(config: &'a Config, preset: &Preset, model: &str) -> Option<&'a ModelConfig> {
+    config.models.iter().find(|row| ordinary_at(row, preset, model))
+}
+
+pub(super) fn adopt(config: &mut Config, preset: &Preset, family: &str, facts: &ModelFacts) -> bool {
+    let Some(row) = config.models.iter_mut().find(|row| ordinary_at(row, preset, facts.id())) else { return false };
+    row.family_binding = Some(new_binding(preset, family, facts, Mode::Follow));
+    true
+}
+
+/// The named target must still be the ordinary duplicate we offered.
+pub(super) fn merge(config: &mut Config, preset: &Preset, family: &str, target: &str) -> Option<String> {
+    let row = row_of(config, preset.key, family)?;
+    let source = row.id.clone();
+    let binding = row.family_binding.clone()?;
+    let original = duplicate(config, preset, &row.model).filter(|r| r.id == target)?;
+    let target = original.id.clone();
+    config.models.iter_mut().find(|r| r.id == target)?.family_binding = Some(binding);
+    let mut seen_target = false;
+    config.routing.default_models.retain_mut(|id| {
+        if *id == source { *id = target.clone(); }
+        if *id != target { return true; }
+        !std::mem::replace(&mut seen_target, true)
+    });
+    if config.pet.model == source { config.pet.model = target.clone(); }
+    for agent in &mut config.agents {
+        if agent.model.as_deref() == Some(&source) { agent.model = Some(target.clone()); }
+    }
+    remove(config, &source);
+    Some(source)
+}
+
 /// File a family as a new row running `facts`. The caller has checked that
 /// the family is not ticked at this endpoint.
 pub(super) fn tick(config: &mut Config, preset: &Preset, family: &str, facts: &ModelFacts, mode: Mode) -> String {
@@ -128,14 +172,7 @@ pub(super) fn tick(config: &mut Config, preset: &Preset, family: &str, facts: &M
         price: None,
         provided_by: None,
         is_builtin: false,
-        family_binding: Some(FamilyBinding {
-            family: family.into(),
-            preset: preset.key.into(),
-            mode,
-            released: facts.release_date().map(str::to_string),
-            moves: 0,
-            last_move: None,
-        }),
+        family_binding: Some(new_binding(preset, family, facts, mode)),
     };
     run_on(&mut row, facts);
     config.models.push(row);

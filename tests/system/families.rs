@@ -73,7 +73,7 @@ async fn startup_checks_an_existing_key_without_a_tick() {
     let w = World::start_with_home(setup(Some(BOUND_ROW), None), |home| {
         let fixture = json!({"today": TODAY, "delay_ms": 3000, "lists": {"anthropic": ["claude-opus-5-5"]}});
         std::fs::write(home.linggen_home().join("test-families.json"), fixture.to_string()).unwrap();
-        let creds = json!({"endpoints": [{"provider":"anthropic", "url":"https://api.anthropic.com", "api_key":KEY}]});
+        let creds = json!({"version": 2, "endpoints": [{"provider":"anthropic", "url":"https://api.anthropic.com", "api_key":KEY}]});
         std::fs::write(home.linggen_home().join("credentials.json"), creds.to_string()).unwrap();
     }).await;
     let body = w.api.get("/api/providers").await;
@@ -222,6 +222,50 @@ model = "claude-opus-5"
     assert_eq!(rows.iter().find(|m| m["id"] == "my-opus").unwrap()["model"], "claude-opus-5");
     assert_eq!(family(&body, "claude-opus")["current"]["model"], "claude-opus-5-5");
     assert_ne!(family(&body, "claude-opus")["row"], "my-opus");
+}
+
+const OWN_OPUS: &str = r#"
+[[models]]
+id = "my-opus"
+provider = "anthropic"
+url = "https://api.anthropic.com"
+model = "claude-opus-5-5"
+"#;
+
+#[tokio::test]
+async fn an_explicit_tick_adopts_the_matching_row_and_keeps_its_default() {
+    let w = world(setup(Some(OWN_OPUS), Some("my-opus")), ALL).await;
+    let (id, body) = connect(&w).await;
+    assert_eq!(family(&body, "claude-opus")["ticked"], false);
+    assert_eq!(act(&w, &id, "claude-opus", json!({"action":"tick"})).await.0, 200);
+    let body = w.api.get("/api/providers").await;
+    assert_eq!(family(&body, "claude-opus")["row"], "my-opus");
+    assert_eq!(anthropic(&body)["models"].as_array().unwrap().len(), 1);
+    assert_eq!(w.api.get("/api/config").await["routing"]["default_models"][0], "my-opus");
+}
+
+#[tokio::test]
+async fn an_explicit_merge_keeps_the_original_and_repoints_config_references() {
+    let w = world(setup(Some(BOUND_ROW), Some("fam-seed")), ALL).await;
+    let (id, _) = connect(&w).await;
+    assert_eq!(act(&w, &id, "claude-opus", json!({"action":"follow"})).await.0, 200);
+    w.api.post(&format!("/api/providers/{id}/models"), json!({"id":"my-opus","model":"claude-opus-5-5"})).await;
+    let mut config = w.api.get("/api/config").await;
+    config["pet"]["model"] = "fam-seed".into();
+    config["agents"] = json!([{"id":"merge-check","spec_path":"merge-check.md","model":"fam-seed"}]);
+    assert_eq!(w.api.post_status("/api/config", config).await, 200);
+    let body = w.api.get("/api/providers").await;
+    assert_eq!(family(&body, "claude-opus")["merge_into"], "my-opus");
+    assert_eq!(anthropic(&body)["models"].as_array().unwrap().len(), 2);
+    assert_eq!(act(&w, &id, "claude-opus", json!({"action":"merge","model":"my-opus"})).await.0, 200);
+    let config = w.api.get("/api/config").await;
+    assert_eq!(config["routing"]["default_models"][0], "my-opus");
+    assert_eq!(config["pet"]["model"], "my-opus");
+    assert_eq!(config["agents"][0]["model"], "my-opus");
+    let body = w.api.get("/api/providers").await;
+    assert_eq!(anthropic(&body)["models"].as_array().unwrap().len(), 1);
+    assert_eq!(family(&body, "claude-opus")["row"], "my-opus");
+    assert!(family(&body, "claude-opus").get("merge_into").is_none());
 }
 
 #[tokio::test]

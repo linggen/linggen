@@ -446,6 +446,7 @@ export const ZH: Record<string, string> = {
   'Companion': '伙伴',
   'Agent {who}': '智能体 {who}',
   'This key cannot use it.': '这个密钥用不了。',
+  'Merge': '合并',
   'Pick a version': '选一个版本',
   'Checking this key…': '正在核对这个密钥…',
   'Could not connect. Try again later.': '暂时连不上，稍后再试。',
