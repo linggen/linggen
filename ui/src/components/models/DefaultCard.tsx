@@ -1,11 +1,12 @@
 import { W, say } from '../../lib/modelsWords.mts';
 import { translate } from '../../lib/i18n';
 import type { UseEdit, UseOption, UseRow, Uses } from '../../lib/modelUses';
+import { EFFORT_WORD } from '../../lib/effortChip.mts';
 import { cardCls, hintCls, inputCls } from './shell';
 
 const optionName = (option: UseOption) => ({
   qwen: 'Qwen3-TTS', system: W.systemVoice, local: W.thisMac, 'local-stt': 'Whisper',
-  low: W.effortLow, medium: W.effortMedium, high: W.effortHigh, xhigh: W.effortXhigh, max: W.effortMax,
+  ...EFFORT_WORD,
 } as Record<string, string>)[option.id] ?? option.label;
 const status = (option: UseOption) => ({
   ready: W.ready, no_key: W.liveMissingKey, signed_out: W.notSignedIn, unavailable: W.notReady,

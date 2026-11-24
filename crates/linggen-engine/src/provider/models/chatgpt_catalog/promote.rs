@@ -152,7 +152,7 @@ mod tests {
     fn with_next_sol() -> Snapshot {
         let mut s = Snapshot::seed();
         s.listed = measured_list();
-        s.listed.insert(0, Listed { slug: "gpt-7-sol".into(), priority: 0, context_window: None });
+        s.listed.insert(0, Listed { slug: "gpt-7-sol".into(), ..Listed::default() });
         s
     }
 
@@ -198,7 +198,7 @@ mod tests {
     async fn astra_is_not_a_built_in_family_and_is_never_tried() {
         let mut s = Snapshot::seed();
         s.listed = measured_list();
-        s.listed.insert(0, Listed { slug: "gpt-7-astra".into(), priority: 0, context_window: None });
+        s.listed.insert(0, Listed { slug: "gpt-7-astra".into(), ..Listed::default() });
         let fake = Fake::new(&["gpt-7-astra"]);
         assert!(!promote(&mut s, &fake, 5).await);
         assert!(fake.tried().is_empty());

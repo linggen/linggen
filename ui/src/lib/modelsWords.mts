@@ -21,6 +21,7 @@ export const W = {
   effortHigh: 'High effort',
   effortXhigh: 'Extra high effort',
   effortMax: 'Max effort',
+  effortUltra: 'Ultra effort',
   thinking: 'Thinking',
   speaker: 'Qwen3-TTS speaker',
   systemVoice: 'System voice',

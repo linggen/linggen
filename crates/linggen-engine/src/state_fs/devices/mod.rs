@@ -652,7 +652,7 @@ mod tests {
         use crate::provider::models::chatgpt_catalog::{tests::measured_list, Listed, Snapshot};
         let mut snap = Snapshot::seed();
         snap.listed = measured_list();
-        snap.listed.insert(0, Listed { slug: "gpt-7-sol".into(), priority: 0, context_window: None });
+        snap.listed.insert(0, Listed { slug: "gpt-7-sol".into(), ..Listed::default() });
         let mut s = serde_json::Map::new();
         s.insert("models".into(), serde_json::json!(["deepseek-flash", "gpt-6.2-sol"]));
         assert!(!follow_catalog(&mut s, &snap), "not moved until it answered");

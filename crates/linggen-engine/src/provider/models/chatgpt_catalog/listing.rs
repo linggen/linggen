@@ -69,6 +69,15 @@ fn listed(m: &serde_json::Value) -> Option<Listed> {
         slug,
         priority: m.get("priority").and_then(|v| v.as_i64()).unwrap_or(i64::MAX),
         context_window: m.get("context_window").and_then(|v| v.as_u64()).filter(|w| *w > 0),
+        reasoning_levels: m.get("supported_reasoning_levels")
+            .and_then(|v| v.as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|level| level.get("effort").and_then(|v| v.as_str()))
+            .filter(|effort| !effort.is_empty())
+            .map(str::to_owned)
+            .collect(),
+        default_reasoning_level: m.get("default_reasoning_level").and_then(|v| v.as_str()).map(str::to_owned),
     })
 }
 
@@ -153,7 +162,28 @@ pub(crate) mod tests {
         assert_eq!(got[0].slug, "gpt-6.2-sol");
         assert_eq!(got[0].priority, 1);
         assert_eq!(got[0].context_window, Some(272_000));
+        assert!(got.iter().all(|m| m.reasoning_levels.is_empty() && m.default_reasoning_level.is_none()));
         assert_eq!(got, super::super::tests::measured_list());
+    }
+
+    #[tokio::test]
+    async fn codex_reasoning_metadata_survives_a_snapshot_round_trip() {
+        // The measured fixture is trimmed; add a synthetic Codex-shaped entry.
+        let mut answer = measured_answer();
+        answer["models"][0]["supported_reasoning_levels"] = serde_json::json!([
+            {"effort": "low", "description": "Fast"},
+            {"effort": "ultra"},
+            {"effort": "future"},
+            {"effort": 4},
+        ]);
+        answer["models"][0]["default_reasoning_level"] = "low".into();
+        let mut snap = Snapshot::seed();
+        assert!(read_list(&mut snap, &Answers(Ok(answer)), 50).await);
+        assert_eq!(snap.reasoning_levels("gpt-6.2-sol"), ["low", "ultra", "future"]);
+        assert_eq!(snap.listed[0].default_reasoning_level.as_deref(), Some("low"));
+        assert!(snap.reasoning_levels("gpt-6.1-terra").is_empty());
+        let restored: Snapshot = serde_json::from_value(serde_json::to_value(&snap).unwrap()).unwrap();
+        assert_eq!(restored, snap);
     }
 
     #[tokio::test]

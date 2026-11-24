@@ -34,6 +34,6 @@ test('every value has its Chinese word, short', () => {
     readFileSync(new URL('../src/lib/strings-zh.ts', import.meta.url), 'utf8').replace(/^export const ZH[^=]*=/m, 'return '),
   )();
   const said = Object.values(EFFORT_WORD).map((word) => zh[word]);
-  assert.deepEqual(said, ['低', '中', '高', '超高', '最高']);
+  assert.deepEqual(said, ['低', '中', '高', '超高', '最高', '极限']);
   assert.equal(zh['Thinking'], '思考');
 });

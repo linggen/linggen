@@ -1655,7 +1655,7 @@ mod tests {
         use crate::provider::models::chatgpt_catalog::{tests::measured_list, Listed, Snapshot};
         let mut snap = Snapshot::seed();
         snap.listed = measured_list();
-        snap.listed.insert(0, Listed { slug: "gpt-7-sol".into(), priority: 0, context_window: None });
+        snap.listed.insert(0, Listed { slug: "gpt-7-sol".into(), ..Listed::default() });
         let mut cfg = Config::default();
         cfg.routing.default_models = vec!["gpt-6.2-sol".into(), "gpt-6.1-sol".into()];
         cfg.pet.model = "gpt-6.2-sol".into();
@@ -1684,7 +1684,7 @@ mod tests {
         use crate::provider::models::chatgpt_catalog::{tests::measured_list, Listed, Snapshot};
         let mut snap = Snapshot::seed();
         snap.listed = measured_list();
-        snap.listed.insert(0, Listed { slug: "gpt-7-sol".into(), priority: 0, context_window: None });
+        snap.listed.insert(0, Listed { slug: "gpt-7-sol".into(), ..Listed::default() });
         let mut cfg = valid_config();
         cfg.models[0].id = "gpt-7-sol".into();
         cfg.models[0].auth_mode = Some("chatgpt_oauth".into());

@@ -18,11 +18,18 @@ fn ensure_fc_prefix(id: &str) -> String {
     }
 }
 
-fn apply_effort(req: &mut Value, model: &str, effort: Option<&str>) {
+pub(crate) const BASE_EFFORT_VALUES: [&str; 3] = ["low", "medium", "high"];
+
+/// The Codex CLI also lists xhigh, max and ultra for its Responses models.
+/// `models::effort` offers those only when the backend lists them for the model.
+pub(crate) const EFFORT_VALUES: [&str; 6] = [
+    BASE_EFFORT_VALUES[0], BASE_EFFORT_VALUES[1], BASE_EFFORT_VALUES[2],
+    "xhigh", "max", "ultra",
+];
+
+fn apply_effort(req: &mut Value, effort: Option<&str>) {
     let Some(effort) = effort.map(str::to_ascii_lowercase) else { return };
-    if OpenAiClient::EFFORT_VALUES.contains(&effort.as_str())
-        && OpenAiClient::model_supports_reasoning(model, false)
-    {
+    if EFFORT_VALUES.contains(&effort.as_str()) {
         req["reasoning"] = serde_json::json!({ "effort": effort });
     }
 }
@@ -44,7 +51,7 @@ pub(super) fn text_request(
         "stream": true,
         "store": false,
     });
-    apply_effort(&mut req, model, reasoning_effort);
+    apply_effort(&mut req, reasoning_effort);
     let cache_key = prompt_cache_key(&instructions);
     req["prompt_cache_key"] = Value::String(cache_key.clone());
     if !instructions.is_empty() {
@@ -122,16 +129,9 @@ pub(super) fn tool_request(
         "stream": true,
         "store": false,
     });
-    // Reasoning models (gpt-5.x, o-series) on the Responses API take
-    // a `reasoning: { effort }` OBJECT — not the Chat Completions
-    // `reasoning_effort` scalar. The Responses branch never applied
-    // it, so the configured effort was silently dropped and the
-    // model always ran at default effort. `max_output_tokens` is
-    // deliberately left unset: OpenAI defaults it to the model
-    // maximum, so — unlike Gemini's small thinking budget (which we
-    // DO bump) — reasoning can't starve the visible output into an
-    // empty response.
-    apply_effort(&mut req, model, reasoning_effort);
+    // As on text turns, effort goes in `reasoning.effort`. Leave
+    // `max_output_tokens` at the provider's default.
+    apply_effort(&mut req, reasoning_effort);
     let cache_key = prompt_cache_key(&instructions);
     req["prompt_cache_key"] = Value::String(cache_key.clone());
     if !instructions.is_empty() {
@@ -894,7 +894,7 @@ mod effort_tests {
 
     #[test]
     fn a_text_turn_and_a_tool_turn_carry_the_same_reasoning_effort() {
-        for value in OpenAiClient::EFFORT_VALUES {
+        for value in ["low", "medium", "high", "xhigh", "max", "ultra"] {
             let (text, tools) = sent("gpt-6.2-sol", Some(value));
             assert_eq!(text, Some(json!({ "effort": value })));
             assert_eq!(text, tools);
@@ -905,9 +905,7 @@ mod effort_tests {
     #[test]
     fn no_effort_or_one_the_wire_cannot_carry_adds_nothing() {
         assert_eq!(sent("gpt-6.2-sol", None), (None, None));
-        // The gate is the three values and a model that reasons.
-        assert_eq!(sent("gpt-6.2-sol", Some("xhigh")), (None, None));
-        assert_eq!(sent("gpt-4o", Some("high")), (None, None));
+        assert_eq!(sent("gpt-6.2-sol", Some("future")), (None, None));
     }
 
     /// Only `reasoning` differs between a request with effort and one without.

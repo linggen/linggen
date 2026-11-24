@@ -20,6 +20,7 @@ pub(crate) fn measured_list() -> Vec<Listed> {
         slug: slug.to_string(),
         priority: *priority,
         context_window: Some(272_000),
+        ..Listed::default()
     })
     .collect()
 }
@@ -53,6 +54,17 @@ fn a_missing_or_broken_file_loads_as_the_seed() {
     save_to(&path, &s).unwrap();
     assert_eq!(load_from(&path), s);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn an_old_cache_without_reasoning_metadata_still_loads() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("chatgpt_models.json");
+    std::fs::write(&path, r#"{"listed":[{"slug":"gpt-6.2-sol","priority":1,"context_window":272000}]}"#).unwrap();
+    let old = load_from(&path);
+    assert_eq!(old.context_window("gpt-6.2-sol"), Some(272_000));
+    assert!(old.reasoning_levels("gpt-6.2-sol").is_empty());
+    assert_eq!(old.listed[0].default_reasoning_level, None);
 }
 
 #[test]
@@ -134,7 +146,7 @@ fn the_generation_reader_finds_the_number() {
 fn moved_sol() -> Snapshot {
     let mut s = Snapshot::seed();
     s.listed = measured_list();
-    s.listed.insert(0, Listed { slug: "gpt-7-sol".into(), priority: 0, context_window: None });
+    s.listed.insert(0, Listed { slug: "gpt-7-sol".into(), ..Listed::default() });
     let sol = s.family_mut("sol").unwrap();
     sol.previous = Some("gpt-6.2-sol".into());
     sol.current = "gpt-7-sol".into();

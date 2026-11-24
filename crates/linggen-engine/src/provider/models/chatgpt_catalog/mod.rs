@@ -29,13 +29,18 @@ pub(crate) mod tests;
 
 /// One model the backend listed for this account. Only visible models are
 /// kept.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Listed {
     pub slug: String,
     /// The backend's order, 1 first. Within a family, lower is newer.
     pub priority: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_window: Option<u64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reasoning_levels: Vec<String>,
+    /// Metadata only: Auto lets the provider apply its own default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_reasoning_level: Option<String>,
 }
 
 /// One built-in family (Sol, Terra, Luna) and where it stands.
@@ -297,6 +302,12 @@ impl Snapshot {
             "builtins": self.builtin_ids(),
             "successors": self.successors(),
         })
+    }
+
+    /// The supported effort values the backend listed for this exact slug.
+    pub(super) fn reasoning_levels(&self, slug: &str) -> &[String] {
+        self.listed.iter().find(|m| m.slug == slug)
+            .map_or(&[], |m| m.reasoning_levels.as_slice())
     }
 
     /// The context window the backend listed for [slug].

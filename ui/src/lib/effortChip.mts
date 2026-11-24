@@ -9,6 +9,7 @@ export interface ChipModel { id: string; effort?: string[] | null }
 /** The fixed word of each value the engine can offer, as the Models page says it. */
 export const EFFORT_WORD: Record<string, string> = {
   low: W.effortLow, medium: W.effortMedium, high: W.effortHigh, xhigh: W.effortXhigh, max: W.effortMax,
+  ultra: W.effortUltra,
 };
 
 export interface Chip {

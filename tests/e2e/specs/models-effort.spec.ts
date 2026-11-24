@@ -51,6 +51,17 @@ test('the chip appears for a model that offers effort, keeps its choice over a r
   await expect(page.getByTestId('session-effort')).toHaveValue('');
 });
 
+test('a ChatGPT sign-in row offers low, medium and high before catalog metadata arrives', async ({ page, world, httpRequests }) => {
+  await page.goto(`${world.url}/?session=${FERRY}&lang=zh`);
+  await expectWebRtc(page, httpRequests);
+  await page.getByTestId('session-model').selectOption('fake-sol');
+  const chip = page.getByTestId('session-effort');
+  await expect(chip).toBeVisible();
+  await expect(chip.locator('option')).toHaveText(['思考: 自动', '思考: 低', '思考: 中', '思考: 高']);
+  await chip.selectOption('high');
+  await expect(chip).toHaveValue('high');
+});
+
 const CLAUDE = `
 [[models]]
 id = "claude"

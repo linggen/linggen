@@ -5,7 +5,7 @@
 mod chat_completions;
 mod citations;
 mod image_gen;
-mod responses_api;
+pub(super) mod responses_api;
 mod strict_schema;
 mod wire;
 

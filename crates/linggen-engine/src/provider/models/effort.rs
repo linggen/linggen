@@ -18,13 +18,13 @@
 //! default's value the model does not offer also means the provider's default
 //! for that call; the choice is kept where it is stored, and the caller is
 //! told ([`Resolved::held_back`]) so the conversation can say so once.
-//! Which values a model offers: the catalog's `reasoning_options` for it,
-//! cut to what its wire can carry ([`wire_values`]).
+//! A model's effort choices come from its catalog, cut to what its wire
+//! can carry. ChatGPT sign-in uses its own catalog, not API-key facts.
 
-use super::{family_catalog, ModelManager};
+use super::{chatgpt_catalog, family_catalog, ModelManager};
 use crate::config::{ModelConfig, ProviderKind, SignIn};
 use crate::provider::anthropic::AnthropicClient;
-use crate::provider::openai::OpenAiClient;
+use crate::provider::openai::{responses_api, OpenAiClient};
 
 /// What the caller of a call has to say about effort, by who says it.
 #[derive(Clone, Copy, Debug, Default)]
@@ -91,38 +91,48 @@ fn candidates<'a>(ask: &EffortAsk<'a>, row: &'a ModelConfig) -> [(Source, Option
     ]
 }
 
-/// The values a wire can carry, all models of it. Exhaustive: a new kind of
-/// provider says here what it carries.
-fn wire_values(kind: ProviderKind) -> &'static [&'static str] {
-    match kind {
-        ProviderKind::OpenAiCompatible | ProviderKind::ChatGpt => &OpenAiClient::EFFORT_VALUES,
-        ProviderKind::Anthropic => &AnthropicClient::EFFORT_VALUES,
-        // Nothing is forwarded to either today.
-        ProviderKind::Ollama | ProviderKind::Proxy => &[],
-    }
-}
-
-/// Whether the backend has its own gate on a value it is given
-/// (`OpenAiClient::apply_reasoning_effort`), so a legacy value is left to it.
-fn backend_gates_itself(kind: ProviderKind) -> bool {
-    matches!(kind, ProviderKind::OpenAiCompatible | ProviderKind::ChatGpt)
-}
-
-/// What a row offers: its catalog's values that its wire carries. Only a
-/// key-signed-in row has facts here. A sign-in's capabilities must come from
-/// its own backend, not from the file of API facts; the Claude sign-in is
-/// left out until the docs say the field is accepted there.
+/// What a row offers: its catalog's values that its wire carries.
 fn choices(row: &ModelConfig) -> Vec<&'static str> {
-    let wire = wire_values(row.provider_kind());
-    let openai = row.provider_kind() == ProviderKind::OpenAiCompatible;
-    if row.sign_in() != SignIn::Key || wire.is_empty()
-        || (openai && !OpenAiClient::model_supports_reasoning(&row.model, OpenAiClient::gemini_wire(&row.url)))
-    {
-        return Vec::new();
+    match row.sign_in() {
+        SignIn::ChatGpt => chatgpt_choices(row, &chatgpt_catalog::current()),
+        SignIn::Key => key_choices(row),
+        // Claude sign-in does not send the effort field.
+        SignIn::Claude | SignIn::LinggenAccount | SignIn::Unknown => Vec::new(),
     }
+}
+
+fn chatgpt_choices(row: &ModelConfig, catalog: &chatgpt_catalog::Snapshot) -> Vec<&'static str> {
+    let levels = catalog.reasoning_levels(&row.model);
+    if levels.is_empty() {
+        // Before the backend supplies levels (including old caches), offer
+        // the official baseline: low, medium and high.
+        return responses_api::BASE_EFFORT_VALUES.to_vec();
+    }
+    responses_api::EFFORT_VALUES.iter().copied()
+        .filter(|value| levels.iter().any(|level| level == *value))
+        .collect()
+}
+
+fn key_choices(row: &ModelConfig) -> Vec<&'static str> {
+    let wire: &[&str] = match row.provider_kind() {
+        ProviderKind::OpenAiCompatible if OpenAiClient::model_supports_reasoning(
+            &row.model, OpenAiClient::gemini_wire(&row.url),
+        ) => &OpenAiClient::EFFORT_VALUES,
+        ProviderKind::Anthropic => &AnthropicClient::EFFORT_VALUES,
+        ProviderKind::OpenAiCompatible | ProviderKind::ChatGpt | ProviderKind::Ollama | ProviderKind::Proxy => return Vec::new(),
+    };
     let catalog = family_catalog::current();
     let Some(facts) = catalog.exact(row) else { return Vec::new() };
     wire.iter().copied().filter(|value| facts.effort_values().any(|v| v == *value)).collect()
+}
+
+/// Preserve the old gate for forced and legacy values outside the choices.
+fn passes_legacy_gate(row: &ModelConfig, value: &str) -> bool {
+    if row.sign_in() == SignIn::ChatGpt {
+        return OpenAiClient::model_supports_reasoning(&row.model, false)
+            && responses_api::BASE_EFFORT_VALUES.iter().any(|v| v.eq_ignore_ascii_case(value));
+    }
+    row.provider_kind() == ProviderKind::OpenAiCompatible
 }
 
 pub(super) fn resolve(row: &ModelConfig, ask: &EffortAsk<'_>) -> Resolved {
@@ -140,7 +150,7 @@ pub(super) fn resolve(row: &ModelConfig, ask: &EffortAsk<'_>) -> Resolved {
     }
     match source {
         Source::Choice => omit(Some(value.to_string())),
-        Source::Forced | Source::Legacy if backend_gates_itself(row.provider_kind()) => {
+        Source::Forced | Source::Legacy if passes_legacy_gate(row, value) => {
             Resolved { effort: Effort(Some(value.to_string())), held_back: None }
         }
         Source::Forced | Source::Legacy => omit(None),
@@ -211,11 +221,33 @@ mod tests {
     }
 
     #[test]
-    fn a_sign_in_offers_nothing_until_its_own_backend_says() {
-        // The Claude sign-in: the docs name no sign-in for the field, so none is sent.
+    fn claude_sign_in_offers_no_effort() {
         assert!(choices(&row("claude-sonnet-5-5", "anthropic", "", Some("claude_oauth"), None)).is_empty());
-        // ChatGPT's capabilities come from its backend, not the API-facts file.
-        assert!(choices(&row("gpt-6.2-sol", "chatgpt", "", Some("chatgpt_oauth"), None)).is_empty());
+    }
+
+    #[test]
+    fn chatgpt_sign_in_without_levels_offers_low_medium_high() {
+        let sol = row("gpt-6.2-sol", "chatgpt", "", Some("chatgpt_oauth"), None);
+        assert_eq!(choices(&sol), ["low", "medium", "high"]);
+    }
+
+    #[test]
+    fn chatgpt_sign_in_offers_only_the_exact_models_levels_the_wire_can_send() {
+        let sol = row("gpt-6.2-sol", "chatgpt", "", Some("chatgpt_oauth"), None);
+        let mut catalog = chatgpt_catalog::Snapshot::seed();
+        catalog.listed = chatgpt_catalog::listing::parse_list(&serde_json::json!({"models": [
+            {"slug": "gpt-6.2-sol", "supported_reasoning_levels": [
+                {"effort": "ultra"}, {"effort": "max"}, {"effort": "medium"},
+                {"effort": "xhigh"}, {"effort": "future"}, {"effort": "medium"}
+            ]},
+            {"slug": "gpt-6.1-terra", "supported_reasoning_levels": [{"effort": "future"}]},
+            {"slug": "gpt-6-luna", "supported_reasoning_levels": []},
+        ]}));
+        assert_eq!(chatgpt_choices(&sol, &catalog), ["medium", "xhigh", "max", "ultra"]);
+        let terra = row("gpt-6.1-terra", "chatgpt", "", None, None);
+        assert!(chatgpt_choices(&terra, &catalog).is_empty(), "a nonempty list does not fall back");
+        let luna = row("gpt-6-luna", "chatgpt", "", None, None);
+        assert_eq!(chatgpt_choices(&luna, &catalog), ["low", "medium", "high"]);
     }
 
     #[test]
@@ -273,10 +305,13 @@ mod tests {
     }
 
     #[test]
-    fn a_default_that_does_not_fit_a_sign_in_row_omits_and_is_told() {
+    fn chatgpt_without_levels_sends_a_baseline_choice_but_not_an_unadvertised_extra() {
         let sol = row("gpt-6.2-sol", "chatgpt", "", Some("chatgpt_oauth"), None);
         let ask = EffortAsk { chat_default: Some("high"), ..EffortAsk::default() };
-        assert_eq!(resolve(&sol, &ask), Resolved { effort: Effort(None), held_back: Some("high".into()) });
+        assert_eq!(resolve(&sol, &ask), Resolved { effort: Effort(Some("high".into())), held_back: None });
+        let ask = EffortAsk { chat_default: Some("xhigh"), ..EffortAsk::default() };
+        assert_eq!(resolve(&sol, &ask), Resolved { effort: Effort(None), held_back: Some("xhigh".into()) });
+        assert_eq!(sent(&sol, EffortAsk::agent(Some("ultra"))), None);
     }
 
     #[test]
@@ -284,7 +319,8 @@ mod tests {
         let models = ModelManager::new_with_credentials(vec![], &Default::default());
         let ask = EffortAsk { session: Some("high"), ..EffortAsk::default() };
         assert_eq!(models.resolve_effort("not-a-model", &ask).effort.wire(), None);
-        assert!(models.effort_choices("gpt-6-luna").is_empty());
+        assert!(models.effort_choices("not-a-model").is_empty());
+        assert_eq!(models.effort_choices("gpt-6-luna"), ["low", "medium", "high"], "the built-in is known");
     }
 
     /// The lock: the row's, agent's and the chat default's effort are read by

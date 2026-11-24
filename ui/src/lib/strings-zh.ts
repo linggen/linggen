@@ -413,6 +413,7 @@ export const ZH: Record<string, string> = {
   'High effort': '高',
   'Extra high effort': '超高',
   'Max effort': '最高',
+  'Ultra effort': '极限',
   'Thinking': '思考',
   'Qwen3-TTS speaker': 'Qwen3-TTS 音色',
   'System voice': '系统语音',
