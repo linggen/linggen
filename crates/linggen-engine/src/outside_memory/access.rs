@@ -7,8 +7,8 @@
 //! cannot use this to learn what is on the disk.
 
 use super::redact::{clean, Clean};
-use super::sources::SOURCES;
-use super::{shorten, Env};
+use super::sources::{Source, SOURCES};
+use super::{shorten, Agent, Env};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
@@ -161,14 +161,25 @@ fn is_note(path: &Path) -> bool {
 /// Every note file of every source: a root that is a file, or the files in
 /// a root folder (two levels down). Links are not followed.
 fn note_files(env: &Env) -> Vec<(&'static str, PathBuf)> {
-    let mut found = Vec::new();
-    for source in SOURCES {
-        for root in (source.roots)(env) {
-            collect(source.id, &root, 0, &mut found);
-        }
-    }
+    let mut found: Vec<(&'static str, PathBuf)> = by_root(env)
+        .into_iter()
+        .flat_map(|(source, _, files)| files.into_iter().map(move |f| (source.id, f)))
+        .collect();
     found.truncate(SEARCH_FILES);
     found
+}
+
+/// Each root of each source, with the note files in it.
+fn by_root(env: &Env) -> Vec<(&'static Source, PathBuf, Vec<PathBuf>)> {
+    let mut out = Vec::new();
+    for source in SOURCES {
+        for root in (source.roots)(env) {
+            let mut files = Vec::new();
+            collect(source.id, &root, 0, &mut files);
+            out.push((source, root, files.into_iter().map(|(_, f)| f).collect()));
+        }
+    }
+    out
 }
 
 fn collect(
@@ -199,4 +210,61 @@ fn read_head(path: &Path, max: u64) -> std::io::Result<Vec<u8>> {
     let mut bytes = Vec::new();
     fs::File::open(path)?.take(max).read_to_end(&mut bytes)?;
     Ok(bytes)
+}
+
+/// One note file a person can open, as the page lists it.
+#[derive(Clone, Debug)]
+pub struct NoteFile {
+    pub path: PathBuf,
+    pub name: String,
+    pub bytes: u64,
+    /// Seconds since the epoch.
+    pub changed: u64,
+}
+
+/// A folder (or single file) of an agent's notes.
+#[derive(Clone, Debug)]
+pub struct Place {
+    pub root: PathBuf,
+    pub files: Vec<NoteFile>,
+}
+
+/// One agent's memory as it is on this machine: every place the registry
+/// reads for it.
+#[derive(Clone, Debug)]
+pub struct AgentMemory {
+    pub agent: Agent,
+    pub places: Vec<Place>,
+}
+
+/// The agents the registry reads, each with the note files found now —
+/// listed in the registry's order, an agent once. A listing only: the
+/// files are read with [`read`].
+pub fn listing(env: &Env) -> Vec<AgentMemory> {
+    let mut out: Vec<AgentMemory> = Vec::new();
+    for source in SOURCES {
+        if !out.iter().any(|m| m.agent == source.agent) {
+            out.push(AgentMemory { agent: source.agent, places: Vec::new() });
+        }
+    }
+    for (source, root, files) in by_root(env) {
+        let files = files.into_iter().filter_map(|path| note_file(&path)).collect();
+        let memory = out.iter_mut().find(|m| m.agent == source.agent).expect("every source's agent is listed");
+        memory.places.push(Place { root, files });
+    }
+    out
+}
+
+fn note_file(path: &Path) -> Option<NoteFile> {
+    let meta = fs::metadata(path).ok()?;
+    Some(NoteFile {
+        path: path.to_path_buf(),
+        name: path.file_name()?.to_string_lossy().to_string(),
+        bytes: meta.len(),
+        changed: meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+            .map_or(0, |d| d.as_secs()),
+    })
 }

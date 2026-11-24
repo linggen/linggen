@@ -1,5 +1,5 @@
 /**
- * Settings → Notes: what Linggen remembers, by source (`GET /api/memory-sources`,
+ * Settings → Notes: what Linggen remembers, by source (`GET /api/remembered-sources`,
  * `server/api/memory_sources.rs`) — Linggen's own notes, which the owner may
  * tend, and what other agents keep, which is shown and never changed. The
  * engine decides what holds; the page shows its answer and sends the owner's

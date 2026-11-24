@@ -385,8 +385,24 @@ which memory Linggen's own sessions have; v1 is everything above, unchanged.
   folder (and the person's, with core) and no tool.
 - **Outside hosts** — the same tool is on the MCP door (`mcp-spec.md`) for a
   host with no memory of its own, served when `outside_agents = "v2"`.
+- **Settings → Notes** — the owner sees and tends what Linggen remembers,
+  by source: Linggen's own notes, and each agent the registry reads (Claude
+  Code, Codex, …; the tabs come from `outside_memory::listing`, the page names
+  no agent). Linggen's notes can be edited, marked wrong and right again,
+  kept from being raised (`no-raise`), and deleted (the file's last version
+  stays in `.state/history`, which keeps 20 per file; a file left with no
+  notes goes). Each is one call to the one writer as the person
+  (`user_directed`, so a note in their own voice changes too). Un-void and
+  delete are the page's alone: the tool has no word for them. Other agents'
+  files are listed and read (redacted, as `memory_agents` does) with their
+  path, and no route changes them: the routes that change a note name a note
+  id and no source (`api/memory_sources.rs`; all admin). A review list
+  shows notes marked wrong and notes not read for 90 days and not changed in
+  them. Looking counts no use, or opening the page would empty that list. The
+  page reads as the person, who sees the fenced notes too (`page::OWNER`).
+  It sits beside the v1 Memory page, which stays while v1 is on.
 - **Not built yet** — migration of v1 rows, the chronicle, Yinyue's daily
-  context, the Settings page, phone sync.
+  context, phone sync.
 
 ## Open / next
 

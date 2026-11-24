@@ -34,7 +34,7 @@ async function openNotes(page: Page, url: string, httpRequests: string[]) {
   await page.goto(`${url}/settings`);
   await expectWebRtc(page, httpRequests);
   await page.getByRole('button', { name: 'Notes', exact: true }).click();
-  await expect(page.getByTestId('memory-sources')).toBeVisible();
+  await expect(page.getByTestId('remembered-sources')).toBeVisible();
 }
 
 const note = (page: Page, id: string) => page.locator(`[data-testid="memory-note"][data-id="${id}"]`);

@@ -69,7 +69,7 @@ test('the page changes notes only through the one api object, and names no write
   }
   const endpoints = readFileSync(new URL('../src/lib/endpoints.ts', import.meta.url), 'utf8');
   // The changes name a note and no source: nothing of another agent's can be addressed.
-  assert.doesNotMatch(endpoints, /memory-sources\/[^`]*`,\s*\{/);
+  assert.doesNotMatch(endpoints, /remembered-sources\/[^`]*`,\s*\{/);
 });
 
 function fakeClock() {

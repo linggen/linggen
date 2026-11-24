@@ -31,7 +31,7 @@ export const MemorySourcesTab: React.FC = () => {
   }
   const active = sources.value.find((s) => s.id === picked) ?? sources.value[0];
   return (
-    <div className="space-y-4" data-testid="memory-sources">
+    <div className="space-y-4" data-testid="remembered-sources">
       <Section title={WORDS.title} desc={WORDS.intro}>
         <div role="tablist" className="flex flex-wrap gap-2">
           {sources.value.map((s) => (

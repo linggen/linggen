@@ -28,6 +28,7 @@ mod heralds;
 mod hearing;
 mod mac_tools;
 mod memory_ops;
+mod memory_sources;
 mod met;
 mod model_kinds;
 mod leftovers;

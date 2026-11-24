@@ -10,7 +10,8 @@
 //! - Who may see what: [`fence`], by [`fence::Audience`]. Every way out of
 //!   the store ends there (`tests::only_the_fence_loads_and_only_write_saves`).
 //! - What is written and how: [`write::write`], the only saver.
-//! - What a session is shown at start: [`index::index`].
+//! - What a session is shown at start: [`index::index`]. What Settings shows
+//!   of the notes: [`page`] (read only; its edits are [`write::write`]'s).
 //! - Which memory a session has, v1 or v2: [`Mode`] (`[memory] linggen`).
 //!   The tool's ops: [`call::call`].
 
@@ -19,6 +20,7 @@ pub mod fence;
 pub mod find;
 pub mod format;
 pub mod index;
+pub mod page;
 pub mod prompt;
 pub mod spec;
 mod store;

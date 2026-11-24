@@ -346,3 +346,36 @@ fn source_ids_are_distinct() {
     ids.dedup();
     assert_eq!(ids.len(), n);
 }
+
+// ── the listing the page shows ─────────────────────────────────────────────
+
+/// The page's listing names each registered agent once with its places and
+/// files, reads nothing of a file's text and changes nothing.
+#[test]
+fn the_listing_shows_each_agent_once_with_its_files() {
+    let (_d, env) = scratch();
+    let project = env.home().join("work/app");
+    let memory = cc_memory(&env, &project);
+    put(&memory.join("MEMORY.md"), &index_of(&[("Build", "build.md")]));
+    put(&memory.join("build.md"), "Use just test.\n");
+    put(&env.home().join(".codex/memories/summary.md"), "A codex note.\n");
+
+    let before = fs::read(memory.join("build.md")).unwrap();
+    let listed = listing(&env);
+    assert_eq!(listed.iter().map(|m| m.agent.id()).collect::<Vec<_>>(), ["claude-code", "codex"]);
+    let claude = &listed[0];
+    assert_eq!(claude.places.len(), 1);
+    assert_eq!(claude.places[0].root, memory);
+    let mut names: Vec<&str> = claude.places[0].files.iter().map(|f| f.name.as_str()).collect();
+    names.sort();
+    assert_eq!(names, ["MEMORY.md", "build.md"]);
+    assert_eq!(listed[1].places[0].files[0].name, "summary.md");
+    assert_eq!(fs::read(memory.join("build.md")).unwrap(), before);
+}
+
+#[test]
+fn an_agent_with_no_files_is_still_listed_with_none() {
+    let (_d, env) = scratch();
+    let listed = listing(&env);
+    assert_eq!(listed.iter().map(|m| (m.agent.id(), m.places.len())).collect::<Vec<_>>(), [("claude-code", 0), ("codex", 0)]);
+}

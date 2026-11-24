@@ -277,19 +277,19 @@ export const storageApi = {
  *  take any source; the changes name a note and no source — only Linggen's own
  *  can be changed. `base` is the version of the note's file the page showed. */
 export const memorySourcesApi = {
-  sources: () => apiGet<{ sources: Source[] }>('/api/memory-sources'),
-  topics: (source: string) => apiGet<{ topics: Topic[] }>(`/api/memory-sources/${encodeURIComponent(source)}/topics`),
+  sources: () => apiGet<{ sources: Source[] }>('/api/remembered-sources'),
+  topics: (source: string) => apiGet<{ topics: Topic[] }>(`/api/remembered-sources/${encodeURIComponent(source)}/topics`),
   ownNotes: (topic: string) =>
-    apiGet<{ entries: Note[] }>(`/api/memory-sources/linggen/entries?${q({ topic })}`),
+    apiGet<{ entries: Note[] }>(`/api/remembered-sources/linggen/entries?${q({ topic })}`),
   files: (source: string, topic: string) =>
-    apiGet<{ entries: FileEntry[] }>(`/api/memory-sources/${encodeURIComponent(source)}/entries?${q({ topic })}`),
+    apiGet<{ entries: FileEntry[] }>(`/api/remembered-sources/${encodeURIComponent(source)}/entries?${q({ topic })}`),
   fileText: (source: string, path: string) =>
-    apiGet<{ path: string; text: string; truncated: boolean }>(`/api/memory-sources/${encodeURIComponent(source)}/note?${q({ path })}`),
-  review: () => apiGet<{ review: ReviewNote[] }>('/api/memory-notes/review'),
+    apiGet<{ path: string; text: string; truncated: boolean }>(`/api/remembered-sources/${encodeURIComponent(source)}/note?${q({ path })}`),
+  review: () => apiGet<{ review: ReviewNote[] }>('/api/remembered-notes/review'),
   edit: (id: string, change: { summary?: string; body?: string; base?: string }) =>
-    apiPut<{ note: Note }>(`/api/memory-notes/${id}`, change),
-  void: (id: string, reason: string, base?: string) => apiPost<{ note: Note }>(`/api/memory-notes/${id}/void`, { reason, base }),
-  unvoid: (id: string, base?: string) => apiPost<{ note: Note }>(`/api/memory-notes/${id}/unvoid`, { base }),
-  noRaise: (id: string, on: boolean, base?: string) => apiPost<{ note: Note }>(`/api/memory-notes/${id}/no-raise`, { on, base }),
-  remove: (id: string) => apiDelete<{ deleted: string }>(`/api/memory-notes/${id}`),
+    apiPut<{ note: Note }>(`/api/remembered-notes/${id}`, change),
+  void: (id: string, reason: string, base?: string) => apiPost<{ note: Note }>(`/api/remembered-notes/${id}/void`, { reason, base }),
+  unvoid: (id: string, base?: string) => apiPost<{ note: Note }>(`/api/remembered-notes/${id}/unvoid`, { base }),
+  noRaise: (id: string, on: boolean, base?: string) => apiPost<{ note: Note }>(`/api/remembered-notes/${id}/no-raise`, { on, base }),
+  remove: (id: string) => apiDelete<{ deleted: string }>(`/api/remembered-notes/${id}`),
 };

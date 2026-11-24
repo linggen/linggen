@@ -26,7 +26,7 @@ mod sources;
 #[cfg(test)]
 mod tests;
 
-pub use access::{read, search, Hit, Note, ReadError};
+pub use access::{listing, read, search, AgentMemory, Hit, Note, NoteFile, Place, ReadError};
 pub use redact::Clean;
 pub use slice::{slice, Slice, SourceNote, BUDGET_BYTES};
 pub use sources::{reports, SourceReport};
@@ -81,6 +81,14 @@ impl Agent {
         match self {
             Agent::ClaudeCode => "Claude Code",
             Agent::Codex => "Codex",
+        }
+    }
+
+    /// The agent's name in an address and in the page's tabs.
+    pub fn id(self) -> &'static str {
+        match self {
+            Agent::ClaudeCode => "claude-code",
+            Agent::Codex => "codex",
         }
     }
 
