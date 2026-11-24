@@ -40,7 +40,7 @@ import { useChatActions } from '../../hooks/useChatActions';
 import { sessionApi } from '../../lib/endpoints';
 import { startNewChat } from '../../lib/newChat';
 import { sessionFolderLabel } from '../../lib/sessionRoot.mts';
-import { runLabel } from '../../lib/runStatus.mts';
+import { runLabel, withModelName } from '../../lib/runStatus.mts';
 import { askedElsewhere, askedFrom, pagePlace, placeName, stopLabel, withLivePlaces, workingIn } from '../../lib/dayFold.mts';
 import { useRunningElsewhere } from '../../hooks/useRunningElsewhere';
 import { boxSlot } from '../../lib/chatDrafts.mts';
@@ -548,7 +548,7 @@ export const ChatPanel: React.FC<{
       <RunStatusLine
         active={isAgentActive}
         reconnecting={reconnecting}
-        label={runningAtName ? workingIn(runningAtName) : runLabel(activePlan, agentStatusText?.[sessionId || ''], spinnerVerb)}
+        label={runningAtName ? workingIn(runningAtName) : runLabel(activePlan, withModelName(agentStatusText?.[sessionId || ''], (id) => modelsList?.find((m) => m.id === id)?.name), spinnerVerb)}
         elapsed={thinkingElapsed}
         tokensPerSec={tokensPerSec}
         context={agentContext?.[sessionId || '']}

@@ -55,3 +55,11 @@ test('a plan not being worked, or a todo without an active form, leaves the old 
   assert.equal(runLabel(bare, 'Idle', 'Musing'), 'Musing');
   assert.equal(runLabel(null, undefined, ''), 'Thinking');
 });
+
+test('the spinner names the model, not its row id', async () => {
+  const { withModelName } = await import('../src/lib/runStatus.mts');
+  const names: Record<string, string> = { 'fam-30f1cbae78': 'Claude Sonnet 5.5' };
+  assert.equal(withModelName('Thinking (fam-30f1cbae78)', (id) => names[id]), 'Thinking (Claude Sonnet 5.5)');
+  assert.equal(withModelName('Thinking (unknown-row)', (id) => names[id]), 'Thinking (unknown-row)');
+  assert.equal(withModelName('Compacting conversation', (id) => names[id]), 'Compacting conversation');
+});

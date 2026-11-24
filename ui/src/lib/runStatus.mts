@@ -29,6 +29,14 @@ export function spinnerLabel(text: string | undefined): string | undefined {
   return text && text !== 'Idle' ? text : undefined;
 }
 
+/** The engine says "Thinking (<model row id>)"; the person reads the model's
+ *  name, the same one the chat's model menu shows (`nameOf` there). */
+export function withModelName(text: string | undefined, nameOf: (id: string) => string | undefined): string | undefined {
+  const m = text?.match(/^Thinking \((.+)\)$/);
+  if (!m) return text;
+  return `Thinking (${nameOf(m[1]) ?? m[1]})`;
+}
+
 /** The bits of a plan the run line reads (`Plan` from types/generated). */
 export interface RunPlan {
   status: string;
