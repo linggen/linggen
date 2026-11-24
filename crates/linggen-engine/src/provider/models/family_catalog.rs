@@ -13,6 +13,8 @@ pub(crate) use selection::{family_current, Access, AccessEvidence, Connection, F
 #[cfg(test)]
 mod tests;
 pub(crate) use refresh::start;
+// The curated list reads over the same transport (its refresh is a second reader until v1 is retired).
+pub(super) use refresh::{valid_etag, Reply, Transport, CHECK_EVERY_DAYS};
 
 /// Capture once at a decision boundary. Never performs I/O.
 pub(crate) fn current() -> std::sync::Arc<Snapshot> {
@@ -253,12 +255,12 @@ fn seed() -> &'static std::sync::Arc<Snapshot> {
     })
 }
 
-fn word(s: &str) -> bool { !s.trim().is_empty() }
+pub(super) fn word(s: &str) -> bool { !s.trim().is_empty() }
 fn words(xs: &[String]) -> bool {
     !xs.is_empty() && xs.iter().all(|s| word(s)) && xs.iter().collect::<BTreeSet<_>>().len() == xs.len()
 }
 
-fn date(s: &str) -> Option<NaiveDate> {
+pub(super) fn date(s: &str) -> Option<NaiveDate> {
     let day = s.parse::<NaiveDate>().ok()?;
     (s.len() == 10 && !s.starts_with("0000") && day.to_string() == s).then_some(day)
 }
@@ -305,7 +307,8 @@ impl ModelFacts {
         self.stability == Stability::Stable && self.text_chat() && self.release_date.as_deref().and_then(date).is_some()
     }
 
-    fn validate(&self, observed: NaiveDate) -> Result<()> {
+    /// Also the curated list's check of the facts it carries: one rule for both readers.
+    pub(super) fn validate(&self, observed: NaiveDate) -> Result<()> {
         ensure!(word(&self.id) && word(&self.name), "empty model id or label");
         ensure!([&self.family, &self.status, &self.task].into_iter().flatten().all(|s| word(s)), "empty optional model field");
         ensure!(self.release_date.as_deref().is_none_or(release_date), "invalid release date");
@@ -340,7 +343,7 @@ impl ModelFacts {
     }
 }
 
-fn endpoint(s: &str) -> Option<(url::Origin, String)> {
+pub(super) fn endpoint(s: &str) -> Option<(url::Origin, String)> {
     let u = url::Url::parse(s.trim()).ok()?;
     if u.scheme() != "https" || !u.username().is_empty() || u.password().is_some() || u.query().is_some() || u.fragment().is_some() {
         return None;

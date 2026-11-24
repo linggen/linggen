@@ -8,7 +8,7 @@ const URL: &str = "https://linggen.dev/model-catalog/v1.json";
 const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 const MAX_ETAG: usize = 512;
 /// The served catalog is regenerated weekly; asking more often finds nothing new.
-pub(super) const CHECK_EVERY_DAYS: i64 = 7;
+pub(in crate::provider::models) const CHECK_EVERY_DAYS: i64 = 7;
 
 type View = Arc<Snapshot>;
 static CURRENT: LazyLock<RwLock<Option<View>>> = LazyLock::new(|| RwLock::new(None));
@@ -88,7 +88,7 @@ fn read(path: &Path) -> io::Result<Vec<u8>> {
     Ok(bytes)
 }
 
-fn valid_etag(tag: &str) -> bool {
+pub(in crate::provider::models) fn valid_etag(tag: &str) -> bool {
     let quoted = tag.strip_prefix("W/").unwrap_or(tag);
     tag.len() <= MAX_ETAG && quoted.strip_prefix('"').and_then(|s| s.strip_suffix('"'))
         .is_some_and(|s| s.bytes().all(|b| b == 0x21 || (0x23..=0x7e).contains(&b)))
@@ -184,14 +184,14 @@ impl Cache {
     }
 }
 
-pub(super) enum Reply {
+pub(in crate::provider::models) enum Reply {
     Unchanged,
     Body { bytes: Vec<u8>, etag: Option<String> },
 }
 
 /// No credentials or configurable destination. A transport must cap the
 /// streamed bytes at `limit` and report non-200/304 responses as errors.
-pub(super) trait Transport {
+pub(in crate::provider::models) trait Transport {
     async fn get(&self, url: &str, etag: Option<&str>, limit: usize) -> anyhow::Result<Reply>;
 }
 

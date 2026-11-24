@@ -16,7 +16,8 @@
 use crate::credentials::url_host;
 
 /// How a person gets into a provider.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Way {
     /// An API key.
     Key,

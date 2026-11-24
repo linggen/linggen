@@ -18,6 +18,7 @@ pub mod chatgpt_catalog;
 mod effort;
 pub use effort::{Effort, EffortAsk, Resolved};
 pub mod families;
+pub(crate) mod curated;
 pub(crate) mod family_catalog;
 mod health;
 #[cfg(test)]
