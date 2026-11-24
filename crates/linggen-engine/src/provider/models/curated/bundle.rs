@@ -188,8 +188,13 @@ impl Bundle {
             return None;
         }
         let native = row.provider_kind() == ProviderKind::Anthropic;
-        // Anthropic's native client supplies its own base for an omitted address.
-        let at = |place: &Place<'_>| if row.url.trim().is_empty() { native && place.provider.adapter == Adapter::Anthropic } else { place.is_at(&row.url) };
+        // Anthropic's native client supplies its own base for an omitted address:
+        // only a place AT that base is the row's. A list that moves the base
+        // never lends the row's key to the new address.
+        let at = |place: &Place<'_>| {
+            let url = if row.url.trim().is_empty() && native { crate::provider::claude_auth::ANTHROPIC_API_BASE } else { row.url.as_str() };
+            place.is_at(url)
+        };
         [Edition::International, Edition::Mainland].into_iter()
             .flat_map(|edition| self.offered(edition))
             .find(|place| place.provider.sign_in == Way::Key && (place.provider.adapter == Adapter::Anthropic) == native && at(place))
@@ -367,6 +372,7 @@ impl Bundle {
                 ensure!(word(&entry.key) && word(&entry.label) && word(&entry.model) && entry_keys.insert(&entry.key), "entry fields");
                 ensure!(own.contains(&&entry.endpoint), "entry endpoint is not one of its provider's");
                 entry.check_kind()?;
+                self.check_live_host(entry)?;
             }
         }
         Ok(())
@@ -386,6 +392,18 @@ impl Bundle {
                 ensure!(ids.insert(m.id()), "duplicate model id in facts");
             }
         }
+        Ok(())
+    }
+}
+
+impl Bundle {
+    /// A live entry sits at the host its service's key is filed for.
+    fn check_live_host(&self, entry: &Entry) -> Result<()> {
+        let Some(live) = &entry.live else { return Ok(()) };
+        let host = self.endpoints.get(&entry.endpoint).and_then(|e| e.base.as_deref())
+            .and_then(|base| url::Url::parse(base).ok()).and_then(|u| u.host_str().map(str::to_ascii_lowercase));
+        let service = crate::live::PROVIDERS.iter().find(|p| p.id == live.service);
+        ensure!(service.zip(host).is_some_and(|(p, host)| p.key_host().eq_ignore_ascii_case(&host)), "live entry is not at its service's host");
         Ok(())
     }
 }

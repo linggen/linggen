@@ -114,6 +114,8 @@ struct Reference {
 pub(super) fn of(f: &Families, config: &Config, creds: &Credentials, (name, url): (&str, &str)) -> Option<FamiliesView> {
     let list = f.catalog();
     let endpoint = Endpoint::of(&list, name, url, creds)?;
+    // A provider the list approves nothing at (Groq, OpenRouter) has no families to show.
+    endpoint.place.tickable().next()?;
     let today = f.today();
     let result = endpoint.read_result(f);
     let listing = result.as_ref().and_then(|entry| entry.as_deref());

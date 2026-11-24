@@ -201,8 +201,6 @@ impl<'a> Endpoint<'a> {
 
     fn of_row(list: &'a Bundle, row: &ModelConfig, creds: &Credentials) -> Option<Self> {
         let place = list.place_of(row)?;
-        // Only a place with something to tick has families.
-        place.tickable().next()?;
         Some(Self { place, probe: row.clone(), key: credentials::resolve_api_key(row, creds) })
     }
 

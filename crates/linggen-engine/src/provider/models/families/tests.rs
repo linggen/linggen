@@ -562,6 +562,11 @@ async fn a_list_that_moves_an_address_gives_a_new_connection_with_no_key_and_sen
         w.ticked_on("claude-opus", "claude-opus-5", Mode::Follow);
         w.gather().await;
         assert_eq!(w.provider.asks.load(Ordering::SeqCst), 1);
+        // Anthropic's native client with no address written: its key is filed at its own default base.
+        let mut bare = w.settings.models[0].clone();
+        (bare.id, bare.url, bare.family_binding) = ("bare".into(), String::new(), None);
+        w.settings.models.push(bare);
+        w.creds.set_endpoint_key("anthropic", "", Some(KEY.into()));
         let (config, creds) = (toml::to_string(&w.settings).unwrap(), serde_json::to_string(&w.creds).unwrap());
         w.under(anthropic_moved_to(new));
         w.provider.lists("anthropic", &["claude-opus-5-5"]);
@@ -620,4 +625,16 @@ async fn an_exact_starter_with_no_facts_is_ticked_pinned_on_the_first_verified_c
     assert!(w.list.facts_for("qwen-cloud", "qwen-plus").is_none(), "no price borrowed from DashScope");
     let seen = serde_json::to_value(w.families.view(&w.settings, &w.creds, ("qwen", QWEN)).unwrap()).unwrap();
     assert_eq!(seen["rates_unavailable"], true);
+}
+
+#[tokio::test]
+async fn a_key_on_a_provider_with_nothing_approved_is_still_recorded_as_its_first_connection() {
+    let mut w = world(TODAY);
+    const GROQ: &str = "https://api.groq.com/openai/v1";
+    w.creds.set_endpoint_key("groq", GROQ, Some(KEY.into()));
+    w.provider.lists("groq", &["llama-3.3-70b-versatile"]);
+    w.families.gather(&w.settings, &w.creds, Some(("groq", GROQ))).await;
+    assert!(w.families.start_endpoint(&mut w.settings, &w.creds, ("groq", GROQ)));
+    assert!(w.settings.models.is_empty() && w.settings.family_starts.contains("groq"));
+    assert!(w.families.view(&w.settings, &w.creds, ("groq", GROQ)).is_none(), "nothing to tick, nothing shown");
 }
