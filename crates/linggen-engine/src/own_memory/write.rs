@@ -1,5 +1,5 @@
-//! The one writer: add, update by id, void, no-raise, yearly. Ling, Yinyue, the
-//! phone and an outside host with no memory of its own all write through
+//! The one writer: add, update by id, void, un-void, no-raise, yearly, delete.
+//! Ling, Yinyue, the phone and an outside host with no memory of its own all write through
 //! [`write`], and nothing else saves into the store.
 //!
 //! What it enforces, for every caller:
@@ -15,8 +15,11 @@
 //! - A chronicle line (kind chronicle) goes only in the chronicle, into the
 //!   file of its month or year, and is not held to the status rule — what
 //!   the person did is what it is for.
-//! - The old file is kept under `.state/history`; a topic past the limits is
-//!   split by [`Store::save`].
+//! - The old file is kept under `.state/history` (the last 20 versions of
+//!   each file); a topic past the limits is split by [`Store::save`].
+//! - Un-void and delete are the person's, from Settings: no tool op names
+//!   them (`call::write_of`), so an agent cannot bring back a note the
+//!   person marked wrong, nor remove one.
 
 use super::fence::{self, Audience};
 use super::format::{safe_body, one_line, meta_text, yearly_day, Entry, Kind, Scope, Topic, Voice, BODY_CHARS, SUMMARY_CHARS};
@@ -46,10 +49,15 @@ pub enum Action {
     Add { scope: Scope, topic: String, summary: String, kind: Kind, voice: Voice, body: String },
     Update { id: String, summary: Option<String>, body: Option<String>, kind: Option<Kind> },
     Void { id: String, reason: String },
+    /// The note is not wrong after all. Settings only.
+    Unvoid { id: String },
     NoRaise { id: String, on: bool },
     /// Set the day the note repeats every year (`MM-DD` or `YYYY-MM-DD`), or
     /// clear it (`None`).
     Yearly { id: String, day: Option<String> },
+    /// Take the note out of its topic; the file's last version stays in history.
+    /// Settings only.
+    Delete { id: String },
 }
 
 /// What a write did.
@@ -89,6 +97,29 @@ pub enum Refusal {
     /// The caller's version is gone and the file changed.
     ReadAgain,
     Disk(String),
+}
+
+impl Refusal {
+    /// A short word for the refusal, for a page to put in its own words
+    /// (the sentence in `Display` is written for an agent).
+    pub fn code(&self) -> &'static str {
+        match self {
+            Refusal::Status => "status",
+            Refusal::Empty(_) => "empty",
+            Refusal::TooLong(_) => "too_long",
+            Refusal::NotFound => "not_found",
+            Refusal::Fenced => "fenced",
+            Refusal::KindMismatch => "kind_mismatch",
+            Refusal::NotAPeriod => "not_a_period",
+            Refusal::NotADay => "not_a_day",
+            Refusal::UserVoice { .. } => "user_voice",
+            Refusal::TopicTaken => "topic_taken",
+            Refusal::Duplicate(_) => "duplicate",
+            Refusal::Conflict { .. } => "conflict",
+            Refusal::ReadAgain => "read_again",
+            Refusal::Disk(_) => "disk",
+        }
+    }
 }
 
 impl std::fmt::Display for Refusal {
@@ -159,6 +190,10 @@ pub fn write(store: &Store, audience: Audience, now: i64, w: &Write) -> Result<W
                 Ok(())
             }, &today)
         }
+        Action::Unvoid { id } => change(store, audience, w, id, |e| {
+            e.void = None;
+            Ok(())
+        }, &today),
         Action::NoRaise { id, on } => {
             let on = *on;
             change(store, audience, w, id, move |e| {
@@ -176,6 +211,7 @@ pub fn write(store: &Store, audience: Audience, now: i64, w: &Write) -> Result<W
                 Ok(())
             }, &today)
         }
+        Action::Delete { id } => delete(store, audience, w, id),
     }
 }
 
@@ -222,15 +258,18 @@ fn add(
     landed(store, audience, &id, merged)
 }
 
-/// Apply `edit` to the entry `id` in the current file, after the checks.
-fn change(
-    store: &Store,
-    audience: Audience,
-    w: &Write,
-    id: &str,
-    edit: impl FnOnce(&mut Entry) -> Result<(), Refusal>,
-    today: &str,
-) -> Result<Written, Refusal> {
+/// An entry about to change: where it is now, and whether the caller's
+/// version of its file was old (the rest of the file moved: a merge).
+struct Pending {
+    found: fence::Seen,
+    topic: Topic,
+    merged: bool,
+}
+
+/// The checks every change to an existing entry passes: the audience may
+/// see it, the person's own voice is changed only when they said so, and
+/// the entry is as the caller last saw it.
+fn prepare(store: &Store, audience: Audience, w: &Write, id: &str) -> Result<Pending, Refusal> {
     let found = fence::find(store, audience, id).ok_or(Refusal::NotFound)?;
     if !audience.can_write(&found.scope) {
         return Err(Refusal::Fenced);
@@ -253,7 +292,19 @@ fn change(
         }
         _ => false,
     };
-    let mut topic = file.topic;
+    Ok(Pending { found, topic: file.topic, merged })
+}
+
+/// Apply `edit` to the entry `id` in the current file, after the checks.
+fn change(
+    store: &Store,
+    audience: Audience,
+    w: &Write,
+    id: &str,
+    edit: impl FnOnce(&mut Entry) -> Result<(), Refusal>,
+    today: &str,
+) -> Result<Written, Refusal> {
+    let Pending { found, mut topic, merged } = prepare(store, audience, w, id)?;
     let entry = topic.entries.iter_mut().find(|e| e.id == found.entry.id).ok_or(Refusal::NotFound)?;
     edit(entry)?;
     if !entry.kind.fits(&found.scope) {
@@ -263,6 +314,20 @@ fn change(
     entry.source = one_line(&w.source, 40);
     store.save(&found.rel, topic).map_err(|e| Refusal::Disk(e.to_string()))?;
     landed(store, audience, &found.entry.id, merged)
+}
+
+/// Take the entry out of its file. A file left with no entries goes too
+/// ([`Store::remove`]); either way its last version is in the history.
+fn delete(store: &Store, audience: Audience, w: &Write, id: &str) -> Result<Written, Refusal> {
+    let Pending { found, mut topic, merged } = prepare(store, audience, w, id)?;
+    topic.entries.retain(|e| e.id != found.entry.id);
+    let saved = match topic.entries.is_empty() {
+        true => store.remove(&found.rel),
+        false => store.save(&found.rel, topic),
+    };
+    saved.map_err(|e| Refusal::Disk(e.to_string()))?;
+    let version = store.load(&found.rel).ok().flatten().map(|f| f.version).unwrap_or_default();
+    Ok(Written { id: found.entry.id, rel: found.rel, version, merged })
 }
 
 /// The entry is as it was in the version the caller saw — so a change to

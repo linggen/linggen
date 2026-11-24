@@ -514,15 +514,15 @@ fn source_of(file: &str) -> String {
 /// store, and the fence or the writer's rules no longer hold.
 #[test]
 fn only_the_fence_loads_and_only_write_saves() {
-    for file in ["call.rs", "chronicle.rs", "companion.rs", "find.rs", "format.rs", "index.rs", "mod.rs", "write.rs"] {
+    for file in ["call.rs", "chronicle.rs", "companion.rs", "find.rs", "format.rs", "index.rs", "mod.rs", "page.rs", "write.rs"] {
         let src = source_of(file);
         assert!(!src.contains("load_all_unfiltered("), "{file} loads topics around the fence");
         assert!(!src.contains("fs::write") && !src.contains("fs::rename") && !src.contains("File::create"), "{file} writes a file itself");
     }
-    for file in ["call.rs", "chronicle.rs", "companion.rs", "find.rs", "format.rs", "index.rs", "mod.rs", "fence.rs"] {
+    for file in ["call.rs", "chronicle.rs", "companion.rs", "find.rs", "format.rs", "index.rs", "mod.rs", "fence.rs", "page.rs"] {
         assert!(!source_of(file).contains(".save("), "{file} saves a topic; only write.rs does");
     }
-    for file in ["find.rs", "index.rs", "call.rs", "chronicle.rs", "companion.rs"] {
+    for file in ["find.rs", "index.rs", "call.rs", "chronicle.rs", "companion.rs", "page.rs"] {
         assert!(!source_of(file).contains(".load("), "{file} reads a file around the fence");
     }
 }
@@ -531,7 +531,7 @@ fn only_the_fence_loads_and_only_write_saves() {
 /// names a fenced area.
 #[test]
 fn the_only_audience_decision_is_in_the_fence() {
-    for file in ["call.rs", "chronicle.rs", "companion.rs", "find.rs", "index.rs", "write.rs", "store.rs"] {
+    for file in ["call.rs", "chronicle.rs", "companion.rs", "find.rs", "index.rs", "page.rs", "write.rs", "store.rs"] {
         let src = source_of(file);
         assert!(!src.contains("Area::Body") && !src.contains("Area::Mind"), "{file} names a fenced area");
     }
@@ -857,4 +857,129 @@ fn a_yearly_day_is_a_real_day_and_survives_the_file() {
     assert_eq!(write(&store, Audience::Companion, NOW, &bad).unwrap_err(), Refusal::NotADay);
     write(&store, Audience::Companion, NOW, &w(Action::Yearly { id: id.clone(), day: None })).unwrap();
     assert_eq!(read_entry(&store, Audience::Companion, &id).entry.yearly, None);
+}
+
+// ── Settings → Memory: the page's reads and its two person-only changes ───
+
+fn as_person(action: Action) -> Write {
+    Write { user_directed: true, ..w(action) }
+}
+
+/// Un-void and delete are Settings'. The tool has no word for them, so an
+/// agent cannot bring back a note the person marked wrong, nor remove one.
+#[test]
+fn the_tool_cannot_unvoid_or_delete() {
+    let (_d, store) = scratch();
+    let id = rule(&store, Scope::Person, "t", "A rule", "", NOW);
+    let me = Caller { audience: Audience::Companion, source: "linggen".into(), cwd: None };
+    call(&store, &me, "write", &json!({"action": "void", "id": id, "reason": "wrong"}), NOW).unwrap();
+    for action in ["unvoid", "delete", "remove"] {
+        let refused = call(&store, &me, "write", &json!({"action": action, "id": id}), NOW).unwrap_err();
+        assert!(refused.contains("unknown action"), "{action}: {refused}");
+    }
+    assert!(super::page::note(&store, &id).unwrap().void.is_some());
+    assert!(!super::spec::DESCRIPTION.contains("unvoid") && !super::spec::DESCRIPTION.contains("delete"));
+}
+
+#[test]
+fn a_voided_note_is_brought_back_by_unvoid() {
+    let (_d, store) = scratch();
+    let id = rule(&store, Scope::Person, "t", "A rule", "", NOW);
+    write(&store, Audience::Companion, NOW, &w(Action::Void { id: id.clone(), reason: "wrong".into() })).unwrap();
+    assert!(search(&store, Audience::Companion, "rule", 5, NOW).is_empty(), "a void note is not found");
+    write(&store, Audience::Companion, NOW, &w(Action::Unvoid { id: id.clone() })).unwrap();
+    assert_eq!(search(&store, Audience::Companion, "rule", 5, NOW).len(), 1);
+}
+
+/// A delete takes the entry out of its file, keeps the file's last version in
+/// history, removes a file left empty, and a note in the person's own voice
+/// needs `user_directed` like any other change.
+#[test]
+fn a_deleted_note_leaves_its_file_in_history() {
+    let (_d, store) = scratch();
+    let keep = rule(&store, Scope::Person, "t", "Keep me", "", NOW);
+    let go = rule(&store, Scope::Person, "t", "Delete me", "", NOW);
+    let mine = person(&store, "He said so himself", NOW);
+
+    let refused = write(&store, Audience::Companion, NOW, &w(Action::Delete { id: mine.clone() })).unwrap_err();
+    assert!(matches!(refused, Refusal::UserVoice { .. }), "{refused:?}");
+
+    let before = read_entry(&store, Audience::Companion, &go).version;
+    write(&store, Audience::Companion, NOW, &as_person(Action::Delete { id: go.clone() })).unwrap();
+    assert!(super::page::note(&store, &go).is_none());
+    assert!(super::page::note(&store, &keep).is_some());
+    let kept = store.at_version("person/t.md", &before).expect("the file as it was");
+    assert!(kept.entries.iter().any(|e| e.id == go), "history holds the deleted note");
+
+    // The last entry of a file takes the file with it.
+    write(&store, Audience::Companion, NOW, &as_person(Action::Delete { id: keep })).unwrap();
+    assert!(!store.root().join("person/t.md").exists());
+    assert!(super::page::note(&store, &mine).is_some(), "the other topic is untouched");
+    assert_eq!(write(&store, Audience::Companion, NOW, &as_person(Action::Delete { id: go })).unwrap_err(), Refusal::NotFound);
+}
+
+/// A delete from a page that showed an old version of a file where the same
+/// note changed since is a conflict, not a delete.
+#[test]
+fn deleting_a_note_that_changed_since_is_a_conflict() {
+    let (_d, store) = scratch();
+    let id = rule(&store, Scope::Person, "t", "A rule", "first", NOW);
+    let saw = read_entry(&store, Audience::Companion, &id).version;
+    let edit = Action::Update { id: id.clone(), summary: None, body: Some("second".into()), kind: None };
+    write(&store, Audience::Companion, NOW + 1, &w(edit)).unwrap();
+    let mut late = as_person(Action::Delete { id: id.clone() });
+    late.base = Some(saw);
+    assert!(matches!(write(&store, Audience::Companion, NOW + 2, &late), Err(Refusal::Conflict { .. })));
+    assert!(super::page::note(&store, &id).is_some());
+}
+
+/// The page sees the person's whole record, and looking counts no use.
+#[test]
+fn the_page_sees_everything_and_counts_no_use() {
+    let (_d, store) = scratch();
+    person(&store, "Name is Alex", NOW);
+    let mind = add_action(Scope::Area(Area::Mind), "past", "A hard year", Kind::Person, Voice::Agent, "Felt low.");
+    let mind = write(&store, Audience::Companion, NOW, &w(mind)).unwrap().id;
+    let overview = super::page::overview(&store);
+    assert_eq!(overview.topics.iter().map(|t| (t.path.as_str(), t.count)).collect::<Vec<_>>(), [("areas/mind/past.md", 1), ("person/about.md", 1)]);
+    assert_eq!(super::page::notes_of(&store, "areas/mind/past.md").unwrap()[0].id, mind);
+    assert_eq!(super::page::note(&store, &mind).unwrap().body, "Felt low.");
+    assert!(super::page::notes_of(&store, "../outside.md").is_err());
+    assert!(!store.root().join(".state/uses.jsonl").exists(), "the page counted a use");
+}
+
+/// Review: notes marked wrong, and notes neither read nor changed in 90
+/// days. A fresh note, a read one and a changed one are not in it.
+#[test]
+fn the_review_lists_the_void_and_the_unused_for_ninety_days() {
+    let (_d, store) = scratch();
+    let long_ago = NOW - 120 * DAY;
+    let old_unused = rule(&store, Scope::Person, "t", "Old and unused", "", long_ago);
+    let old_read = rule(&store, Scope::Person, "t", "Old but read", "", long_ago);
+    let old_edited = rule(&store, Scope::Person, "t", "Old but edited", "", long_ago);
+    let fresh = rule(&store, Scope::Person, "t", "Fresh", "", NOW - 2 * DAY);
+    let wrong = rule(&store, Scope::Person, "t", "Wrong one", "", NOW - 2 * DAY);
+    write(&store, Audience::Companion, NOW - DAY, &w(Action::Void { id: wrong.clone(), reason: "no longer true".into() })).unwrap();
+    write(&store, Audience::Companion, NOW - 10 * DAY, &w(Action::Update { id: old_edited.clone(), summary: None, body: Some("changed".into()), kind: None })).unwrap();
+    read(&store, Audience::Companion, &old_read, NOW - 5 * DAY).unwrap();
+
+    let rows = super::page::review(&store, NOW);
+    let got: Vec<(&str, super::page::Why)> = rows.iter().map(|r| (r.note.id.as_str(), r.why)).collect();
+    assert_eq!(got, [(wrong.as_str(), super::page::Why::Void), (old_unused.as_str(), super::page::Why::Unused)]);
+    assert!(![&fresh, &old_read, &old_edited].iter().any(|id| got.iter().any(|(g, _)| g == &id.as_str())));
+}
+
+/// The chronicle is never read into an index, so "not read" says nothing of
+/// it: its old lines are not in the review list. A line marked wrong still is.
+#[test]
+fn the_review_leaves_the_old_chronicle_alone_but_lists_a_wrong_line() {
+    let (_d, store) = scratch();
+    let long_ago = NOW - 200 * DAY;
+    let old = chronicle_line(&store, "2026-04", "2026-04-03 Moved to Berlin", long_ago).unwrap().id;
+    let wrong = chronicle_line(&store, "2026-04", "2026-04-09 A line that is wrong", long_ago).unwrap().id;
+    write(&store, Audience::Companion, NOW, &w(Action::Void { id: wrong.clone(), reason: "no".into() })).unwrap();
+    let rows = super::page::review(&store, NOW);
+    let got: Vec<&str> = rows.iter().map(|r| r.note.id.as_str()).collect();
+    assert_eq!(got, [wrong.as_str()]);
+    assert!(!got.contains(&old.as_str()));
 }

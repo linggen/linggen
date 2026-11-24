@@ -10,8 +10,9 @@
 //! - Who may see what: [`fence`], by [`fence::Audience`]. Every way out of
 //!   the store ends there (`tests::only_the_fence_loads_and_only_write_saves`).
 //! - What is written and how: [`write::write`], the only saver.
-//! - What a session is shown at start: [`index::index`]; and what Yinyue is
-//!   told of today's date: [`companion::today`].
+//! - What a session is shown at start: [`index::index`]; what Yinyue is
+//!   told of today's date: [`companion::today`]. What Settings shows of the
+//!   notes: [`page`] (read only; its edits are [`write::write`]'s).
 //! - What the chronicle reads and what it asks the model to write:
 //!   [`chronicle`] (it saves nothing itself; the writer does).
 //! - Which memory a session has, v1 or v2: [`Mode`] (`[memory] linggen`).
@@ -24,6 +25,7 @@ pub mod fence;
 pub mod find;
 pub mod format;
 pub mod index;
+pub mod page;
 pub mod prompt;
 pub mod spec;
 mod store;

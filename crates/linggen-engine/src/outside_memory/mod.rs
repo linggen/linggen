@@ -26,7 +26,7 @@ mod sources;
 #[cfg(test)]
 mod tests;
 
-pub use access::{read, search, touched, Hit, Note, ReadError, Touched};
+pub use access::{listing, read, search, touched, AgentMemory, Hit, Note, NoteFile, Place, ReadError, Touched};
 pub use redact::Clean;
 // The chronicle cleans what it quotes of the person's sessions the same way.
 pub(crate) use redact::clean;
@@ -83,6 +83,14 @@ impl Agent {
         match self {
             Agent::ClaudeCode => "Claude Code",
             Agent::Codex => "Codex",
+        }
+    }
+
+    /// The agent's name in an address and in the page's tabs.
+    pub fn id(self) -> &'static str {
+        match self {
+            Agent::ClaudeCode => "claude-code",
+            Agent::Codex => "codex",
         }
     }
 

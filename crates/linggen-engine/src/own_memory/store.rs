@@ -147,6 +147,15 @@ impl Store {
         fs::rename(&temp, &path)
     }
 
+    /// Take the file `rel` away, its last version kept in the history.
+    pub(super) fn remove(&self, rel: &str) -> std::io::Result<()> {
+        let path = self.root.join(rel);
+        if let Ok(old) = fs::read(&path) {
+            self.keep_history(rel, &old)?;
+        }
+        fs::remove_file(&path)
+    }
+
     fn history_dir(&self, rel: &str) -> PathBuf {
         self.root.join(STATE).join("history").join(rel.replace('/', "__"))
     }

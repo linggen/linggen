@@ -17,7 +17,7 @@ use std::path::Path;
 
 pub const INDEX_LINES: usize = 200;
 pub const INDEX_BYTES: usize = 25 * 1024;
-const USE_WINDOW_SECS: i64 = 90 * 24 * 3600;
+pub(super) const USE_WINDOW_SECS: i64 = 90 * 24 * 3600;
 
 /// The index text and what it left out.
 #[derive(Clone, Debug, PartialEq, Eq)]

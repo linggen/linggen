@@ -26,6 +26,7 @@ export const SETTINGS_SECTIONS = [
   { id: 'room', label: 'Room', group: 'Devices', bare: true, needsConfig: false, requires: ['rooms'] },
   { id: 'memory', label: 'Memory', group: 'Data', bare: false, needsConfig: false, requires: [] },
   { id: 'storage', label: 'Storage', group: 'Data', bare: false, needsConfig: false, requires: [] },
+  { id: 'notes', label: 'Notes', group: 'Data', bare: false, needsConfig: false, requires: [] },
 ] as const satisfies readonly SectionDeclaration[];
 
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
