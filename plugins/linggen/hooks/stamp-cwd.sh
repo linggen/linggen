@@ -52,6 +52,11 @@ command -v jq >/dev/null 2>&1 || exit 0
 
 # shellcheck source=./scope.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scope.sh" 2>/dev/null || exit 0
+# v2: Linggen's store is not this host's memory, and its calls are stamped
+# by nothing here. (mcp.sh answers `outside_agents_mode`; unknown is v1.)
+# shellcheck source=./mcp.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/mcp.sh" 2>/dev/null || true
+if command -v outside_agents_mode >/dev/null 2>&1 && [ "$(outside_agents_mode)" = v2 ]; then exit 0; fi
 
 input="$(cat)"
 

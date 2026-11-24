@@ -1,10 +1,10 @@
 //! Linggen's one MCP door: `POST /mcp`, a minimal streamable-HTTP MCP
 //! server (stateless JSON-RPC 2.0: `initialize`, `ping`, `tools/list`,
 //! `tools/call`) for third-party hosts — Claude Code, Codex, Cursor, … —
-//! publishing thirteen tools from one catalogue (`catalog`): memory 5,
-//! agents 4, browser 3, apps 1.
+//! publishing fourteen tools from one catalogue (`catalog`): memory 5,
+//! agents 4, browser 3, apps 1, other agents' memory 1.
 //!
-//! The caller decides the view (`view_of`): this machine sees all thirteen,
+//! The caller decides the view (`view_of`): this machine sees all fourteen,
 //! an approved computer the five memory tools (no `dream_run`), anyone else
 //! nothing. `tools/list`, `tools/call` and the server text all read that
 //! one view, so what a caller cannot see it cannot call. A tool name
@@ -24,12 +24,14 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde_json::{json, Value};
 
+use crate::config::OutsideAgents;
 use crate::server::bridge::BridgeHub;
 use crate::server::ServerState;
 
 mod app;
 mod catalog;
 mod dispatch;
+mod outside;
 
 use catalog::{catalog, Render};
 use ling_mem::catalog::{Resolved, Retired, View};
@@ -39,16 +41,64 @@ const PROTOCOL_VERSION: &str = "2025-06-18";
 // What an old plugin is told, wherever it knocks: one sentence it can act on.
 use crate::memory_host::UPGRADE_PLUGIN as UPGRADE;
 
-/// The server text this machine's hosts read: memory's rules, delegation's,
-/// the usage limit, the browser, the apps. At most 2,048 characters — Claude Code
-/// drops the rest of a server's instructions without a word.
-const LOCAL_TEXT: &str = "Linggen memory works without an account. Save durable facts about the person, not project internals or secrets.
-Core is tiny and always loaded: stable identity (name, role, location, languages, family). Semantic is durable and recalled on demand: preferences, decisions and why. Episodic is default staging for uncertain signal and events; no search first. Dream promotes what lasts.
-Before saving core or semantic, search the subject. Mark the user's words from=user. Merge your own derived rows atomically with memory_add + replace_ids; never add then delete. Before replacing or rewriting a user row, show its full text and date and ask; set user_directed:true only after their answer or an explicit settled instruction. Keep tier and scope unless directed; supersede old status in the same write. Cite recalled facts you use.
-For each background agent_run, including a follow-up, start a new background watcher at the returned /api/agent/wait WebSocket URL. Answer permission_request with agent_permit: allow_once, allow_session (path/folder for this session), or deny. Outward requests take allow_once or deny only; the deny floor cannot be granted. No reply in 10 minutes means deny. Read reply, followup, error and cannot_run from finished. If the watch ends first, call agent_status (op=session) once; if still running, start a new watch. Do not poll. Check pending and denied. Continue with session_id without widening grants.
-On a usage limit, read its reset time (cannot_run.resets_at), then pick a ready model from agent_status (op=models) or come back after it; never retry before.
-Browser tools control one visible Chrome tab; actions can prompt for per-site permission in Chrome. Read again after page changes. For memory upkeep use the dream, scan or solve runbook; memory_upkeep (op=dream_status) shows backlog and failures.
-The app tool uses what the person's apps do on this Mac, such as playing music: app op=list, then op=call. A private app stays closed until the owner opens it in Settings.";
+// The server text's pieces, written once: a macro because `concat!` takes
+// literals, and the two local texts below share most of them. The locked
+// fingerprints (tests) hold the v1 text word for word.
+macro_rules! memory_rules {
+    () => {
+        "Linggen memory works without an account. Save durable facts about the person, not project internals or secrets.\nCore is tiny and always loaded: stable identity (name, role, location, languages, family). Semantic is durable and recalled on demand: preferences, decisions and why. Episodic is default staging for uncertain signal and events; no search first. Dream promotes what lasts.\nBefore saving core or semantic, search the subject. Mark the user's words from=user. Merge your own derived rows atomically with memory_add + replace_ids; never add then delete. Before replacing or rewriting a user row, show its full text and date and ask; set user_directed:true only after their answer or an explicit settled instruction. Keep tier and scope unless directed; supersede old status in the same write. Cite recalled facts you use."
+    };
+}
+macro_rules! delegation {
+    () => {
+        "For each background agent_run, including a follow-up, start a new background watcher at the returned /api/agent/wait WebSocket URL. Answer permission_request with agent_permit: allow_once, allow_session (path/folder for this session), or deny. Outward requests take allow_once or deny only; the deny floor cannot be granted. No reply in 10 minutes means deny. Read reply, followup, error and cannot_run from finished. If the watch ends first, call agent_status (op=session) once; if still running, start a new watch. Do not poll. Check pending and denied. Continue with session_id without widening grants."
+    };
+}
+macro_rules! usage_limit {
+    () => {
+        "On a usage limit, read its reset time (cannot_run.resets_at), then pick a ready model from agent_status (op=models) or come back after it; never retry before."
+    };
+}
+macro_rules! browser {
+    () => {
+        "Browser tools control one visible Chrome tab; actions can prompt for per-site permission in Chrome. Read again after page changes."
+    };
+}
+macro_rules! apps {
+    () => {
+        "The app tool uses what the person's apps do on this Mac, such as playing music: app op=list, then op=call. A private app stays closed until the owner opens it in Settings."
+    };
+}
+
+/// The server text this machine's hosts read in v1: memory's rules,
+/// delegation's, the usage limit, the browser, the apps. At most 2,048
+/// characters — Claude Code drops the rest of a server's instructions
+/// without a word.
+const LOCAL_TEXT: &str = concat!(
+    memory_rules!(),
+    "\n",
+    delegation!(),
+    "\n",
+    usage_limit!(),
+    "\n",
+    browser!(),
+    " For memory upkeep use the dream, scan or solve runbook; memory_upkeep (op=dream_status) shows backlog and failures.\n",
+    apps!()
+);
+
+/// The same for v2 (`[memory] outside_agents = "v2"`): no rule to save into
+/// Linggen's store and no upkeep — each agent keeps its own memory and
+/// Linggen reads it; the rest as in v1.
+const LOCAL_TEXT_V2: &str = concat!(
+    "Claude Code and Codex each keep their own memory; Linggen only reads it and never edits it. memory_agents op=index lists what they remember for a project, op=read opens one note, op=search finds words. Where two disagree, the newer wins. memory_add and memory_search are for when the person asks to let every agent know something; do not save on your own.\n",
+    delegation!(),
+    "\n",
+    usage_limit!(),
+    "\n",
+    browser!(),
+    "\n",
+    apps!()
+);
 
 /// The server text an approved computer reads: memory only, its upkeep
 /// with the host's own model.
@@ -57,10 +107,23 @@ Core is tiny and always loaded: stable identity (name, role, location, languages
 Before saving core or semantic, search the subject. Mark the user's words from=user. Merge your own derived rows atomically with memory_add + replace_ids; never add then delete. Before replacing or rewriting a user row, show its full text and date and ask; set user_directed:true only after their answer or an explicit settled instruction. Keep tier and scope unless directed; supersede old status in the same write. Cite recalled facts you use.
 For memory upkeep use the dream, scan or solve runbook with your own model; memory_upkeep (op=dream_status) shows backlog and failures.";
 
-fn instructions(view: View) -> &'static str {
-    match view {
-        View::Local => LOCAL_TEXT,
-        View::Remote => REMOTE_TEXT,
+/// The server text a caller reads: its view's, and for this machine, the
+/// way this Linggen serves outside agents. The one place that picks it.
+fn server_text(view: View, outside: OutsideAgents) -> &'static str {
+    match (view, outside) {
+        (View::Local, OutsideAgents::V1) => LOCAL_TEXT,
+        (View::Local, OutsideAgents::V2) => LOCAL_TEXT_V2,
+        (View::Remote, _) => REMOTE_TEXT,
+    }
+}
+
+/// How this Linggen serves agents outside it right now (`[memory]
+/// outside_agents`): read here, for the server text and for the
+/// `memory_agents` tool, and nowhere else. No daemon state (a unit test): v1.
+async fn outside_mode(deps: &McpDeps<'_>) -> OutsideAgents {
+    match deps.state {
+        Some(state) => state.manager.get_config_snapshot().await.memory.outside_agents,
+        None => OutsideAgents::default(),
     }
 }
 
@@ -72,7 +135,7 @@ fn rpc_error(id: Value, code: i64, message: &str) -> Value {
     json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } })
 }
 
-fn initialize_result(view: View) -> Value {
+fn initialize_result(view: View, outside: OutsideAgents) -> Value {
     json!({
         "protocolVersion": PROTOCOL_VERSION,
         "capabilities": { "tools": {} },
@@ -81,7 +144,7 @@ fn initialize_result(view: View) -> Value {
             "title": "Linggen",
             "version": env!("CARGO_PKG_VERSION"),
         },
-        "instructions": instructions(view),
+        "instructions": server_text(view, outside),
     })
 }
 
@@ -309,7 +372,7 @@ async fn handle_rpc(deps: &McpDeps<'_>, view: View, msg: &Value) -> Option<Value
     }
     let id = id.unwrap();
     let response = match method {
-        "initialize" => rpc_result(id, initialize_result(view)),
+        "initialize" => rpc_result(id, initialize_result(view, outside_mode(deps).await)),
         "ping" => rpc_result(id, json!({})),
         "tools/list" => rpc_result(id, tools_list_result(view)),
         "tools/call" => {
@@ -419,6 +482,13 @@ pub(crate) fn tool_schema(name: &str) -> Option<Value> {
         .into_iter()
         .find(|t| t["name"] == name)
         .map(|t| t["inputSchema"].clone())
+}
+
+/// The v1 text of each view: what every host that has not been moved to v2
+/// reads, and what the locked fingerprints hold.
+#[cfg(test)]
+fn instructions(view: View) -> &'static str {
+    server_text(view, OutsideAgents::V1)
 }
 
 #[cfg(test)]

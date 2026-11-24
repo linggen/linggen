@@ -170,25 +170,45 @@ session_root=""
 if command -v session_root >/dev/null 2>&1; then
   session_root="$(session_root "$session_cwd")"
 fi
-start_args="$(jq -nc --arg c "$session_cwd" --arg r "$session_root" '
-  {op: "session_start", cwd: $c} + (if ($r | length) > 0 then {root: $r} else {} end)
-' 2>/dev/null || printf '{"op":"session_start"}')"
-
 # A slightly longer budget than a per-turn recall: this runs once, at session
 # start, and an engine that just started may still be opening the store.
 to="${LINGGEN_CORE_TIMEOUT:-5}"
-start_out="$(mcp_call memory_upkeep "$start_args" "$to")"
 
-# Defensive guard: a malformed payload would make the pipeline below fail
-# silently, and the session would start with no core context and no log of
-# why. Validate the parse first; on failure log to stderr (CC shows hook
-# stderr in the transcript) and inject nothing.
+# v2 (`[memory] outside_agents = "v2"`, asked of the door): this host keeps its
+# own memory; it is forwarded what the OTHER agents remember for this project
+# (`memory_agents op=index`, which leaves out its own) and nothing from
+# Linggen's store. v1: core memory and the scope index, as ever.
 core_block=""
-if [ -n "$start_out" ]; then
-  if printf '%s' "$start_out" | jq -e 'type == "object"' >/dev/null 2>&1; then
+start_out=""
+if [ "$(outside_agents_mode)" = v2 ]; then
+  host_word=""
+  case "${PLUGIN_AGENT:-${LINGGEN_CLIENT:-}}" in
+    cc|claude-code) host_word="claude-code" ;;
+    codex)          host_word="codex" ;;
+  esac
+  index_args="$(jq -nc --arg c "$session_cwd" --arg h "$host_word" '
+    {op: "index", cwd: $c} + (if ($h | length) > 0 then {host: $h} else {} end)
+  ' 2>/dev/null || printf '{"op":"index"}')"
+  start_out="$(mcp_call memory_agents "$index_args" "$to")"
+  if [ -n "$start_out" ] && printf '%s' "$start_out" | jq -e 'type == "object"' >/dev/null 2>&1; then
     core_block="$(printf '%s' "$start_out" | jq -r '.block // empty' 2>/dev/null || true)"
-  else
-    printf 'linggen autostart: memory_upkeep op=session_start returned non-JSON; skipping memory injection\n' >&2
+  fi
+else
+  start_args="$(jq -nc --arg c "$session_cwd" --arg r "$session_root" '
+    {op: "session_start", cwd: $c} + (if ($r | length) > 0 then {root: $r} else {} end)
+  ' 2>/dev/null || printf '{"op":"session_start"}')"
+  start_out="$(mcp_call memory_upkeep "$start_args" "$to")"
+
+  # Defensive guard: a malformed payload would make the pipeline below fail
+  # silently, and the session would start with no core context and no log of
+  # why. Validate the parse first; on failure log to stderr (CC shows hook
+  # stderr in the transcript) and inject nothing.
+  if [ -n "$start_out" ]; then
+    if printf '%s' "$start_out" | jq -e 'type == "object"' >/dev/null 2>&1; then
+      core_block="$(printf '%s' "$start_out" | jq -r '.block // empty' 2>/dev/null || true)"
+    else
+      printf 'linggen autostart: memory_upkeep op=session_start returned non-JSON; skipping memory injection\n' >&2
+    fi
   fi
 fi
 

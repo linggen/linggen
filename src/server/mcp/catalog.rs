@@ -5,8 +5,8 @@
 //! (`ling_mem::catalog`); the door's handlers read this table and keep no
 //! list of names of their own.
 //!
-//! `/mcp` publishes it as thirteen tools — memory 5, agents 4, browser 3,
-//! apps 1 — with a view per caller: this machine sees all thirteen, an approved
+//! `/mcp` publishes it as fourteen tools — memory 5, agents 4, browser 3,
+//! apps 1, other agents' memory 1 — with a view per caller: this machine sees all fourteen, an approved
 //! computer the five memory tools without `dream_run`. The names published
 //! before the tools were folded are [`RETIRED`] (memory's are memory's):
 //! a call by one is told to update the plugin.
@@ -41,6 +41,8 @@ pub(crate) enum Dispatch {
     Memory(&'static str),
     /// An app's actions, for an agent outside Linggen (`mcp::app`).
     App(AppOp),
+    /// What other agents remember, read-only (`mcp::outside`).
+    Outside(OutsideOp),
 }
 
 /// The delegation calls (`mcp_agent`).
@@ -62,6 +64,19 @@ pub(crate) enum AppOp {
     List,
     /// One of an app's actions, run.
     Call,
+}
+
+/// The `memory_agents` tool's four ops.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum OutsideOp {
+    /// How this Linggen serves outside agents: `v1` or `v2`.
+    Mode,
+    /// The other agents' index lines for a project, for a calling host.
+    Index,
+    /// One note, by path, from inside a registered source.
+    Read,
+    /// Words, across every registered source.
+    Search,
 }
 
 /// A host's permission modes as `agent_run`'s description names them, made
@@ -150,13 +165,22 @@ const APP_TOOLS: &[ToolDoc] = &[
     },
 ];
 
+const OUTSIDE_TOOLS: &[ToolDoc] = &[
+    ToolDoc {
+        name: "memory_agents",
+        description: "What other agents (Claude Code, Codex) remember, read from their own files. Linggen only reads: it never edits, moves or copies them, and each agent keeps its memory its own way. op=index: their index lines for a project (cwd), never the calling host's own (host); op=read: one note by path, only inside those memories; op=search: words across them, any language. For this Mac's owner at this Mac.",
+        implicit_op: None,
+    },
+];
+
 /// Every tool the engine adds to the door: the agents', the browser's
-/// (defined in `browser_def`) and the app tool.
+/// (defined in `browser_def`), the app tool and what other agents remember.
 static TOOLS: LazyLock<Vec<ToolDoc>> = LazyLock::new(|| {
     AGENT_TOOLS
         .iter()
         .chain(browser_def::TOOLS)
         .chain(APP_TOOLS)
+        .chain(OUTSIDE_TOOLS)
         .copied()
         .collect()
 });
@@ -437,7 +461,83 @@ const OWN_BRANCHES: &[Branch<Dispatch>] = &[
         timeout_ms: 0,
         views: Views::LOCAL,
         dispatch: Dispatch::App(AppOp::Call),
-    },];
+    },
+    Branch {
+        tool: "memory_agents",
+        op: "mode",
+        note: "",
+        schema: || json!({"type": "object", "properties": {}}),
+        extra: None,
+        hidden: &[],
+        stamps: &[],
+        fixed: &[],
+        check: None,
+        timeout_ms: 0,
+        views: Views::LOCAL,
+        dispatch: Dispatch::Outside(OutsideOp::Mode),
+    },
+    Branch {
+        tool: "memory_agents",
+        op: "index",
+        note: "",
+        schema: || json!({
+            "type": "object",
+            "properties": {
+                "cwd": {"type": "string", "description": "The project folder; the nearest project's lines come first"},
+                "host": {"type": "string", "description": "The calling host, e.g. claude-code or codex: its own memory is left out"}
+            }
+        }),
+        extra: None,
+        hidden: &[],
+        stamps: &[],
+        fixed: &[],
+        check: None,
+        timeout_ms: 0,
+        views: Views::LOCAL,
+        dispatch: Dispatch::Outside(OutsideOp::Index),
+    },
+    Branch {
+        tool: "memory_agents",
+        op: "read",
+        note: "",
+        schema: || json!({
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "A note's absolute path (or ~/…), as the index names its folder and file"}
+            },
+            "required": ["path"]
+        }),
+        extra: None,
+        hidden: &[],
+        stamps: &[],
+        fixed: &[],
+        check: None,
+        timeout_ms: 0,
+        views: Views::LOCAL,
+        dispatch: Dispatch::Outside(OutsideOp::Read),
+    },
+    Branch {
+        tool: "memory_agents",
+        op: "search",
+        note: "",
+        schema: || json!({
+            "type": "object",
+            "properties": {
+                "words": {"type": "string", "description": "Words to find (any language, any case); a line with more of them ranks higher"},
+                "limit": {"type": "integer", "description": "Most lines to return (default 10, at most 30)"}
+            },
+            "required": ["words"]
+        }),
+        extra: None,
+        hidden: &[],
+        stamps: &[],
+        fixed: &[],
+        check: None,
+        timeout_ms: 0,
+        views: Views::LOCAL,
+        dispatch: Dispatch::Outside(OutsideOp::Search),
+    },
+];
 
 /// The engine's branches: the browser's, from `browser_def`, then the rest.
 static BRANCHES: LazyLock<Vec<Branch<Dispatch>>> = LazyLock::new(|| {
@@ -538,9 +638,10 @@ mod tests {
             .collect()
     }
 
-    /// The door, from the one table: memory 5, agents 4, browser 3, apps 1.
+    /// The door, from the one table: memory 5, agents 4, browser 3, apps 1,
+    /// what other agents remember 1.
     #[test]
-    fn the_door_is_thirteen_tools() {
+    fn the_door_is_fourteen_tools() {
         assert_eq!(
             names(View::Local),
             [
@@ -557,6 +658,7 @@ mod tests {
                 "browser_read",
                 "browser_act",
                 "app",
+                "memory_agents",
             ]
         );
     }

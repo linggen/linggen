@@ -769,6 +769,49 @@
           "op"
         ]
       }
+    },
+    {
+      "name": "memory_agents",
+      "description": "What other agents (Claude Code, Codex) remember, read from their own files. Linggen only reads: it never edits, moves or copies them, and each agent keeps its memory its own way. op=index: their index lines for a project (cwd), never the calling host's own (host); op=read: one note by path, only inside those memories; op=search: words across them, any language. For this Mac's owner at this Mac.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "mode",
+              "index",
+              "read",
+              "search"
+            ],
+            "description": "mode: no fields · index: cwd?, host? · read: path · search: words, limit?"
+          },
+          "cwd": {
+            "type": "string",
+            "description": "The project folder; the nearest project's lines come first"
+          },
+          "host": {
+            "type": "string",
+            "description": "The calling host, e.g. claude-code or codex: its own memory is left out"
+          },
+          "path": {
+            "type": "string",
+            "description": "A note's absolute path (or ~/…), as the index names its folder and file"
+          },
+          "words": {
+            "type": "string",
+            "description": "Words to find (any language, any case); a line with more of them ranks higher"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Most lines to return (default 10, at most 30)"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "op"
+        ]
+      }
     }
   ]
 }

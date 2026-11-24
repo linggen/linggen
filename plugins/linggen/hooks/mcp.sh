@@ -154,3 +154,19 @@ mcp_door() {
             (if any(.result.tools[]; .name == "memory_upkeep") then "yes" else "no" end)
         else empty end' 2>/dev/null || true
 }
+
+# How this Linggen serves agents outside it right now: `v1` (the plugin has
+# the host save into Linggen's store and recalls from it every turn) or `v2`
+# (each agent keeps its own memory; Linggen forwards the others' index once,
+# at session start). Linggen's config decides (`[memory] outside_agents`);
+# this only asks the door, so there is one place that knows. Anything but a
+# clear `v2` — an engine that is not running, one older than this plugin, a
+# refusal — is `v1`: today's behaviour, unchanged.
+outside_agents_mode() {
+    local out
+    out="$(mcp_call memory_agents '{"op":"mode"}' "${LINGGEN_MODE_TIMEOUT:-2}")"
+    case "$(printf '%s' "$out" | jq -r '.outside_agents // empty' 2>/dev/null)" in
+        v2) printf 'v2' ;;
+        *)  printf 'v1' ;;
+    esac
+}

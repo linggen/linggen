@@ -4,7 +4,7 @@ reader: Coding agent and users
 guide: |
   Product specification — describe what the system should do and why.
   Keep it brief. Aim to guide design and implementation, not document code.
-status: 2.7 — one door, thirteen tools (memory 5, agents 4, browser 3, apps 1) at /mcp; the two-server layout (24 + 17 tools) is retired
+status: 2.7 + memory v2 (in trial) — one door, fourteen tools (memory 5, agents 4, browser 3, apps 1, other agents' memory 1) at /mcp; the two-server layout (24 + 17 tools) is retired
 ---
 
 # Linggen MCP — the one door
@@ -38,7 +38,7 @@ share one door.
 
 | Caller | Sees |
 |:-------|:-----|
-| this machine (loopback) | all thirteen tools; `app` answers the owner at this Mac itself, not a tunnelled device |
+| this machine (loopback) | all fourteen tools; `app` and `memory_agents` answer the owner at this Mac itself, not a tunnelled device |
 | an approved computer (token in `x-linggen-device`) | the five memory tools only; `memory_upkeep` without `dream_run` (twelve ops). Delegation and browser control are this machine's alone |
 | a phone, or a caller with no token off this machine | refused (403 / 401 `PAIRING_REQUIRED`). Phones use `/api/memory/<verb>`, not MCP |
 
@@ -114,6 +114,31 @@ reason that names the setting. The owner opens it in Settings → Tools & MCP �
 Outside agents, one switch per private app that offers an action anywhere. The
 list is the engine config's `outside_apps` (absent: none), set only through
 `PUT /api/mcp/outside-apps` at this Mac; a saved config keeps what it holds.
+
+## Other agents' memory (`memory_agents`) — memory v2, in trial
+
+Claude Code and Codex keep their own memory their own way; Linggen only
+**reads** it — never edits, moves or copies it — and forwards what each
+agent remembers to the others. One tool, this machine's owner at this Mac only:
+
+| op | does |
+|:---|:-----|
+| `mode` | `v1` or `v2`: how this Linggen serves outside hosts (`[memory] outside_agents` in the config; absent = `v1`). The plugin's hooks ask it. |
+| `index` | the other agents' index lines for a project (`cwd`), never the calling `host`'s own; nearest project first, then the person; at most 4 KB, each group tagged with its source |
+| `read` | one note by absolute (or `~/`) path; only a note file inside a registered source, links and `..` resolved first |
+| `search` | words across the registered sources, any language, best line first |
+
+- The sources are one declared list (`outside_memory::sources`): Claude Code's
+  `~/.claude/projects/<encoded project path>/memory/` and `~/.claude/CLAUDE.md`,
+  and a Codex entry that reports "no data / format not known yet" until its
+  memories are read. An unreadable or missing source is skipped and reported.
+- Key-shaped strings are replaced before anything leaves.
+- **v2** (the switch): the plugin's session-start hook injects the `index`
+  slice instead of core memory; the per-turn recall, the capture reminder, the
+  cwd stamp and the delegate recall do nothing; the server text drops the
+  save rules. Linggen's own agents (Ling, Yinyue, Linggen's sessions) are
+  unchanged in both modes. **v1** is today's behaviour. An approved computer
+  sees the same as before in both.
 
 ## Browser tools
 
