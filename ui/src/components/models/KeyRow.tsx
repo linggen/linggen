@@ -49,6 +49,16 @@ const KeyField: React.FC<Props> = ({ provider: p, run, busy }) => {
       setReplacing(false);
     }
   };
+  if (p.key?.conflict) {
+    return (
+      <div className="flex flex-wrap items-center gap-2" data-testid="key-conflict">
+        <span className="text-xs font-semibold text-amber-700 dark:text-amber-300">{W.keyConflict}</span>
+        {p.key.can_keep_model_key
+          ? <button type="button" className={ghostBtn} disabled={busy} onClick={() => void run(() => providersApi.keepModelKey(p.id))}>{W.keepModelKey}</button>
+          : <span className={hintCls}>{W.keysInUse}</span>}
+      </div>
+    );
+  }
   const set = !!p.key?.set;
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -58,7 +68,6 @@ const KeyField: React.FC<Props> = ({ provider: p, run, busy }) => {
           <span data-testid="key-set" className={`${inputCls} font-mono`}>{W.keySet}</span>
           <button type="button" className={ghostBtn} disabled={busy} onClick={() => setReplacing(true)}>{W.replaceKey}</button>
           <button type="button" className={`${ghostBtn} !text-red-600`} disabled={busy} onClick={() => void run(() => providersApi.setKey(p.id, null))}>{W.removeKey}</button>
-          <span className={hintCls}>{W.shareKey}</span>
         </>
       ) : (
         <>

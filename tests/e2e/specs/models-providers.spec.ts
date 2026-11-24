@@ -41,6 +41,42 @@ async function connectAnthropic(row: Locator) {
   await expect(row.getByTestId('key-set')).toBeVisible();
 }
 
+test.describe('two names at one Qwen Cloud address', () => {
+  const url = 'https://ap-southeast-1.maas.qwencloudapi.com/compatible-mode/v1';
+  test.use({ scenario: {
+    families: { today: '2026-11-23', lists: { 'qwen-cloud': ['qwen-plus'] } },
+    configAppend: `
+[[models]]
+id = "own-flash"
+provider = "openai"
+url = "${url}"
+model = "deepseek-v4.1-flash"
+`,
+  } });
+
+  test('one card shows the model and live voice, and can remove only the unused key', async ({ page, world, httpRequests, request }) => {
+    const other = 'unused-test-key-marker';
+    const filed = await request.put(`${world.url}/api/credentials`, { data: { endpoints: [
+      { provider: 'openai', url, api_key: KEY },
+      { provider: 'qwen', url: `${url}/`, api_key: other },
+    ] } });
+    expect(filed.ok()).toBe(true);
+    await page.goto(`${world.url}/settings/models?lang=zh`);
+    await expectWebRtc(page, httpRequests);
+    const row = page.getByTestId('provider-row').filter({ hasText: 'Qwen Cloud' });
+    await expect(row).toHaveCount(1);
+    await row.getByRole('button', { name: /Qwen Cloud/ }).click();
+    await expect(row.getByTestId('typed-model')).toHaveText(/deepseek-v4.1-flash/);
+    await expect(row.getByTestId('live-model')).toHaveCount(1);
+    await expect(row.getByTestId('key-conflict')).toContainText('这个地址存了两把不同的密钥');
+    await row.getByRole('button', { name: '保留模型使用的密钥' }).click();
+    await expect(row.getByTestId('key-set')).toHaveText('已设置密钥');
+    await expect(row.getByTestId('key-conflict')).toBeHidden();
+    await expect(row).not.toContainText(KEY);
+    await expect(row).not.toContainText(other);
+  });
+});
+
 test.describe('a followed family', () => {
   test.use({ scenario: { families: { today: '2026-11-23', lists: LISTS }, configAppend: PINNED_OPUS } });
 

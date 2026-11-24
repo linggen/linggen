@@ -122,6 +122,7 @@ export const providersApi = {
   /** A provider the person picked from `presets`, by its label. */
   create: (preset: string) => apiPost<ProvidersAnswer>('/api/providers', { preset }),
   setKey: (id: string, apiKey: string | null) => apiPut<ProvidersAnswer>(`${provider(id)}/key`, { api_key: apiKey }),
+  keepModelKey: (id: string) => apiPut<ProvidersAnswer>(`${provider(id)}/key`, { action: 'keep_model_key' }),
   setAddress: (id: string, url: string) => apiPatch<ProvidersAnswer>(provider(id), { url }),
   /** A model typed by name; the engine makes the row's id. */
   addModel: (id: string, model: string) => apiPost<ProvidersAnswer>(`${provider(id)}/models`, { model }),

@@ -7,7 +7,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::config::{providers::{known_names, Way, PRESETS}, Config, ModelConfig, SignIn};
-use crate::provider::models::providers_view::{provider_id, ProviderView};
+use crate::provider::models::providers_view::{editable_row, filed_endpoint, group_keys, keep_model_key, provider_id, ProviderView};
 use crate::credentials::{self, Credentials};
 use crate::server::{person, ServerState};
 
@@ -39,7 +39,8 @@ pub(super) async fn answer(state: &ServerState, config: &Config, creds: &Credent
         }
     }
     for provider in providers.iter_mut().filter(|p| p.way == Way::Key.as_str()) {
-        provider.families = state.manager.families.view(config, creds, (&provider.provider, &provider.url));
+        let filed = filed_endpoint(config, creds, &provider.id).unwrap_or((&provider.provider, &provider.url));
+        provider.families = state.manager.families.view(config, creds, filed);
     }
     let presets: Vec<_> = PRESETS.iter().map(|p| json!({
         "name": p.name, "label": p.label, "url": p.url, "way": p.way.as_str(),
@@ -57,8 +58,15 @@ struct NewProvider {
 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct KeyEdit { api_key: serde_json::Value }
+#[serde(untagged, deny_unknown_fields)]
+enum KeyEdit {
+    Set { api_key: serde_json::Value },
+    Clean { action: KeyAction },
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum KeyAction { KeepModelKey }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -128,13 +136,18 @@ pub(crate) async fn edit(State(state): State<Arc<ServerState>>, headers: HeaderM
 /// not accept ticks nothing and records nothing.
 async fn put_key(state: Arc<ServerState>, headers: HeaderMap, id: String, body: Bytes) -> Response {
     if let Some(refused) = owner_refusal(&headers) { return refused; }
-    let filed = {
-        let _write = state.settings_write.lock().await;
-        apply(&state, Edit::Key(id.clone(), body)).await
-    };
-    let (config, creds) = match filed {
-        Ok(filed) => filed,
+    let edit = match parse::<KeyEdit>(&body) {
+        Ok(edit) => edit,
         Err(failure) => return failure.into_response(),
+    };
+    let adding = matches!(&edit, KeyEdit::Set { api_key } if api_key.is_string());
+    let (config, creds) = {
+        let _write = state.settings_write.lock().await;
+        match apply(&state, Edit::Key(id.clone(), edit)).await {
+            Ok(filed) if !adding => return answer(&state, &filed.0, &filed.1).await,
+            Ok(filed) => filed,
+            Err(failure) => return failure.into_response(),
+        }
     };
     let Ok((name, url)) = endpoint(&state, &config, &creds, &id).await else {
         return answer(&state, &config, &creds).await;
@@ -155,7 +168,7 @@ pub(crate) async fn remove_model(State(state): State<Arc<ServerState>>, headers:
 
 enum Edit {
     Create(Bytes),
-    Key(String, Bytes),
+    Key(String, KeyEdit),
     Address(String, Bytes),
     AddModel(String, Bytes),
     RemoveModel(String, String),
@@ -170,15 +183,8 @@ async fn mutate(state: Arc<ServerState>, headers: HeaderMap, edit: Edit) -> Resp
     }
 }
 
-fn matches_group(row: &ModelConfig, id: &str) -> bool {
-    !row.is_builtin && row.sign_in() == SignIn::Key && provider_id(row.sign_in(), &row.provider, &row.url) == id
-}
-
 pub(super) async fn endpoint(state: &ServerState, config: &Config, creds: &Credentials, id: &str) -> Result<(String, String), Failure> {
-    let filed = config.models.iter().find(|row| matches_group(row, id))
-        .map(|row| (row.provider.clone(), row.url.clone()))
-        .or_else(|| creds.endpoints.iter().find(|e| provider_id(SignIn::Key, &e.provider, &e.url) == id)
-            .map(|e| (e.provider.clone(), e.url.clone())));
+    let filed = filed_endpoint(config, creds, id).map(|(name, url)| (name.to_owned(), url.to_owned()));
     let pair = match filed {
         Some(pair) => pair,
         None => {
@@ -213,12 +219,23 @@ async fn apply(state: &Arc<ServerState>, edit: Edit) -> Result<(Config, Credenti
         Edit::Key(id, body) => {
             address(&url)?;
             if name == "ollama" { return Err(BAD); }
-            let key = match parse::<KeyEdit>(&body)?.api_key {
-                serde_json::Value::Null => None,
-                serde_json::Value::String(key) if !key.trim().is_empty() && key != "***" => Some(key),
-                _ => return Err(BAD),
-            };
-            creds.set_endpoint_key(&name, &url, key);
+            match body {
+                KeyEdit::Clean { action: KeyAction::KeepModelKey } => {
+                    // The same guard that offered the action, rechecked under the write lock.
+                    creds = keep_model_key(&config, &creds, &id).ok_or(CONFLICT)?;
+                }
+                KeyEdit::Set { api_key } => {
+                    let key = match api_key {
+                        serde_json::Value::Null => None,
+                        serde_json::Value::String(key) if !key.trim().is_empty() && key != "***" => Some(key),
+                        _ => return Err(BAD),
+                    };
+                    // One card holds one key: a replace or remove reaches every name filed there.
+                    let filed: Vec<_> = group_keys(&creds, &id).map(|e| (e.provider.clone(), e.url.clone())).collect();
+                    for (other, at) in filed { creds.set_endpoint_key(&other, &at, None); }
+                    creds.set_endpoint_key(&name, &url, key);
+                }
+            }
             creds.save(&path).map_err(|_| SAVE)?;
             super::config::reload_models(state).await;
             state.provider_drafts.lock().await.remove(&id);
@@ -229,25 +246,29 @@ async fn apply(state: &Arc<ServerState>, edit: Edit) -> Result<(Config, Credenti
             if next_id != id {
                 if endpoint(state, &config, &creds, &next_id).await.is_ok() { return Err(CONFLICT); }
                 let mut has_rows = false;
-                for row in config.models.iter_mut().filter(|row| matches_group(row, &id)) {
+                for row in config.models.iter_mut().filter(|row| editable_row(row, &id)) {
                     row.url = new.clone();
                     has_rows = true;
                 }
                 validate_config(&config)?;
-                let key = creds.endpoint_key(&name, &url).map(str::to_owned);
-                if key.is_some() {
-                    // Copy first. A failed config save leaves the old key usable.
-                    creds.set_endpoint_key(&name, &new, key);
+                let keys: Vec<_> = group_keys(&creds, &id).cloned().collect();
+                if !keys.is_empty() {
+                    // Copy first. A failed config save leaves the old keys usable.
+                    for key in &keys {
+                        creds.set_endpoint_key(&key.provider, &new, key.api_key.clone());
+                    }
                     creds.save(&path).map_err(|_| SAVE)?;
                 }
                 if has_rows { save_config(state, &config).await?; }
-                if creds.endpoint_key(&name, &url).is_some() {
-                    // Only after the new URL has been filed do we drop the old key.
-                    creds.set_endpoint_key(&name, &url, None);
+                if !keys.is_empty() {
+                    // Only after the new URL has been filed do we drop the old keys.
+                    for key in &keys {
+                        creds.set_endpoint_key(&key.provider, &key.url, None);
+                    }
                     creds.save(&path).map_err(|_| SAVE)?;
                 }
                 let mut drafts = state.provider_drafts.lock().await;
-                if drafts.remove(&id).is_some() && !has_rows && creds.endpoint_key(&name, &new).is_none() {
+                if drafts.remove(&id).is_some() && !has_rows && keys.is_empty() {
                     drafts.insert(next_id, (name, new));
                 }
             }
@@ -262,7 +283,7 @@ async fn apply(state: &Arc<ServerState>, edit: Edit) -> Result<(Config, Credenti
             state.provider_drafts.lock().await.remove(&id);
         }
         Edit::RemoveModel(id, model) => {
-            let index = config.models.iter().position(|row| row.id == model && matches_group(row, &id)).ok_or(MISSING)?;
+            let index = config.models.iter().position(|row| row.id == model && editable_row(row, &id)).ok_or(MISSING)?;
             // A family's row is removed by unticking, which names a replacement
             // when the row is the first default chat model.
             if config.models[index].family_binding.is_some() && config.routing.default_models.first() == Some(&model) {
@@ -270,7 +291,9 @@ async fn apply(state: &Arc<ServerState>, edit: Edit) -> Result<(Config, Credenti
             }
             let row = config.models.remove(index);
             validate_config(&config)?;
-            if !config.models.iter().any(|row| matches_group(row, &id)) && creds.endpoint_key(&name, &url).is_none() {
+            let (name, url) = (&row.provider, &row.url);
+            if !config.models.iter().any(|r| editable_row(r, &id)
+                && credentials::same_endpoint(&r.provider, &r.url, name, url)) && creds.endpoint_key(name, url).is_none() {
                 let key = row.api_key.as_deref().filter(|k| !k.is_empty() && *k != "***")
                     .or_else(|| creds.model_override(&model)).map(str::to_owned);
                 if key.is_some() {

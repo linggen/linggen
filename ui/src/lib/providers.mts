@@ -90,7 +90,7 @@ export interface Provider {
   url: string;
   connected: boolean;
   fix?: 'add_key' | 'sign_in' | 'download' | 'install';
-  key?: { set: boolean };
+  key?: { set: boolean; conflict?: boolean; can_keep_model_key?: boolean };
   models: ProviderModel[];
   used_by: string[];
   disk_gb?: number;

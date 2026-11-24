@@ -9,7 +9,7 @@ fn provider<'a>(body: &'a Value, label: &str) -> &'a Value {
 }
 
 #[tokio::test]
-async fn providers_group_by_sign_in_name_and_address_without_returning_keys() {
+async fn providers_group_by_sign_in_and_address_without_returning_keys() {
     const ROW: &str = r#"
 [[models]]
 id = "own-deepseek"
@@ -163,6 +163,75 @@ model = "gemini-3.8-live"
         assert!(groups[0]["families"].is_object());
         voice(&body, label, model);
     }
+}
+
+const QWEN_URL: &str = "https://ap-southeast-1.maas.qwencloudapi.com/compatible-mode/v1";
+const QWEN_ALIASES: &str = r#"
+[[models]]
+id = "own-flash"
+provider = "openai"
+url = "https://ap-southeast-1.maas.qwencloudapi.com/compatible-mode/v1"
+model = "deepseek-v4.1-flash"
+"#;
+
+#[tokio::test]
+async fn qwen_aliases_with_the_same_key_share_one_card() {
+    let w = World::start(Setup { config_append: Some(QWEN_ALIASES), ..Setup::default() }).await;
+    assert_eq!(w.api.put_json("/api/credentials", json!({"endpoints":[
+        {"provider":"qwen", "url":format!("{QWEN_URL}/"), "api_key":"model-key-marker"},
+        {"provider":"openai", "url":QWEN_URL, "api_key":"model-key-marker"}
+    ]})).await.0, 200);
+    let body = w.api.get("/api/providers").await;
+    assert_eq!(body["providers"].as_array().unwrap().iter().filter(|p| p["url"] == QWEN_URL).count(), 1);
+    let qwen = provider(&body, "Qwen Cloud");
+    assert_eq!(qwen["key"], json!({"set":true}));
+    assert_eq!(qwen["provider"], "qwen");
+    assert!(qwen["models"].as_array().unwrap().iter().any(|m| m["id"] == "own-flash" && m["ready"] == true));
+    assert_eq!(voice(&body, "Qwen Cloud", "qwen-audio-3.1-realtime-flash")["ready"], true);
+    assert!(!body.to_string().contains("model-key-marker"));
+}
+
+#[tokio::test]
+async fn removing_the_key_of_a_card_removes_it_under_every_name() {
+    let w = World::start(Setup { config_append: Some(QWEN_ALIASES), ..Setup::default() }).await;
+    assert_eq!(w.api.put_json("/api/credentials", json!({"endpoints":[
+        {"provider":"qwen", "url":format!("{QWEN_URL}/"), "api_key":"model-key-marker"},
+        {"provider":"openai", "url":QWEN_URL, "api_key":"model-key-marker"}
+    ]})).await.0, 200);
+    let body = w.api.get("/api/providers").await;
+    let route = format!("/api/providers/{}/key", provider(&body, "Qwen Cloud")["id"].as_str().unwrap());
+    let (status, body) = w.api.put_json(&route, json!({"api_key": null})).await;
+    assert_eq!(status, 200);
+    assert_eq!(provider(&body, "Qwen Cloud")["key"], json!({"set":false}));
+}
+
+#[tokio::test]
+async fn cleanup_refuses_when_two_model_rows_use_different_keys() {
+    const ROWS: &str = concat!(r#"
+[[models]]
+id = "own-flash"
+provider = "openai"
+url = "https://ap-southeast-1.maas.qwencloudapi.com/compatible-mode/v1"
+model = "deepseek-v4.1-flash"
+
+[[models]]
+id = "own-plus"
+provider = "qwen"
+url = "https://ap-southeast-1.maas.qwencloudapi.com/compatible-mode/v1"
+model = "qwen-plus"
+"#);
+    let w = World::start(Setup { config_append: Some(ROWS), ..Setup::default() }).await;
+    assert_eq!(w.api.put_json("/api/credentials", json!({"endpoints":[
+        {"provider":"qwen", "url":QWEN_URL, "api_key":"qwen-key-marker"},
+        {"provider":"openai", "url":QWEN_URL, "api_key":"model-key-marker"}
+    ]})).await.0, 200);
+    let body = w.api.get("/api/providers").await;
+    let qwen = provider(&body, "Qwen Cloud");
+    assert_eq!(qwen["key"], json!({"set":true,"conflict":true}));
+    let route = format!("/api/providers/{}/key", qwen["id"].as_str().unwrap());
+    assert_eq!(w.api.put_json(&route, json!({"action":"keep_model_key"})).await.0, 409);
+    let body = w.api.get("/api/providers").await;
+    assert!(provider(&body, "Qwen Cloud")["models"].as_array().unwrap().iter().all(|m| m["ready"] == true));
 }
 
 #[tokio::test]

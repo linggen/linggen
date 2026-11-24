@@ -342,7 +342,7 @@ fn provider_key(p: &Provider, stored: impl FnOnce() -> Option<String>) -> Option
     pick_key(std::env::var(p.key_env).ok(), stored)
 }
 
-fn stored_key(p: &Provider, configured: &[ModelConfig], creds: &Credentials) -> Option<String> {
+pub(crate) fn stored_key(p: &Provider, configured: &[ModelConfig], creds: &Credentials) -> Option<String> {
     match p.key_provider {
         Some(name) => credentials::resolve_provider_key(name, p.key_host, configured, creds),
         None => credentials::resolve_host_key(p.key_host, configured, creds),

@@ -2,7 +2,7 @@
 
 use super::{ModelManager, NotReady};
 use crate::config::providers::{label_for, Way, PRESETS};
-use crate::config::{Config, SignIn};
+use crate::config::{Config, ModelConfig, SignIn};
 use crate::credentials::{self, Credentials};
 use crate::provider::kinds::{kind_of, Kind};
 use crate::{live, runtime};
@@ -35,6 +35,10 @@ pub struct ProviderView {
 #[derive(Serialize)]
 struct KeyState {
     set: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    conflict: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    can_keep_model_key: bool,
 }
 
 #[derive(Serialize)]
@@ -50,7 +54,7 @@ pub struct ProviderModel {
     first: bool,
 }
 
-/// Identify the filed pair using the same normalization as credential matching.
+/// Settings identity only. Credential lookup still uses the filed provider name.
 pub fn provider_id(sign_in: SignIn, name: &str, url: &str) -> String {
     let class = match sign_in {
         SignIn::Key => "key",
@@ -59,8 +63,59 @@ pub fn provider_id(sign_in: SignIn, name: &str, url: &str) -> String {
         SignIn::LinggenAccount => "account",
         SignIn::Unknown => "unknown",
     };
-    let parts = (class, name.trim().to_ascii_lowercase(), credentials::endpoint_url(url).to_ascii_lowercase());
+    // The one rule: a key card is its address. Names filed under it do not split it.
+    // Local lanes (ollama) and rows with no address keep their name.
+    let by_address = sign_in == SignIn::Key && !credentials::endpoint_url(url).is_empty()
+        && !name.trim().eq_ignore_ascii_case("ollama");
+    let name = if by_address {
+        String::new()
+    } else {
+        name.trim().to_ascii_lowercase()
+    };
+    let parts = (class, name, credentials::endpoint_url(url).to_ascii_lowercase());
     format!("{:x}", Sha256::digest(serde_json::to_vec(&parts).expect("strings serialize")))
+}
+
+/// The filed endpoint settings should edit, separately from the card's label.
+/// Prefer the endpoint with a key used by a model, then the first filed key.
+pub fn filed_endpoint<'a>(config: &'a Config, creds: &'a Credentials, id: &str) -> Option<(&'a str, &'a str)> {
+    let rows = || config.models.iter().filter(|row| editable_row(row, id));
+    let keyed_row = rows().find(|row| uses_endpoint_key(row, creds));
+    let row_pair = |r: &'a ModelConfig| (&*r.provider, &*r.url);
+    keyed_row.map(row_pair)
+        .or_else(|| group_keys(creds, id).next().map(|e| (&*e.provider, &*e.url)))
+        .or_else(|| rows().next().map(row_pair))
+}
+
+pub fn editable_row(row: &ModelConfig, id: &str) -> bool {
+    !row.is_builtin && row.sign_in() == SignIn::Key && provider_id(row.sign_in(), &row.provider, &row.url) == id
+}
+
+pub fn group_keys<'a, 'id>(creds: &'a Credentials, id: &'id str) -> impl Iterator<Item = &'a credentials::EndpointKey> + use<'a, 'id> {
+    creds.endpoints.iter().filter(move |e| provider_id(SignIn::Key, &e.provider, &e.url) == id)
+}
+
+fn uses_endpoint_key(row: &ModelConfig, creds: &Credentials) -> bool {
+    row.api_key.as_deref().is_none_or(str::is_empty) && creds.model_override(&row.id).is_none()
+        && creds.endpoint_key(&row.provider, &row.url).is_some()
+}
+
+/// Compute the cleanup on a copy. Refuse if no model uses an endpoint key,
+/// or if removing any different key would change a model's or live voice's key.
+/// The view and the owner-only write use this same check; no keys leave it.
+pub fn keep_model_key(config: &Config, creds: &Credentials, id: &str) -> Option<Credentials> {
+    let row = config.models.iter().find(|r| editable_row(r, id) && uses_endpoint_key(r, creds))?;
+    let key = creds.endpoint_key(&row.provider, &row.url)?;
+    let mut next = creds.clone();
+    next.endpoints.retain(|e| provider_id(SignIn::Key, &e.provider, &e.url) != id
+        || e.api_key.as_deref().is_none_or(|k| k.is_empty() || k == key));
+    if next.endpoints.len() == creds.endpoints.len()
+        || config.models.iter().any(|row| credentials::resolve_api_key(row, creds) != credentials::resolve_api_key(row, &next))
+        || live::PROVIDERS.iter().any(|p| live::stored_key(p, &config.models, creds) != live::stored_key(p, &config.models, &next))
+    {
+        return None;
+    }
+    Some(next)
 }
 
 /// Display an address, not credentials embedded in a pasted URL.
@@ -96,10 +151,13 @@ impl ProviderView {
                 (label_for(provider, url), way)
             }
         };
+        let preset = (way == Way::Key).then(|| PRESETS.iter().find(|p| p.way == Way::Key
+            && credentials::same_endpoint("", p.url, "", url))).flatten();
+        let (provider, url) = preset.map_or((provider, url), |p| (p.name, p.url));
         Self {
             id: provider_id(sign_in, provider, url), label, way: way.as_str(),
             provider: provider.into(), url: shown_url(url), connected: false, fix: None,
-            key: (way == Way::Key).then_some(KeyState { set: false }),
+            key: (way == Way::Key).then_some(KeyState { set: false, conflict: false, can_keep_model_key: false }),
             models: Vec::new(), used_by: Vec::new(), disk_gb: None, families: None,
         }
     }
@@ -170,6 +228,11 @@ impl ModelManager {
         }
         let mut providers: Vec<_> = groups.into_values().collect();
         for group in &mut providers {
+            if let Some(key) = &mut group.key {
+                let mut keys = group_keys(creds, &group.id).filter_map(|e| e.api_key.as_deref()).filter(|k| !k.is_empty());
+                key.conflict = keys.next().is_some_and(|first| keys.any(|k| k != first));
+                key.can_keep_model_key = key.conflict && keep_model_key(config, creds, &group.id).is_some();
+            }
             group.models.sort_by(|a, b| a.id.cmp(&b.id));
             group.used_by.sort_unstable();
             group.fix = match group.way {

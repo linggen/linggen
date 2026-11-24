@@ -442,6 +442,57 @@ async fn a_phone_that_is_not_the_owner_is_refused_and_told_why() {
 }
 
 #[tokio::test]
+async fn qwen_card_cleanup_keeps_the_model_key_and_the_live_authorization() {
+    use linggen_engine::{config::Config, credentials::{self, Credentials}};
+    const URL: &str = "https://ap-southeast-1.maas.qwencloudapi.com/compatible-mode/v1";
+    const ROW: &str = r#"
+[[models]]
+id = "own-flash"
+provider = "openai"
+url = "https://ap-southeast-1.maas.qwencloudapi.com/compatible-mode/v1"
+model = "deepseek-v4.1-flash"
+"#;
+    const OTHER: &str = "unused-key-marker";
+    let api = QwenApi::start(Answer::Token).await;
+    let w = World::start(Setup {
+        config_append: Some(ROW),
+        env: vec![("LINGGEN_LIVE_ALIBABA_BASE", api.url.clone()), ("LINGGEN_LIVE_ALIBABA_KEY", String::new())],
+        ..Setup::default()
+    }).await;
+    assert_eq!(w.api.put_json("/api/credentials", json!({"endpoints":[
+        {"provider":"qwen", "url":URL, "api_key":OTHER},
+        {"provider":"openai", "url":URL, "api_key":QWEN_KEY}
+    ]})).await.0, 200);
+    let config: Config = serde_json::from_value(w.api.get("/api/config").await).unwrap();
+    let row = config.models.iter().find(|r| r.id == "own-flash").unwrap();
+    let path = w.home.linggen_home().join("credentials.json");
+    let live = || post_token(&w, json!({"provider":"alibaba"}));
+    assert_eq!(live().await.0, 200);
+    assert_eq!(credentials::resolve_api_key(row, &Credentials::load(&path)).as_deref(), Some(QWEN_KEY));
+    let result = w.api.get("/api/providers").await;
+    let groups: Vec<_> = result["providers"].as_array().unwrap().iter().filter(|p| p["label"] == "Qwen Cloud").collect();
+    assert_eq!(groups.len(), 1);
+    assert_eq!(groups[0]["key"], json!({"set":true,"conflict":true,"can_keep_model_key":true}));
+    assert_eq!(groups[0]["models"].as_array().unwrap().len(), 2);
+    assert!(groups[0]["families"].is_object());
+    let id = groups[0]["id"].as_str().unwrap();
+    let key_route = format!("/api/providers/{id}/key");
+    let action = json!({"action":"keep_model_key"});
+    let (status, cleaned) = w.api.put_json(&key_route, action.clone()).await;
+    assert_eq!(status, 200);
+    assert_eq!(cleaned["providers"].as_array().unwrap().iter().find(|p| p["id"] == id).unwrap()["key"], json!({"set":true}));
+    for answer in [result, cleaned] {
+        for marker in [QWEN_KEY, OTHER, "api_key"] { assert!(!answer.to_string().contains(marker)); }
+    }
+    let creds = Credentials::load(&path);
+    assert!(creds.endpoint_key("qwen", URL).is_none());
+    assert_eq!(credentials::resolve_api_key(row, &creds).as_deref(), Some(QWEN_KEY));
+    assert_eq!(live().await.0, 200);
+    assert_eq!(api.requests().iter().map(|(auth, _, _)| auth.clone()).collect::<Vec<_>>(), vec![format!("Bearer {QWEN_KEY}"); 2]);
+    assert_eq!(w.api.put_json(&key_route, action).await.0, 409);
+}
+
+#[tokio::test]
 async fn the_owner_is_given_a_qwen_short_key_address_and_never_the_long_lived_key() {
     let api = QwenApi::start(Answer::Token).await;
     let w = qwen_world(&api, true).await;
