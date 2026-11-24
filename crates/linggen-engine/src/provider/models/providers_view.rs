@@ -157,7 +157,7 @@ impl ModelManager {
             group.mark_key(set);
             group.connected |= set && group.models.is_empty();
         }
-        for (voice, ready, first) in live::readiness(&config.models, creds) {
+        for (voice, ready, first) in live::readiness(config.uses.live.as_deref(), &config.models, creds) {
             let Some(preset) = PRESETS.iter().find(|p| p.serves_live(voice)) else { continue };
             let id = provider_id(SignIn::Key, preset.name, preset.url);
             let group = groups.entry(id).or_insert_with(|| ProviderView::new(SignIn::Key, preset.name, preset.url));

@@ -5,12 +5,12 @@
  * What a key provider shows, and how, is models/KeyRow; the words are
  * lib/modelsWords.mts; reading the answer is lib/providers.mts.
  */
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Plus } from 'lucide-react';
-import type { AppConfig, ModelMove } from '../types';
+import type { ModelMove } from '../types';
+import type { UseEdit, Uses } from '../lib/modelUses';
 import { useServerStore } from '../stores/serverStore';
-import { appConfig, modelsApi, providersApi } from '../lib/endpoints';
-import { madeDefault } from '../lib/defaultChain.mts';
+import { modelsApi, providersApi, usesApi } from '../lib/endpoints';
 import { W } from '../lib/modelsWords.mts';
 import { keyProviders, localProviders, readyToUse, sameAddress, type Preset, type ProvidersAnswer } from '../lib/providers.mts';
 import { AddProvider } from './models/AddProvider';
@@ -22,11 +22,21 @@ import { cardCls, hintCls, linkBtn } from './models/shell';
 import { useProviders } from './models/useProviders';
 
 export const ModelsTab: React.FC<{
-  config: AppConfig;
   /** Read the config again: a route of the engine changed it (Settings holds one copy). */
   reload: () => Promise<void>;
-}> = ({ config, reload }) => {
+}> = ({ reload }) => {
   const { answer, loadFailed, problem, busy, load, run } = useProviders(reload);
+  const [uses, setUses] = useState<Uses | null>(null);
+  const [usesFailed, setUsesFailed] = useState(false);
+  const loadUses = useCallback(async () => {
+    try {
+      setUses(await usesApi.list());
+      setUsesFailed(false);
+    } catch {
+      setUsesFailed(true);
+    }
+  }, []);
+  useEffect(() => { if (!busy) void loadUses(); }, [answer, busy, loadUses]);
   const [open, setOpen] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   // A sign-in that made another model the default: one line says so.
@@ -48,10 +58,12 @@ export const ModelsTab: React.FC<{
     setSignInLine(made.line);
   };
 
-  const makeDefault = (modelId: string) => run(async () => {
-    await appConfig.update((c) => ({ ...c, routing: { ...c.routing, default_models: madeDefault(c.routing?.default_models ?? [], modelId) } }));
-    return providersApi.list();
+  const pickUse = (edit: UseEdit) => run(async () => {
+    setUses(await usesApi.put(edit));
+    setUsesFailed(false);
+    if (edit.use === 'chat' || edit.use === 'live') return providersApi.list();
   }).then(() => undefined);
+  const makeDefault = (choice: string) => pickUse({ use: 'chat', choice });
 
   const pick = async (preset: Preset) => {
     let made: ProvidersAnswer | void = undefined;
@@ -78,7 +90,7 @@ export const ModelsTab: React.FC<{
   const local = localProviders(providers);
   return (
     <div className="space-y-6" data-testid="models-page">
-      <DefaultCard providers={providers} first={config.routing?.default_models?.[0]} busy={busy} onPick={(id) => void makeDefault(id)} />
+      <DefaultCard view={uses} busy={busy} failed={usesFailed} retry={() => void loadUses()} pick={(edit) => void pickUse(edit)} />
       <section className={cardCls}>
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div className="min-w-0">

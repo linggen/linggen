@@ -112,6 +112,11 @@ export const modelsApi = {
  *  provider_families.rs). Every call answers with the fresh list; the page
  *  draws that answer and decides nothing itself (lib/providers.mts). */
 const provider = (id: string) => `/api/providers/${encodeURIComponent(id)}`;
+export const usesApi = {
+  list: () => apiGet<import('./modelUses').Uses>('/api/uses'),
+  put: (edit: import('./modelUses').UseEdit) => apiPut<import('./modelUses').Uses>('/api/uses', edit),
+};
+
 export const providersApi = {
   list: () => apiGet<ProvidersAnswer>('/api/providers'),
   /** A provider the person picked from `presets`, by its label. */

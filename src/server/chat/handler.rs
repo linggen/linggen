@@ -658,22 +658,29 @@ pub(super) fn turn_model(
 /// turn alone ([`turn_only`]); a kept or picked model that is replaced is
 /// cleared, so the member stops asking for it.
 ///
-/// An app's default model is not applied here: branded apps pin it as the
-/// request's model (their skill page sends ?model= only in app_mode), while
-/// the same skill run in the core app uses the configured global default.
+/// The app's standing model occupies the frontmatter slot in `AgentManager`;
+/// explicit request and session picks still win. A blocked app supplies none.
 pub(super) async fn resolve_effective_model(
     engine: &mut crate::engine::AgentEngine,
     asker: crate::engine::model_choice::Asker<'_>,
     asked: &TurnModel,
     (session_id, member): (Option<&str>, &str),
     manager: &Arc<AgentManager>,
+    app: Option<&str>,
 ) {
     use crate::engine::model_choice::{self, Rule};
     let may_switch = engine.switching(session_id).session_allows();
+    let standing = match app {
+        Some(name) => match manager.skills.reload_one(name).await {
+            Some(skill) => manager.app_model_id(member, &skill, may_switch).await,
+            None => None,
+        },
+        None => None,
+    };
     let choice = model_choice::resolve(
         &engine.model_manager,
         asked.id(),
-        &engine.default_model_id,
+        standing.as_deref().unwrap_or(&engine.default_model_id),
         Rule { asker, may_switch },
     );
     let place = format!("session '{}', {member}", session_id.unwrap_or("?"));
@@ -713,7 +720,8 @@ pub(super) async fn choose_members_model(engine: &mut crate::engine::AgentEngine
     );
     // A guest's session keeps to the models the room shares here too.
     let by = engine.asked_by();
-    resolve_effective_model(engine, by.asker(), &asked, (Some(sid), &ctx.agent_id), &ctx.manager).await;
+    let app = ctx.place.skill.as_deref().filter(|name| ctx.policy.is_skill_allowed(name));
+    resolve_effective_model(engine, by.asker(), &asked, (Some(sid), &ctx.agent_id), &ctx.manager, app).await;
 }
 
 /// In the day's session (setting on) a model sent with a message is for
@@ -1637,6 +1645,7 @@ pub(crate) async fn start_turn(
             &asked,
             (session_id.as_deref(), &target_id_clone),
             &state.manager,
+            turn_place.skill.as_deref().filter(|name| policy.is_skill_allowed(name)),
         )
         .await;
         if super::members::is_companion(&target_id_clone) {
@@ -1781,6 +1790,7 @@ mod tests {
                 &TurnModel::Member("ghost-model".into()),
                 (Some(&session), "ling"),
                 &manager,
+                None,
             )
             .await;
             let want = if kept { "ghost-model" } else { standing.as_str() };

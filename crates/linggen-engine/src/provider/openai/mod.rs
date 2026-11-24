@@ -342,8 +342,14 @@ impl OpenAiClient {
         None
     }
 
+    pub(crate) fn gemini_wire(base_url: &str) -> bool {
+        base_url.contains("googleapis.com")
+    }
+
     /// Check if a model supports reasoning effort control.
-    pub(super) fn model_supports_reasoning(model: &str, is_gemini: bool) -> bool {
+    pub(crate) const EFFORT_VALUES: [&'static str; 3] = ["low", "medium", "high"];
+
+    pub(crate) fn model_supports_reasoning(model: &str, is_gemini: bool) -> bool {
         let m = model.to_lowercase();
         // OpenAI reasoning models
         let gpt_reasoning = crate::provider::models::chatgpt_catalog::openai_generation(&m)
@@ -378,7 +384,7 @@ impl OpenAiClient {
     ) {
         let Some(effort) = effort else { return };
         let effort_lower = effort.to_lowercase();
-        if !["low", "medium", "high"].contains(&effort_lower.as_str()) {
+        if !Self::EFFORT_VALUES.contains(&effort_lower.as_str()) {
             return;
         }
 
@@ -444,7 +450,7 @@ impl OpenAiClient {
         let (rb, parse): (_, Parser) = if self.uses_responses_api() {
             let mut stream = responses_api::ResponsesStream::default();
             (
-                responses_api::text_request(self, model, messages),
+                responses_api::text_request(self, model, messages, reasoning_effort),
                 Box::new(move |data| stream.text_event(data)),
             )
         } else {

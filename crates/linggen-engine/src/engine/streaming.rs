@@ -182,6 +182,11 @@ pub(crate) fn has_write_path_conflicts(actions: &[(&str, &serde_json::Value)], c
 // ---------------------------------------------------------------------------
 
 impl AgentEngine {
+    fn turn_effort(&self, model_id: &str) -> Option<&str> {
+        let chat = self.session_permissions.interactive.then_some(self.cfg.chat_effort.as_deref()).flatten();
+        self.model_manager.turn_effort(model_id, self.reasoning_effort.as_deref(), chat)
+    }
+
     /// App product for per-app usage attribution on the Linggen Cloud proxy
     /// (X-Linggen-App): what the session's bound skill declares as its
     /// `product`. Everything else meters the shared 'linggen' bucket.
@@ -207,7 +212,7 @@ impl AgentEngine {
             .chat_text_stream(
                 model_id,
                 messages,
-                self.reasoning_effort.as_deref(),
+                self.turn_effort(model_id),
                 self.app_product(),
             )
             .await?;
@@ -314,7 +319,7 @@ impl AgentEngine {
                 model_id,
                 messages,
                 tools,
-                self.reasoning_effort.as_deref(),
+                self.turn_effort(model_id),
                 self.app_product(),
             )
             .await?;

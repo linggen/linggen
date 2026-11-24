@@ -354,10 +354,16 @@ pub(crate) fn key_ready(p: &Provider, configured: &[ModelConfig], creds: &Creden
     provider_key(p, || stored_key(p, configured, creds)).is_some()
 }
 
+/// Move the preferred service to the front, keeping the declared fallback order.
+pub fn in_order(pref: Option<&str>) -> impl Iterator<Item = &'static Provider> {
+    let preferred = pref.and_then(provider_named);
+    preferred.into_iter().chain(PROVIDERS.iter().filter(move |p| Some(p.id) != preferred.map(|p| p.id)))
+}
+
 /// The declarations with readiness, in the same order the live page tries them.
-pub(crate) fn readiness<'a>(configured: &'a [ModelConfig], creds: &'a Credentials) -> impl Iterator<Item = (&'static Provider, bool, bool)> + 'a {
+pub fn readiness<'a>(pref: Option<&str>, configured: &'a [ModelConfig], creds: &'a Credentials) -> impl Iterator<Item = (&'static Provider, bool, bool)> + 'a {
     let mut found_ready = false;
-    PROVIDERS.iter().map(move |p| {
+    in_order(pref).map(move |p| {
         let ready = key_ready(p, configured, creds);
         let first = ready && !std::mem::replace(&mut found_ready, true);
         (p, ready, first)
@@ -472,6 +478,14 @@ impl Default for TokenRate {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_live_preference_moves_only_its_provider() {
+        let ids = |pref| in_order(pref).map(|p| p.id).collect::<Vec<_>>();
+        assert_eq!(ids(None), ["alibaba", "google"]);
+        assert_eq!(ids(Some("google")), ["google", "alibaba"]);
+        assert_eq!(ids(Some("unknown")), ids(None));
+    }
 
     fn google() -> &'static Provider {
         provider_named("google").unwrap()

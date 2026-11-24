@@ -15,8 +15,12 @@ const CAPTION_CHARS: usize = 120;
 
 impl Tools {
     pub(crate) async fn generate_image(&self, args: GenerateImageArgs) -> Result<ToolResult> {
+        let default = match self.get_manager() {
+            Some(manager) => manager.get_config_snapshot().await.uses.draw,
+            None => None,
+        };
         let source = Source::select(
-            args.model.as_deref(),
+            args.model.as_deref().or(default.as_deref()),
             crate::provider::codex_auth::chatgpt_signed_in(),
             crate::runtime::lane_verdict(&crate::runtime::PICTURES_LANE),
         )?;

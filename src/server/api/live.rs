@@ -47,11 +47,10 @@ pub(crate) async fn status_handler(
 ) -> Response {
     let level = crate::server::api::pair::caller_level(&headers);
     let owner = crate::server::person::owners_only(level).is_none();
-    let configured = state.manager.get_config_snapshot().await.models;
-    let providers: Vec<Value> = live::PROVIDERS
-        .iter()
+    let config = state.manager.get_config_snapshot().await;
+    let providers: Vec<Value> = live::in_order(config.uses.live.as_deref())
         .map(
-            |p| match why_not_ready(owner, || live::find_key(p, &configured).is_some()) {
+            |p| match why_not_ready(owner, || live::find_key(p, &config.models).is_some()) {
                 Some(why) => json!({"id": p.id, "ready": false, "why": why}),
                 None => json!({"id": p.id, "ready": true}),
             },

@@ -42,6 +42,7 @@ mod presence;
 mod private_app;
 mod prompt;
 mod providers;
+mod uses;
 mod reading;
 mod restart;
 mod rooms;

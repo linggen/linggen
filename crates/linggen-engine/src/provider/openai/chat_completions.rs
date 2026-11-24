@@ -11,7 +11,7 @@ use serde_json::Value;
 
 /// Gemini's OpenAI-compatible endpoint, which needs a few extra knobs.
 fn is_gemini(client: &OpenAiClient) -> bool {
-    client.base_url.contains("googleapis.com")
+    OpenAiClient::gemini_wire(&client.base_url)
 }
 
 /// A text-only turn (no tools).

@@ -49,6 +49,7 @@ pub(super) mod tts_mlx;
 /// `pub(crate)`: the `pet_speak` event carries a line's clauses.
 pub(crate) mod tts_text;
 pub(super) mod tts_wav;
+pub(super) mod uses;
 pub(crate) mod utils;
 pub(super) mod workspace;
 pub(super) mod yinyue;

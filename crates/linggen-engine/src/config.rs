@@ -8,6 +8,29 @@ pub mod providers;
 mod sign_in;
 pub use sign_in::{AuthMode, ProviderKind, SignIn};
 
+/// Defaults for uses other than the legacy chat chain. Missing choices keep
+/// the built-in order. Speaker stays in `pet.voice`, including for downgrade.
+#[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize, Clone)]
+#[serde(default, deny_unknown_fields)]
+pub struct Uses {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub live: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub speak: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub draw: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chat_effort: Option<String>,
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub apps: std::collections::BTreeMap<String, String>,
+}
+
+impl Uses {
+    fn is_empty(&self) -> bool {
+        self == &Self::default()
+    }
+}
+
 #[derive(Debug)]
 pub struct DuplicateModelId;
 
@@ -32,6 +55,9 @@ pub struct Config {
     pub agents: Vec<AgentSpecRef>,
     #[serde(default)]
     pub routing: RoutingConfig,
+    #[serde(default, skip_serializing_if = "Uses::is_empty")]
+    #[cfg_attr(any(test, feature = "test-support"), ts(skip))]
+    pub uses: Uses,
     /// Default working folder for new sessions. Defaults to `~` if not set.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub home_path: Option<String>,
@@ -990,6 +1016,7 @@ impl Default for Config {
                 default_models: vec![crate::provider::models::LINGGEN_CLOUD_MODEL_ID.to_string()],
                 ..Default::default()
             },
+            uses: Uses::default(),
             home_path: None,
             language: None,
             pet: PetConfig::default(),

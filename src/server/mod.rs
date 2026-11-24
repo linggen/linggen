@@ -111,7 +111,7 @@ async fn prepare_server(
             rtc::token_store::TokenUsageStore::load(),
         )),
         codex_login_task: Arc::new(tokio::sync::Mutex::new(None)),
-        tts: api::tts::default_provider(voice_sidecar.clone()),
+        tts: Arc::new(api::tts_mlx::MlxTtsProvider::new(voice_sidecar.clone())),
         stt: api::stt::default_provider(voice_sidecar),
         live_rate: Default::default(),
         settings_write: Default::default(),

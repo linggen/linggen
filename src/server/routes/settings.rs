@@ -47,6 +47,7 @@ pub(super) fn routes() -> Routes {
         // Models & skills GETs — used by SharingTab and SkillsTab Settings pages directly.
         // Session list / agents / agent-runs come via page_state only (no GET route).
         .route("/api/models", get(list_models_api))
+        .route("/api/uses", get(api::uses::list).put(api::uses::put))
         .route("/api/providers", get(api::providers::list).post(api::providers::create))
         .route("/api/providers/{id}", axum::routing::patch(api::providers::edit))
         .route("/api/providers/{id}/key", put(api::providers::edit))

@@ -79,8 +79,35 @@ pub trait TtsProvider: Send + Sync {
 /// Qwen3-TTS on the GPU via the managed runtime's sidecar, with Kokoro
 /// (and behind it `say`) as the automatic fallback chain, so the voice
 /// upgrade can never cost the pet her speech.
-pub fn default_provider(sidecar: Arc<super::mlx_sidecar::VoiceSidecar>) -> Arc<dyn TtsProvider> {
-    Arc::new(super::tts_mlx::MlxTtsProvider::new(sidecar))
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Source { Qwen, Kokoro, System }
+
+impl Source {
+    pub(super) const ALL: [Self; 3] = [Self::Qwen, Self::Kokoro, Self::System];
+
+    pub(super) fn id(self) -> &'static str {
+        match self { Self::Qwen => "qwen", Self::Kokoro => "kokoro", Self::System => "system" }
+    }
+
+    pub(super) fn readiness() -> [bool; 3] {
+        #[cfg(feature = "kokoro")]
+        let kokoro = KokoroProvider::weights_on_disk();
+        #[cfg(not(feature = "kokoro"))]
+        let kokoro = false;
+        let system = std::env::var_os("PATH").is_some_and(|path| {
+            std::env::split_paths(&path).any(|dir| dir.join("say").is_file())
+        });
+        [crate::runtime::voice_ready(), kokoro, system]
+    }
+
+    pub(super) fn exists(self) -> bool {
+        self != Self::Kokoro || cfg!(feature = "kokoro")
+    }
+}
+
+pub(super) fn default_provider(preference: Option<&str>, ready: [bool; 3]) -> Option<Source> {
+    let usable = || Source::ALL.into_iter().zip(ready).filter_map(|(source, ready)| ready.then_some(source));
+    usable().find(|source| Some(source.id()) == preference).or_else(|| usable().next())
 }
 
 /// Kokoro's own voice packs carry the LANGUAGE, not just the timbre: its
@@ -148,14 +175,14 @@ impl TtsProvider for SystemSayProvider {
 
 /// What speaks when the GPU voice can't: Kokoro when the build carries it
 /// (the `kokoro` feature, on by default), else `say` directly.
-pub fn fallback_provider() -> Box<dyn TtsProvider> {
+pub fn fallback_provider() -> Arc<dyn TtsProvider> {
     #[cfg(feature = "kokoro")]
     {
-        Box::new(KokoroProvider::new())
+        Arc::new(KokoroProvider::new())
     }
     #[cfg(not(feature = "kokoro"))]
     {
-        Box::new(SystemSayProvider)
+        Arc::new(SystemSayProvider)
     }
 }
 
@@ -412,10 +439,6 @@ pub(crate) struct Speech {
     pub natural: bool,
 }
 
-pub(crate) fn speech_standing(natural: bool, system_say: bool, kokoro_on_disk: bool) -> Speech {
-    Speech { speaks: natural || system_say || kokoro_on_disk, natural }
-}
-
 /// Why there is no voice: its fetch gave up (and why), or it is not here yet.
 fn no_voice_reason() -> String {
     let again = "It tries again on its own.";
@@ -425,18 +448,16 @@ fn no_voice_reason() -> String {
     }
 }
 
-fn speech_now() -> Speech {
-    #[cfg(feature = "kokoro")]
-    let kokoro = KokoroProvider::weights_on_disk();
-    #[cfg(not(feature = "kokoro"))]
-    let kokoro = false;
-    speech_standing(crate::runtime::voice_ready(), cfg!(target_os = "macos"), kokoro)
+fn speech_now(pref: Option<&str>) -> Speech {
+    let source = default_provider(pref, Source::readiness());
+    Speech { speaks: source.is_some(), natural: source == Some(Source::Qwen) }
 }
 
 /// GET /api/tts — can a line be spoken now, and in her own voice? Reads the
 /// disk and starts nothing: no fetch, no model load, no synthesis.
-pub(crate) async fn tts_status_handler() -> impl IntoResponse {
-    let now = speech_now();
+pub(crate) async fn tts_status_handler(State(state): State<Arc<ServerState>>) -> impl IntoResponse {
+    let config = state.manager.get_config_snapshot().await;
+    let now = speech_now(config.uses.speak.as_deref());
     match now.speaks {
         true => Json(serde_json::json!({ "speaks": true, "natural": now.natural })),
         false => Json(serde_json::json!({
@@ -458,15 +479,16 @@ pub(crate) async fn tts_handler(
 
     // No voice named → the configured pet voice, applied per clip so a
     // Settings change speaks on the very next line.
-    let voice = match req.voice {
-        Some(v) => Some(v),
-        None => {
-            let v = state.manager.get_config_snapshot().await.pet.voice;
-            (!v.trim().is_empty()).then_some(v)
-        }
+    let config = state.manager.get_config_snapshot().await;
+    let source = default_provider(config.uses.speak.as_deref(), Source::readiness());
+    let (tts, voice): (&dyn TtsProvider, Option<&str>) = match source {
+        Some(Source::Qwen) => (state.tts.as_ref(), req.voice.as_deref().or(Some(&config.pet.voice))),
+        Some(Source::Kokoro) => (state.tts.fallback.as_ref(), req.voice.as_deref().filter(|v| [VOICE_EN, VOICE_ZH].contains(v))),
+        Some(Source::System) => (&SystemSayProvider, None),
+        None => return (StatusCode::SERVICE_UNAVAILABLE, "No voice is ready.").into_response(),
     };
 
-    match speak_line(state.tts.as_ref(), &req.text, voice.as_deref()).await {
+    match speak_line(tts, &req.text, voice).await {
         Ok(wav) => (StatusCode::OK, [(header::CONTENT_TYPE, "audio/wav")], wav).into_response(),
         Err(e) => {
             tracing::warn!("[tts] synthesis failed: {e}");
@@ -511,11 +533,14 @@ mod tests {
     /// only for the GPU voice, and never starts anything: it is a function of
     /// three facts read from disk.
     #[test]
-    fn the_status_names_the_voice_a_line_would_have() {
-        assert_eq!(speech_standing(true, false, false), Speech { speaks: true, natural: true });
-        assert_eq!(speech_standing(false, true, false), Speech { speaks: true, natural: false });
-        assert_eq!(speech_standing(false, false, true), Speech { speaks: true, natural: false });
-        assert_eq!(speech_standing(false, false, false), Speech { speaks: false, natural: false });
+    fn speech_prefers_a_ready_choice_then_the_builtin_order() {
+        let ready = [true, true, true];
+        assert_eq!(default_provider(None, ready), Some(Source::Qwen));
+        assert_eq!(default_provider(Some("kokoro"), ready), Some(Source::Kokoro));
+        assert_eq!(default_provider(Some("system"), ready), Some(Source::System));
+        assert_eq!(default_provider(Some("kokoro"), [true, false, true]), Some(Source::Qwen));
+        assert_eq!(default_provider(Some("qwen"), [false, true, true]), Some(Source::Kokoro));
+        assert_eq!(default_provider(None, [false; 3]), None);
     }
 
     /// Lock: the status route reads, it does not make or fetch. Its handler and
@@ -524,7 +549,7 @@ mod tests {
     fn the_status_route_starts_nothing() {
         let code = include_str!("tts.rs");
         let production = &code[..code.find("#[cfg(test)]").unwrap()];
-        let from = production.find("pub(crate) fn speech_standing").unwrap();
+        let from = production.find("fn speech_now").unwrap();
         let to = production.find("/// POST /api/tts").unwrap();
         let status = &production[from..to];
         for starts in [".synthesize(", ".fetch(", ".prewarm(", "ensure_voice", "speak_line", "get_bytes", ".model()"] {

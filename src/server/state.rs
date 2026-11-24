@@ -82,7 +82,7 @@ pub struct ServerState {
     pub codex_login_task: Arc<tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>>,
     /// Voice backend for `/api/tts` (Yinyue's speech). Held here so a
     /// model-backed provider (Kokoro) loads once rather than per request.
-    pub tts: Arc<dyn crate::server::api::tts::TtsProvider>,
+    pub tts: Arc<crate::server::api::tts_mlx::MlxTtsProvider>,
     /// Hearing backend for `/api/stt` (what the person says to her). Shares
     /// her voice's one sidecar process.
     pub stt: Arc<dyn crate::server::api::stt::SttProvider>,

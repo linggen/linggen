@@ -18,11 +18,21 @@ fn ensure_fc_prefix(id: &str) -> String {
     }
 }
 
+fn apply_effort(req: &mut Value, model: &str, effort: Option<&str>) {
+    let Some(effort) = effort.map(str::to_ascii_lowercase) else { return };
+    if OpenAiClient::EFFORT_VALUES.contains(&effort.as_str())
+        && OpenAiClient::model_supports_reasoning(model, false)
+    {
+        req["reasoning"] = serde_json::json!({ "effort": effort });
+    }
+}
+
 /// A text-only turn (no tools).
 pub(super) fn text_request(
     client: &OpenAiClient,
     model: &str,
     messages: &[ChatMessage],
+    reasoning_effort: Option<&str>,
 ) -> reqwest::RequestBuilder {
     let url = format!("{}/responses", client.base_url);
     // Separate system instructions from input messages
@@ -34,6 +44,7 @@ pub(super) fn text_request(
         "stream": true,
         "store": false,
     });
+    apply_effort(&mut req, model, reasoning_effort);
     let cache_key = prompt_cache_key(&instructions);
     req["prompt_cache_key"] = Value::String(cache_key.clone());
     if !instructions.is_empty() {
@@ -120,14 +131,7 @@ pub(super) fn tool_request(
     // maximum, so — unlike Gemini's small thinking budget (which we
     // DO bump) — reasoning can't starve the visible output into an
     // empty response.
-    if let Some(effort) = reasoning_effort {
-        let e = effort.to_lowercase();
-        if ["low", "medium", "high"].contains(&e.as_str())
-            && OpenAiClient::model_supports_reasoning(model, false)
-        {
-            req["reasoning"] = serde_json::json!({ "effort": e });
-        }
-    }
+    apply_effort(&mut req, model, reasoning_effort);
     let cache_key = prompt_cache_key(&instructions);
     req["prompt_cache_key"] = Value::String(cache_key.clone());
     if !instructions.is_empty() {

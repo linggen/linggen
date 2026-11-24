@@ -88,7 +88,7 @@ export function translate(text: string): string | null {
 function swapText(node: Text) {
   const v = node.nodeValue || '';
   const said = translate(v);
-  if (said == null) return;
+  if (said == null || said === v.trim()) return;
   node.nodeValue = (v.match(/^\s*/)?.[0] ?? '') + said + (v.match(/\s*$/)?.[0] ?? '');
 }
 

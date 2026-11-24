@@ -39,15 +39,12 @@ fn synth_timeout(text: &str) -> std::time::Duration {
 
 pub struct MlxTtsProvider {
     sidecar: Arc<VoiceSidecar>,
-    fallback: Box<dyn TtsProvider>,
+    pub(super) fallback: Arc<dyn TtsProvider>,
 }
 
 impl MlxTtsProvider {
     pub fn new(sidecar: Arc<VoiceSidecar>) -> Self {
-        Self {
-            sidecar,
-            fallback: super::tts::fallback_provider(),
-        }
+        Self { sidecar, fallback: super::tts::fallback_provider() }
     }
 
     /// Venv and model both on disk: a sidecar spawned before the model

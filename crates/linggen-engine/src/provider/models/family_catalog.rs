@@ -275,6 +275,13 @@ fn valid_rates(rates: Rates) -> bool {
 impl ModelFacts {
     pub(crate) fn id(&self) -> &str { &self.id }
     pub(crate) fn name(&self) -> &str { &self.name }
+
+    pub(crate) fn effort_values(&self) -> impl Iterator<Item = &str> {
+        self.reasoning_options.iter().flatten().filter_map(|option| match option {
+            ReasoningOption::Effort { values } => Some(values),
+            _ => None,
+        }).flatten().map(String::as_str)
+    }
     pub(crate) fn family(&self) -> Option<&str> { self.family.as_deref() }
     pub(crate) fn release_date(&self) -> Option<&str> { self.release_date.as_deref() }
     pub(crate) fn context(&self) -> Option<u32> { self.context }

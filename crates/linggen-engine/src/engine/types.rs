@@ -176,6 +176,7 @@ pub struct EngineConfig {
     /// A member tuned its own recall (`AgentEngine::tune_recall`): the
     /// configured recall no longer applies to this engine.
     pub recall_tuned: bool,
+    pub(crate) chat_effort: Option<String>,
 }
 
 impl EngineConfig {
@@ -205,6 +206,7 @@ impl EngineConfig {
             memory_inject_min_score: config.agent.memory_inject_min_score,
             memory_recall_count: config.agent.memory_recall_count,
             recall_tuned: false,
+            chat_effort: None,
         };
         cfg.apply_settings(config);
         cfg
@@ -215,6 +217,7 @@ impl EngineConfig {
     /// changes (`AgentEngine::read_changes_if_any`). The default permission
     /// mode is not among them — it is a new session's, not a live one's.
     pub fn apply_settings(&mut self, config: &crate::config::Config) {
+        self.chat_effort.clone_from(&config.uses.chat_effort);
         self.max_iters = config.agent.max_iters;
         self.coding_max_iters = config.agent.coding_max_iters;
         self.write_safety_mode = config.agent.write_safety_mode;

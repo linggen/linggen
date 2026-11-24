@@ -848,6 +848,20 @@ impl AgentManager {
         .ok()
     }
 
+    /// An app's choice takes the frontmatter slot, below the configured
+    /// agent override and above the chat chain. An unavailable choice lets
+    /// the ordinary agent default stand. The caller still applies its model policy.
+    pub async fn app_model_id(&self, agent_id: &str, skill: &crate::engine::skill::Skill, may_switch: bool) -> Option<String> {
+        let config = self.get_config_snapshot().await;
+        let configured = skill.text_model_app().and_then(|_| config.uses.apps.get(&skill.name));
+        let choice = configured.or(skill.model.as_ref())?;
+        let models = self.models.read().await;
+        if may_switch && !models.model_auth_ok(choice) {
+            return None;
+        }
+        Self::resolve_model_id(&config, &models, agent_id, Some(choice.clone()), may_switch).ok()
+    }
+
     pub async fn agent_exists(&self, project_root: &Path, agent_id: &str) -> bool {
         matches!(self.agents.find(project_root, agent_id).await, Ok(Some(_)))
     }

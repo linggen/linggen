@@ -51,6 +51,14 @@ pub struct AppConfig {
     pub assets: Option<String>,
 }
 
+impl Skill {
+    /// An app with model-backed turns, as declared in its skill record.
+    pub fn text_model_app(&self) -> Option<&AppConfig> {
+        self.app.as_ref().filter(|_| !self.disable_model_invocation
+            && (self.product.is_some() || self.model.is_some() || self.agent.is_some() || self.private_talk))
+    }
+}
+
 fn listed_by_default() -> bool {
     true
 }

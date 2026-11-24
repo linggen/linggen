@@ -46,6 +46,10 @@ impl Source {
         }
     }
 
+    pub fn id(self) -> &'static str {
+        match self { Self::ChatGpt => "chatgpt", Self::ThisMac => "local" }
+    }
+
     /// How a result names it.
     pub fn label(self) -> &'static str {
         match self {

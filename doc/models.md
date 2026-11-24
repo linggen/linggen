@@ -94,6 +94,12 @@ Optional fields:
 
 The easiest way to add models: open **Settings → Models** in the browser, click **Add provider**, pick one, paste your key once. The engine ticks the provider's starter families (Sonnet for Claude, say); tick more, or type a model name under **Advanced**. The page draws what `GET /api/providers` answers and decides nothing; each button calls its route (`PUT /api/providers/{id}/key`, `PUT …/families/{family}`, `POST …/models` with just `{model}` — the engine makes the row's id).
 
+### Defaults by use
+
+Settings → Models owns the chat chain, effort, live voice, reading voice, drawing, and app text models. Dictation uses local Whisper. An explicit turn or session model still wins; the app's standing choice occupies the frontmatter slot, after the agent override and before the chat chain. Removing the app override restores its normal default. Live voice and speech keep their built-in fallback order.
+
+New preferences live in `[uses]`; the established chat chain and Yinyue’s speaker keep their original storage. Version 2.6.1 ignores `[uses]` on load and drops it on save; those uses then return to their built-in defaults.
+
 ## Prompt cache
 
 A provider bills a repeated beginning of a request at a fraction of the price, so the engine keeps each request's beginning the same from turn to turn:

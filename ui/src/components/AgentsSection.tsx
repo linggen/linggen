@@ -12,8 +12,6 @@ import { COMPANION_ID } from '../lib/agentsMet.mts';
 import { madeDefault } from '../lib/defaultChain.mts';
 import { Field, Grid, NumberInput, Section, inputCls } from './settings/kit';
 
-const VOICES = ['vivian', 'serena', 'ono_anna', 'sohee', 'uncle_fu', 'ryan', 'aiden', 'eric', 'dylan'];
-
 type ModelOption = { id: string; authOk: boolean };
 
 /** Models an agent can be put on: the engine's built-ins plus the configured
@@ -124,11 +122,6 @@ export const AgentsSection: React.FC<{
                 <select className={inputCls} value={her.model ?? 'auto'} onChange={(e) => setHer({ model: e.target.value })}>
                   <option value="auto">Auto</option>
                   <ModelOptions options={options} current={her.model === 'auto' ? undefined : her.model} />
-                </select>
-              </Field>
-              <Field label="Voice" hint="Her speaker. Applies on her next spoken line." details="A Qwen3-TTS speaker. The fallback voice ignores it.">
-                <select className={inputCls} value={her.voice ?? 'vivian'} onChange={(e) => setHer({ voice: e.target.value })}>
-                  {VOICES.map((v) => <option key={v} value={v}>{v}</option>)}
                 </select>
               </Field>
               <Field label="Mute voice" hint="This Mac only. Muted, she still writes every line." details={<>Also <code>/mute</code> and <code>/unmute</code> in any chat.</>}>

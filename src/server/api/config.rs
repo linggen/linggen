@@ -33,6 +33,9 @@ pub(crate) async fn update_config_api(
     // (`outside_apps::set`): a saved config, from any page, keeps it.
     let current = state.manager.get_config_snapshot().await;
     new_config.outside_apps = current.outside_apps.clone();
+    // Only /api/uses writes these choices; a stale settings page keeps them.
+    new_config.uses = current.uses.clone();
+    new_config.pet.voice = current.pet.voice.clone();
     // Nor does it undo a family's move, or set a binding: the writer is `families`.
     crate::provider::models::families::Families::keep_bindings(&mut new_config, &current);
     if let Err(e) = take_credentials(&mut new_config, &credentials::credentials_file()) {
