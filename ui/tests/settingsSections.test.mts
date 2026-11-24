@@ -69,7 +69,7 @@ test('bare settings uses the declared subset and still gates Room', () => {
   const room = BARE_SECTIONS.find((s) => s.id === 'room')!;
   assert.equal(sectionAvailable(room, off), false);
   assert.equal(sectionAvailable(room, { ...off, rooms: true }), true);
-  assert.equal(SETTINGS_SECTIONS.filter((s) => sectionAvailable(s, off)).length, 12);
+  assert.equal(SETTINGS_SECTIONS.filter((s) => sectionAvailable(s, off)).length, 13);
   const desktop = SETTINGS_SECTIONS.find((s) => s.id === 'desktop')!;
   assert.equal(sectionAvailable(desktop, { ...off, companion: true }), false);
   assert.equal(sectionAvailable(desktop, { ...off, shell: true }), true);
