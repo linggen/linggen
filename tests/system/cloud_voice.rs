@@ -275,8 +275,7 @@ async fn the_sites_refusals_reach_the_page_as_fixed_words() {
 }
 
 #[tokio::test]
-async fn a_subscribers_default_voice_is_linggen_clouds_serena_and_a_refusal_hands_back_to_this_mac()
-{
+async fn a_subscribers_default_voice_is_linggen_clouds_serena() {
     let site = Site::start(Plan::Subscriber, Verdict::Allow).await;
     let w = world(&site, true).await;
 
@@ -358,4 +357,48 @@ async fn read_aloud_is_not_offered_to_a_person_who_is_not_a_subscriber() {
             "the site was asked to read to a non-subscriber"
         );
     }
+}
+
+/// The site says today's read-aloud is used up: the line is asked once, the next voice (this Mac's)
+/// takes over at once, and no clause after it goes to the site again.
+#[tokio::test]
+async fn a_refusal_hands_back_to_this_mac_and_the_site_is_not_asked_again() {
+    let site = Site::start(Plan::Subscriber, Verdict::Refuse(429, "daily_cap")).await;
+    let w = world(&site, true).await;
+    assert_eq!(
+        w.api.get("/api/uses").await["speak"]["effective"],
+        "linggen-cloud"
+    );
+
+    // Whether this machine can then speak (a `say`, a local model) is its own fact; the site is the point.
+    let _ = w
+        .api
+        .post_for_bytes("/api/tts", json!({"text": "Hello there, I am here."}))
+        .await;
+    let asked = |site: &Site| {
+        site.requests()
+            .iter()
+            .filter(|(p, ..)| p == "/api/tts")
+            .count()
+    };
+    assert_eq!(asked(&site), 1, "the line was asked of the site once");
+
+    let _ = w
+        .api
+        .post_for_bytes("/api/tts", json!({"text": "And another line."}))
+        .await;
+    assert_eq!(
+        asked(&site),
+        1,
+        "a refused voice is not asked again for a while"
+    );
+    let uses = w.api.get("/api/uses").await;
+    assert_ne!(uses["speak"]["effective"], "linggen-cloud", "{uses}");
+    let cloud = uses["speak"]["options"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|o| o["id"] == "linggen-cloud")
+        .unwrap();
+    assert_eq!(cloud["state"], "unavailable");
 }

@@ -25,7 +25,7 @@ type Props = {
 };
 
 /** Linggen Cloud's voice uses, as words (it lists all three uses: chat, live voice, read-aloud). */
-const useWords = (p: Provider) => p.models.filter((m) => m.builtin && (m.kind === 'live_voice' || m.kind === 'speak')).map((m) => (m.kind === 'live_voice' ? W.liveVoice : W.readAloud));
+const cloudUseWords = (p: Provider) => p.models.filter((m) => m.builtin && (m.kind === 'live_voice' || m.kind === 'speak')).map((m) => (m.kind === 'live_voice' ? W.liveVoice : W.readAloud));
 
 /** Built-in model ids, then where its sign-in stands. */
 const subtitle = (p: Provider, note: string) => (
@@ -35,7 +35,7 @@ const subtitle = (p: Provider, note: string) => (
     <span>{note}</span>
     <span aria-hidden> · </span>
     <span data-no-i18n>{p.models.filter((m) => m.builtin && m.kind === 'chat').map((m) => m.id).join(' · ')}</span>
-    {useWords(p).map((word) => <React.Fragment key={word}><span aria-hidden> · </span><span>{word}</span></React.Fragment>)}
+    {cloudUseWords(p).map((word) => <React.Fragment key={word}><span aria-hidden> · </span><span>{word}</span></React.Fragment>)}
   </>
 );
 

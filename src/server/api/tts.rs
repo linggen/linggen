@@ -22,7 +22,7 @@ use std::sync::Arc;
 use any_tts::{ModelType, SynthesisRequest, TtsConfig, TtsModel};
 use async_trait::async_trait;
 use axum::extract::State;
-use axum::http::{header, StatusCode};
+use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::Json;
 use serde::Deserialize;
@@ -97,7 +97,11 @@ impl Source {
     /// Whether the voice sounds like Yinyue herself (the GPU voice, or Linggen Cloud's Serena).
     pub(super) fn is_natural(self) -> bool { matches!(self, Self::Cloud | Self::Qwen) }
 
-    pub(super) fn readiness() -> [bool; 4] {
+    /// Which voices can speak now. Linggen Cloud's is the owner's alone: it
+    /// spends the owner's subscription and sends the text out, so a caller who
+    /// is not the owner (`person::owners_only`, as `/api/live` asks) is never
+    /// given it.
+    pub(super) fn readiness(owner: bool) -> [bool; 4] {
         #[cfg(feature = "kokoro")]
         let kokoro = KokoroProvider::weights_on_disk();
         #[cfg(not(feature = "kokoro"))]
@@ -106,7 +110,8 @@ impl Source {
             std::env::split_paths(&path).any(|dir| dir.join("say").is_file())
         });
         // Linggen Cloud's voice is offered only where the curated list names it.
-        let cloud = crate::provider::models::providers_view::cloud_speech_listed()
+        let cloud = owner
+            && crate::provider::models::providers_view::cloud_speech_listed()
             && crate::account::cloud_voice::speech_usable();
         [cloud, crate::runtime::voice_ready(), kokoro, system]
     }
@@ -477,16 +482,21 @@ fn no_voice_reason() -> String {
     }
 }
 
-fn speech_now(pref: Option<&str>) -> Speech {
-    let source = default_provider(pref, Source::readiness());
+/// Whether the caller is the owner: the rule the settings routes ask (`providers::owner_refusal`).
+fn is_owner(headers: &HeaderMap) -> bool {
+    crate::server::person::of_headers(headers).is_owner()
+}
+
+fn speech_now(pref: Option<&str>, owner: bool) -> Speech {
+    let source = default_provider(pref, Source::readiness(owner));
     Speech { speaks: source.is_some(), natural: source.is_some_and(Source::is_natural) }
 }
 
 /// GET /api/tts — can a line be spoken now, and in her own voice? Reads the
 /// disk and starts nothing: no fetch, no model load, no synthesis.
-pub(crate) async fn tts_status_handler(State(state): State<Arc<ServerState>>) -> impl IntoResponse {
+pub(crate) async fn tts_status_handler(State(state): State<Arc<ServerState>>, headers: HeaderMap) -> impl IntoResponse {
     let config = state.manager.get_config_snapshot().await;
-    let now = speech_now(config.uses.speak.as_deref());
+    let now = speech_now(config.uses.speak.as_deref(), is_owner(&headers));
     match now.speaks {
         true => Json(serde_json::json!({ "speaks": true, "natural": now.natural })),
         false => Json(serde_json::json!({
@@ -515,6 +525,7 @@ impl TtsProvider for CloudProvider {
 /// POST /api/tts — `{ text, voice? }` → `audio/wav` bytes.
 pub(crate) async fn tts_handler(
     State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
     Json(req): Json<TtsRequest>,
 ) -> impl IntoResponse {
     if req.text.trim().is_empty() {
@@ -524,11 +535,12 @@ pub(crate) async fn tts_handler(
     // No voice named → the configured pet voice, applied per clip so a
     // Settings change speaks on the very next line.
     let config = state.manager.get_config_snapshot().await;
+    let owner = is_owner(&headers);
     let mut failure = None;
     // Linggen Cloud may fail mid-line (cap, offline); a refusal cools it off
     // (`cloud_voice`), so the second pass finds the next voice ready.
     for _ in 0..2 {
-        let source = default_provider(config.uses.speak.as_deref(), Source::readiness());
+        let source = default_provider(config.uses.speak.as_deref(), Source::readiness(owner));
         let (tts, voice): (&dyn TtsProvider, Option<&str>) = match source {
             Some(Source::Cloud) => (&CloudProvider, None),
             Some(Source::Qwen) => (state.tts.as_ref(), req.voice.as_deref().or(Some(&config.pet.voice))),
@@ -601,6 +613,13 @@ mod tests {
         assert_eq!(default_provider(Some("qwen"), [false, false, true, true]), Some(Source::Kokoro));
         assert_eq!(default_provider(None, [false; 4]), None);
         assert!(Source::Cloud.is_natural() && Source::Qwen.is_natural() && !Source::Kokoro.is_natural());
+    }
+
+    /// Linggen Cloud's voice is the owner's alone: it spends the owner's subscription and sends the text out.
+    #[test]
+    fn linggen_clouds_voice_is_never_ready_for_a_caller_who_is_not_the_owner() {
+        assert!(!Source::readiness(false)[0], "Cloud is the first voice in the order");
+        assert_eq!(Source::ALL[0], Source::Cloud);
     }
 
     /// Lock: the status route reads, it does not make or fetch. Its handler and

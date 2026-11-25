@@ -137,7 +137,7 @@ async fn table(state: &ServerState, config: &Config) -> Table {
     // The entitlement is asked for here (a cached fetch), so the Cloud voice's readiness,
     // which reads it with no network, is not stale on a freshly started engine.
     crate::account::learn_entitlement().await;
-    let speech = tts::Source::readiness();
+    let speech = tts::Source::readiness(true); // the route is the owner's (`owner_refusal`)
     let speak = tts::Source::ALL.into_iter().zip(speech).filter(|(s, _)| s.exists()).map(|(source, ready)| {
         match source {
             tts::Source::Cloud => cloud_voice_row(source.id(), ready),

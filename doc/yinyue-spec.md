@@ -146,6 +146,9 @@ Click summons or dismisses her. No model call ever animates it.
 Spoken line, in order of preference — the first whose files are on disk, with
 `[uses] speak` naming a preferred one:
 
+0. **Linggen Cloud's Serena** (qwen3-tts-flash through linggen.dev), first for a
+   subscriber and the owner alone; the local voices stay the free, offline choice
+   and take over when it is refused or unreachable (`tts::Source::Cloud`).
 1. **Qwen3-TTS** on the GPU (MLX, in the shared voice sidecar), speaker from
    `[pet] voice`. "Natural" is exactly this voice being on disk.
 2. **Kokoro-82M** (candle, `any-tts`; the `kokoro` build feature, default on).
@@ -300,9 +303,16 @@ is ready.
   with no provider text: `unknown_provider`, `bad_setup` (not an object or
   > 64 KiB) 400, `no_key` 409, `slow_down` 429 (five tokens a minute),
   `key_refused`, `request_refused`, `provider_down`, `unreachable`, `bad_answer`
-  (502).
-- **`GET /api/live`** → `{providers: [{id, ready, why?}]}`, `why` = `no_key` or
-  `not_owner`; calls no provider.
+  (502). **Who pays** is decided in one function (`live::find_source`): the
+  person's own key first, else — a subscriber, `alibaba` only — Linggen Cloud:
+  linggen.dev mints the 60 s key per lesson and the page gets the same answer
+  plus `max_minutes` (lesson length cap, kept by the page) and `lessons_left`
+  (this month; absent for the developer account). Cloud adds refusals
+  `not_subscribed` 402, `lessons_used` 429, `daily_cap` 429.
+- **`GET /api/live`** → `{providers: [{id, ready, via?, why?}]}`; `via` =
+  `own_key` or `linggen_cloud` when ready, `why` = `no_key` or `not_owner`. A
+  subscriber with no own key reads ready `via: linggen_cloud`. Calls no provider
+  (may read the account's entitlement, 2 s at most).
 - **Owner only**: below the owner, 403 `beyond_level`.
 - **Key and token are never written** to a log, event, session row or error.
   Google's key is the one stored for the `gemini` provider; Qwen's the one for a
