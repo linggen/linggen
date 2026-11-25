@@ -3,6 +3,7 @@
 # Memory is inside the engine and checked there.
 . ./common.sh
 . ./expect.env
+. ./notes.sh
 
 # The whole first-run path runs under a tccd watch.
 tcc_watch_start
@@ -35,8 +36,8 @@ engine_mem_health 60
 check "memory: /mem/api/health through the engine" $? "no ok from $ENGINE_MEM/api/health — $(tail -3 "$LG/ling.log" 2>/dev/null)" "v$(curl -fsS -m 3 "$ENGINE_MEM/api/health" | jq -r '.data.version // empty')"
 mcp_answers "http://127.0.0.1:$EP/mcp" memory_upkeep
 check "memory: $EP/mcp initialize + tools/list (the one door)" $? "$MCP_DETAIL" "$MCP_DETAIL"
-[ "$MCP_COUNT" = "$DOOR_TOOLS" ]
-check "memory: the one door lists $DOOR_TOOLS tools" $? "$MCP_COUNT listed: $(tr '\n' ' ' <<<"$MCP_NAMES" | cut -c1-200)" "$MCP_COUNT tools"
+door_lists_the_catalogue
+check "memory: the one door lists the catalogue's tools, in order" $? "$MCP_COUNT listed: $(tr '\n' ' ' <<<"$MCP_NAMES" | cut -c1-200); want: $(tr ',' ' ' <<<"${DOOR_TOOL_NAMES:-none handed in}" | cut -c1-240)" "$MCP_COUNT tools"
 mcp_retired "http://127.0.0.1:$EP/mcp/memory"
 check "memory: the retired $EP/mcp/memory answers 410 UPGRADE_PLUGIN" $? "$RETIRED_DETAIL" "$RETIRED_DETAIL"
 "$(ling_bin)" mem session-start --format json >"$OUT/session-start.json" 2>&1
@@ -52,6 +53,10 @@ engine_alone_on_its_port "$(listener_pid "$EP")"
 check "memory: the engine is the one listener on $EP" $? "$PORT_DETAIL" "$PORT_DETAIL"
 mcp_answers "$ENGINE_MEM/mcp"
 check "memory: $EP/mem/mcp initialize + tools/list" $? "$MCP_DETAIL" "$MCP_DETAIL"
+
+# Since 3.0 the person's memory is Linggen's own notes unless the config says
+# v1: a fresh home ends on v2 with nothing to move (notes.sh).
+notes_fresh "first install: notes"
 
 # ── One chat turn on the fake model ────────────────────────────────────────
 stop_engine

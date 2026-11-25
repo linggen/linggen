@@ -9,6 +9,7 @@
 . ./expect.env
 . ./takeover.sh
 . ./inplace.sh
+. ./notes.sh
 
 LING="$(ling_bin)"; MEM="$(mem_bin)"
 
@@ -65,6 +66,9 @@ else
   MEM_KIND=none
   fail "upgrade: the baseline's memory answers" "nothing listens on $LP and $ENGINE_MEM/api/health is not ok"
 fi
+# The baseline's own record of the move to notes, if it ever ran 3.0: an old
+# user has none; a VM kept as the next baseline (--save-prev) does.
+NOTES_RECORD_BEFORE=0; [ -e "$NOTES_MOVED" ] && NOTES_RECORD_BEFORE=1
 rows_before="$("$MEM" stats 2>/dev/null | jq -r '.total // empty')"
 sessions_before="$(ls "$LG/sessions" 2>/dev/null | wc -l | tr -d ' ')"
 info "upgrade: old state" "$rows_before memory rows, $sessions_before sessions"
@@ -143,6 +147,13 @@ check "upgrade: memory answers through the engine after a restart" $? "no ok fro
 nothing_on "$LP"
 check "upgrade: nothing listens on the old port $LP" $? "$PORT_DETAIL" "$PORT_DETAIL"
 
+# Memory V2 is the default since 3.0: the old home's rows were moved into
+# notes once, at that start, and the home ends on v2 (notes.sh). The rows
+# seeded through the baseline are in $TK_IDS.
+notes_moved "upgrade: notes" "$TK_IDS" "$NOTES_RECORD_BEFORE"
+notes_door "upgrade: notes"
+notes_prompts "upgrade: notes" yes
+
 "$LING" status >"$OUT/status.txt" 2>&1
 grep -q 'fake-ling' "$OUT/status.txt" || grep -qiE 'models?[^0-9]*[1-9]' "$OUT/status.txt"
 check "upgrade: old config loads" $? "$(head -c 200 "$OUT/status.txt")"
@@ -162,7 +173,11 @@ check "upgrade: user mission kept" $? "missions/table-check gone"
 # the engine's own memory server.
 [ -n "${BUILTIN_BODIES:-}" ]
 check "upgrade: the host named the release's built-in missions" $? "BUILTIN_BODIES unset" "$(tr ',' '\n' <<<"${BUILTIN_BODIES:-}" | cut -d= -f1 | tr '\n' ' ')"
-mcp_answers "$ENGINE_MEM/mcp"
+# A mission may name a memory tool of the engine's own memory server, or one
+# the one door lists (the chronicle mission's `memory_notes`).
+mcp_answers "$ENGINE_MEM/mcp"; INTERNAL_NAMES="$MCP_NAMES"
+mcp_answers "http://127.0.0.1:$EP/mcp"
+MCP_NAMES="$INTERNAL_NAMES"$'\n'"$MCP_NAMES"
 IFS=',' read -r -a builtins <<<"${BUILTIN_BODIES:-}"
 for kv in "${builtins[@]}"; do
   name="${kv%%=*}"; want="${kv#*=}"; file="$LG/missions/$name/mission.md"

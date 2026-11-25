@@ -112,8 +112,13 @@ mcp_retired() { # url
   [ "$code" = 410 ] && jq -e '.code == "UPGRADE_PLUGIN"' >/dev/null 2>&1 <<<"$body"
 }
 
-# The one door's tool count (doc/mcp-spec.md: memory 5, agents 4, browser 3, apps 1).
-DOOR_TOOLS=13
+# The one door's tools are the catalogue's (src/server/mcp/catalog.rs). The
+# host hands in their names, in order, as DOOR_TOOL_NAMES="a,b,c": read from
+# the plugin evals' _tools.json, which a test locks to the catalogue — so the
+# gate holds no count of its own. MCP_NAMES (mcp_answers) must be exactly them.
+door_lists_the_catalogue() {
+  [ -n "${DOOR_TOOL_NAMES:-}" ] && [ "$(tr '\n' ',' <<<"$MCP_NAMES")" = "$DOOR_TOOL_NAMES," ]
+}
 
 is_standin() { head -c 300 "$1" 2>/dev/null | grep -qF "$STANDIN_MARK"; }
 
