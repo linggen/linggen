@@ -175,9 +175,10 @@ fi
 to="${LINGGEN_CORE_TIMEOUT:-5}"
 
 # v2 (`[memory] outside_agents = "v2"`, asked of the door): this host keeps its
-# own memory; it is forwarded what the OTHER agents remember for this project
-# (`memory_agents op=index`, which leaves out its own) and nothing from
-# Linggen's store. v1: core memory and the scope index, as ever.
+# own memory; it is forwarded, in one block, Linggen's own notes for this
+# project (summaries and ids) and what the OTHER agents remember
+# (`memory_agents op=index`, which leaves out its own). The engine decides the
+# order and the shares of the budget. v1: core memory and the scope index, as ever.
 core_block=""
 start_out=""
 if [ "$(outside_agents_mode)" = v2 ]; then

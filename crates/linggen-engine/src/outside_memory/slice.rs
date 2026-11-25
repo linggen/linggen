@@ -11,9 +11,11 @@ use super::sources::{Line, Skip, SOURCES};
 use super::{Agent, Env, Scope};
 use std::path::Path;
 
-/// What a session start is forwarded, at most, in bytes — aligned to
-/// neither agent's own limit: Claude Code's index is its own memory (25 KB),
-/// this is what it is told about the others'.
+/// What a session start is forwarded, at most, in bytes, of every source
+/// together (Linggen's own notes and the other agents' lines; how the two
+/// share it is [`crate::own_memory::forward`]) — aligned to neither agent's
+/// own limit: Claude Code's index is its own memory (25 KB), this is what it
+/// is told about the rest.
 pub const BUDGET_BYTES: usize = 4096;
 /// Kept free for the "N more" line.
 const FOOTER_BYTES: usize = 128;
@@ -40,8 +42,8 @@ pub struct Slice {
 
 /// The other agents' index lines for a session at `cwd`, for the calling
 /// `host` (an agent never gets its own memory back; a host Linggen knows no
-/// memory of gets everyone's).
-pub fn slice(env: &Env, host: Option<Agent>, cwd: Option<&Path>) -> Slice {
+/// memory of gets everyone's), in at most `budget` bytes.
+pub fn slice(env: &Env, host: Option<Agent>, cwd: Option<&Path>, budget: usize) -> Slice {
     let scope = Scope { cwd: cwd.map(Path::to_path_buf) };
     let mut all = Vec::new();
     let mut notes = Vec::new();
@@ -53,7 +55,7 @@ pub fn slice(env: &Env, host: Option<Agent>, cwd: Option<&Path>) -> Slice {
         }
     }
     let total = all.len();
-    let lines = fit(env, all);
+    let lines = fit(env, all, budget);
     Slice { env: env.clone(), cut: total - lines.len(), lines, notes }
 }
 
@@ -67,12 +69,12 @@ fn order(lines: &mut [Line]) {
 }
 
 /// The lines that fit: the person's share first, the projects in the rest.
-fn fit(env: &Env, all: Vec<Line>) -> Vec<Line> {
+fn fit(env: &Env, all: Vec<Line>, budget: usize) -> Vec<Line> {
     let (mut person, mut projects): (Vec<Line>, Vec<Line>) =
         all.into_iter().partition(|l| l.distance.is_none());
     order(&mut person);
     order(&mut projects);
-    let room = BUDGET_BYTES - FOOTER_BYTES - INTRO.len();
+    let room = budget.saturating_sub(FOOTER_BYTES + INTRO.len());
     let person = take_while_fits(env, person, Vec::new(), room / PERSON_SHARE);
     let used = body(env, &person).as_str().len();
     let mut kept = take_while_fits(env, projects, Vec::new(), room.saturating_sub(used));

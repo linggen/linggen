@@ -41,7 +41,7 @@ impl Tool for MemoryNotesTool {
     fn legacy_schema_entry(&self) -> Value {
         json!({
             "name": own_memory::TOOL,
-            "args": {"op": "index|read|search|write", "id": "string?", "words": "string?", "summary": "string?"},
+            "args": {"op": "index|read|search|titles|write", "id": "string?", "words": "string?", "summary": "string?"},
             "returns": "the answer as JSON, or the reason it was refused",
             "notes": "Linggen's own notes about the person and the work."
         })

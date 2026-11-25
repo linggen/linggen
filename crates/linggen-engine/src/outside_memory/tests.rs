@@ -73,7 +73,7 @@ fn codex_is_forwarded_what_claude_code_remembers_for_the_nearest_projects_first(
     put(&cc_memory(&env, &near).join("MEMORY.md"), &index_of(&[("Near rule", "near.md")]));
     put(&cc_memory(&env, &far).join("MEMORY.md"), &index_of(&[("Far rule", "far.md")]));
     let cwd = near.join("src");
-    let got = slice(&env, Some(Agent::Codex), Some(&cwd));
+    let got = slice(&env, Some(Agent::Codex), Some(&cwd), BUDGET_BYTES);
     let block = got.block().into_string();
     let near_at = block.find("Near rule").expect("near line");
     let far_at = block.find("Far rule").expect("far line");
@@ -88,9 +88,9 @@ fn an_agent_is_not_forwarded_its_own_memory_and_an_unknown_host_gets_everyones()
     let (_d, env) = scratch();
     let project = env.home().join("work/app");
     put(&cc_memory(&env, &project).join("MEMORY.md"), &index_of(&[("A rule", "a.md")]));
-    assert!(slice(&env, Some(Agent::ClaudeCode), Some(&project)).is_empty());
-    assert!(!slice(&env, None, Some(&project)).is_empty());
-    assert!(!slice(&env, Agent::of_host("cursor"), Some(&project)).is_empty());
+    assert!(slice(&env, Some(Agent::ClaudeCode), Some(&project), BUDGET_BYTES).is_empty());
+    assert!(!slice(&env, None, Some(&project), BUDGET_BYTES).is_empty());
+    assert!(!slice(&env, Agent::of_host("cursor"), Some(&project), BUDGET_BYTES).is_empty());
     assert_eq!(Agent::of_host("claude-code"), Some(Agent::ClaudeCode));
     assert_eq!(Agent::of_host("Codex"), Some(Agent::Codex));
 }
@@ -99,7 +99,7 @@ fn an_agent_is_not_forwarded_its_own_memory_and_an_unknown_host_gets_everyones()
 fn the_person_is_forwarded_as_the_headings_of_claudes_own_file() {
     let (_d, env) = scratch();
     put(&env.home().join(".claude/CLAUDE.md"), "# Title\n\nbody text\n\n## First area\nmore\n## Second area\n");
-    let got = slice(&env, Some(Agent::Codex), None);
+    let got = slice(&env, Some(Agent::Codex), None, BUDGET_BYTES);
     let block = got.block().into_string();
     assert!(block.contains("the person, from ~/.claude/CLAUDE.md"), "{block}");
     assert!(block.contains("- First area") && block.contains("- Second area"), "{block}");
@@ -116,7 +116,7 @@ fn the_budget_holds_keeps_the_persons_share_and_counts_what_it_left_out() {
     }
     put(&cc_memory(&env, &project).join("MEMORY.md"), &text);
     put(&env.home().join(".claude/CLAUDE.md"), "## Who I am\n## How I work\n");
-    let got = slice(&env, Some(Agent::Codex), Some(&project));
+    let got = slice(&env, Some(Agent::Codex), Some(&project), BUDGET_BYTES);
     let block = got.block().into_string();
     assert!(block.len() <= BUDGET_BYTES, "{} bytes", block.len());
     assert!(got.cut > 0 && got.cut < 150 + 2, "cut {}", got.cut);
@@ -133,7 +133,7 @@ fn an_index_is_read_the_way_claude_code_loads_it() {
         text.push_str(&format!("- [Note {n}](n{n}.md)\n"));
     }
     put(&cc_memory(&env, &project).join("MEMORY.md"), &text);
-    let got = slice(&env, Some(Agent::Codex), Some(&project));
+    let got = slice(&env, Some(Agent::Codex), Some(&project), BUDGET_BYTES);
     // Only the first 200 lines are the index; the rest are not forwarded.
     assert_eq!(got.entries().len() + got.cut, 200);
 }
@@ -142,7 +142,7 @@ fn an_index_is_read_the_way_claude_code_loads_it() {
 fn a_source_that_is_missing_or_unreadable_is_skipped_and_reported() {
     let (_d, env) = scratch();
     // Nothing at all: no error, nothing forwarded.
-    assert!(slice(&env, None, Some(&env.home().join("work"))).is_empty());
+    assert!(slice(&env, None, Some(&env.home().join("work")), BUDGET_BYTES).is_empty());
     // Codex's folder has files, in a format not known yet: reported, never fatal.
     put(&env.home().join(".codex/memories/some-file.md"), "something");
     let states: Vec<_> = reports(&env, &Scope { cwd: None })
@@ -151,7 +151,7 @@ fn a_source_that_is_missing_or_unreadable_is_skipped_and_reported() {
         .collect();
     assert!(states.contains(&("codex-memories", "format not known yet".to_string())), "{states:?}");
     assert!(states.contains(&("claude-code-instructions", "no data".to_string())), "{states:?}");
-    let got = slice(&env, Some(Agent::ClaudeCode), None);
+    let got = slice(&env, Some(Agent::ClaudeCode), None, BUDGET_BYTES);
     assert!(got.is_empty());
     assert!(got.notes.iter().any(|n| n.source == "codex-memories"), "{:?}", got.notes);
 }
@@ -257,7 +257,7 @@ fn key_shaped_strings_are_redacted_everywhere_they_could_leave() {
     );
     let note = read(&env, folder.join("rule.md").to_str().unwrap()).unwrap();
     let hits = search(&env, "BEGIN", 5);
-    let block = slice(&env, Some(Agent::Codex), Some(&env.home().join("work/app"))).block();
+    let block = slice(&env, Some(Agent::Codex), Some(&env.home().join("work/app")), BUDGET_BYTES).block();
     for text in [note.text.as_str(), hits[0].text.as_str(), block.as_str()] {
         for secret in [key.as_str(), hub.as_str(), "abcdef123456", "MIIB", "abcdefghijklmnop1234"] {
             assert!(!text.contains(secret), "{secret} left in: {text}");

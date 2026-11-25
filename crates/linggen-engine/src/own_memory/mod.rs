@@ -10,7 +10,8 @@
 //! - Who may see what: [`fence`], by [`fence::Audience`]. Every way out of
 //!   the store ends there (`tests::only_the_fence_loads_and_only_write_saves`).
 //! - What is written and how: [`write::write`], the only saver.
-//! - What a session is shown at start: [`index::index`]; what Yinyue is
+//! - What a session is shown at start: [`index::index`] (a coding host's
+//!   forwarded slice, with the other agents' lines: [`forward`]); what Yinyue is
 //!   told of today's date: [`companion::today`]. What Settings shows of the
 //!   notes: [`page`] (read only; its edits are [`write::write`]'s).
 //! - The owner's phone under v2, its old verbs answered from these notes:
@@ -27,6 +28,7 @@ pub mod chronicle;
 pub mod companion;
 pub mod fence;
 pub mod find;
+pub mod forward;
 pub mod format;
 pub mod index;
 pub mod migrate;

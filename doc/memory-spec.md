@@ -187,12 +187,31 @@ Claude Code and Codex write memory their own way; Linggen does not touch it.
   confined to a source's own files, and text leaves only after key-shaped strings
   (keys, tokens, `password=…`) are replaced.
 - **Forwarding happens once, at session start.** The plugin's hook asks
-  `memory_agents op=index` for the folder and the host, and injects the answer:
-  the other agents' index lines, tagged with their source and grouped by
-  project. Nearest project first, then the person (a quarter of the budget is
-  kept for the person), newest first inside each; 4 KB in all; what does not
-  fit is counted. A host never gets its own memory back. Nothing is sent per
-  turn, and no host is reminded to write memory.
+  `memory_agents op=index` for the folder and the host, and injects the answer
+  (`own_memory::forward` makes it): first Linggen's own notes, then the other
+  agents' index lines, tagged with their source and grouped by project; 4 KB
+  in all, what does not fit is counted. A host never gets its own memory back.
+  - *Linggen's notes* are summaries and ids only, never a body, and only what
+    the fence lets a coding host see (no body, mind, people, moments, chronicle).
+    Order: the nearest project's notes, then the person's rules, decisions and
+    gotchas (the person's own words first, then the most read, then newest),
+    then by use in the last 90 days, then newest. Half of Linggen's share is
+    kept for those person-scope rules, so a long project index cannot push
+    them out.
+  - *The split:* the other agents' lines always get up to half (2 KB; inside it
+    nearest project first, then the person, newest first); Linggen's notes get the
+    other half and whatever those lines leave unused. Under v1 there are none of
+    Linggen's notes.
+  - *Per turn:* titles only. The plugin's prompt hook asks `memory_notes
+    op=titles` with the prompt's words and `exclude` (the ids this session was
+    already shown, kept by the hook), and prints at most four lines
+    `相关笔记: <summary> (id)`. The match is plain words in a note's summary or
+    topic, Chinese and English, no vectors; a hit holds two independent words of the
+    prompt (one if that is all of it that any title has; two pieces of one
+    Chinese word count as one), and a word most titles share counts for
+    nothing. It cannot bridge languages: a Chinese prompt finds a note whose
+    summary or topic has those Chinese words, not its English twin. It counts no use. No hit, no engine, no answer in time: nothing is
+    printed. No host is reminded to write memory.
 - **Bodies on demand:** `memory_agents op=read path=…`, or `op=search`.
 - **Who writes where.** An agent with memory of its own writes there, and
   Linggen reads it. It uses `memory_notes` only when the person says to let
@@ -200,8 +219,7 @@ Claude Code and Codex write memory their own way; Linggen does not touch it.
   client; Codex until its memories can be read) uses `memory_notes` as its
   memory, at the same moments: the person says remember or forget, a decision or
   rule is stated, a gotcha is found.
-- **Linggen's own notes are not injected into those hosts at start.** They are
-  one `op=index` away. Where two notes disagree, the newer wins unless the person
+- Where two notes disagree, the newer wins unless the person
   says otherwise.
 
 ## The chronicle and Yinyue's day

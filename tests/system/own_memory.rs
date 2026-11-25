@@ -177,6 +177,52 @@ async fn at_the_door_a_host_keeps_notes_as_itself_and_never_sees_the_fenced_ones
     assert!(notes(&w, json!({"op": "read", "path": "areas/mind/past.md"})).await.is_err());
 }
 
+/// One `memory_agents` call at the door: its answer as JSON.
+async fn agents(w: &World, args: Value) -> Value {
+    let res = w.api.post("/mcp", rpc("tools/call", json!({"name": "memory_agents", "arguments": args}))).await;
+    let text = res["result"]["content"][0]["text"].as_str().unwrap_or_else(|| panic!("{res}")).to_string();
+    serde_json::from_str(&text).unwrap_or_else(|_| panic!("{text}"))
+}
+
+/// The door, v2: a host's session start carries Linggen's own notes (the
+/// person's, summaries and ids, never a body or a fenced note), and a turn's
+/// words find a note's title — once; v1 carries none of it.
+#[tokio::test]
+async fn a_hosts_session_start_and_turns_are_given_linggens_notes_as_titles() {
+    let w = World::start_with_home(Setup { config_append: BOTH_V2, ..Setup::default() }, seed).await;
+    let wrote = notes(
+        &w,
+        json!({"op": "write", "scope": "person", "topic": "Pricing", "summary": "The five dollar plan cannot include live lessons", "kind": "decision", "body": "SECRET BODY", "host": "codex"}),
+    )
+    .await
+    .unwrap();
+    let id = wrote["id"].as_str().unwrap().to_string();
+
+    let start = agents(&w, json!({"op": "index", "cwd": w.work(), "host": "claude-code"})).await;
+    let block = start["block"].as_str().unwrap();
+    assert!(block.contains("Name is Alex") && block.contains("cannot include live lessons") && block.contains(&id), "{block}");
+    assert!(!block.contains("hard year") && !block.contains("SECRET BODY"), "{block}");
+    assert!(start["own_notes"].as_u64().unwrap() >= 2, "{start}");
+
+    let found = notes(&w, json!({"op": "titles", "words": "what is the pricing plan for live lessons?", "exclude": []})).await.unwrap();
+    assert_eq!(found["titles"][0]["id"], id.as_str(), "{found}");
+    assert!(found["titles"][0].get("body").is_none());
+    let again = notes(&w, json!({"op": "titles", "words": "pricing plan live lessons", "exclude": [id]})).await.unwrap();
+    assert_eq!(again["titles"], json!([]));
+    let fenced = notes(&w, json!({"op": "titles", "words": "a hard year closed"})).await.unwrap();
+    assert_eq!(fenced["titles"], json!([]), "a mind note reached a coding host");
+}
+
+/// v1 on the door: the session start carries the other agents' lines only.
+#[tokio::test]
+async fn under_v1_a_hosts_session_start_has_none_of_linggens_notes() {
+    let w = World::start_with_home(Setup { config_append: Some("\n[memory]\nlinggen = \"v2\"\noutside_agents = \"v1\"\n"), ..Setup::default() }, seed).await;
+    let start = agents(&w, json!({"op": "index", "cwd": w.work(), "host": "claude-code"})).await;
+    assert!(!start["block"].as_str().unwrap().contains("Name is Alex"), "{start}");
+    assert_eq!(start["own_notes"], 0);
+    assert!(notes(&w, json!({"op": "titles", "words": "name alex"})).await.is_err());
+}
+
 /// Yinyue, through `/api/yinyue/chat`: she writes a life moment and reads her
 /// own mind note — what Ling's session is refused — and the moment is signed
 /// as hers.

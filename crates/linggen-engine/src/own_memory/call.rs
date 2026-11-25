@@ -1,4 +1,4 @@
-//! The tool's four ops — `index`, `read`, `search`, `write` — read from
+//! The tool's ops — `index`, `read`, `search`, `titles`, `write` — read from
 //! arguments and answered as data. The Linggen sessions' built-in tool and
 //! the MCP door's `memory_notes` both call [`call`], so what an op needs and
 //! what it answers is written once.
@@ -16,6 +16,7 @@ use std::path::PathBuf;
 
 const DEFAULT_HITS: usize = 10;
 const MOST_HITS: usize = 30;
+const DEFAULT_TITLES: usize = 5;
 
 /// Who is calling and from where.
 #[derive(Clone, Debug)]
@@ -58,6 +59,20 @@ pub fn call(store: &Store, caller: &Caller, op: &str, args: &Value, now: i64) ->
                 .map(|h| json!({ "source": h.source, "path": store.env().tilde(&h.path), "line": h.line, "text": h.text.as_str() }))
                 .collect();
             Ok(json!({ "hits": own, "other_agents": others }))
+        }
+        Op::Titles => {
+            let words = text(args, "words").ok_or("name the `words` to find")?;
+            let limit = args.get("limit").and_then(Value::as_u64).map_or(DEFAULT_TITLES, |n| (n as usize).clamp(1, MOST_HITS));
+            let exclude: Vec<String> = args
+                .get("exclude")
+                .and_then(Value::as_array)
+                .map(|ids| ids.iter().filter_map(Value::as_str).map(String::from).collect())
+                .unwrap_or_default();
+            let titles: Vec<Value> = find::titles(store, caller.audience, words, &exclude, limit)
+                .iter()
+                .map(|f| json!({ "id": f.entry.id, "summary": f.entry.summary, "kind": f.entry.kind.word(), "topic": f.topic }))
+                .collect();
+            Ok(json!({ "titles": titles }))
         }
         Op::Write => {
             let w = write_of(args, caller)?;

@@ -514,15 +514,15 @@ fn source_of(file: &str) -> String {
 /// store, and the fence or the writer's rules no longer hold.
 #[test]
 fn only_the_fence_loads_and_only_write_saves() {
-    for file in ["call.rs", "chronicle.rs", "companion.rs", "find.rs", "format.rs", "index.rs", "migrate.rs", "mod.rs", "page.rs", "phone.rs", "write.rs"] {
+    for file in ["call.rs", "chronicle.rs", "companion.rs", "find.rs", "forward.rs", "format.rs", "index.rs", "migrate.rs", "mod.rs", "page.rs", "phone.rs", "write.rs"] {
         let src = source_of(file);
         assert!(!src.contains("load_all_unfiltered("), "{file} loads topics around the fence");
         assert!(!src.contains("fs::write") && !src.contains("fs::rename") && !src.contains("File::create"), "{file} writes a file itself");
     }
-    for file in ["call.rs", "chronicle.rs", "companion.rs", "find.rs", "format.rs", "index.rs", "migrate.rs", "mod.rs", "fence.rs", "page.rs", "phone.rs"] {
+    for file in ["call.rs", "chronicle.rs", "companion.rs", "find.rs", "forward.rs", "format.rs", "index.rs", "migrate.rs", "mod.rs", "fence.rs", "page.rs", "phone.rs"] {
         assert!(!source_of(file).contains(".save("), "{file} saves a topic; only write.rs does");
     }
-    for file in ["find.rs", "index.rs", "call.rs", "chronicle.rs", "companion.rs", "migrate.rs", "page.rs", "phone.rs"] {
+    for file in ["find.rs", "forward.rs", "index.rs", "call.rs", "chronicle.rs", "companion.rs", "migrate.rs", "page.rs", "phone.rs"] {
         assert!(!source_of(file).contains(".load("), "{file} reads a file around the fence");
     }
 }
@@ -531,7 +531,7 @@ fn only_the_fence_loads_and_only_write_saves() {
 /// names a fenced area.
 #[test]
 fn the_only_audience_decision_is_in_the_fence() {
-    for file in ["call.rs", "chronicle.rs", "companion.rs", "find.rs", "index.rs", "page.rs", "phone.rs", "write.rs", "store.rs"] {
+    for file in ["call.rs", "chronicle.rs", "companion.rs", "find.rs", "forward.rs", "index.rs", "page.rs", "phone.rs", "write.rs", "store.rs"] {
         let src = source_of(file);
         assert!(!src.contains("Area::Body") && !src.contains("Area::Mind"), "{file} names a fenced area");
     }
@@ -1099,4 +1099,157 @@ mod phone_verbs {
             assert!(!phone::serves(verb));
         }
     }
+}
+
+// ── what a coding host is forwarded, and the titles a turn matches ─────────
+
+use super::find::titles;
+use super::forward::session_start;
+use super::index::index_for_forwarding;
+use crate::outside_memory::{Agent, BUDGET_BYTES};
+
+fn decision(store: &Store, scope: Scope, topic: &str, summary: &str, at: i64) -> String {
+    let action = add_action(scope, topic, summary, Kind::Decision, Voice::User, "the body that must never be forwarded");
+    write(store, Audience::Companion, at, &w(action)).expect("a decision is written").id
+}
+
+fn mind(store: &Store, summary: &str) -> String {
+    let action = add_action(Scope::Area(Area::Mind), "past", summary, Kind::Person, Voice::User, "");
+    write(store, Audience::Companion, NOW, &w(action)).unwrap().id
+}
+
+#[test]
+fn a_session_start_carries_linggens_notes_fenced_and_without_bodies() {
+    let (_d, store) = scratch();
+    let near = decision(&store, Scope::Project(PathBuf::from("/work/app")), "build", "Release builds use the fast profile", NOW);
+    let reply = decision(&store, Scope::Person, "language", "Reply to the person in Chinese", NOW - DAY);
+    mind(&store, "A hard year with the family");
+    let got = session_start(store.env(), Some(&store), Some(Agent::ClaudeCode), Some(Path::new("/work/app")), NOW);
+    assert!(got.block.contains("Release builds use the fast profile") && got.block.contains(&near), "{}", got.block);
+    assert!(got.block.contains("Reply to the person in Chinese") && got.block.contains(&reply));
+    assert!(!got.block.contains("hard year"), "a note of the mind reached a coding host");
+    assert!(!got.block.contains("must never be forwarded"), "a body was forwarded");
+    // The nearest project's note comes before the person's.
+    assert!(got.block.find("fast profile").unwrap() < got.block.find("in Chinese").unwrap());
+    assert!(got.block.len() <= BUDGET_BYTES, "{} bytes", got.block.len());
+}
+
+#[test]
+fn without_the_store_only_the_other_agents_are_forwarded() {
+    let (_d, store) = scratch();
+    decision(&store, Scope::Person, "language", "Reply to the person in Chinese", NOW);
+    let got = session_start(store.env(), None, None, None, NOW);
+    assert!(got.block.is_empty() && got.own.shown == 0);
+}
+
+#[test]
+fn linggens_notes_and_the_others_share_one_budget() {
+    let (_d, store) = scratch();
+    for i in 0..60 {
+        decision(&store, Scope::Person, &format!("t{i}"), &format!("A standing decision number {i} with some words to fill the line"), NOW - i);
+    }
+    // The other agents: a Claude Code project index, long enough to be cut.
+    let home = store.env().home().to_path_buf();
+    let memory = home.join(".claude/projects/-work-app/memory");
+    std::fs::create_dir_all(&memory).unwrap();
+    let lines: String = (0..60).map(|i| format!("- [Note {i}](note_{i}.md) — a line that Claude Code keeps about the project, number {i}\n")).collect();
+    std::fs::write(memory.join("MEMORY.md"), lines).unwrap();
+    let got = session_start(store.env(), Some(&store), Some(Agent::Codex), Some(Path::new("/work/app")), NOW);
+    assert!(got.block.len() <= BUDGET_BYTES, "{} bytes", got.block.len());
+    assert!(got.own.left_out > 0 && got.others.cut > 0, "both were cut");
+    let own_bytes = got.own.text.len();
+    assert!(own_bytes <= BUDGET_BYTES / 2 + 200 && own_bytes >= BUDGET_BYTES / 2 - 600, "own {own_bytes} bytes");
+    assert!(got.block.contains("Claude Code"), "{}", got.block);
+}
+
+#[test]
+fn the_forwarded_index_puts_the_projects_then_standing_person_notes_then_the_rest() {
+    let (_d, store) = scratch();
+    let far = Scope::Project(PathBuf::from("/work"));
+    let near = Scope::Project(PathBuf::from("/work/app"));
+    rule(&store, Scope::Area(Area::Money), "t", "Money rule, newest", "", NOW);
+    person(&store, "Name is Alex", NOW - DAY);
+    decision(&store, Scope::Person, "language", "Person decision", NOW - 30 * DAY);
+    decision(&store, far, "t", "Far project", NOW - 5 * DAY);
+    decision(&store, near, "t", "Near project", NOW - 9 * DAY);
+    let got = index_for_forwarding(&store, Some(Path::new("/work/app")), NOW, 2048);
+    let order: Vec<&str> = got
+        .text
+        .lines()
+        .skip(1)
+        .map(|l| l.trim_start_matches("- ").split(" (").next().unwrap())
+        .collect();
+    assert_eq!(order, ["Near project", "Far project", "Person decision", "Money rule, newest", "Name is Alex"]);
+}
+
+#[test]
+fn a_long_project_index_cannot_push_the_persons_standing_rules_out() {
+    let (_d, store) = scratch();
+    let near = Scope::Project(PathBuf::from("/work/app"));
+    for i in 0..40 {
+        decision(&store, near.clone(), &format!("t{i}"), &format!("A project decision number {i} that fills the line well"), NOW - i);
+    }
+    let said = decision(&store, Scope::Person, "language", "Reply to the person in Chinese", NOW - 200 * DAY);
+    let got = index_for_forwarding(&store, Some(Path::new("/work/app")), NOW, 2048);
+    assert!(got.text.contains(&said), "the rule was pushed out:\n{}", got.text);
+    assert!(got.text.contains("A project decision number"), "no project note at all:\n{}", got.text);
+    assert!(got.text.len() <= 2048, "{} bytes", got.text.len());
+    // The rule keeps its place after the projects, not before them.
+    assert!(got.text.find("A project decision").unwrap() < got.text.find("in Chinese").unwrap());
+}
+
+#[test]
+fn a_prompt_naming_a_notes_topic_gets_its_title_in_chinese_and_english() {
+    let (_d, store) = scratch();
+    let en = decision(&store, Scope::Person, "pricing", "The $5 plan cannot include the live lessons", NOW);
+    let zh = decision(&store, Scope::Person, "语言", "回复要用中文，代码和提交用英文", NOW);
+    decision(&store, Scope::Person, "build", "Release builds use the fast profile", NOW);
+    let hit = |prompt: &str| -> Vec<String> {
+        titles(&store, Audience::Work, prompt, &[], 5).into_iter().map(|f| f.entry.id).collect()
+    };
+    assert_eq!(hit("what does the pricing plan include?"), [en.clone()]);
+    assert_eq!(hit("回复用中文吗"), [zh.clone()]);
+    // A prompt about nothing, one word that matches too little, and filler words match no note.
+    assert!(hit("please rename this function and run it").is_empty());
+    assert!(hit("你好，帮我看一下这个").is_empty());
+    assert!(hit("what the how").is_empty());
+    // Words no title holds do not raise the bar; two pieces of one Chinese word are one word.
+    assert_eq!(hit("回复 qwertyzzz"), [zh.clone()]);
+    let (a, b, c) = ("提交".to_string(), "交代".to_string(), "pricing".to_string());
+    assert_eq!(super::find::independent_words(&[&a, &b]), 1);
+    assert_eq!(super::find::independent_words(&[&a, &c]), 2);
+    assert!(hit("   ").is_empty());
+    // The wordless titles do not count a use: the index order does not move.
+    assert!(store.uses_since(0).is_empty());
+}
+
+#[test]
+fn titles_leave_out_what_was_shown_what_is_void_and_what_the_fence_keeps_back() {
+    let (_d, store) = scratch();
+    let a = decision(&store, Scope::Person, "pricing", "Pricing: the first plan", NOW);
+    let b = decision(&store, Scope::Person, "pricing", "Pricing: the second plan", NOW - DAY);
+    let c = decision(&store, Scope::Person, "pricing", "Pricing: the voided plan", NOW - 2);
+    mind(&store, "Pricing worries kept me awake");
+    let void = Write { user_directed: true, ..w(Action::Void { id: c, reason: "wrong".into() }) };
+    write(&store, Audience::Companion, NOW, &void).unwrap();
+    let ids = |exclude: &[String]| -> Vec<String> {
+        titles(&store, Audience::Work, "pricing plan", exclude, 5).into_iter().map(|f| f.entry.id).collect()
+    };
+    assert_eq!(ids(&[]), [a.clone(), b.clone()]);
+    assert_eq!(ids(&[a.clone()]), [b.clone()]);
+    assert!(ids(&[a, b]).is_empty());
+}
+
+#[test]
+fn the_titles_op_answers_ids_and_summaries_only() {
+    let (_d, store) = scratch();
+    let id = decision(&store, Scope::Person, "pricing", "Pricing: the first plan", NOW);
+    let door = caller(Audience::Work);
+    let got = call(&store, &door, "titles", &json!({"words": "pricing plan", "exclude": []}), NOW).unwrap();
+    assert_eq!(got["titles"][0]["id"], id);
+    assert_eq!(got["titles"][0]["summary"], "Pricing: the first plan");
+    assert!(got["titles"][0].get("body").is_none());
+    let none = call(&store, &door, "titles", &json!({"words": "pricing plan", "exclude": [id]}), NOW).unwrap();
+    assert_eq!(none["titles"], json!([]));
+    assert!(call(&store, &door, "titles", &json!({}), NOW).is_err());
 }

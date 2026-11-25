@@ -13,17 +13,20 @@ pub enum Op {
     Index,
     Read,
     Search,
+    /// Only the titles that match words; for a host's per-turn hook.
+    Titles,
     Write,
 }
 
 impl Op {
-    pub const ALL: [Op; 4] = [Op::Index, Op::Read, Op::Search, Op::Write];
+    pub const ALL: [Op; 5] = [Op::Index, Op::Read, Op::Search, Op::Titles, Op::Write];
 
     pub fn word(self) -> &'static str {
         match self {
             Op::Index => "index",
             Op::Read => "read",
             Op::Search => "search",
+            Op::Titles => "titles",
             Op::Write => "write",
         }
     }
@@ -36,6 +39,7 @@ impl Op {
 pub const DESCRIPTION: &str = "Linggen's own notes about the person and the work. \
 op=index lists the notes for a project; op=read opens one note (id) or a topic file (path); \
 op=search finds notes by words, any language, and what other agents remember; \
+op=titles lists only the summaries (with ids) whose words match, and counts no use; \
 op=write adds a note (scope, topic, summary, kind, body) or changes one by id (action update, void, no_raise, yearly). \
 Write only a fact the person asked to remember, a decision or rule with its why, or a gotcha — never what was done or where work stands. \
 A note in the person's own voice changes only after you show it and they agree (user_directed true). \
@@ -47,6 +51,7 @@ pub fn fields(op: Op) -> Vec<(&'static str, Value)> {
         Op::Index => &["cwd"],
         Op::Read => &["id", "path"],
         Op::Search => &["words", "limit"],
+        Op::Titles => &["words", "limit", "exclude"],
         Op::Write => &["action", "scope", "topic", "summary", "kind", "voice", "body", "id", "reason", "on", "user_directed", "base", "day"],
     };
     names.iter().map(|name| (*name, definition(name))).collect()
@@ -58,6 +63,7 @@ fn definition(name: &str) -> Value {
         "id" => json!({"type": "string", "description": "A note's id, from the index"}),
         "path" => json!({"type": "string", "description": "A topic file inside the store, e.g. person/diet.md"}),
         "words" => json!({"type": "string", "description": "Words to find (any language, any case); a note with more of them ranks higher"}),
+        "exclude" => json!({"type": "array", "items": {"type": "string"}, "description": "Note ids to leave out (already shown)"}),
         "limit" => json!({"type": "integer", "description": "Most hits (default 10, at most 30)"}),
         "action" => json!({"type": "string", "enum": ["add", "update", "void", "no_raise", "yearly"], "description": "Default add (update when an id is given)"}),
         "scope" => json!({"type": "string", "description": "add: person | area:<body|mind|people|music|money|play|home> | project:<absolute path> | moments | chronicle"}),

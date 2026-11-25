@@ -172,7 +172,7 @@ const APP_TOOLS: &[ToolDoc] = &[
 const OUTSIDE_TOOLS: &[ToolDoc] = &[
     ToolDoc {
         name: "memory_agents",
-        description: "What other agents (Claude Code, Codex) remember, read from their own files. Linggen only reads: it never edits, moves or copies them, and each agent keeps its memory its own way. op=index: their index lines for a project (cwd), never the calling host's own (host); op=read: one note by path, only inside those memories; op=search: words across them, any language. For this Mac's owner at this Mac.",
+        description: "What other agents (Claude Code, Codex) remember, read from their own files. Linggen only reads: it never edits, moves or copies them, and each agent keeps its memory its own way. op=index: what a session starts with for a project (cwd) — Linggen's own notes (summaries and ids), then their index lines, never the calling host's own (host); op=read: one note by path, only inside those memories; op=search: words across them, any language. For this Mac's owner at this Mac.",
         implicit_op: None,
     },
 ];
@@ -591,6 +591,20 @@ const OWN_BRANCHES: &[Branch<Dispatch>] = &[
         timeout_ms: 0,
         views: Views::LOCAL,
         dispatch: Dispatch::Notes("search"),
+    },
+    Branch {
+        tool: "memory_notes",
+        op: "titles",
+        note: "",
+        schema: || notes_schema(own_memory::spec::Op::Titles),
+        extra: None,
+        hidden: &[],
+        stamps: &[],
+        fixed: &[],
+        check: None,
+        timeout_ms: 0,
+        views: Views::LOCAL,
+        dispatch: Dispatch::Notes("titles"),
     },
     Branch {
         tool: "memory_notes",

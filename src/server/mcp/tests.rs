@@ -432,8 +432,8 @@ async fn the_published_surface_is_locked() {
         ("browser_read", "f9802d55ffbe79be"),
         ("browser_act", "258452acd0f37bb6"),
         ("app", "f58f64ed75697d7a"),
-        ("memory_agents", "8194defe0bc3d985"),
-        ("memory_notes", "11a15d801e62fb68"),
+        ("memory_agents", "50071fc863f1e6d5"),
+        ("memory_notes", "b6dd95f20ea57d76"),
     ];
     assert_eq!(local, want(expected_local), "local:\n{}", print(&local));
     let remote = shown(View::Remote);
