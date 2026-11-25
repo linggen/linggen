@@ -390,12 +390,20 @@ pub(crate) fn mission_session_meta(
         // Mission sessions carry the mission name as canonical title.
         title_locked: true,
         withheld_tools: Vec::new(),
-        model_fallback: None,
+        model_fallback: model_fallback_for(mission),
         effort: None,
         params: Default::default(),
     };
     meta.set_cwd(&cwd);
     meta
+}
+
+/// A mission that names its own `model:` runs on it and nothing else: a
+/// failed call ends the run on that model, never on the global fallback
+/// list (the owner keeps some models for his own use). One that names none
+/// follows the global fallback switch.
+fn model_fallback_for(mission: &Mission) -> Option<bool> {
+    mission.model.is_some().then_some(false)
 }
 
 /// Create a new session for a mission run in the global session store.
@@ -654,7 +662,7 @@ async fn dispatch_mission_prompt(
     match super::prepare::run(mission, day.as_deref(), &root).await {
         Ok(super::prepare::Prepared::Ready) => {}
         Ok(super::prepare::Prepared::NothingToDo) => {
-            let end = RunEnd { status: "completed", ..Default::default() };
+            let end = RunEnd::nothing_to_prepare("nothing to prepare");
             end_mission_run(&state, mission, &mission_run_id, session_id, end);
             return;
         }
@@ -1035,6 +1043,7 @@ async fn dispatch_mission_prompt(
         faults,
         error,
         cannot_run,
+        skip: None,
     };
     end_mission_run(&state, mission, &mission_run_id, session_id, end);
 }
@@ -1094,7 +1103,9 @@ async fn append_run_report(state: &Arc<SchedulerHost>, agent_id: &str, session_i
 /// with what the run spent and what went wrong in it (the entry keeps its
 /// original `triggered_at`, the actual start time), leave one activity line
 /// when something went wrong, and tell the UI and the heralds it finished.
-/// Every path out of a run that was recorded as `running` ends here.
+/// Every path out of a run that was recorded as `running` ends here — and a
+/// skipped end (`RunEnd::skip`) is where its pre-made session goes: a run
+/// that did nothing leaves no empty session in the list.
 fn end_mission_run(
     state: &Arc<SchedulerHost>,
     mission: &Mission,
@@ -1102,6 +1113,13 @@ fn end_mission_run(
     session_id: Option<String>,
     end: RunEnd,
 ) {
+    let skipped = end.skip.is_some();
+    if skipped {
+        if let Some(sid) = session_id.as_deref() {
+            let _ = state.manager.global_sessions.remove_session(sid);
+        }
+        let _ = state.events_tx.send(ServerEvent::StateUpdated);
+    }
     let status = end.status;
     let (failure_count, hit_limit) = (end.faults.count, end.faults.hit_limit);
     let mut finished = None;
@@ -1117,6 +1135,10 @@ fn end_mission_run(
     }
     if let Some(entry) = finished {
         super::outcome::record_fault(mission, &entry);
+    }
+    // A skip is no completion: like a run-if skip, it raises no toast.
+    if skipped {
+        return;
     }
     let _ = state.events_tx.send(ServerEvent::Notification(
         NotificationPayload::MissionCompleted {
@@ -1285,6 +1307,27 @@ mod tests {
         yesterday.catchup = true;
         runs.push(yesterday);
         assert_eq!(catchup_attempts_today(&runs, now), 1);
+    }
+
+    /// A mission that names its model gets no fallback; one that names none
+    /// keeps the global default (`None`).
+    #[test]
+    fn a_mission_that_names_its_model_never_falls_back() {
+        assert_eq!(model_fallback_for(&parsed("model: gpt-6.1-terra\n")), Some(false));
+        assert_eq!(model_fallback_for(&parsed("")), None);
+    }
+
+    #[test]
+    fn a_prepare_skip_fills_its_slot() {
+        let mut end = MissionRunEntry {
+            status: "running".into(),
+            session_id: Some("sess-1-m".into()),
+            ..Default::default()
+        };
+        RunEnd::nothing_to_prepare("nothing to prepare").apply(&mut end);
+        assert!(end.skipped && end.session_id.is_none());
+        assert_eq!(end.skip, Some(SkipKind::Prepare));
+        assert!(end.fills_slot());
     }
 
     #[test]

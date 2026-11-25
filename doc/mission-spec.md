@@ -120,7 +120,7 @@ permission:
 | `prepare` | no | Arguments to the engine's own binary, run by the engine when any run starts, before the first turn (`[mem, scan, $DAY]`). A failure ends the run as failed. See "prepare" |
 | `agent` | no | Engine agent that runs the mission (key into `agents/`). Defaults to `ling`. The mission body is still the system prompt — `agent:` just picks the routing identity, the model default, and the persona-level config |
 | `cwd` | yes | Working directory for the agent |
-| `model` | no | Model override |
+| `model` | no | Model override. A mission that names one runs on it only: if that model's call fails the run fails, naming it, and never falls back to another model (`routing.model_fallback` applies only to missions that name none) |
 | `kickoff` | no | Ordered list of user-turn messages persisted at run start. Item 0 fires immediately; later items drain one-per-assistant-final-reply via the engine's `kickoff_queue`. Empty list falls back to a single generic "Run the X mission" line. Use for staged onboarding (greet → start work) without batching everything into one model reply |
 | `kickoff-day` | no | Day-scoped kickoff variant, used when a trigger passes a target `day` (the memory app's calendar). `$DAY` in each item is replaced with the `YYYY-MM-DD` date |
 | `kickoff-attended` | no | Attended day-scoped variant, used when a trigger passes `day` + `attended: true` (a user clicked and is watching). The engine adds `AskUser` to the run's tool scope, so these items may include review steps that ask the user. Falls back to `kickoff-day` when absent |
@@ -202,7 +202,7 @@ Work a run needs done before its first turn, which the run itself should not be 
 
 - **What** — a list of arguments to the engine's own binary: `prepare: [mem, scan, $DAY]` runs the running `ling` (never one found on `PATH`) with those words. No shell parses them, so a mission file can name a `ling` verb and nothing else. `$DAY` in a word is the run's day.
 - **When** — on every run, a person's trigger too (unlike `run-if`): after the run is recorded as running, before any model call. It runs in the mission's `cwd`, with the engine's environment, for at most 5 minutes.
-- **Nothing to do** — exit status 3 (`missions::NOTHING_TO_DO`) ends the run `completed` with no model call and no fault: the step found no work (the chronicle with memory v2 off, or no month waiting).
+- **Nothing to do** — exit status 3 (`missions::NOTHING_TO_DO`): the step found no work (the chronicle with memory v2 off, or no month waiting). The run is recorded `skipped` with `skip: "prepare"` and `reason: "nothing to prepare"`; no model call, no fault, and **no session** — one a manual trigger created beforehand is deleted, so the session list holds no empty run. Like a `run-if` skip it handles its slot, so catch-up does not run it again, and it raises no completion toast. `scheduler::end_mission_run` decides this for every path.
 - **Failure** — any other non-zero exit, a timeout, or a `$DAY` with no day given: the run ends `failed`, no model call. Its record keeps the step as a failure (`tool: "prepare"`, its exit status, the last two lines of its stderr) and the session gets one line saying why.
 
 ### run-if
@@ -284,7 +284,7 @@ Background task evaluates all enabled missions against their cron schedules ever
 2. **Match** — for each, check if its cron expression matches the current minute window.
 3. **Busy-skip** — if the previous run is still executing, record `skipped` and move on.
 4. **run-if** — if the mission declares one, run it; a non-zero exit records a `run-if` skip and moves on.
-4a. **prepare** — on every run (manual ones too), once it is recorded as running: the engine runs the mission's `prepare` step; a failure ends the run as failed.
+4a. **prepare** — on every run (manual ones too), once it is recorded as running: the engine runs the mission's `prepare` step; a failure ends the run as failed, and "nothing to do" ends it as a `prepare` skip with its session removed.
 5. **Agent** — create session, persist `kickoff[0]` as the first user turn, seed `kickoff[1..]` into the engine queue, run the agent loop with the body as system prompt.
 6. **Record** — write `runs.jsonl` entry; emit events; finalize run record.
 
@@ -294,7 +294,7 @@ The scheduler tracks the last fire minute per mission. A cron match only fires o
 
 ### Catch-up fires
 
-Cron is missed when the machine is off or asleep. To recover, a mission can declare `catchup_hours: <n>` in its frontmatter. The scheduler's own tick sweeps all enabled missions for a missed slot — the latest scheduled time inside the last `catchup_hours` that no run started at or after (busy-skipped and `interrupted` runs don't count, a `run-if` skip does; a run from before the slot, like an afternoon's manual trigger, doesn't either) — and triggers them once the machine has been quiet for the background quiet window — no user turn needed. Same dispatch path as a normal cron fire; overlaps are prevented by the same busy-skip. Missions that omit `catchup_hours` (or set it to `0`) are cron-only.
+Cron is missed when the machine is off or asleep. To recover, a mission can declare `catchup_hours: <n>` in its frontmatter. The scheduler's own tick sweeps all enabled missions for a missed slot — the latest scheduled time inside the last `catchup_hours` that no run started at or after (busy-skipped and `interrupted` runs don't count, a `run-if` or `prepare` skip does; a run from before the slot, like an afternoon's manual trigger, doesn't either) — and triggers them once the machine has been quiet for the background quiet window — no user turn needed. Same dispatch path as a normal cron fire; overlaps are prevented by the same busy-skip. Missions that omit `catchup_hours` (or set it to `0`) are cron-only.
 
 The built-in `dream` mission uses `catchup_hours: 24`: a missed 3am fire re-runs soon after the machine wakes. Catch-up attempts are capped per local day (a repeatedly-failing mission must not burn the day's token budget) — runs marked `catchup` count, manual runs and cron fires do not, and one run per mission is enforced across all trigger paths — cron, catch-up, and manual triggers share a single in-flight guard; an overlapping trigger records a `skipped` run.
 
@@ -316,7 +316,7 @@ Each trigger creates:
 }
 ```
 
-A skipped entry adds `skip` — `busy` or `run-if` — and a run-if skip its `reason`:
+A skipped entry adds `skip` — `busy`, `run-if` or `prepare` — and a run-if or prepare skip its `reason`:
 
 ```json
 { "run_id": "mission-run-1700000000-e5f6a7b8", "triggered_at": 1700000000,
@@ -325,7 +325,7 @@ A skipped entry adds `skip` — `busy` or `run-if` — and a run-if skip its `re
 
 The mission-level `run_id` (format `mission-run-<ts>-<uuid8>`) keys the `runs.jsonl` entry. It's distinct from the agent's internal `AgentRunRecord.run_id`, which stays an engine-internal concern.
 
-Skipped triggers (busy, or a `run-if` that said no) are logged with `skipped: true` and no `session_id`; they still get a real `run_id` so downstream tooling can reference them. The daily cap logs nothing; the tick simply stops firing.
+Skipped triggers (busy, a `run-if` that said no, or a `prepare` with nothing to do) are logged with `skipped: true` and no `session_id`; they still get a real `run_id` so downstream tooling can reference them. The daily cap logs nothing; the tick simply stops firing.
 
 ### What went wrong in a run
 

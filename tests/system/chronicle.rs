@@ -46,6 +46,31 @@ async fn finished_run(w: &World, sid: &str) -> Value {
     panic!("the chronicle run never finished:\n{}", w.engine.log());
 }
 
+/// The next run on record after `previous` (a run id, or none yet), once it
+/// is finished. A run that found nothing to do is skipped and has no session,
+/// so it cannot be found by one.
+async fn next_finished_run(w: &World, previous: Option<&str>) -> Value {
+    let start = Instant::now();
+    while start.elapsed() < Duration::from_secs(60) {
+        let runs = w.api.get("/api/missions/chronicle/runs").await;
+        let newest = runs["runs"][0].clone();
+        if !newest.is_null() && newest["run_id"].as_str() != previous && newest["status"] != "running" {
+            return newest;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    panic!("the chronicle run never finished:\n{}", w.engine.log());
+}
+
+/// A run that had nothing to do: skipped as a `prepare` skip, no model call,
+/// no session left behind (the manual trigger made one first).
+fn assert_nothing_to_do(w: &World, run: &Value, sid: &str) {
+    assert_eq!(run["status"], "skipped", "{run}");
+    assert_eq!(run["skip"], "prepare", "{run}");
+    assert!(run.get("session_id").is_none() && run.get("failure_count").is_none(), "{run}");
+    assert!(!w.home.linggen_home().join("sessions").join(sid).exists(), "an empty session was left");
+}
+
 /// The month and the year are written through the writer into their files,
 /// signed by the engine, from the input the engine prepared; the writer's
 /// fence lets the run write the chronicle and nothing else.
@@ -86,21 +111,21 @@ async fn the_monthly_run_writes_the_month_and_the_year_through_the_writer() {
 
     // Written, the months are not offered again: nothing to do, no model call.
     let before = w.model.calls_of(Agent::Chronicler).len();
+    let first_run = run["run_id"].as_str().unwrap().to_string();
     let again = start_run(&w).await;
-    let run = finished_run(&w, &again).await;
-    assert_eq!(run["status"], "completed", "{run}");
+    let run = next_finished_run(&w, Some(&first_run)).await;
+    assert_nothing_to_do(&w, &run, &again);
     assert_eq!(w.model.calls_of(Agent::Chronicler).len(), before, "a model call for nothing");
 }
 
 /// v1 is the default: the monthly run ends at once, quietly, with no model
-/// call and no file.
+/// call, no file and no session.
 #[tokio::test]
 async fn under_v1_the_run_does_nothing() {
     let w = World::start_with_home(Setup::default(), seed_old).await;
     let sid = start_run(&w).await;
-    let run = finished_run(&w, &sid).await;
-    assert_eq!(run["status"], "completed", "{run}");
-    assert!(run.get("failure_count").is_none(), "{run}");
+    let run = next_finished_run(&w, None).await;
+    assert_nothing_to_do(&w, &run, &sid);
     assert!(w.model.calls_of(Agent::Chronicler).is_empty());
     assert!(!w.home.linggen_home().join("memory/chronicle").exists());
 }
@@ -109,7 +134,9 @@ async fn under_v1_the_run_does_nothing() {
 /// v1 hers has none.
 #[tokio::test]
 async fn only_yinyues_prompt_has_the_days_dates_and_only_under_v2() {
-    let today = chrono::Local::now().format("%m-%d").to_string();
+    // The world's engine runs with TZ=UTC (support/process.rs): its today is
+    // UTC's, which is not this machine's local day in the evening.
+    let today = chrono::Utc::now().format("%m-%d").to_string();
     let note = format!(
         "---\ntopic: Days\nscope: person\n---\n\n## Our anniversary\n<!-- id: d000000001 · kind: person · voice: user · created: 2026-01-01 · updated: 2026-01-01 · source: yinyue · yearly: {today} -->\n"
     );

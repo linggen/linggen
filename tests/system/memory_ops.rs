@@ -636,6 +636,30 @@ async fn a_failing_prepare_step_ends_the_run_failed_and_unstamped() {
     );
 }
 
+/// A generic mission whose engine prepare step reports no work must leave
+/// neither a session nor a completed run behind, even on a manual trigger.
+#[tokio::test]
+async fn a_prepare_with_nothing_to_do_skips_without_a_session() {
+    let w = World::start(Setup::default()).await;
+    let dir = w.home.linggen_home().join("missions/empty-prepare");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("mission.md"), "---\nname: Empty prepare\nenabled: false\nagent: memory\ncwd: ~/.linggen\nprepare: [chronicle, prepare]\nallowed-tools: [Read]\n---\n\nDo work.\n").unwrap();
+    let sid = trigger(&w, "empty-prepare", json!({})).await;
+    let start = Instant::now();
+    let run = loop {
+        let runs = w.api.get("/api/missions/empty-prepare/runs").await;
+        let run = runs["runs"][0].clone();
+        if !run.is_null() && run["status"] != "running" { break run; }
+        assert!(start.elapsed() < Duration::from_secs(60), "run never finished");
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    };
+    assert_eq!(run["status"], "skipped", "{run}");
+    assert_eq!(run["skipped"], true, "{run}");
+    assert!(run.get("session_id").is_none(), "{run}");
+    assert!(!w.home.linggen_home().join("sessions").join(&sid).exists());
+    assert!(w.model.calls_of(Agent::Memory).is_empty());
+}
+
 /// Settings → Memory's Solve: the run reads the queue, asks the user (it is
 /// attended), and a second Solve while it waits is refused with 409; the
 /// answer closes the item.
