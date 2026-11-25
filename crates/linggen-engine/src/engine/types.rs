@@ -331,6 +331,10 @@ pub struct AgentEngine {
     /// Used to reset model_id at the start of each turn when no session
     /// override is active, so fallback state doesn't persist.
     pub default_model_id: String,
+    /// Whether the agent declares a model of its own (its `model:` or the
+    /// config's override of it), set when the manager builds the engine. A
+    /// Task child that declares none runs on its parent's model.
+    pub declares_own_model: bool,
     /// Per-agent reasoning-effort override from the agent spec ("low"|"medium"|
     /// "high"). Overrides the model config's effort at call time when set.
     pub reasoning_effort: Option<String>,
@@ -736,6 +740,7 @@ impl AgentEngine {
             cfg,
             model_manager,
             default_model_id: model_id.clone(),
+            declares_own_model: false,
             model_id,
             reasoning_effort: None,
             forced_effort: None,

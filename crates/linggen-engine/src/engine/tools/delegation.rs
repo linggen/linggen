@@ -141,6 +141,7 @@ impl Tools {
             manager,
             self.root.clone(),
             caller_id,
+            None,
             args.target_agent_id,
             args.task,
             self.run_id.clone(),
@@ -366,6 +367,10 @@ pub(crate) async fn run_delegation(
     manager: Arc<AgentManager>,
     ws_root: PathBuf,
     caller_id: String,
+    // The model the parent's turn runs on: a child whose agent declares none
+    // runs on it. `None`: not known here (`Tools::task`), the child runs its
+    // agent's own model.
+    parent_model: Option<String>,
     target_agent_id: String,
     task: String,
     parent_run_id: Option<String>,
@@ -478,10 +483,10 @@ pub(crate) async fn run_delegation(
     );
     spec.read_origin = read_origin;
     spec.apply(&mut engine);
-    // Under a guest's policy the child, like its parent, runs only a model
-    // the room shares.
+    // The parent's model unless the agent declares its own; under a guest's
+    // policy a model the room shares.
     engine
-        .run_on_own_model(&format!("subagent '{target_agent_id}'"))
+        .run_as_child(parent_model.as_deref(), &format!("subagent '{target_agent_id}'"))
         .await;
     // A separate ceiling survives policy and skill changes in the child.
     engine.cfg.delegated_allowed_tools = parent_allowed_tools;
