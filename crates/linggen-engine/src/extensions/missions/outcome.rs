@@ -1,7 +1,7 @@
 //! How a mission run ended, as its record keeps it — and the one line the
 //! activity log gets when something in it went wrong.
 
-use crate::engine::mission::record::{Mission, MissionRunEntry};
+use crate::engine::mission::record::{Mission, MissionRunEntry, SkipKind};
 use crate::engine::run_faults::{self, RunFaults};
 use crate::perception::activity_verbs::FAULT_VERB;
 use crate::provider::models::RunUsage;
@@ -18,9 +18,22 @@ pub struct RunEnd {
     /// agent could not be made, or its model call failed
     /// (`RunStore::cannot_run`).
     pub cannot_run: Option<crate::cannot_run::CannotRun>,
+    /// The run was skipped, not run: what skipped it and why. A skipped
+    /// end leaves no session (`scheduler::end_mission_run` removes it).
+    pub skip: Option<(SkipKind, String)>,
 }
 
 impl RunEnd {
+    /// The mission's `prepare` step found no work: no model call, no
+    /// session, and the slot counts as handled.
+    pub fn nothing_to_prepare(reason: &str) -> Self {
+        Self {
+            status: "skipped",
+            skip: Some((SkipKind::Prepare, reason.to_string())),
+            ..Default::default()
+        }
+    }
+
     pub fn failed(error: String) -> Self {
         Self {
             status: "failed",
@@ -51,6 +64,16 @@ impl RunEnd {
             .and_then(run_faults::tail)
             .map(|e| run_faults::cap(&e, run_faults::TAIL_MAX_CHARS));
         entry.cannot_run = self.cannot_run.filter(|_| self.status == "failed");
+        // A skipped run keeps no session: `end_mission_run` removes it.
+        if let Some((kind, reason)) = self.skip {
+            *entry = MissionRunEntry {
+                session_id: None,
+                skipped: true,
+                skip: Some(kind),
+                reason: Some(reason),
+                ..std::mem::take(entry)
+            };
+        }
     }
 }
 

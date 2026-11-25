@@ -401,6 +401,12 @@ fn stamp_hook(tool: &str, args: &serde_json::Value) -> serde_json::Value {
         .env_clear()
         .env("PATH", std::env::var("PATH").unwrap_or_default())
         .env("HOME", "/nonexistent-home")
+        // The hook asks the engine at this address whether memory is on v2
+        // (and then stamps nothing). Point it at a closed port: the test
+        // reads the hook's v1 table, never whatever engine runs on this
+        // machine.
+        .env("LINGGEN_HOST", "127.0.0.1")
+        .env("LINGGEN_PORT", "1")
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .spawn()

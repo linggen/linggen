@@ -148,6 +148,8 @@ pub enum SkipKind {
     Busy,
     /// The mission's `run-if` check said no (or couldn't answer).
     RunIf,
+    /// The mission's `prepare` step found no work (`missions::NOTHING_TO_DO`).
+    Prepare,
 }
 
 /// A single entry in a mission's run history (`<id>/runs.jsonl`).
@@ -165,7 +167,8 @@ pub struct MissionRunEntry {
     /// What skipped it. Rows written before this field have none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skip: Option<SkipKind>,
-    /// A `run-if` skip's reason: the check's first stdout line.
+    /// A skip's reason: a `run-if` check's first stdout line, or what the
+    /// `prepare` step found nothing to do about.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
     /// The tool calls that ended in failure — the first few by name
@@ -217,12 +220,12 @@ impl MissionRunEntry {
 
     /// True when this entry handled its schedule slot, so catch-up leaves
     /// the slot alone: a run that started (and wasn't cut off by a dead
-    /// daemon), or a `run-if` skip — the check answered for that slot. A
-    /// busy skip handled nothing.
+    /// daemon), or a `run-if` or `prepare` skip — the check or the step
+    /// answered for that slot. A busy skip handled nothing.
     pub fn fills_slot(&self) -> bool {
         if self.status == "interrupted" {
             return false;
         }
-        !self.skipped || self.skip == Some(SkipKind::RunIf)
+        !self.skipped || matches!(self.skip, Some(SkipKind::RunIf | SkipKind::Prepare))
     }
 }
