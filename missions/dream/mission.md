@@ -19,6 +19,10 @@ enabled: true
 # uncertainty resolves to promote.
 agent: memory
 cwd: ~/.linggen
+# A v1 memory job: under `[memory] linggen = "v2"` nobody reads the v1 store, so
+# the run is skipped with a plain reason — no model call, no session
+# (`ling v1-only`, `src/cli/v1_only.rs`, the one place that decides).
+prepare: [v1-only]
 # Multi-item kickoff: item 0 starts the run; each later item lands as
 # the next user turn after the model's final reply (engine drains one
 # per assistant final-response). The repeated nudge items make the

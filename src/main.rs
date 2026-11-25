@@ -133,6 +133,13 @@ enum Command {
         #[command(subcommand)]
         action: ChronicleVerb,
     },
+    /// Gate for a v1 memory mission's `prepare` step: under `[memory] linggen = "v2"`
+    /// the run is skipped; under v1 the rest of the arguments run as `ling <args>`.
+    #[command(name = "v1-only", disable_help_flag = true)]
+    V1Only {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     /// Memory's data verbs: `ling mem search …`, `ling mem add …`, `ling mem list`, …
     /// (`ling mem --help` lists them). Runs against the engine when it is up,
     /// else on the store directly.
@@ -263,6 +270,9 @@ async fn main() -> Result<()> {
         }
         Some(Command::Mem { args }) => {
             return cli::mem::run(args.clone()).await;
+        }
+        Some(Command::V1Only { args }) => {
+            return cli::v1_only::run(args, &config).await;
         }
         Some(Command::Chronicle { action }) => {
             let action = match action {
@@ -544,6 +554,7 @@ async fn main() -> Result<()> {
         | Some(Command::Claude { .. })
         | Some(Command::Mem { .. })
         | Some(Command::Chronicle { .. })
+        | Some(Command::V1Only { .. })
         | Some(Command::Restart { .. })
         | Some(Command::EngineRestart { .. }) => unreachable!(),
     }

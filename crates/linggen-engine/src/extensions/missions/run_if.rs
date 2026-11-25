@@ -138,8 +138,9 @@ fn verdict_of(exit_code: Option<i32>, stdout: &str) -> Verdict {
     }
 }
 
-/// The first non-empty stdout line, trimmed and capped.
-fn reason_of(stdout: &str) -> Option<String> {
+/// The first non-empty stdout line, trimmed and capped (a `run-if` skip's
+/// reason, and a `prepare` skip's).
+pub(super) fn reason_of(stdout: &str) -> Option<String> {
     let line = stdout.lines().map(str::trim).find(|l| !l.is_empty())?;
     Some(cap(line))
 }
