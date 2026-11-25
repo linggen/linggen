@@ -615,6 +615,7 @@ impl AgentEngine {
                     }
                     self.remember_call(&model_id, attempt_messages, tools.as_ref(), &result);
                     self.note_call(&model_id, &spent);
+                    self.warn_near_cap(&model_id).await;
                     self.note_run_model(&model_id);
                     crate::engine::cloud_meter::after_call(self, result.token_usage.as_ref());
                     if model_id != preferred {
@@ -641,11 +642,20 @@ impl AgentEngine {
                         stalled.push(model_id.clone());
                         continue;
                     }
-                    crate::provider::models::note_unavailable(&model_id, &e);
+                    // A provider at its cap is not failing: it is not benched,
+                    // and the call is the person's to continue once the cap is
+                    // raised. Another model answers only when switching is on.
+                    let capped = e.downcast_ref::<crate::provider::models::spend_cap::Capped>().is_some();
+                    if !capped {
+                        crate::provider::models::note_unavailable(&model_id, &e);
+                    }
                     self.report_model_refusal(&model_id, &e).await;
                     tried.push(model_id.clone());
                     self.note_run_model(&model_id);
-                    let worthy = crate::provider::models::is_fallback_worthy_error(&e);
+                    let worthy = capped || crate::provider::models::is_fallback_worthy_error(&e);
+                    if capped && !may_switch {
+                        return Err(e);
+                    }
                     if !may_switch || !worthy {
                         // The refusal another model would have answered: with
                         // the session's switch off, say which model failed and

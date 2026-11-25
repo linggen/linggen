@@ -147,6 +147,12 @@ export const W = {
   gotIt: 'Got it',
   switchBack: 'Switch back',
   // ── The price footer ──
+  capLabel: 'Monthly cap $',
+  setCap: 'Set cap',
+  clearCap: 'Remove cap',
+  spentOfCap: 'Used about ${used} of ${cap} this month (estimate)',
+  spentNoCap: 'Used about ${used} this month (estimate)',
+  spendNote: 'Estimated from token counts and the price list of {date}. Use of the same key outside Linggen is not seen.',
   estimatesFrom: 'Prices are estimates, from the list of {date}.',
   listOld: 'The price list is {n} days old.',
   // ── Advanced ──

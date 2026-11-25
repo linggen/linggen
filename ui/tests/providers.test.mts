@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { W } from '../src/lib/modelsWords.mts';
-import { addedByName, chatChoices, dollars, editionWord, failureLabel, searchFamilies, splitFamilies, useLines, type Family, type Provider } from '../src/lib/providers.mts';
+import { addedByName, capShare, chatChoices, dollars, spendMeter, editionWord, failureLabel, searchFamilies, splitFamilies, useLines, type Family, type Provider } from '../src/lib/providers.mts';
 
 const family = (key: string, over: Partial<Family> = {}): Family => ({ family: key, label: key, ticked: false, choose: [], folded: false, references: [], ...over });
 const provider = (over: Partial<Provider>): Provider => ({ id: 'p', label: 'Anthropic', way: 'key', provider: 'anthropic', url: '', connected: true, models: [], used_by: [], ...over });
@@ -57,4 +57,14 @@ test('a price is written without trailing zeros', () => {
   assert.equal(dollars(4), '4');
   assert.equal(dollars(0.1), '0.1');
   assert.equal(dollars(0.125), '0.125');
+});
+
+test('the cap meter says used of cap as an estimate, and what was used when there is no cap', () => {
+  const s = { month: '2026-11', used_usd: 60.5, cap_usd: 200, prices_as_of: '2026-11-23' };
+  assert.equal(spendMeter(s), 'Used about $60.5 of $200 this month (estimate)');
+  assert.equal(capShare(s), 0.3025);
+  assert.equal(capShare({ ...s, used_usd: 250 }), 1);
+  const none = { month: '2026-11', used_usd: 3, prices_as_of: '2026-11-23' };
+  assert.equal(spendMeter(none), 'Used about $3 this month (estimate)');
+  assert.equal(capShare(none), 0);
 });

@@ -160,6 +160,26 @@ test('a provider is added from the list with one key; a model is added by name u
   await expect(row.getByTestId('typed-model')).toHaveCount(0);
 });
 
+test.describe('the monthly cap', () => {
+  test.use({ scenario: { families: { today: '2026-11-23', lists: LISTS }, configAppend: PINNED_OPUS } });
+
+  test('a monthly cap is set on the provider, shown as an estimate meter, kept over a reload, and removed', async ({ page, world, httpRequests }) => {
+  await openModels(page, world, httpRequests);
+  const row = provider(page, 'Anthropic');
+  await connectAnthropic(row);
+  const meter = row.getByTestId('spend-meter');
+  await expect(meter).toContainText('Used about $0 this month (estimate)');
+  await row.getByLabel('Monthly cap $').fill('200');
+  await row.getByRole('button', { name: 'Set cap' }).click();
+  await expect(meter).toContainText('Used about $0 of $200 this month (estimate)');
+  await page.reload();
+  await row.getByRole('button', { name: /Anthropic/ }).click();
+  await expect(row.getByTestId('spend-meter')).toContainText('of $200');
+  await row.getByRole('button', { name: 'Remove cap' }).click();
+  await expect(row.getByTestId('spend-meter')).not.toContainText('of $200');
+});
+});
+
 test('a default made on the page keeps the fallbacks, and a later edit elsewhere keeps the ticked rows', async ({ page, world, request, httpRequests }) => {
   const chain = async (): Promise<string[]> => (await (await request.get(`${world.url}/api/config`)).json()).routing.default_models;
   const before = await chain();

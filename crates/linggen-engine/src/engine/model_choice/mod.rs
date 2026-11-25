@@ -369,6 +369,7 @@ pub fn next_down(
             !tried.contains(m)
                 && live(models, asker, m).is_ok()
                 && models.model_auth_ok(m)
+                && models.under_spend_cap(m)
                 && !crate::provider::models::in_cooldown(m)
         })
 }

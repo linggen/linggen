@@ -5,7 +5,7 @@
  * answer to draw and gives a route's failure its fixed label. It holds no
  * preset map, no winner rule and no price rule. Pure, so node tests can hold it.
  */
-import { W, type Word } from './modelsWords.mts';
+import { W, say, type Word } from './modelsWords.mts';
 
 export type Way = 'key' | 'local' | 'account' | 'subscription';
 export type Kind = 'chat' | 'live_voice' | 'speak' | 'hear' | 'draw';
@@ -97,7 +97,19 @@ export interface Provider {
   /** Named only by the other region's list: the person's own, kept as it is. */
   retained?: boolean;
   families?: FamiliesView;
+  /** This month's estimated spend and the monthly cap, for a key provider. */
+  spend?: { month: string; used_usd: number; cap_usd?: number; prices_as_of: string };
 }
+
+/** The meter line: 「本月已用约 $X / $200 (估算)」, or what was used when no cap is set. */
+export const spendMeter = (s: NonNullable<Provider['spend']>): string =>
+  s.cap_usd === undefined
+    ? say(W.spentNoCap, { used: dollars(s.used_usd) })
+    : say(W.spentOfCap, { used: dollars(s.used_usd), cap: dollars(s.cap_usd) });
+
+/** How much of the cap is used, 0–1 (capped at 1); 0 with no cap. */
+export const capShare = (s: NonNullable<Provider['spend']>): number =>
+  s.cap_usd ? Math.min(1, s.used_usd / s.cap_usd) : 0;
 
 export interface Preset {
   name: string;

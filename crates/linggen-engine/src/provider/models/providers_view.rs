@@ -36,6 +36,9 @@ pub struct ProviderView {
     /// filled by the route that has them; absent where there are none.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub families: Option<super::families::FamiliesView>,
+    /// This month's estimated spend and the cap, for a key provider.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    spend: Option<super::spend_cap::SpendView>,
 }
 
 #[derive(Serialize)]
@@ -174,7 +177,7 @@ impl ProviderView {
             id: provider_id(sign_in, provider, url), label, way: way.as_str(),
             provider: provider.into(), url: shown_url(url), connected: false, fix: None, retained,
             key: (way == Way::Key).then_some(KeyState { set: false, conflict: false, can_keep_model_key: false }),
-            models: Vec::new(), used_by: Vec::new(), disk_gb: None, families: None,
+            models: Vec::new(), used_by: Vec::new(), disk_gb: None, families: None, spend: None,
         }
     }
 
@@ -254,6 +257,7 @@ impl ModelManager {
                 key.conflict = keys.next().is_some_and(|first| keys.any(|k| k != first));
                 key.can_keep_model_key = key.conflict && keep_model_key(config, creds, &group.id).is_some();
             }
+            group.spend = (group.way == "key").then(|| super::spend_cap::view(&group.id));
             group.models.sort_by(|a, b| a.id.cmp(&b.id));
             group.used_by.sort_unstable();
             group.fix = match group.way {

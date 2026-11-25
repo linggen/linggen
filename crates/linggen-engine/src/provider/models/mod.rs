@@ -28,6 +28,7 @@ mod pricing;
 mod providers;
 pub mod providers_view;
 mod readiness;
+pub mod spend_cap;
 mod usage;
 
 pub use catalog::*;
@@ -279,6 +280,18 @@ impl ModelManager {
         &self.live_rows
     }
 
+    /// The one asker of the monthly spending cap (`spend_cap::check`): a call
+    /// to a capped provider is refused before it is made, the session kept.
+    fn spend_refusal(&self, cfg: &ModelConfig) -> Result<()> {
+        spend_cap::check(cfg).map_err(anyhow::Error::from)
+    }
+
+    /// Whether `model_id`'s provider is under its cap this month — the
+    /// fallback chain asks it of each candidate.
+    pub fn under_spend_cap(&self, model_id: &str) -> bool {
+        self.config_of(model_id).is_none_or(|cfg| self.spend_refusal(cfg).is_ok())
+    }
+
     pub async fn chat_text_stream(
         &self,
         model_id: &str,
@@ -314,6 +327,7 @@ impl ModelManager {
             .ok_or_else(|| anyhow::anyhow!("Model {} not found", model_id))?;
 
         Self::check_provider_auth(&instance.config)?;
+        self.spend_refusal(&instance.config)?;
 
         // Note: permit is held for the duration of the stream
         let _permit = instance.semaphore.clone().acquire_owned().await?;
@@ -354,6 +368,7 @@ impl ModelManager {
             .ok_or_else(|| anyhow::anyhow!("Model {} not found", model_id))?;
 
         Self::check_provider_auth(&instance.config)?;
+        self.spend_refusal(&instance.config)?;
 
         let _permit = instance.semaphore.clone().acquire_owned().await?;
         let max_output = instance

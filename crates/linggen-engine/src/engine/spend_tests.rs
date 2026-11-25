@@ -399,3 +399,42 @@ async fn a_model_removed_from_the_config_keeps_its_earlier_figure() {
     );
     assert!(s.unpriced.is_empty(), "{:?}", s.unpriced);
 }
+
+/// The monthly cap, end to end: one provider (the fake host's address, so no
+/// other test shares it), a price of its own, a $10 cap. One test, since the
+/// caps in force are process-wide.
+#[tokio::test]
+async fn a_capped_provider_stops_before_the_call_keeps_the_session_and_goes_on_when_raised() {
+    use crate::provider::models::spend_cap;
+    let mut c = case("ok").await;
+    let mut cfg = anthropic("spend-ok", &format!("{}/ok", host().await));
+    cfg.price = Some(crate::config::ModelPrice { input: 1000.0, output: 1000.0, cache_read: None, cache_write: None });
+    let models = Arc::new(ModelManager::new_with_credentials(vec![cfg.clone()], &crate::credentials::Credentials::default()));
+    c.engine.model_manager = models.clone();
+    let id = spend_cap::account_of(&cfg).expect("a key provider billed per token");
+    let caps = |usd: f64| spend_cap::use_caps(&std::collections::BTreeMap::from([(id.clone(), usd)]));
+    caps(10.0);
+    // A call costs (1,200 + 400 + 5,000 + 3,000) tokens at $1,000 per million: $9.60.
+    c.engine.stream_with_fallback(&hi(), None).await.unwrap();
+    assert!((spend_cap::view(&id).used_usd - 9.6).abs() < 1e-9);
+    // 96% of the cap: the warning was given by the call, so it is spent.
+    assert!(spend_cap::take_warning(&cfg).is_none(), "the 80% line is said once");
+    // The next call goes (under the cap), and now it is over.
+    c.engine.stream_with_fallback(&hi(), None).await.unwrap();
+    assert!(spend_cap::check(&cfg).is_err(), "{:?}", spend_cap::view(&id));
+    let calls = c.ledger("spend-ok").unwrap().tally.calls;
+    // At the cap: refused before the call, said in words, the session kept.
+    let err = c.engine.stream_with_fallback(&hi(), None).await.err().expect("refused").to_string();
+    assert!(err.contains("monthly cap") && err.contains("Settings → Models"), "{err}");
+    assert!(err.split_whitespace().count() <= 20, "{err}");
+    assert_eq!(c.ledger("spend-ok").unwrap().tally.calls, calls, "no call was made");
+    assert!(c.manager.global_sessions.session_usage(&c.session).entries.len() == 1, "session kept");
+    // The chain does not route around the cap: a capped candidate is skipped.
+    assert!(!models.under_spend_cap("spend-ok"));
+    assert_eq!(crate::engine::model_choice::next_down(&models, crate::engine::model_choice::Asker::Owner, &["spend-ok".into()], &[]), None);
+    // Raising the cap continues the session.
+    caps(100.0);
+    c.engine.stream_with_fallback(&hi(), None).await.unwrap();
+    assert_eq!(c.ledger("spend-ok").unwrap().tally.calls, calls + 1);
+    spend_cap::use_caps(&Default::default());
+}
