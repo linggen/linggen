@@ -436,6 +436,23 @@ which memory Linggen's own sessions have; v1 is everything above, unchanged.
 - **Not built yet** — migration of v1 rows, phone sync, other agents' session
   logs in the chronicle.
 
+### The owner's phone under v2
+
+The phone is unchanged: it still sends `add`, `delete`, `search` and `list`
+to `/api/memory/<verb>`. Under v2 the door answers those four for the
+owner's own phone from the notes (`own_memory::phone`); every other caller
+(a phone that is another person, a machine, a skill page) stays on the
+ling-mem store, because the notes have no per-person partition. A phone note
+is one `write` with source `phone`, in the place its app has (a table in
+`phone.rs`); a note naming no app goes to `area:mind`, which coding hosts
+never see. `list` answers the pull: the person's notes as `core`, the
+areas' notes as `semantic` under the app's folder, nothing staged. A search
+carrying `min_score` is the per-turn recall; v2 has none, so it finds
+nothing. A note that can never land (status, empty) is answered ok with no
+id so the phone's queue does not stop on it. The first pull after the switch
+drops the phone's rows that carry an old-store id (the notes hold none of
+them): migrate first. Entry-by-entry sync (design § 4a) is later.
+
 ## Open / next
 
 - Scope on Codex is read-side only: its hook runner cannot rewrite

@@ -99,11 +99,13 @@ async fn door(url: &str, who: Who, verb: &str, body: Value) -> (u16, Value) {
     let guest = phone("dev-guest", Some(("u-guest", "Guest")));
     let asker = match who {
         Who::Owner => {
-            let call = passthrough(
-                ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 50000))),
-                Path(verb.to_string()),
-                HeaderMap::new(),
-                Some(Json(body)),
+            let headers = HeaderMap::new();
+            let call = serve(
+                Mode::V1,
+                SocketAddr::from(([127, 0, 0, 1], 50000)),
+                verb,
+                &headers,
+                Some(body),
             );
             let res = crate::memory_host::TEST_HOST
                 .scope(host_at(url), call)
@@ -115,7 +117,7 @@ async fn door(url: &str, who: Who, verb: &str, body: Value) -> (u16, Value) {
         Who::SignedOutPhone => asker_of(&Caller::Phone(phone("dev-2", None))),
     };
     let res = crate::memory_host::TEST_HOST
-        .scope(host_at(url), answer(&asker, verb, body))
+        .scope(host_at(url), answer(&asker, Mode::V1, verb, body))
         .await;
     read(res).await
 }
@@ -503,7 +505,7 @@ async fn door_at(
     body: Value,
 ) -> (u16, Value) {
     let res = crate::memory_host::TEST_HOST
-        .scope(host, answer(&asker, verb, body))
+        .scope(host, answer(&asker, Mode::V1, verb, body))
         .await;
     read(res).await
 }

@@ -514,15 +514,15 @@ fn source_of(file: &str) -> String {
 /// store, and the fence or the writer's rules no longer hold.
 #[test]
 fn only_the_fence_loads_and_only_write_saves() {
-    for file in ["call.rs", "chronicle.rs", "companion.rs", "find.rs", "format.rs", "index.rs", "mod.rs", "page.rs", "write.rs"] {
+    for file in ["call.rs", "chronicle.rs", "companion.rs", "find.rs", "format.rs", "index.rs", "mod.rs", "page.rs", "phone.rs", "write.rs"] {
         let src = source_of(file);
         assert!(!src.contains("load_all_unfiltered("), "{file} loads topics around the fence");
         assert!(!src.contains("fs::write") && !src.contains("fs::rename") && !src.contains("File::create"), "{file} writes a file itself");
     }
-    for file in ["call.rs", "chronicle.rs", "companion.rs", "find.rs", "format.rs", "index.rs", "mod.rs", "fence.rs", "page.rs"] {
+    for file in ["call.rs", "chronicle.rs", "companion.rs", "find.rs", "format.rs", "index.rs", "mod.rs", "fence.rs", "page.rs", "phone.rs"] {
         assert!(!source_of(file).contains(".save("), "{file} saves a topic; only write.rs does");
     }
-    for file in ["find.rs", "index.rs", "call.rs", "chronicle.rs", "companion.rs", "page.rs"] {
+    for file in ["find.rs", "index.rs", "call.rs", "chronicle.rs", "companion.rs", "page.rs", "phone.rs"] {
         assert!(!source_of(file).contains(".load("), "{file} reads a file around the fence");
     }
 }
@@ -531,7 +531,7 @@ fn only_the_fence_loads_and_only_write_saves() {
 /// names a fenced area.
 #[test]
 fn the_only_audience_decision_is_in_the_fence() {
-    for file in ["call.rs", "chronicle.rs", "companion.rs", "find.rs", "index.rs", "page.rs", "write.rs", "store.rs"] {
+    for file in ["call.rs", "chronicle.rs", "companion.rs", "find.rs", "index.rs", "page.rs", "phone.rs", "write.rs", "store.rs"] {
         let src = source_of(file);
         assert!(!src.contains("Area::Body") && !src.contains("Area::Mind"), "{file} names a fenced area");
     }
@@ -539,7 +539,9 @@ fn the_only_audience_decision_is_in_the_fence() {
 
 /// Who reads `[memory] linggen`: the engine's settings map, its prompt (and
 /// the tools it offers), the turn's recall, and the chronicle's own step
-/// (`ling chronicle`, which keeps the chronicle only under v2). Another
+/// (`ling chronicle`, which keeps the chronicle only under v2), and the
+/// door the phone reaches memory by (which answers the owner's phone from
+/// the notes under v2). Another
 /// reader is a second place deciding which memory Linggen has.
 #[test]
 fn the_switch_is_read_in_the_listed_places_only() {
@@ -576,8 +578,8 @@ fn the_switch_is_read_in_the_listed_places_only() {
     found.sort();
     assert_eq!(
         found,
-        ["src/cli/chronicle.rs", "src/engine/prompt/mod.rs", "src/engine/types.rs", "src/server/chat/runtime.rs"],
-        "the switch is read in the engine's settings map, its prompt, the turn's recall and the chronicle's step alone"
+        ["src/cli/chronicle.rs", "src/engine/prompt/mod.rs", "src/engine/types.rs", "src/server/api/memory.rs", "src/server/chat/runtime.rs"],
+        "the switch is read in the engine's settings map, its prompt, the turn's recall, the chronicle's step and the phone's door alone"
     );
 }
 
@@ -982,4 +984,119 @@ fn the_review_leaves_the_old_chronicle_alone_but_lists_a_wrong_line() {
     let got: Vec<&str> = rows.iter().map(|r| r.note.id.as_str()).collect();
     assert_eq!(got, [wrong.as_str()]);
     assert!(!got.contains(&old.as_str()));
+}
+
+// ── the owner's phone ──────────────────────────────────────────────────────
+
+mod phone_verbs {
+    use super::*;
+    use crate::own_memory::phone;
+    use serde_json::{json, Value};
+
+    fn ask(store: &Store, verb: &str, args: Value) -> Value {
+        phone::answer(store, verb, &args, NOW).expect("the phone's verb is answered")
+    }
+
+    fn add(store: &Store, content: &str, app: &str) -> String {
+        let got = ask(store, "add", json!({"content": content, "episodic": true, "host": "linggen-mobile", "cwd": format!("~/.linggen/skills/{app}")}));
+        got["id"].as_str().unwrap().to_string()
+    }
+
+    fn contents(rows: &Value) -> Vec<String> {
+        rows.as_array().unwrap().iter().map(|r| r["content"].as_str().unwrap().to_string()).collect()
+    }
+
+    /// A note comes back, from `list` as the phone's pull asks and from a
+    /// deliberate search, as the text that was sent (a long one too), under
+    /// the app's folder; the phone's pull keeps the row because its id is listed.
+    #[test]
+    fn a_note_added_comes_back_as_sent_with_its_id_in_the_pull() {
+        let (_d, store) = scratch();
+        let long = format!("Likes the window seat on trains, and {}", "always says so. ".repeat(12));
+        let (short, dj) = (add(&store, "Prefers oat milk", "yinyue"), add(&store, &long, "dj"));
+        let kept = ask(&store, "list", json!({"tier": "semantic", "apps": ["yinyue", "dj"], "type": "fact", "limit": 1000}));
+        let ids: Vec<&str> = kept.as_array().unwrap().iter().map(|r| r["id"].as_str().unwrap()).collect();
+        assert!(ids.contains(&short.as_str()) && ids.contains(&dj.as_str()), "{kept}");
+        let texts = contents(&kept);
+        assert!(texts.contains(&"Prefers oat milk".to_string()) && texts.contains(&long.trim().to_string()), "{texts:?}");
+        let row = kept.as_array().unwrap().iter().find(|r| r["id"] == dj.as_str()).unwrap();
+        assert_eq!((row["tier"].as_str(), row["scope"].as_str()), (Some("semantic"), Some("~/.linggen/skills/dj")));
+        let found = ask(&store, "search", json!({"query": "window seat", "limit": 5}));
+        assert_eq!(contents(&found), vec![long.trim().to_string()]);
+        assert_eq!(ask(&store, "list", json!({"episodic": true, "limit": 1000})), json!([]), "nothing is staged");
+        let file = std::fs::read_to_string(store.root().join("areas/mind/from-the-phone.md")).unwrap();
+        assert!(file.contains("source: phone") && file.contains("Prefers oat milk"), "{file}");
+    }
+
+    /// The person's own notes are the phone's core ("About them"), without a scope.
+    #[test]
+    fn the_persons_notes_are_the_phones_core() {
+        let (_d, store) = scratch();
+        let id = person(&store, "Name is Alex", NOW);
+        let core = ask(&store, "list", json!({"tier": "core", "limit": 200}));
+        assert_eq!(core, json!([{"id": id, "content": "Name is Alex", "tier": "core"}]));
+        assert_eq!(ask(&store, "list", json!({"tier": "semantic", "type": "preference", "limit": 1000})), json!([]));
+    }
+
+    /// A note with no place named is in a place a coding session never sees:
+    /// nothing of it in Ling's index, search or read; the companion has it.
+    #[test]
+    fn a_phone_note_with_no_place_is_never_seen_by_a_coding_host() {
+        let (_d, store) = scratch();
+        let id = add(&store, "Worried about the interview", "no-such-app");
+        assert!(!index(&store, Audience::Work, None, NOW).text.contains("interview"));
+        assert!(search(&store, Audience::Work, "interview", 5, NOW).is_empty());
+        assert!(read(&store, Audience::Work, &id, NOW).is_err());
+        assert!(index(&store, Audience::Companion, None, NOW).text.contains("interview"));
+    }
+
+    /// What can never succeed is answered ok without an id (the phone's queue
+    /// would otherwise stop on it for good); a note said twice is the same note.
+    #[test]
+    fn a_note_that_cannot_land_does_not_jam_the_phone() {
+        let (_d, store) = scratch();
+        let status = ask(&store, "add", json!({"content": "Status: the migration is done", "cwd": "~/.linggen/skills/yinyue"}));
+        assert_eq!(status["id"], "");
+        assert_eq!(ask(&store, "add", json!({"content": "  "}))["id"], "");
+        let first = add(&store, "Prefers oat milk", "yinyue");
+        assert_eq!(add(&store, "Prefers oat milk", "yinyue"), first);
+    }
+
+    /// The person's delete from the phone removes the note, even one in their
+    /// own voice; an id of the old store is not an error.
+    #[test]
+    fn a_delete_from_the_phone_removes_the_note_and_an_old_id_is_not_an_error() {
+        let (_d, store) = scratch();
+        let mine = person(&store, "Name is Alex", NOW);
+        let phone_note = add(&store, "Prefers oat milk", "yinyue");
+        assert_eq!(ask(&store, "delete", json!({"id": mine}))["deleted"], true);
+        assert_eq!(ask(&store, "delete", json!({"id": phone_note}))["deleted"], true);
+        assert_eq!(ask(&store, "delete", json!({"id": "Mw13jg0tlu"}))["deleted"], false);
+        assert_eq!(ask(&store, "list", json!({"tier": "semantic"})), json!([]));
+        assert_eq!(ask(&store, "list", json!({"tier": "core"})), json!([]));
+    }
+
+    /// A per-turn recall (it carries `min_score`) finds nothing — v2 has none;
+    /// a note marked wrong is neither listed nor found.
+    #[test]
+    fn no_per_turn_recall_and_a_void_note_is_not_listed() {
+        let (_d, store) = scratch();
+        let id = add(&store, "Prefers oat milk", "yinyue");
+        let recall = ask(&store, "search", json!({"query": "what milk should I buy", "limit": 1, "min_score": 0.8}));
+        assert_eq!(recall, json!([]));
+        write(&store, Audience::Companion, NOW, &w(Action::Void { id, reason: "wrong".into() })).unwrap();
+        assert_eq!(ask(&store, "list", json!({"tier": "semantic"})), json!([]));
+        assert_eq!(ask(&store, "search", json!({"query": "oat milk"})), json!([]));
+    }
+
+    /// Only the phone's four verbs are answered here.
+    #[test]
+    fn only_the_four_verbs_are_the_notes() {
+        for verb in ["add", "delete", "search", "list"] {
+            assert!(phone::serves(verb));
+        }
+        for verb in ["update", "get", "count", "restamp", "forget"] {
+            assert!(!phone::serves(verb));
+        }
+    }
 }
