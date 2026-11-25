@@ -5,6 +5,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { ENGINE_GUEST_LABEL } from '../src/lib/people.mts';
 import { SETTINGS_SECTIONS } from '../src/lib/settingsSections.mts';
 
 const root = fileURLToPath(new URL('../src/', import.meta.url));
@@ -34,4 +35,24 @@ test('People is a declared section of Devices, drawn by PeopleTab', () => {
 test('the People page reads and writes only through peopleApi', () => {
   const direct = files.filter((file) => file !== 'lib/endpoints.ts' && /['"`]\/api\/people/.test(readFileSync(join(root, file), 'utf8')));
   assert.deepEqual(direct, []);
+});
+
+test("the page's word for a signed-out phone's person is the engine's own label, renamed only here", () => {
+  const engine = readFileSync(join(root, '../../crates/linggen-engine/src/state_fs/devices/mod.rs'), 'utf8');
+  assert.equal(engine.match(/GUEST_LABEL: &str = "([^"]+)"/)?.[1], ENGINE_GUEST_LABEL);
+});
+
+test('People says a model by its readable name and source, through the Models page label, never an id', () => {
+  const people = readFileSync(join(root, 'components/PeopleTab.tsx'), 'utf8');
+  assert.match(people, /nativeModelLabel\(/);
+  assert.doesNotMatch(people, /'' \}\{row\.id\}/);
+});
+
+test('the sidebar and People read one rule for an unlisted app', () => {
+  const tabs = readFileSync(join(root, 'apps/AppTabs.tsx'), 'utf8');
+  const lib = readFileSync(join(root, 'lib/people.mts'), 'utf8');
+  for (const text of [tabs, lib]) {
+    assert.match(text, /appListed/);
+    assert.doesNotMatch(text, /\.list\s*[!=]==\s*false/);
+  }
 });
