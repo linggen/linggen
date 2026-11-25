@@ -62,7 +62,8 @@ export function useSubagentPane(messages: ChatMessage[], pendingAskUser: Pending
   return {
     askUserBelongsToSubagent,
     runningCount,
-    hasItems: items.length > 0,
+    itemKeys: items.map((item) => item.key),
+    itemCount: items.length,
     paneVisible,
     setReading,
     closePane: () => setPaneVisible(false),

@@ -14,7 +14,7 @@
  */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { X, Copy, FileText, ArrowLeft } from 'lucide-react';
-import type { BackgroundTask, ChatMessage, PendingAskUser, AskUserAnswer } from '../../types';
+import type { BackgroundTask, ChatMessage, PendingAskUser, AskUserAnswer, SubagentInfo } from '../../types';
 import { paneItems, subagentTranscript, type PaneItem } from '../../lib/paneItems.mts';
 import { TaskList, StopButton, RunningSpinner } from './TaskList';
 import { TaskDetail } from './TaskDetail';
@@ -42,6 +42,8 @@ interface Props {
   /** Told whether an item's detail is open: the pane does not close itself
    *  under someone reading. */
   onReadingChange?: (reading: boolean) => void;
+  subagents?: SubagentInfo[];
+  onOpenSubagent?: (id: string) => void;
 }
 
 const iconButton = 'p-1 rounded text-slate-400 hover:text-blue-500 hover:bg-blue-500/10 transition-colors';
@@ -56,6 +58,8 @@ export const SubagentPane: React.FC<Props> = ({
   tasks = [],
   onStopTask,
   onReadingChange,
+  subagents = [],
+  onOpenSubagent,
 }) => {
   const entries = useMemo(() => messages.flatMap((m) => m.subagentTree ?? []), [messages]);
   const items = useMemo(() => paneItems(entries, tasks), [entries, tasks]);
@@ -96,7 +100,8 @@ export const SubagentPane: React.FC<Props> = ({
     return () => onReadingChange?.(false);
   }, [isReading, onReadingChange]);
 
-  if (!visible || items.length === 0) return null;
+  const otherSubagents = subagents.filter((sub) => !items.some((item) => item.key === sub.id));
+  if (!visible || (items.length === 0 && otherSubagents.length === 0)) return null;
 
   // A pane of the shell: its background is the shared surface token, so the
   // day's picture shows through here as it does behind the chat (index.css,
@@ -135,6 +140,19 @@ export const SubagentPane: React.FC<Props> = ({
           onOpen={setOpenKey}
           onStopTask={(id) => onStopTask?.(id)}
         />
+      )}
+      {!open && otherSubagents.length > 0 && (
+        <div className="px-2 py-1 flex flex-wrap gap-1">
+          {otherSubagents.map((sub) => (
+            <button key={sub.id} onClick={() => onOpenSubagent?.(sub.id)}
+              className="px-2 py-1 rounded border border-slate-200 dark:border-white/10 text-[11px] hover:bg-slate-100 dark:hover:bg-white/5">
+              {sub.id} · {sub.status}
+            </button>
+          ))}
+        </div>
+      )}
+      {open?.entry && subagents.some((sub) => sub.id === open.key) && (
+        <button onClick={() => onOpenSubagent?.(open.key)} className="self-start px-2 py-1 text-[11px] text-blue-500 hover:underline">Subagent context</button>
       )}
       {open?.entry && (
         <SubagentDetail

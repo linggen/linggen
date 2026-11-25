@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { chatAgentOf } from '../../lib/sessionMembers.mts';
-import { Sparkles, ArrowDown, Copy, FileText, Eraser, Plus, ListTree, MoreHorizontal } from 'lucide-react';
+import { ArrowDown, Copy, FileText, Eraser, Plus, MoreHorizontal } from 'lucide-react';
 import { RunningSpinner } from './TaskList';
 import 'highlight.js/styles/github.css';
 import { cn } from '../../lib/cn';
@@ -34,7 +34,6 @@ import { OldClaudeBar } from './OldClaudeBar';
 import { isOldClaude } from '../../lib/oldClaude.mts';
 import { SubagentDrawer } from './SubagentDrawer';
 import { SubagentPane } from './SubagentPane';
-import { statusBadgeClass } from './MessageHelpers';
 import { SessionCodingToggle, SessionEffortChip, SessionFallbackToggle, SessionModelSelector, SessionModeSelector, SessionStats } from './SessionSelectors';
 import { useChatActions } from '../../hooks/useChatActions';
 import { sessionApi } from '../../lib/endpoints';
@@ -162,16 +161,16 @@ const ChatDebugActions: React.FC<{ projectRoot?: string | null; sessionId?: stri
 
 /** Opens and closes the subagent & background-task pane; lit and counting
  *  while anything runs. */
-const PaneButton: React.FC<{ open: boolean; running: number; onClick: () => void }> = ({ open, running, onClick }) => (
+const PaneButton: React.FC<{ open: boolean; running: number; count: number; onClick: () => void }> = ({ open, running, count, onClick }) => (
   <button
     onClick={onClick}
-    className={cn('relative shrink-0 inline-flex items-center gap-1 p-1 rounded text-[11px] hover:bg-white/70 dark:hover:bg-white/5',
+    type="button" data-testid="subagent-pane-toggle" aria-expanded={open}
+    className={cn('shrink-0 h-6 inline-flex items-center gap-1 px-1.5 rounded border border-slate-200 dark:border-white/10 bg-white dark:bg-black/30 text-[11px] hover:bg-slate-100 dark:hover:bg-white/5',
       open ? 'text-blue-500' : running > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-slate-400 hover:text-slate-700 dark:hover:text-slate-200')}
     title={open ? 'Hide subagents and tasks' : 'Show subagents and tasks'}
   >
-    <ListTree size={15} />
     {running > 0 && <RunningSpinner />}
-    {running > 0 && <span className="font-semibold tabular-nums">{running}</span>}
+    <span className="font-semibold tabular-nums">子任务 {count}</span>
   </button>
 );
 
@@ -328,7 +327,10 @@ export const ChatPanel: React.FC<{
   const floatingUserMsg = useFloatingUserMessage(chatScrollRef, userMsgRefs, filteredMainMessages, sessionId);
   const { from: windowFrom, loadEarlier } = useMessageWindow(historicalMessages.length, sessionId, chatScrollRef);
   const backgroundTasks = useInteractionStore((s) => s.backgroundTasks);
-  const { askUserBelongsToSubagent, runningCount, hasItems, paneVisible, setReading, closePane, openPane } = useSubagentPane(filteredMainMessages, pendingAskUser, selectedAgent, memberIds, backgroundTasks);
+  const { askUserBelongsToSubagent, runningCount, itemKeys, itemCount, paneVisible, setReading, closePane, openPane } = useSubagentPane(filteredMainMessages, pendingAskUser, selectedAgent, memberIds, backgroundTasks);
+  const extraSubagents = subagents.filter((sub) => !itemKeys.includes(sub.id));
+  const paneCount = itemCount + extraSubagents.length;
+  const paneRunning = runningCount + extraSubagents.filter((sub) => sub.status === 'running').length;
   const stopTask = (id: string) => {
     const sid = sessionId || useSessionStore.getState().activeSessionId;
     if (sid) sessionApi.stopTask(sid, id).catch(() => {});
@@ -376,6 +378,7 @@ export const ChatPanel: React.FC<{
       <div className="session-bar-container flex-1 min-w-0 space-y-1">
         {sessionId && (
           <div data-testid="session-bar" className="session-bar rounded-md border border-slate-200 dark:border-white/10 bg-white/80 dark:bg-black/20 px-2 py-1 text-[11px] text-slate-600 dark:text-slate-300 flex items-center gap-1 whitespace-nowrap min-w-0">
+              <div className="flex flex-1 min-w-0 items-center gap-1 overflow-hidden">
               {sessionId && (() => {
                 const sessionMeta = useSessionStore.getState().allSessions.find(s => s.id === sessionId);
                 return (
@@ -416,41 +419,13 @@ export const ChatPanel: React.FC<{
               <SessionFallbackToggle />
               <SessionCodingToggle />
               <SessionStats />
+              </div>
+            {showSubagentPane && paneCount > 0 && <PaneButton open={paneVisible} running={paneRunning} count={paneCount} onClick={paneVisible ? closePane : openPane} />}
             <ChatDebugActions projectRoot={projectRoot} sessionId={sessionId} />
           </div>
         )}
 
-        {subagents.length > 0 && (
-          <details className="rounded-md border border-slate-200 dark:border-white/10 bg-white/80 dark:bg-black/20 px-2 py-1 text-[11px]">
-            <summary className="cursor-pointer font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-1">
-              <Sparkles size={11} />
-              Subagents ({subagents.length})
-            </summary>
-            <div className="mt-1 flex flex-wrap items-center gap-1.5">
-              {subagents.map((sub) => (
-                <button
-                  key={sub.id}
-                  onClick={() => setOpenSubagentId(sub.id)}
-                  className={cn(
-                    'px-2 py-1 rounded-md text-[11px] border transition-colors flex items-center gap-1',
-                    openSubagentId === sub.id
-                      ? 'bg-blue-600 text-white border-blue-600'
-                      : 'bg-slate-100 dark:bg-white/5 border-slate-200 dark:border-white/10 hover:bg-slate-200 dark:hover:bg-white/10'
-                  )}
-                >
-                  <span className="font-semibold">{sub.id}</span>
-                  <span className={cn('px-1.5 py-0.5 rounded-full uppercase tracking-wide', statusBadgeClass(sub.status))}>
-                    {sub.status}
-                  </span>
-                </button>
-              ))}
-            </div>
-          </details>
-        )}
       </div>
-      {showSubagentPane && hasItems && (
-        <PaneButton open={paneVisible} running={runningCount} onClick={paneVisible ? closePane : openPane} />
-      )}
       </div>
 
       <div className="relative flex-1 flex flex-col md:flex-row gap-0 min-h-0">
@@ -538,6 +513,8 @@ export const ChatPanel: React.FC<{
             tasks={backgroundTasks}
             onStopTask={stopTask}
             onReadingChange={setReading}
+            subagents={subagents}
+            onOpenSubagent={setOpenSubagentId}
           />
         </div>
       )}
