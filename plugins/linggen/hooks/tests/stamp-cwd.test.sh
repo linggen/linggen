@@ -3,6 +3,10 @@
 # schemas are strict, so a field an op does not take would be refused.
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
+# No engine answers these tests: not the one this Mac runs on 9527, whose
+# [memory] mode would change what the hooks do (mcp.sh: client.json, then
+# LINGGEN_HOST/PORT, then 127.0.0.1:9527).
+export LINGGEN_DATA_DIR="$(mktemp -d)/.linggen" LINGGEN_HOST=127.0.0.1 LINGGEN_PORT=9
 stamp="$here/../stamp-cwd.sh"
 # Not under a temp dir: a temp dir is never a project, so nothing would be
 # scoped there.

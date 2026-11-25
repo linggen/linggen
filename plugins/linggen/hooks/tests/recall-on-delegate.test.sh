@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
+# No engine answers these tests: not the one this Mac runs on 9527, whose
+# [memory] mode would change what the hooks do (mcp.sh: client.json, then
+# LINGGEN_HOST/PORT, then 127.0.0.1:9527).
+export LINGGEN_DATA_DIR="$(mktemp -d)/.linggen" LINGGEN_HOST=127.0.0.1 LINGGEN_PORT=9
 hook="$here/../recall-on-delegate.sh"
 tmp="$(mktemp -d)" || exit 1
 trap 'rm -rf "$tmp"' EXIT
