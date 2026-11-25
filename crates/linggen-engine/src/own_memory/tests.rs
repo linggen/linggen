@@ -1203,7 +1203,9 @@ fn the_block_is_one_budget_and_the_other_agents_keep_a_floor() {
     let topics = got.block.lines().filter(|l| l.contains("memory_notes op=read path=")).count();
     let others = got.block.lines().filter(|l| l.starts_with("- [Note ")).count();
     assert!(rules <= 70 && rules >= 60 && topics <= 50 && topics > 0, "rules {rules}, topics {topics}");
-    assert!(others >= 55, "the others kept {others} lines\n{}", got.block);
+    // The floor is 60 lines and 60/200 of the bytes (4.9 KB): with rules this long
+    // the bytes bind first, and about 54 of these 91-byte lines fit.
+    assert!(others >= 50, "the others kept {others} lines\n{}", got.block);
     assert!(got.block.contains("more lines left out; memory_agents op=search finds them"), "{}", got.block);
 }
 
