@@ -20,11 +20,15 @@
 //! - Un-void and delete are the person's, from Settings: no tool op names
 //!   them (`call::write_of`), so an agent cannot bring back a note the
 //!   person marked wrong, nor remove one.
+//! - [`carry`] is the one way a note keeps the id and the dates it already
+//!   had (the move from the v1 store, `migrate`): the same checks as an add,
+//!   a note whose id is already here is left as it is, and no tool op names it.
 
 use super::fence::{self, Audience};
 use super::format::{safe_body, one_line, meta_text, yearly_day, Entry, Kind, Scope, Topic, Voice, BODY_CHARS, SUMMARY_CHARS};
 use super::store::{slug, Store};
 use regex::Regex;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::{LazyLock, Mutex};
 
 /// The reason given for every refused status line. One text, so a caller can
@@ -213,6 +217,111 @@ pub fn write(store: &Store, audience: Audience, now: i64, w: &Write) -> Result<W
         }
         Action::Delete { id } => delete(store, audience, w, id),
     }
+}
+
+/// A note brought over from another store: it keeps its id and its dates.
+#[derive(Clone, Debug)]
+pub struct Carried {
+    pub id: String,
+    pub scope: Scope,
+    pub topic: String,
+    pub summary: String,
+    pub kind: Kind,
+    pub voice: Voice,
+    /// `YYYY-MM-DD`.
+    pub created: String,
+    pub updated: String,
+    pub source: String,
+    pub body: String,
+}
+
+/// What [`carry`] did with one note that was not refused.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Carry {
+    Landed,
+    /// A note with this id is already in the store: left as it is.
+    Already,
+}
+
+/// Bring `batch` over, in order, as one write: the files are loaded once,
+/// every note is checked as an add checks it (fence, kind, empty, too long,
+/// status, same summary in the topic), and each changed file is saved once
+/// (split past the limits by [`Store::save`]). One answer per note. With
+/// `save` false nothing is saved and the answers are what a real run would
+/// give, so a dry run cannot drift from the run.
+pub fn carry(store: &Store, audience: Audience, batch: &[Carried], save: bool) -> Vec<Result<Carry, Refusal>> {
+    let _one_at_a_time = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut have: HashSet<String> = fence::seen(store, audience).0.into_iter().map(|s| s.entry.id).collect();
+    let mut files: BTreeMap<String, Topic> = BTreeMap::new();
+    let mut changed: HashSet<String> = HashSet::new();
+    let mut landed_in: Vec<Option<String>> = Vec::with_capacity(batch.len());
+    let mut answers: Vec<Result<Carry, Refusal>> = Vec::with_capacity(batch.len());
+    for note in batch {
+        let answer = carry_one(store, audience, note, &mut have, &mut files, &mut changed);
+        landed_in.push(match answer {
+            Ok((Carry::Landed, ref rel)) => Some(rel.clone()),
+            _ => None,
+        });
+        answers.push(answer.map(|(done, _)| done));
+    }
+    if !save {
+        return answers;
+    }
+    for rel in changed {
+        let Some(topic) = files.remove(&rel) else { continue };
+        if let Err(e) = store.save(&rel, topic) {
+            let why = e.to_string();
+            for (answer, at) in answers.iter_mut().zip(&landed_in) {
+                if at.as_deref() == Some(rel.as_str()) {
+                    *answer = Err(Refusal::Disk(why.clone()));
+                }
+            }
+        }
+    }
+    answers
+}
+
+fn carry_one(
+    store: &Store,
+    audience: Audience,
+    note: &Carried,
+    have: &mut HashSet<String>,
+    files: &mut BTreeMap<String, Topic>,
+    changed: &mut HashSet<String>,
+) -> Result<(Carry, String), Refusal> {
+    let rel = Store::rel_of(&note.scope, &slug(&one_line(&note.topic, 80)));
+    if have.contains(&note.id) {
+        return Ok((Carry::Already, rel));
+    }
+    if !audience.can_write(&note.scope) {
+        return Err(Refusal::Fenced);
+    }
+    if !note.kind.fits(&note.scope) {
+        return Err(Refusal::KindMismatch);
+    }
+    let mut entry = Entry::new(note.id.clone(), &note.summary, note.kind, note.voice, &note.created, &note.source, &note.body);
+    entry.updated = note.updated.clone();
+    checked(&entry)?;
+    if !files.contains_key(&rel) {
+        let topic = match store.load(&rel) {
+            Ok(Some(f)) if f.topic.scope == note.scope => f.topic,
+            Ok(Some(_)) => return Err(Refusal::TopicTaken),
+            Ok(None) => Topic::new(&one_line(&note.topic, 80), note.scope.clone()),
+            Err(why) => return Err(Refusal::Disk(format!("{rel}: {why}"))),
+        };
+        files.insert(rel.clone(), topic);
+    }
+    let topic = files.get_mut(&rel).expect("the file was just loaded");
+    if topic.scope != note.scope {
+        return Err(Refusal::TopicTaken);
+    }
+    if let Some(same) = topic.entries.iter().find(|e| e.void.is_none() && e.summary.to_lowercase() == entry.summary.to_lowercase()) {
+        return Err(Refusal::Duplicate(same.id.clone()));
+    }
+    have.insert(entry.id.clone());
+    topic.entries.push(entry);
+    changed.insert(rel.clone());
+    Ok((Carry::Landed, rel))
 }
 
 #[allow(clippy::too_many_arguments)]

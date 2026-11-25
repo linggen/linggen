@@ -183,6 +183,28 @@ impl Store {
         Topic::parse(&text).ok()
     }
 
+    /// Whether any topic file is here.
+    pub(super) fn has_notes(&self) -> bool {
+        !self.topic_files().is_empty()
+    }
+
+    fn moved_file(&self) -> PathBuf {
+        self.root.join(STATE).join("moved-from-v1.json")
+    }
+
+    /// What was recorded when the v1 store was looked at for the move to
+    /// these notes (`migrate::upgrade_once`); `None` before. Delete the file
+    /// to have the move looked at again.
+    pub(super) fn moved_record(&self) -> Option<String> {
+        fs::read_to_string(self.moved_file()).ok()
+    }
+
+    pub(super) fn record_moved(&self, text: &str) -> std::io::Result<()> {
+        let path = self.moved_file();
+        fs::create_dir_all(path.parent().expect("a state folder"))?;
+        fs::write(path, text)
+    }
+
     fn uses_file(&self) -> PathBuf {
         self.root.join(STATE).join("uses.jsonl")
     }

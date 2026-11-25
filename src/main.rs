@@ -406,6 +406,8 @@ async fn main() -> Result<()> {
             // listener binds; the engine's own memory calls reach it
             // in-process (`memory_host::post_verb`).
             memory_host::start(port).await;
+            // v2 is the default memory: once, move what the v1 store holds.
+            memory_host::upgrade_to_v2(&config.memory).await;
 
             // Install/update built-in agent specs to ~/.linggen/agents/
             if let Err(e) = cli::init::install_default_agents() {

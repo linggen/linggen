@@ -9,6 +9,10 @@
 //! lock, engine or not. A CLI call never starts the engine. The lifecycle verbs of
 //! the old daemon (serve, start, stop, restart, status, upgrade) are not here:
 //! memory runs inside the engine.
+//!
+//! `migrate-v2` is the one verb of this program, not of the memory crate: it
+//! moves the v1 rows into Linggen's own notes through the engine's writer
+//! (`own_memory::migrate`), which the memory crate cannot reach.
 
 use anyhow::{anyhow, Result};
 use clap::Parser;
@@ -22,6 +26,13 @@ pub async fn run(args: Vec<String>) -> Result<()> {
     if let Err(e) = refuse_lifecycle(&args) {
         print_error(&e);
         std::process::exit(1);
+    }
+    if verb_of(&args) == Some(MIGRATE_VERB) {
+        if let Err(e) = migrate_v2(&args).await {
+            print_error(&e);
+            std::process::exit(1);
+        }
+        return Ok(());
     }
     let argv = std::iter::once("ling mem".to_string()).chain(args);
     let cli = match Cli::try_parse_from(argv) {
@@ -125,4 +136,80 @@ fn print_error(err: &anyhow::Error) {
     let mut stderr = std::io::stderr().lock();
     let _ = serde_json::to_writer(&mut stderr, &payload);
     let _ = stderr.write_all(b"\n");
+}
+
+/// The verb that moves the v1 rows into the notes.
+const MIGRATE_VERB: &str = "migrate-v2";
+
+/// `ling mem migrate-v2 [--dry-run] [--from FILE|-] [--data-dir DIR]`
+#[derive(Parser, Debug)]
+#[command(name = "ling mem migrate-v2", about = "Move the v1 memory rows into Linggen's own notes (v2); the v1 store is left as it is. Safe to run again.")]
+struct MigrateArgs {
+    /// Count what would be kept and dropped; write nothing.
+    #[arg(long)]
+    dry_run: bool,
+    /// Read the rows from an export file (`ling mem export`; `-` is stdin)
+    /// instead of the store.
+    #[arg(long)]
+    from: Option<String>,
+    #[arg(long)]
+    data_dir: Option<std::path::PathBuf>,
+    #[arg(long, hide = true)]
+    format: Option<String>,
+}
+
+async fn migrate_v2(args: &[String]) -> Result<()> {
+    use crate::own_memory::{migrate, Store};
+    let rest = args.iter().filter(|a| a.as_str() != MIGRATE_VERB).cloned();
+    let args = MigrateArgs::try_parse_from(std::iter::once("ling mem migrate-v2".to_string()).chain(rest))
+        .unwrap_or_else(|e| e.exit());
+    let data_dir = args.data_dir.clone().unwrap_or_else(|| crate::paths::linggen_home().clone());
+    let notes = match &args.data_dir {
+        Some(dir) => Store::new(
+            dir.join("memory"),
+            crate::outside_memory::Env::this_machine().ok_or_else(|| anyhow!("this machine has no home folder"))?,
+        ),
+        None => Store::this_machine().ok_or_else(|| anyhow!("this machine has no home folder"))?,
+    };
+    let (rows, unreadable) = match args.from.as_deref() {
+        Some(file) => migrate::V1Row::from_ndjson(&read_export(file)?),
+        None => migrate::V1Row::from_ndjson(&list_rows(&data_dir).await?),
+    };
+    let mut report = tokio::task::spawn_blocking(move || migrate::migrate(&notes, &rows, !args.dry_run)).await?;
+    report.unreadable = unreadable;
+    for line in report.lines(args.dry_run) {
+        println!("{line}");
+    }
+    Ok(())
+}
+
+fn read_export(file: &str) -> Result<String> {
+    use std::io::Read;
+    match file {
+        "-" => {
+            let mut text = String::new();
+            std::io::stdin().read_to_string(&mut text)?;
+            Ok(text)
+        }
+        path => std::fs::read_to_string(path).map_err(|e| anyhow!("cannot read {path}: {e}")),
+    }
+}
+
+/// Every row of the store, both tables, as `ling mem export` gives them (it
+/// opens the store itself beside a running engine, and only reads). The v1
+/// store is not changed.
+async fn list_rows(data_dir: &std::path::Path) -> Result<String> {
+    let dir = data_dir.display().to_string();
+    let scratch = tempfile::tempdir()?;
+    let mut text = String::new();
+    for (name, episodic) in [("semantic.ndjson", false), ("episodic.ndjson", true)] {
+        let file = scratch.path().join(name);
+        let mut argv = vec!["ling mem".to_string(), "--data-dir".to_string(), dir.clone()];
+        argv.extend(episodic.then(|| "--episodic".to_string()));
+        argv.extend(["export".to_string(), file.display().to_string()]);
+        let cli = Cli::try_parse_from(argv).map_err(|e| anyhow!("{e}"))?;
+        dispatch(cli).await?;
+        text.push_str(&std::fs::read_to_string(&file)?);
+    }
+    Ok(text)
 }

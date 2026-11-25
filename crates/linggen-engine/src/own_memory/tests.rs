@@ -514,15 +514,15 @@ fn source_of(file: &str) -> String {
 /// store, and the fence or the writer's rules no longer hold.
 #[test]
 fn only_the_fence_loads_and_only_write_saves() {
-    for file in ["call.rs", "chronicle.rs", "companion.rs", "find.rs", "format.rs", "index.rs", "mod.rs", "page.rs", "write.rs"] {
+    for file in ["call.rs", "chronicle.rs", "companion.rs", "find.rs", "format.rs", "index.rs", "migrate.rs", "mod.rs", "page.rs", "write.rs"] {
         let src = source_of(file);
         assert!(!src.contains("load_all_unfiltered("), "{file} loads topics around the fence");
         assert!(!src.contains("fs::write") && !src.contains("fs::rename") && !src.contains("File::create"), "{file} writes a file itself");
     }
-    for file in ["call.rs", "chronicle.rs", "companion.rs", "find.rs", "format.rs", "index.rs", "mod.rs", "fence.rs", "page.rs"] {
+    for file in ["call.rs", "chronicle.rs", "companion.rs", "find.rs", "format.rs", "index.rs", "migrate.rs", "mod.rs", "fence.rs", "page.rs"] {
         assert!(!source_of(file).contains(".save("), "{file} saves a topic; only write.rs does");
     }
-    for file in ["find.rs", "index.rs", "call.rs", "chronicle.rs", "companion.rs", "page.rs"] {
+    for file in ["find.rs", "index.rs", "call.rs", "chronicle.rs", "companion.rs", "migrate.rs", "page.rs"] {
         assert!(!source_of(file).contains(".load("), "{file} reads a file around the fence");
     }
 }
@@ -612,9 +612,9 @@ fn an_app_is_given_the_index_alone_and_the_person_only_when_it_has_core() {
 }
 
 #[test]
-fn the_switch_is_v1_unless_the_file_says_v2() {
+fn the_switch_is_v2_unless_the_file_says_v1() {
     use super::Mode;
-    assert_eq!(Mode::default(), Mode::V1);
+    assert_eq!(Mode::default(), Mode::V2);
     assert_eq!((Mode::V1.word(), Mode::V2.word()), ("v1", "v2"));
 }
 

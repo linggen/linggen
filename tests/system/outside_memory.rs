@@ -1,7 +1,7 @@
 //! Linggen reads what other agents remember and forwards it, through the
 //! MCP door's `memory_agents` tool (doc/mcp-spec.md § memory_agents), and
 //! `[memory] outside_agents` says whether outside hosts get that (v2) or
-//! today's save-and-recall (v1, the default).
+//! today's save-and-recall (v1, the way back; v2 is the default since 3.0).
 //!
 //! The folders are made-up fixtures in the world's own home.
 
@@ -53,13 +53,14 @@ fn claude_memory(home: &Path, project: &Path) -> std::path::PathBuf {
     folder
 }
 
-const V2: Option<&str> = Some("\n[memory]\noutside_agents = \"v2\"\n");
+const V2: Option<&str> = Some("\n[memory]\nlinggen = \"v1\"\noutside_agents = \"v2\"\n");
+const V1: Option<&str> = Some("\n[memory]\nlinggen = \"v1\"\noutside_agents = \"v1\"\n");
 
-/// Default: v1. The door says so, its text is the old one, and the index
-/// and the read still work when asked for.
+/// v1 in the config (the way back). The door says so, its text is the old
+/// one, and the index and the read still work when asked for.
 #[tokio::test]
-async fn by_default_outside_hosts_are_served_the_old_way_and_the_tool_still_reads() {
-    let w = World::start(Setup::default()).await;
+async fn with_v1_outside_hosts_are_served_the_old_way_and_the_tool_still_reads() {
+    let w = World::start(Setup { config_append: V1, ..Setup::default() }).await;
     assert_eq!(agents(&w, json!({"op": "mode"})).await.unwrap()["outside_agents"], "v1");
     assert!(server_text(&w).await.contains("Core is tiny"));
 
@@ -88,6 +89,13 @@ async fn by_default_outside_hosts_are_served_the_old_way_and_the_tool_still_read
         let refused = agents(&w, json!({"op": "read", "path": path.display().to_string()})).await;
         assert!(refused.unwrap_err().contains("not a note inside"), "{path:?}");
     }
+}
+
+/// Nothing written in the config: the door says v2.
+#[tokio::test]
+async fn by_default_the_door_says_v2() {
+    let w = World::start(Setup { memory_defaults: true, ..Setup::default() }).await;
+    assert_eq!(agents(&w, json!({"op": "mode"})).await.unwrap()["outside_agents"], "v2");
 }
 
 /// v2: the door says so, the server text no longer asks a host to save into

@@ -124,7 +124,8 @@ fn server_text(view: View, outside: OutsideAgents) -> &'static str {
 async fn outside_mode(deps: &McpDeps<'_>) -> OutsideAgents {
     match deps.state {
         Some(state) => state.manager.get_config_snapshot().await.memory.outside_agents,
-        None => OutsideAgents::default(),
+        // No engine state is a unit test's door: the old text its facts are checked against.
+        None => OutsideAgents::V1,
     }
 }
 
