@@ -10,7 +10,7 @@ use crate::support::{text, tool, Setup, World};
 use serde_json::{json, Value};
 use std::time::{Duration, Instant};
 
-const V2: Option<&str> = Some("\n[memory]\nlinggen = \"v2\"\n");
+const V2: Option<&str> = Some("\n[memory]\nlinggen = \"v2\"\noutside_agents = \"v1\"\n");
 
 /// A person note made long ago: the one month (2024-03) and year (2024) waiting.
 const OLD_NOTE: &str = "---\ntopic: Work\nscope: person\n---\n\n## Chose Rust for the engine\n<!-- id: c000000001 · kind: decision · voice: user · created: 2024-03-05 · updated: 2024-03-05 · source: linggen -->\nWhy: one binary.\n";

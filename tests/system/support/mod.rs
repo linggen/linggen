@@ -78,6 +78,11 @@ pub struct Setup {
     /// Text appended to the rendered config before the engine starts (an
     /// extra `[[models]]` block, say). Rendered like the fixture files.
     pub config_append: Option<&'static str>,
+    /// Leave `[memory]` to the engine's own defaults (v2 since 3.0). Unset:
+    /// the world is pinned to the old v1 memory, unless `config_append`
+    /// writes a `[memory]` section of its own — most tests are about
+    /// something else and were written against v1.
+    pub memory_defaults: bool,
     /// More of the engine's environment, set last (a stand-in service's
     /// address, say).
     pub env: Vec<(&'static str, String)>,
@@ -163,6 +168,12 @@ impl World {
                     format!("\n{}\n", home::render(extra, &vars)).as_bytes(),
                 )
                 .expect("append config");
+            }
+            let chose_memory = setup.config_append.is_some_and(|c| c.contains("[memory]"));
+            if !setup.memory_defaults && !chose_memory {
+                let mut file = std::fs::OpenOptions::new().append(true).open(home.config_path()).expect("config");
+                std::io::Write::write_all(&mut file, b"\n[memory]\nlinggen = \"v1\"\noutside_agents = \"v1\"\n")
+                    .expect("append config");
             }
             if let Some(on) = setup.daily_session {
                 save_daily_session(&home, on);

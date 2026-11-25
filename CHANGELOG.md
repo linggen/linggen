@@ -1,5 +1,26 @@
 # Changelog
 
+## [3.0.0] - unreleased — memory is Linggen's own notes
+
+Built and tested with fakes and made-up rows; the move is not yet tried on a
+second person's Mac.
+
+### Memory
+
+- **Notes are the default memory.** Linggen's own sessions and the agents
+  outside it (Claude Code, Codex) both use the v2 notes unless the config says
+  otherwise. Write `[memory] linggen = "v1"` and `outside_agents = "v1"` to stay
+  on the old store; nothing else changes for you.
+- **Your old memory moves over once.** The first start with v2 on, when no note
+  exists yet, keeps your preferences and rules, decisions, learned gotchas and
+  facts about you as notes. What was done (built, fixed, tried), staged lines
+  and anything that reads as status are left behind, with every key-shaped
+  secret. Your old store is not touched.
+- **`ling mem migrate-v2`** does the same by hand. `--dry-run` prints what it
+  would keep and drop, by reason, and writes nothing; run again, it adds
+  nothing twice. A Mac that already has notes is left alone.
+- The rules keep more than a careful read would; the dream thins them later.
+
 ## [2.8.0] - unreleased — share your Mac with your household
 
 Built and tested with fakes; not yet seen live with a second person's phone.

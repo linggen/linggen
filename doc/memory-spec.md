@@ -350,14 +350,16 @@ real scorecard is the write-side eval (six axes: extraction, routing,
 dedup, reconcile, decay, secrets), which drives each scenario through
 a real engine against a throwaway store and judges the end state.
 
-## Memory V2 — Linggen's own notes (built; off by default)
+## Memory V2 — Linggen's own notes (the default since 3.0)
 
 Design: the memory-v2 design (§ 4a is the build spec). Other agents' memory
 is read, never written (`outside_memory`, `mcp-spec.md` § memory_agents).
 This is the memory Linggen writes: what Ling and Yinyue keep about the
 person and the work, as plain Markdown under `$LINGGEN_HOME/memory/`
-(module `own_memory`). `[memory] linggen = "v1" | "v2"` (absent: v1) says
-which memory Linggen's own sessions have; v1 is everything above, unchanged.
+(module `own_memory`). `[memory] linggen = "v1" | "v2"` (absent: v2) says
+which memory Linggen's own sessions have, and `outside_agents` (absent: v2)
+how outside hosts are served. v1 is everything above, unchanged, and stays
+the way back: write `v1` in the config and it is v1.
 
 - **Files** — `person/`, `areas/<body|mind|people|music|money|play|home>/`,
   `projects/<encoded path>/`, `moments/<yyyy>/<yyyy-mm>.md`,
@@ -433,8 +435,29 @@ which memory Linggen's own sessions have; v1 is everything above, unchanged.
   use, or opening the page would empty that list. The
   page reads as the person, who sees the fenced notes too (`page::OWNER`).
   It sits beside the v1 Memory page, which stays while v1 is on.
-- **Not built yet** — migration of v1 rows, phone sync, other agents' session
-  logs in the chronicle.
+- **The move from v1** (`own_memory::migrate`) — rule-based, no model, through
+  the one writer (`write::carry`: the same checks as an add, the row's id and
+  dates kept, one save per file). Kept: a preference (rule), a decision, a
+  learned gotcha, and a fact about the person (a row with no scope; voice
+  user where the row is `from=user`; a row's scope is a folder = a project,
+  none = the person). Not kept, each counted by reason: what was done
+  (built, fixed, tried), episodic staging, a fact about a project, a row
+  another person's phone wrote or v1 already replaced, a key-shaped secret,
+  what the writer refuses (reads as status, too long, same summary in the
+  topic). A topic is the first word of the summary's subject (two when it is
+  short), so the same row always lands in the same file. The v1 store is only read. Rules let
+  more through than a judged pass would; thinning what remains is the
+  dream's job, later.
+  - `ling mem migrate-v2 [--dry-run] [--from export.ndjson]` — by hand,
+    safe to run again (a row whose id is already a note is left as it is).
+    `--dry-run` prints the counts of a real run and writes nothing.
+  - At the engine's start, once: when either switch is v2, no note exists and
+    the v1 store has rows, the move runs, and `.state/moved-from-v1.json`
+    records it. A Mac that already has notes is recorded and left alone.
+    Both switches written as `v1` skip it. A failed read records nothing; the
+    next start tries again. Delete the record to have it looked at again.
+- **Not built yet** — phone sync, other agents' session logs in the
+  chronicle.
 
 ### The owner's phone under v2
 

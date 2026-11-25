@@ -17,6 +17,8 @@
 //!   [`phone`] (the translation only; the writer and the fence are the same).
 //! - What the chronicle reads and what it asks the model to write:
 //!   [`chronicle`] (it saves nothing itself; the writer does).
+//! - What of the v1 store moves into these notes, and when it moves by
+//!   itself: [`migrate`] (through the writer's `carry`, never around it).
 //! - Which memory a session has, v1 or v2: [`Mode`] (`[memory] linggen`).
 //!   The tool's ops: [`call::call`].
 
@@ -27,6 +29,9 @@ pub mod fence;
 pub mod find;
 pub mod format;
 pub mod index;
+pub mod migrate;
+#[cfg(test)]
+mod migrate_tests;
 pub mod page;
 pub mod phone;
 pub mod prompt;
@@ -44,17 +49,18 @@ pub use store::Store;
 pub const TOOL: &str = "memory_notes";
 
 /// Which memory Linggen's own sessions (Ling, Yinyue, apps) have — `[memory]
-/// linggen = "v1" | "v2"`. The one place that decides; every site that
-/// differs between the two matches on it
+/// linggen = "v1" | "v2"`; absent: v2. The one place that decides; every
+/// site that differs between the two matches on it
 /// (`tests::the_switch_is_read_in_the_listed_places_only`).
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Mode {
-    /// Today's: the ling-mem store, recalled every turn, the capture reminder.
-    #[default]
+    /// The old way, kept as the way back (`linggen = "v1"` in the config):
+    /// the ling-mem store, recalled every turn, the capture reminder.
     V1,
     /// These notes: an index at session start, the `memory_notes` tool, no
     /// per-turn recall or reminder.
+    #[default]
     V2,
 }
 

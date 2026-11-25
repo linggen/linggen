@@ -1,6 +1,6 @@
 //! Linggen's own memory (Memory V2): `[memory] linggen` says whether
-//! Linggen's own sessions have the ling-mem store (v1, the default) or the
-//! notes under `$LINGGEN_HOME/memory` (v2): an index in the prompt, the
+//! Linggen's own sessions have the ling-mem store (v1, the way back) or the
+//! notes under `$LINGGEN_HOME/memory` (v2, the default since 3.0): an index in the prompt, the
 //! `memory_notes` tool, no per-turn recall and no capture reminder. The
 //! same tool is on the MCP door for outside hosts when `outside_agents` is
 //! v2. The notes are made-up fixtures in the world's own home.
@@ -9,7 +9,7 @@ use crate::support::model::Agent;
 use crate::support::{text, tool, Setup, World};
 use serde_json::{json, Value};
 
-const V2: Option<&str> = Some("\n[memory]\nlinggen = \"v2\"\n");
+const V2: Option<&str> = Some("\n[memory]\nlinggen = \"v2\"\noutside_agents = \"v1\"\n");
 const BOTH_V2: Option<&str> = Some("\n[memory]\nlinggen = \"v2\"\noutside_agents = \"v2\"\n");
 
 const PERSON: &str = "---\ntopic: About\nscope: person\n---\n\n## Name is Alex\n<!-- id: p000000001 · kind: person · voice: user · created: 2026-11-20 · updated: 2026-11-20 · source: yinyue -->\n";
@@ -48,11 +48,12 @@ async fn notes(w: &World, args: Value) -> Result<Value, String> {
     }
 }
 
-/// The default is v1, and v1 is what it was: no `memory_notes` in a
-/// session, the memory server's own tools and its capture reminder every
-/// turn, and no notes at the door.
+/// v1 written in the config is the way back, and it is what it was: no
+/// `memory_notes` in a session, the memory server's own tools and its capture
+/// reminder every turn, and no notes at the door. (A test world is pinned to
+/// v1 unless it says otherwise: `Setup::memory_defaults`.)
 #[tokio::test]
-async fn by_default_a_session_has_the_old_memory_and_nothing_of_the_new() {
+async fn v1_in_the_config_is_the_old_memory_and_nothing_of_the_new() {
     let w = World::start_with_home(
         Setup::default().script(Agent::Ling, vec![text("Hello.")]),
         seed,
@@ -73,6 +74,23 @@ async fn by_default_a_session_has_the_old_memory_and_nothing_of_the_new() {
 
     let refused = notes(&w, json!({"op": "index"})).await.unwrap_err();
     assert!(refused.contains("not served"), "{refused}");
+}
+
+/// Nothing written in the config: the person's memory is v2 — the tool at
+/// the door and in the session, the index in the prompt, no capture reminder.
+#[tokio::test]
+async fn by_default_a_session_has_the_notes() {
+    let w = World::start_with_home(
+        Setup { memory_defaults: true, ..Setup::default() }.script(Agent::Ling, vec![text("Hello.")]),
+        seed,
+    )
+    .await;
+    let sid = w.api.create_session(json!({"title": "Chat"})).await;
+    let export = w.api.export(&sid, "ling", &w.work()).await;
+    let names = tool_names(&export);
+    assert!(names.iter().any(|n| n == "memory_notes"), "{names:?}");
+    assert!(export["system_prompt"].as_str().unwrap().contains("Name is Alex"));
+    assert!(notes(&w, json!({"op": "index"})).await.is_ok());
 }
 
 /// v2: Ling is given the index (the person's notes, never Yinyue's mind

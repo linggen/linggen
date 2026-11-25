@@ -317,6 +317,7 @@ yet.
 
 ```bash
 ling mem <verb> [args…]      # ling mem --help lists the verbs
+ling mem migrate-v2 [--dry-run] [--from FILE]  # Move v1 memory rows into Linggen's own notes (v2); v1 left as it is, safe to repeat
 ling mem scan [WINDOW]       # WINDOW: YYYY-MM-DD, or today|24h (default)|week|month|<n>d|<n>w|<n>m|<n>y
 ling mem scan --sessions YYYY-MM-DD  # List session metadata as NDJSON; no candidates file
 ling mem scan --extract FILE --source SOURCE [--day YYYY-MM-DD] [--max-chars N]  # Filtered text; no candidates file
