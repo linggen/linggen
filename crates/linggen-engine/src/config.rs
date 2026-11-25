@@ -4,8 +4,10 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+mod explicit;
 pub mod providers;
 mod sign_in;
+pub use explicit::Explicit;
 pub use sign_in::{AuthMode, ProviderKind, SignIn};
 
 /// Defaults for uses other than the legacy chat chain. Missing choices keep
@@ -97,15 +99,15 @@ pub struct Config {
     pub family_starts: crate::provider::models::families::FamilyStarts,
     /// What agents outside Linggen (Claude Code, Codex, …) get as memory
     /// from Linggen — `[memory]` on disk. Hand-edited; a saved settings page
-    /// keeps what it holds (`api::config`).
-    #[serde(default, skip_serializing_if = "MemoryConfig::is_default")]
+    /// keeps what it holds (`api::config`). Written only for what is set.
+    #[serde(default, skip_serializing_if = "MemoryConfig::is_unset")]
     #[cfg_attr(any(test, feature = "test-support"), ts(skip))]
     pub memory: MemoryConfig,
     /// Which edition of the curated model list is offered (`[model_catalog]`):
     /// only what is offered for a new setup, never what a person already has.
     /// Absent: Auto. Written only by the owner's route (`PUT /api/providers/edition`);
     /// a saved config keeps what it holds.
-    #[serde(default, skip_serializing_if = "crate::provider::models::ModelCatalog::is_default")]
+    #[serde(default, skip_serializing_if = "crate::provider::models::ModelCatalog::is_unset")]
     #[cfg_attr(any(test, feature = "test-support"), ts(skip))]
     pub model_catalog: crate::provider::models::ModelCatalog,
     /// What was wrong in the file and was set right on load rather than
@@ -144,27 +146,56 @@ impl OutsideAgents {
     }
 }
 
+/// `[memory]` on disk. Each switch is [`Explicit`]: absent follows the
+/// default of the running version; a written one — `"v1"` too — is the
+/// person's and is always written back (`explicit.rs`). Read through the
+/// accessors; the fields are private so nothing reads the raw choice.
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct MemoryConfig {
     /// `outside_agents = "v1" | "v2"`; absent: v1 (v2 is opt-in).
-    pub outside_agents: OutsideAgents,
+    #[serde(skip_serializing_if = "Explicit::is_unset")]
+    outside_agents: Explicit<OutsideAgents>,
     /// `linggen = "v1" | "v2"`: which memory Linggen's own sessions (Ling,
     /// Yinyue, apps) have; absent: v1 (v2 is opt-in). Read into `EngineConfig` and nowhere
     /// else (`own_memory::Mode`).
-    pub linggen: crate::own_memory::Mode,
+    #[serde(skip_serializing_if = "Explicit::is_unset")]
+    linggen: Explicit<crate::own_memory::Mode>,
 }
 
 impl MemoryConfig {
-    /// Whether either switch is written as v2: the person's memory is these
+    /// How outside agents get memory now.
+    pub fn outside_agents(&self) -> OutsideAgents {
+        self.outside_agents.get()
+    }
+
+    /// Which memory Linggen's own sessions have now.
+    pub fn linggen(&self) -> crate::own_memory::Mode {
+        self.linggen.get()
+    }
+
+    /// This section with `outside_agents` chosen.
+    pub fn with_outside_agents(mut self, choice: OutsideAgents) -> Self {
+        self.outside_agents = Explicit::set(choice);
+        self
+    }
+
+    /// This section with `linggen` chosen.
+    pub fn with_linggen(mut self, choice: crate::own_memory::Mode) -> Self {
+        self.linggen = Explicit::set(choice);
+        self
+    }
+
+    /// Whether either switch is v2: the person's memory is these
     /// notes, so the v1 store is moved into them once (`own_memory::migrate`).
     /// Both v1 — written so, or absent — is the person staying where they are.
     pub fn wants_v2(&self) -> bool {
-        self.linggen == crate::own_memory::Mode::V2 || self.outside_agents == OutsideAgents::V2
+        self.linggen() == crate::own_memory::Mode::V2 || self.outside_agents() == OutsideAgents::V2
     }
 
-    fn is_default(&self) -> bool {
-        self == &Self::default()
+    /// Nothing chosen: no `[memory]` on disk.
+    fn is_unset(&self) -> bool {
+        self.outside_agents.is_unset() && self.linggen.is_unset()
     }
 }
 
@@ -1154,20 +1185,20 @@ fn is_valid_go_duration(s: &str) -> bool {
 mod tests {
     use super::*;
 
-    /// `[memory]` is v1 unless the file says v2 (v2 is opt-in), and a
-    /// config on the default is written back without the section.
+    /// `[memory]` is v1 unless the file says v2 (v2 is opt-in); a value the
+    /// file says is kept, v1 too — only a never-set one is left out.
     #[test]
     fn memory_is_v1_unless_the_file_says_v2() {
         use crate::own_memory::Mode;
         let base = toml::to_string(&Config::default()).unwrap();
         let default: Config = toml::from_str(&base).unwrap();
-        assert_eq!(default.memory.outside_agents, OutsideAgents::V1);
-        assert_eq!(default.memory.linggen, Mode::V1);
+        assert_eq!(default.memory.outside_agents(), OutsideAgents::V1);
+        assert_eq!(default.memory.linggen(), Mode::V1);
         assert!(!default.memory.wants_v2());
         assert!(!toml::to_string(&default).unwrap().contains("[memory]"));
         // Written as v2, it is v2 and is written back so.
         let v2: Config = toml::from_str(&format!("{base}\n[memory]\nlinggen = \"v2\"\noutside_agents = \"v2\"\n")).unwrap();
-        assert_eq!((v2.memory.linggen, v2.memory.outside_agents), (Mode::V2, OutsideAgents::V2));
+        assert_eq!((v2.memory.linggen(), v2.memory.outside_agents()), (Mode::V2, OutsideAgents::V2));
         assert!(v2.memory.wants_v2());
         let text = toml::to_string(&v2).unwrap();
         assert!(text.contains("outside_agents = \"v2\"") && text.contains("linggen = \"v2\""), "{text}");
@@ -1178,6 +1209,77 @@ mod tests {
         let half: Config = toml::from_str(&format!("{base}\n[memory]\nlinggen = \"v2\"\n")).unwrap();
         assert!(half.memory.wants_v2());
         assert_eq!(OutsideAgents::V2.word(), "v2");
+    }
+
+    /// The bug of 2026-11-25: a save left out a value for equalling the
+    /// default, so when a later version moved the default the person's word
+    /// moved with it. A choice is written even when it equals the default;
+    /// what was never chosen stays absent. Through the one writer
+    /// (`save_runtime`) and back through the one reader (`from_toml`).
+    #[test]
+    fn a_saved_config_keeps_what_the_person_chose_even_when_it_equals_the_default() {
+        use crate::own_memory::Mode;
+        use crate::provider::models::{EditionChoice, ModelCatalog};
+        let dir = tempfile::tempdir().unwrap();
+        let saved = |config: Config| {
+            let path = config.save_runtime(Some(dir.path())).unwrap();
+            let text = std::fs::read_to_string(path).unwrap();
+            (Config::from_toml(&text).unwrap(), text)
+        };
+        let mut chosen = valid_config();
+        chosen.memory = MemoryConfig::default().with_outside_agents(OutsideAgents::V1).with_linggen(Mode::V1);
+        chosen.model_catalog = ModelCatalog::chosen(EditionChoice::Auto);
+        let (back, text) = saved(chosen);
+        assert!(text.contains("[memory]") && text.contains("outside_agents = \"v1\"") && text.contains("linggen = \"v1\""), "{text}");
+        assert!(text.contains("[model_catalog]") && text.contains("edition = \"auto\""), "{text}");
+        assert_eq!(back.memory, MemoryConfig::default().with_outside_agents(OutsideAgents::V1).with_linggen(Mode::V1));
+        assert_eq!(back.model_catalog, ModelCatalog::chosen(EditionChoice::Auto));
+        // Chosen once is chosen on the next save too.
+        let (_, again) = saved(back);
+        assert!(again.contains("outside_agents = \"v1\"") && again.contains("edition = \"auto\""), "{again}");
+        // One switch chosen: only that key is written.
+        let mut half = valid_config();
+        half.memory = MemoryConfig::default().with_linggen(Mode::V2);
+        let (_, text) = saved(half);
+        assert!(text.contains("linggen = \"v2\"") && !text.contains("outside_agents"), "{text}");
+        // Never chosen: nothing is written, so a default that moves can move.
+        let (never, text) = saved(valid_config());
+        assert!(!text.contains("[memory]") && !text.contains("[model_catalog]"), "{text}");
+        assert!(never.memory.is_unset() && never.model_catalog.is_unset());
+    }
+
+    /// The lock: no config type leaves a value out because it equals the
+    /// default (`Explicit` is the one way, `config/explicit.rs`). A second
+    /// copy of the old `is_default` skip fails here.
+    #[test]
+    fn a_saved_config_never_drops_a_value_for_equalling_the_default() {
+        fn walk(dir: &Path, found: &mut Vec<String>) {
+            for entry in std::fs::read_dir(dir).unwrap().flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    walk(&path, found);
+                    continue;
+                }
+                if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+                    continue;
+                }
+                let text = std::fs::read_to_string(&path).unwrap();
+                for (n, line) in text.lines().enumerate() {
+                    let skips_on_default = line.contains("skip_serializing_if")
+                        && (line.contains("is_default") || line.contains("Default::default"));
+                    if skips_on_default {
+                        found.push(format!("{}:{}", path.display(), n + 1));
+                    }
+                }
+            }
+        }
+        let mut found = Vec::new();
+        walk(&Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &mut found);
+        assert!(
+            found.is_empty(),
+            "a value that equals today's default is still the person's choice; hold it in `Explicit<T>` and skip it with `Explicit::is_unset`:\n{}",
+            found.join("\n")
+        );
     }
 
     #[test]

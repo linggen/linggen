@@ -127,3 +127,25 @@ fn old_use_settings_migrate_effort_and_drop_app_and_live_choices() {
     assert!(!saved.contains("live ="));
     assert_eq!(linggen_engine::config::Config::from_toml(&saved).unwrap().uses, config.uses);
 }
+
+/// 2026-11-25: a save through this route left `[memory]` out because its
+/// values equalled the running build's default, and a later build with
+/// another default changed the person's memory. What the person set stays
+/// in the file, even when it equals the default; what they never set stays out.
+#[tokio::test]
+async fn a_settings_save_keeps_chosen_values_that_equal_the_default() {
+    const CHOSEN: &str = "\n[memory]\noutside_agents = \"v1\"\nlinggen = \"v1\"\n\n[model_catalog]\nedition = \"auto\"\n";
+    let w = World::start(Setup { config_append: Some(CHOSEN), ..Setup::default() }).await;
+    let (code, answer) = w.api.put_json("/api/uses", json!({"use":"speak","choice":"system"})).await;
+    assert_eq!(code, 200, "{answer}");
+    let saved = std::fs::read_to_string(w.home.config_path()).unwrap();
+    assert!(saved.contains("outside_agents = \"v1\"") && saved.contains("linggen = \"v1\""), "{saved}");
+    assert!(saved.contains("edition = \"auto\""), "{saved}");
+
+    // Never set (the world is not pinned to v1 here): nothing is written.
+    let w = World::start(Setup { memory_defaults: true, ..Setup::default() }).await;
+    let (code, answer) = w.api.put_json("/api/uses", json!({"use":"speak","choice":"system"})).await;
+    assert_eq!(code, 200, "{answer}");
+    let saved = std::fs::read_to_string(w.home.config_path()).unwrap();
+    assert!(!saved.contains("[memory]") && !saved.contains("[model_catalog]"), "{saved}");
+}

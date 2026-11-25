@@ -31,7 +31,7 @@ fn refusal(mode: Mode) -> Option<&'static str> {
 }
 
 pub async fn run(rest: &[String], config: &Config) -> Result<()> {
-    if let Some(line) = refusal(config.memory.linggen) {
+    if let Some(line) = refusal(config.memory.linggen()) {
         println!("{line}");
         std::process::exit(NOTHING_TO_DO);
     }

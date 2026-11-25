@@ -73,7 +73,7 @@ pub async fn passthrough(
 ) -> Response {
     // Which memory Linggen's own sessions have: read here for the one case
     // that differs, the owner's own phone (`phone_notes`).
-    let mode = state.manager.get_config_snapshot().await.memory.linggen;
+    let mode = state.manager.get_config_snapshot().await.memory.linggen();
     serve(mode, peer, &verb, &headers, body.map(|Json(v)| v)).await
 }
 

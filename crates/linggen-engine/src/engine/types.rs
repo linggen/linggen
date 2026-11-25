@@ -214,7 +214,7 @@ impl EngineConfig {
             memory_inject_min_score: config.agent.memory_inject_min_score,
             memory_recall_count: config.agent.memory_recall_count,
             recall_tuned: false,
-            memory_linggen: config.memory.linggen,
+            memory_linggen: config.memory.linggen(),
             model_effort: Default::default(),
         };
         cfg.apply_settings(config);
@@ -232,7 +232,7 @@ impl EngineConfig {
         self.write_safety_mode = config.agent.write_safety_mode;
         self.prompt_loop_breaker = config.agent.prompt_loop_breaker.clone();
         self.compact_threshold_default = config.agent.compact_threshold;
-        self.memory_linggen = config.memory.linggen;
+        self.memory_linggen = config.memory.linggen();
         if !self.recall_tuned {
             self.memory_inject_min_score = config.agent.memory_inject_min_score;
             self.memory_recall_count = config.agent.memory_recall_count;
