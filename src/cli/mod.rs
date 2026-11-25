@@ -11,3 +11,4 @@ pub mod restart;
 pub mod self_update;
 pub mod skills_cmd;
 pub mod status;
+pub mod v1_only;

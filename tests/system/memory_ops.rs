@@ -660,6 +660,67 @@ async fn a_prepare_with_nothing_to_do_skips_without_a_session() {
     assert!(w.model.calls_of(Agent::Memory).is_empty());
 }
 
+/// The v1 memory missions work a store nobody reads under v2: a run (a
+/// person's trigger, the dream tool's, or the schedule's — all go through
+/// `prepare`) is skipped with a plain reason, no model call, no session left
+/// behind. Under v1 the same missions run. The chronicle, v2's own, is
+/// covered in chronicle.rs (it runs under v2).
+const V2: Option<&str> = Some("\n[memory]\nlinggen = \"v2\"\noutside_agents = \"v1\"\n");
+const V1_MISSIONS: [(&str, &str); 3] = [
+    ("dream", "{}"),
+    ("memory-scan", r#"{"day":"2026-11-10","attended":true}"#),
+    ("memory-solve", r#"{"attended":true}"#),
+];
+
+/// A fresh world has no dream (its install marker lists it as deleted): put
+/// the engine's own file where an upgraded Mac keeps it.
+fn install_dream(home: &crate::support::home::Home) {
+    let dir = home.linggen_home().join("missions/dream");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("mission.md"), include_str!("../../missions/dream/mission.md")).unwrap();
+}
+
+#[tokio::test]
+async fn under_v2_the_v1_memory_missions_are_skipped_with_no_model_call_and_no_session() {
+    let w = World::start_with_home(Setup { config_append: V2, ..Setup::default() }, install_dream).await;
+    for (mission, body) in V1_MISSIONS {
+        let body: Value = serde_json::from_str(body).unwrap();
+        let sid = trigger(&w, mission, body).await;
+        let start = Instant::now();
+        let run = loop {
+            let runs = w.api.get(&format!("/api/missions/{mission}/runs")).await;
+            let run = runs["runs"][0].clone();
+            if !run.is_null() && run["status"] != "running" {
+                break run;
+            }
+            assert!(start.elapsed() < Duration::from_secs(60), "{mission}: run never finished");
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        };
+        assert_eq!((run["status"].as_str(), run["skip"].as_str()), (Some("skipped"), Some("prepare")), "{mission}: {run}");
+        assert!(
+            run["reason"].as_str().unwrap_or("").contains("Memory v2 is on"),
+            "{mission}: {run}"
+        );
+        assert!(run.get("session_id").is_none() && run.get("failure_count").is_none(), "{mission}: {run}");
+        assert!(!w.home.linggen_home().join("sessions").join(&sid).exists(), "{mission}: an empty session was left");
+    }
+    assert!(w.model.calls_of(Agent::Memory).is_empty(), "a model call for a v1 job under v2");
+}
+
+/// Under v1 (the default) the gate steps aside: the dream and the solve run.
+#[tokio::test]
+async fn under_v1_the_dream_and_the_solve_still_run() {
+    let setup = Setup::default().script(Agent::Memory, vec![text("DONE"), text("DONE")]);
+    let w = World::start_with_home(setup, install_dream).await;
+    for mission in ["dream", "memory-solve"] {
+        let sid = trigger(&w, mission, json!({})).await;
+        let run = finished_run(&w, mission, &sid).await;
+        assert_eq!(run["status"], "completed", "{mission}: {run}");
+        assert!(run.get("skip").is_none(), "{mission}: {run}");
+    }
+    assert_eq!(w.model.calls_of(Agent::Memory).len(), 2);
+}
+
 /// Settings → Memory's Solve: the run reads the queue, asks the user (it is
 /// attended), and a second Solve while it waits is refused with 409; the
 /// answer closes the item.

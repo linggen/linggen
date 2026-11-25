@@ -328,8 +328,13 @@ that a note used again and again move into a project's `AGENTS.md`.
 what ran before Memory V2. The
 v1 store (ling-mem rows) is still opened and served by the engine under v2, for
 what v2 does not cover: a phone that is another person, approved computers, skill
-pages, and the move above. The built-in dream, scan and solve missions are not
-gated by the switch.
+pages, and the move above. The built-in dream, scan and solve missions
+(the missions of the `memory` agent) tidy that store, so under `linggen = "v2"`
+each run is skipped with a plain reason — no model call, no session — by the
+`v1-only` step they open with (`src/cli/v1_only.rs`, `doc/mission-spec.md`
+"prepare"). Under v1 they run as before; the chronicle is v2's own and runs
+only under v2. With `linggen = "v2"` but `outside_agents = "v1"`, outside hosts
+still read the v1 store, which these missions no longer tidy.
 
 - **Tiers.** Core (a handful of high-confidence universals, in every session),
   long-term (durable state and lessons, never events), short-term (per-turn

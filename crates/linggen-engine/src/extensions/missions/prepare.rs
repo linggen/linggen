@@ -28,8 +28,9 @@ pub const NOTHING_TO_DO: i32 = 3;
 pub(super) enum Prepared {
     /// Go on to the run's first turn.
     Ready,
-    /// The step found no work: end the run here, quietly.
-    NothingToDo,
+    /// The step found no work: end the run here, quietly. Carries the
+    /// reason: the step's first stdout line, or a plain default.
+    NothingToDo(String),
 }
 
 /// The name a failure is recorded under.
@@ -63,7 +64,9 @@ pub(super) async fn run(
         return Ok(Prepared::Ready);
     }
     if output.status.code() == Some(NOTHING_TO_DO) {
-        return Ok(Prepared::NothingToDo);
+        let said = String::from_utf8_lossy(&output.stdout);
+        let reason = super::run_if::reason_of(&said).unwrap_or_else(|| "nothing to prepare".into());
+        return Ok(Prepared::NothingToDo(reason));
     }
     let stderr = String::from_utf8_lossy(&output.stderr);
     Err(exited(output.status.code(), &stderr))

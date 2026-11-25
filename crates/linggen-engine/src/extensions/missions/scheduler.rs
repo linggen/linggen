@@ -661,8 +661,8 @@ async fn dispatch_mission_prompt(
     // memory scan's walk of the session logs). A failure ends the run here.
     match super::prepare::run(mission, day.as_deref(), &root).await {
         Ok(super::prepare::Prepared::Ready) => {}
-        Ok(super::prepare::Prepared::NothingToDo) => {
-            let end = RunEnd::nothing_to_prepare("nothing to prepare");
+        Ok(super::prepare::Prepared::NothingToDo(reason)) => {
+            let end = RunEnd::nothing_to_prepare(&reason);
             end_mission_run(&state, mission, &mission_run_id, session_id, end);
             return;
         }

@@ -538,8 +538,9 @@ fn the_only_audience_decision_is_in_the_fence() {
 }
 
 /// Who reads `[memory] linggen`: the engine's settings map, its prompt (and
-/// the tools it offers), the turn's recall, and the chronicle's own step
-/// (`ling chronicle`, which keeps the chronicle only under v2), and the
+/// the tools it offers), the turn's recall, the chronicle's own step
+/// (`ling chronicle`, which keeps the chronicle only under v2), the gate of
+/// the v1 memory missions (`ling v1-only`, which skips them under v2), and the
 /// door the phone reaches memory by (which answers the owner's phone from
 /// the notes under v2). Another
 /// reader is a second place deciding which memory Linggen has.
@@ -578,8 +579,8 @@ fn the_switch_is_read_in_the_listed_places_only() {
     found.sort();
     assert_eq!(
         found,
-        ["src/cli/chronicle.rs", "src/engine/prompt/mod.rs", "src/engine/types.rs", "src/server/api/memory.rs", "src/server/chat/runtime.rs"],
-        "the switch is read in the engine's settings map, its prompt, the turn's recall, the chronicle's step and the phone's door alone"
+        ["src/cli/chronicle.rs", "src/cli/v1_only.rs", "src/engine/prompt/mod.rs", "src/engine/types.rs", "src/server/api/memory.rs", "src/server/chat/runtime.rs"],
+        "the switch is read in the engine's settings map, its prompt, the turn's recall, the chronicle's step, the v1 missions' gate and the phone's door alone"
     );
 }
 
