@@ -2,6 +2,12 @@
 //! live socket itself (`POST /api/live/token`, `GET /api/live`; the handlers
 //! are `server/api/live.rs`).
 //!
+//! Who pays is a second axis, apart from which service: a lesson on a service
+//! is paid by the person's own key if there is one, else by Linggen Cloud
+//! (linggen.dev gives a short key with Linggen's own key, for a subscriber —
+//! `account::cloud_voice`). [`find_source`] decides it in one place; the page
+//! names only the service.
+//!
 //! The page never holds the provider's key. The engine, which holds the keys,
 //! asks the provider for a token that is good for ONE live session, fixed to
 //! one model and to audio output, and hands the page only that.
@@ -83,6 +89,9 @@ pub struct Provider {
     /// The scratch engines' knob: when this environment variable is set it is
     /// the key for this route, and for this route only (`find_key`).
     key_env: &'static str,
+    /// Whether linggen.dev gives this service's lesson keys to subscribers
+    /// (Linggen Cloud pays): only a service the site holds a key for.
+    via_cloud: bool,
     /// How long a token lives, as this engine asks for it. Also the expiry
     /// told to the page when the provider's answer names none.
     token_minutes: i64,
@@ -99,6 +108,11 @@ pub struct Provider {
 }
 
 impl Provider {
+    /// Whether Linggen Cloud (the subscription) can give this service's lesson keys.
+    pub fn via_cloud(&self) -> bool {
+        self.via_cloud
+    }
+
     /// The host this provider's account is at: the one the curated list's
     /// address for its live entry must be at.
     pub fn key_host(&self) -> &'static str {
@@ -124,6 +138,7 @@ const GOOGLE: Provider = Provider {
     key_provider: Some("gemini"),
     key_host: "generativelanguage.googleapis.com",
     key_env: "LINGGEN_LIVE_GOOGLE_KEY",
+    via_cloud: false,
     token_minutes: 30,
     body: google_body,
     read: google_answer,
@@ -145,6 +160,7 @@ const ALIBABA: Provider = Provider {
     key_provider: None,
     key_host: "ap-southeast-1.maas.qwencloudapi.com",
     key_env: "LINGGEN_LIVE_ALIBABA_KEY",
+    via_cloud: true,
     token_minutes: 1,
     body: no_body,
     read: alibaba_answer,
@@ -277,6 +293,12 @@ pub enum Refusal {
     Unreachable,
     /// The provider answered something that holds no token.
     BadAnswer,
+    /// Linggen Cloud's lessons are for subscribers.
+    NotSubscribed,
+    /// This month's included lessons are used up.
+    LessonsUsed,
+    /// Today's live keys are used up.
+    DailyCap,
 }
 
 impl Refusal {
@@ -292,6 +314,9 @@ impl Refusal {
             Refusal::ProviderDown => "provider_down",
             Refusal::Unreachable => "unreachable",
             Refusal::BadAnswer => "bad_answer",
+            Refusal::NotSubscribed => "not_subscribed",
+            Refusal::LessonsUsed => "lessons_used",
+            Refusal::DailyCap => "daily_cap",
         }
     }
 
@@ -300,7 +325,8 @@ impl Refusal {
         match self {
             Refusal::UnknownProvider | Refusal::BadSetup => 400,
             Refusal::NoKey => 409,
-            Refusal::SlowDown => 429,
+            Refusal::NotSubscribed => 402,
+            Refusal::SlowDown | Refusal::LessonsUsed | Refusal::DailyCap => 429,
             Refusal::KeyRefused
             | Refusal::RequestRefused
             | Refusal::ProviderDown
@@ -354,6 +380,35 @@ pub(crate) fn key_ready(p: &Provider, configured: &[ModelConfig], creds: &Creden
     provider_key(p, || stored_key(p, configured, creds)).is_some()
 }
 
+/// Who pays for a lesson. A closed set: the one `match` that reads it is
+/// [`find_source`], which is also where the order of preference is decided.
+pub enum Source {
+    /// The person's own key for the service: it costs Linggen nothing.
+    OwnKey(Secret),
+    /// Linggen Cloud: linggen.dev gives a short key for the lesson with ITS key,
+    /// and the subscription pays (`account::cloud_voice`).
+    LinggenCloud,
+}
+
+impl Source {
+    /// The word `GET /api/live` tells a page.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Source::OwnKey(_) => "own_key",
+            Source::LinggenCloud => "linggen_cloud",
+        }
+    }
+}
+
+/// Who pays for a lesson on `p` now — THE order of preference: the person's
+/// own key first, then Linggen Cloud for a subscriber; none when neither.
+/// The page names a service (`alibaba`), never who pays: this decides it.
+pub fn find_source(p: &Provider, configured: &[ModelConfig]) -> Option<Source> {
+    find_key(p, configured).map(Source::OwnKey).or_else(|| {
+        (p.via_cloud && crate::account::cloud_voice::live_usable()).then_some(Source::LinggenCloud)
+    })
+}
+
 /// Move the preferred service to the front, keeping the declared fallback order.
 pub fn in_order(pref: Option<&str>) -> impl Iterator<Item = &'static Provider> {
     let preferred = pref.and_then(provider_named);
@@ -382,6 +437,48 @@ pub struct Minted {
     pub ws_url: Secret,
     pub token: Secret,
     pub expires: String,
+    /// A lesson's length cap in minutes, when Linggen Cloud names one (the page ends the lesson).
+    pub max_minutes: Option<u32>,
+    /// Lessons left this month, when Linggen Cloud counts them for this account.
+    pub lessons_left: Option<u32>,
+}
+
+/// A grant for one new session from whoever pays for it.
+pub async fn grant(
+    p: &'static Provider,
+    source: &Source,
+    now: DateTime<Utc>,
+    asked: &Value,
+) -> Result<Minted, Refusal> {
+    match source {
+        Source::OwnKey(key) => mint(p, &http_base(p), key, now, asked).await,
+        Source::LinggenCloud => mint_via_cloud(p).await,
+    }
+}
+
+/// Linggen Cloud's grant: the site mints the provider's short key with its own
+/// key and tells the engine the socket; the page's setup is written on the
+/// socket by the page itself, so nothing of it is sent.
+async fn mint_via_cloud(p: &'static Provider) -> Result<Minted, Refusal> {
+    use crate::account::cloud_voice::{live_grant, Denied};
+    let got = live_grant(p.id).await.map_err(|why| match why {
+        Denied::SignedOut => Refusal::NoKey,
+        Denied::NotSubscribed => Refusal::NotSubscribed,
+        Denied::LessonsUsed => Refusal::LessonsUsed,
+        Denied::DailyCap => Refusal::DailyCap,
+        Denied::Down => Refusal::ProviderDown,
+        Denied::Unreachable => Refusal::Unreachable,
+        Denied::BadAnswer => Refusal::BadAnswer,
+    })?;
+    Ok(Minted {
+        provider: p.id,
+        model: p.model,
+        ws_url: Secret::new(got.ws_url),
+        token: Secret::new(got.token),
+        expires: got.expires,
+        max_minutes: got.max_minutes,
+        lessons_left: got.lessons_left,
+    })
 }
 
 /// Ask the provider at `base` for a token for one session. The one place the
@@ -427,6 +524,8 @@ pub async fn mint(
         ws_url: Secret::new((p.socket_with)(p, &token)),
         token,
         expires,
+        max_minutes: None,
+        lessons_left: None,
     })
 }
 
@@ -604,6 +703,8 @@ mod tests {
             ws_url: Secret::new("wss://h/p?access_token=tok-secret"),
             token: Secret::new("tok-secret"),
             expires: "x".into(),
+            max_minutes: None,
+            lessons_left: None,
         };
         assert!(!format!("{minted:?}").contains("secret"));
     }
@@ -688,6 +789,24 @@ mod tests {
         assert!(rate.allow(t0 + Duration::from_secs(61)));
     }
 
+    /// Who pays is decided in one function: the person's own key beats Linggen
+    /// Cloud, and a service the site holds no key for is never Cloud's.
+    #[test]
+    fn the_source_is_the_own_key_first_then_linggen_cloud() {
+        assert!(alibaba().via_cloud() && !google().via_cloud());
+        let own = Source::OwnKey(Secret::new("k"));
+        assert_eq!((own.as_str(), Source::LinggenCloud.as_str()), ("own_key", "linggen_cloud"));
+        let code = include_str!("live.rs");
+        let production = &code[..code.find("#[cfg(test)]").unwrap()];
+        assert_eq!(production.matches("fn find_source(").count(), 1, "who pays is decided in one function");
+        let from = production.find("pub fn find_source(").unwrap();
+        let decision = &production[from..production[from..].find("\n}\n").map(|n| from + n).unwrap()];
+        assert!(
+            decision.find("find_key(").unwrap() < decision.find("live_usable(").unwrap(),
+            "the own key is asked before Linggen Cloud"
+        );
+    }
+
     #[test]
     fn every_refusal_has_its_own_word_and_a_status() {
         let all = [
@@ -699,11 +818,14 @@ mod tests {
             Refusal::ProviderDown,
             Refusal::Unreachable,
             Refusal::BadAnswer,
+            Refusal::NotSubscribed,
+            Refusal::LessonsUsed,
+            Refusal::DailyCap,
         ];
         let words: std::collections::HashSet<_> = all.iter().map(|r| r.code()).collect();
         assert_eq!(words.len(), all.len());
         assert!(all
             .iter()
-            .all(|r| matches!(r.status(), 400 | 409 | 429 | 502)));
+            .all(|r| matches!(r.status(), 400 | 402 | 409 | 429 | 502)));
     }
 }

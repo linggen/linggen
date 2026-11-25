@@ -80,16 +80,24 @@ pub trait TtsProvider: Send + Sync {
 /// (and behind it `say`) as the automatic fallback chain, so the voice
 /// upgrade can never cost the pet her speech.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Source { Qwen, Kokoro, System }
+pub(super) enum Source { Cloud, Qwen, Kokoro, System }
 
 impl Source {
-    pub(super) const ALL: [Self; 3] = [Self::Qwen, Self::Kokoro, Self::System];
+    /// The order of preference when the person has chosen nothing: Linggen
+    /// Cloud's voice (Yinyue's, the same on the Mac and the phone) for a
+    /// subscriber, then the Mac's own voices. Its readiness is a fact read
+    /// with no network ([`Source::readiness`]), so a person who is not a
+    /// subscriber, or is offline, is simply on the next one.
+    pub(super) const ALL: [Self; 4] = [Self::Cloud, Self::Qwen, Self::Kokoro, Self::System];
 
     pub(super) fn id(self) -> &'static str {
-        match self { Self::Qwen => "qwen", Self::Kokoro => "kokoro", Self::System => "system" }
+        match self { Self::Cloud => "linggen-cloud", Self::Qwen => "qwen", Self::Kokoro => "kokoro", Self::System => "system" }
     }
 
-    pub(super) fn readiness() -> [bool; 3] {
+    /// Whether the voice sounds like Yinyue herself (the GPU voice, or Linggen Cloud's Serena).
+    pub(super) fn is_natural(self) -> bool { matches!(self, Self::Cloud | Self::Qwen) }
+
+    pub(super) fn readiness() -> [bool; 4] {
         #[cfg(feature = "kokoro")]
         let kokoro = KokoroProvider::weights_on_disk();
         #[cfg(not(feature = "kokoro"))]
@@ -97,15 +105,22 @@ impl Source {
         let system = std::env::var_os("PATH").is_some_and(|path| {
             std::env::split_paths(&path).any(|dir| dir.join("say").is_file())
         });
-        [crate::runtime::voice_ready(), kokoro, system]
+        // Linggen Cloud's voice is offered only where the curated list names it.
+        let cloud = crate::provider::models::providers_view::cloud_speech_listed()
+            && crate::account::cloud_voice::speech_usable();
+        [cloud, crate::runtime::voice_ready(), kokoro, system]
     }
 
     pub(super) fn exists(self) -> bool {
-        self != Self::Kokoro || cfg!(feature = "kokoro")
+        match self {
+            Self::Kokoro => cfg!(feature = "kokoro"),
+            Self::Cloud => crate::provider::models::providers_view::cloud_speech_listed(),
+            Self::Qwen | Self::System => true,
+        }
     }
 }
 
-pub(super) fn default_provider(preference: Option<&str>, ready: [bool; 3]) -> Option<Source> {
+pub(super) fn default_provider(preference: Option<&str>, ready: [bool; 4]) -> Option<Source> {
     let usable = || Source::ALL.into_iter().zip(ready).filter_map(|(source, ready)| ready.then_some(source));
     usable().find(|source| Some(source.id()) == preference).or_else(|| usable().next())
 }
@@ -427,6 +442,20 @@ async fn speak_line(
     Ok(super::tts_wav::encode(&super::tts_wav::join(&parts)))
 }
 
+/// The line as ONE request, for a voice that does not drift on a long line
+/// (Linggen Cloud's): one round trip instead of one per clause. A line over
+/// the service's 600 characters goes clause by clause, as the others do.
+async fn speak_whole_line(tts: &dyn TtsProvider, text: &str) -> anyhow::Result<Vec<u8>> {
+    let spoken = super::tts_text::spoken_copy(text);
+    if spoken.trim().is_empty() || spoken.chars().count() > CLOUD_LINE_MAX_CHARS {
+        return speak_line(tts, text, None).await;
+    }
+    tts.synthesize(&spoken, None).await
+}
+
+/// What one Linggen Cloud read-aloud request may hold (the site refuses more).
+const CLOUD_LINE_MAX_CHARS: usize = 600;
+
 /// Whether a clip made now is made without fetching anything, and in which
 /// voice: the one judgement behind `GET /api/tts`. What a page asks before it
 /// turns "read her replies aloud" on. `natural`: the GPU voice (Qwen3-TTS) is on
@@ -450,7 +479,7 @@ fn no_voice_reason() -> String {
 
 fn speech_now(pref: Option<&str>) -> Speech {
     let source = default_provider(pref, Source::readiness());
-    Speech { speaks: source.is_some(), natural: source == Some(Source::Qwen) }
+    Speech { speaks: source.is_some(), natural: source.is_some_and(Source::is_natural) }
 }
 
 /// GET /api/tts — can a line be spoken now, and in her own voice? Reads the
@@ -468,6 +497,21 @@ pub(crate) async fn tts_status_handler(State(state): State<Arc<ServerState>>) ->
     }
 }
 
+/// Linggen Cloud's voice as a [`TtsProvider`]: each clip asks linggen.dev
+/// (`account::cloud_voice`), which reads it in Yinyue's voice and counts the
+/// characters against the subscription. The voice is the service's (Serena),
+/// so a voice the caller names is not passed on.
+struct CloudProvider;
+
+#[async_trait]
+impl TtsProvider for CloudProvider {
+    async fn synthesize(&self, text: &str, _voice: Option<&str>) -> anyhow::Result<Vec<u8>> {
+        crate::account::cloud_voice::speak(text)
+            .await
+            .map_err(|why| anyhow::anyhow!("Linggen Cloud voice: {why:?}"))
+    }
+}
+
 /// POST /api/tts — `{ text, voice? }` → `audio/wav` bytes.
 pub(crate) async fn tts_handler(
     State(state): State<Arc<ServerState>>,
@@ -480,25 +524,35 @@ pub(crate) async fn tts_handler(
     // No voice named → the configured pet voice, applied per clip so a
     // Settings change speaks on the very next line.
     let config = state.manager.get_config_snapshot().await;
-    let source = default_provider(config.uses.speak.as_deref(), Source::readiness());
-    let (tts, voice): (&dyn TtsProvider, Option<&str>) = match source {
-        Some(Source::Qwen) => (state.tts.as_ref(), req.voice.as_deref().or(Some(&config.pet.voice))),
-        Some(Source::Kokoro) => (state.tts.fallback.as_ref(), req.voice.as_deref().filter(|v| [VOICE_EN, VOICE_ZH].contains(v))),
-        Some(Source::System) => (&SystemSayProvider, None),
-        None => return (StatusCode::SERVICE_UNAVAILABLE, "No voice is ready.").into_response(),
-    };
-
-    match speak_line(tts, &req.text, voice).await {
-        Ok(wav) => (StatusCode::OK, [(header::CONTENT_TYPE, "audio/wav")], wav).into_response(),
-        Err(e) => {
-            tracing::warn!("[tts] synthesis failed: {e}");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("tts synthesis failed: {e}"),
-            )
-                .into_response()
+    let mut failure = None;
+    // Linggen Cloud may fail mid-line (cap, offline); a refusal cools it off
+    // (`cloud_voice`), so the second pass finds the next voice ready.
+    for _ in 0..2 {
+        let source = default_provider(config.uses.speak.as_deref(), Source::readiness());
+        let (tts, voice): (&dyn TtsProvider, Option<&str>) = match source {
+            Some(Source::Cloud) => (&CloudProvider, None),
+            Some(Source::Qwen) => (state.tts.as_ref(), req.voice.as_deref().or(Some(&config.pet.voice))),
+            Some(Source::Kokoro) => (state.tts.fallback.as_ref(), req.voice.as_deref().filter(|v| [VOICE_EN, VOICE_ZH].contains(v))),
+            Some(Source::System) => (&SystemSayProvider, None),
+            None => return (StatusCode::SERVICE_UNAVAILABLE, "No voice is ready.").into_response(),
+        };
+        let line = match source {
+            Some(Source::Cloud) => speak_whole_line(tts, &req.text).await,
+            _ => speak_line(tts, &req.text, voice).await,
+        };
+        match line {
+            Ok(wav) => return (StatusCode::OK, [(header::CONTENT_TYPE, "audio/wav")], wav).into_response(),
+            Err(e) => {
+                tracing::warn!("[tts] synthesis failed: {e}");
+                failure = Some(e);
+                if source != Some(Source::Cloud) {
+                    break;
+                }
+            }
         }
     }
+    let e = failure.expect("a loop that did not return failed once");
+    (StatusCode::INTERNAL_SERVER_ERROR, format!("tts synthesis failed: {e}")).into_response()
 }
 
 #[cfg(test)]
@@ -534,13 +588,19 @@ mod tests {
     /// three facts read from disk.
     #[test]
     fn speech_prefers_a_ready_choice_then_the_builtin_order() {
-        let ready = [true, true, true];
-        assert_eq!(default_provider(None, ready), Some(Source::Qwen));
+        let ready = [true; 4];
+        // Cloud (Yinyue's own voice for a subscriber) is the default; a person's pick wins.
+        assert_eq!(default_provider(None, ready), Some(Source::Cloud));
+        assert_eq!(default_provider(Some("qwen"), ready), Some(Source::Qwen));
         assert_eq!(default_provider(Some("kokoro"), ready), Some(Source::Kokoro));
         assert_eq!(default_provider(Some("system"), ready), Some(Source::System));
-        assert_eq!(default_provider(Some("kokoro"), [true, false, true]), Some(Source::Qwen));
-        assert_eq!(default_provider(Some("qwen"), [false, true, true]), Some(Source::Kokoro));
-        assert_eq!(default_provider(None, [false; 3]), None);
+        // Not a subscriber, offline, or cooling off: the Mac's own voices, as before.
+        assert_eq!(default_provider(None, [false, true, true, true]), Some(Source::Qwen));
+        assert_eq!(default_provider(Some("linggen-cloud"), [false, true, true, true]), Some(Source::Qwen));
+        assert_eq!(default_provider(Some("kokoro"), [true, true, false, true]), Some(Source::Cloud));
+        assert_eq!(default_provider(Some("qwen"), [false, false, true, true]), Some(Source::Kokoro));
+        assert_eq!(default_provider(None, [false; 4]), None);
+        assert!(Source::Cloud.is_natural() && Source::Qwen.is_natural() && !Source::Kokoro.is_natural());
     }
 
     /// Lock: the status route reads, it does not make or fetch. Its handler and

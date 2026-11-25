@@ -207,6 +207,9 @@ impl ModelManager {
         cloud.connected = crate::account::resolve_token()
             .is_some_and(|(token, _)| !crate::account::token_rejected(&token));
         cloud.fix = (!cloud.connected).then_some("sign_in");
+        for use_ in cloud_uses(&list, offered) {
+            cloud.add(use_);
+        }
         groups.insert(cloud.id.clone(), cloud);
         let rows = self.list_models();
         for row in rows.iter().copied().filter(|row| row.is_builtin).chain(config.chat_models()) {
@@ -270,6 +273,28 @@ impl ModelManager {
         providers.sort_by(|a, b| a.label.cmp(&b.label).then_with(|| a.id.cmp(&b.id)));
         providers
     }
+}
+
+/// Linggen Cloud's voice uses the list names — live voice and read-aloud — as
+/// lines on its card, ready when a subscription is known (no network). Only a
+/// use the list names AND the engine has a wire for is here (`curated`).
+fn cloud_uses(list: &Bundle, offered: Edition) -> Vec<ProviderModel> {
+    list.cloud_uses(offered).map(|entry| {
+        let (kind, ready) = match entry.kind {
+            curated::EntryType::Speech => (Kind::Speak, crate::account::cloud_voice::speech_usable()),
+            _ => (Kind::LiveVoice, crate::account::cloud_voice::live_usable()),
+        };
+        let id = format!("{}:cloud:{}", kind.as_str(), entry.key);
+        // Signed in without a subscription: not ready, and no reason a sign-in would fix.
+        let why = (!ready && crate::account::resolve_token().is_none()).then_some(NotReady::NotSignedIn);
+        ProviderModel { id, model: entry.model.clone(), kind: kind.as_str(), ready, why, builtin: true, first: false }
+    }).collect()
+}
+
+/// Whether the list names read-aloud under Linggen Cloud: the picker shows
+/// "Linggen Cloud · Serena" only then (`api/uses`, `tts::Source`).
+pub fn cloud_speech_listed() -> bool {
+    curated::current().lists_cloud_speech()
 }
 
 /// What the page offers to add, as the curated list names it, in its order:

@@ -44,6 +44,20 @@ just sign in:
 ling account login  # Opens browser → sign in to linggen.dev
 ```
 
+Linggen Cloud means who pays (Linggen's keys, the subscription), not the path the traffic
+takes, and offers exactly three uses; the curated list's Linggen Cloud row names them:
+
+1. **Chat** — DeepSeek Flash through linggen.dev.
+2. **Live voice** — Qwen audio realtime, for Lingyu lessons. The person's own key is asked
+   first; with none, a subscriber is given a short-lived key per lesson by linggen.dev and the
+   device connects straight to the provider (`live::find_source`, `account::cloud_voice`).
+   Metered per lesson, with a length cap the page keeps.
+3. **Read-aloud** — Yinyue's voice (Serena) through linggen.dev, the default for subscribers
+   (`tts::Source::Cloud`, first in the order); the local voice stays the free and offline choice,
+   and takes over when the Cloud voice is refused or unreachable.
+
+Not in Linggen Cloud: pictures, and dictation (Apple's, on the device).
+
 The ChatGPT built-ins — one per family, Sol, Terra and Luna (Luna is the default) — are also present in every install and
 need only a ChatGPT sign-in (Settings → Models → Sign in with ChatGPT).
 They update by themselves (`provider/models/chatgpt_catalog`): about once a

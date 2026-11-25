@@ -21,6 +21,7 @@ use std::time::{Duration, Instant};
 
 pub mod cloud;
 pub mod cloud_save;
+pub mod cloud_voice;
 
 pub const DEFAULT_SITE_URL: &str = "https://linggen.dev";
 
@@ -206,6 +207,7 @@ pub fn delete_account() -> Result<bool> {
     let _ = std::fs::remove_file(entitlement_snapshot_path());
     invalidate_entitlement_cache();
     cloud::forget_readings();
+    cloud_voice::forget();
     Ok(true)
 }
 
@@ -404,6 +406,45 @@ pub async fn entitlement_cached(token: &str) -> Option<(serde_json::Value, bool)
     }
 }
 
+/// Whether the signed-in account is, as far as this machine knows, entitled to
+/// Linggen: the developer, or a subscriber — read from the cached entitlement
+/// (any age, memory then the disk snapshot), with NO network call. Cloud voice
+/// asks it on paths that must start nothing (a status read, a readiness
+/// check); the entitlement is kept fresh by the account page and `/api/uses`.
+/// A key the site has refused, or no key, is not entitled.
+pub fn subscribed_known() -> bool {
+    let Some((token, _)) = resolve_token() else { return false };
+    if token_rejected(&token) {
+        return false;
+    }
+    let account = account_key(&token);
+    let known = entitlement_in_memory(&account)
+        .map(|(value, _)| value)
+        .or_else(|| snapshot_of(&entitlement_snapshot_path(), &account));
+    known.is_some_and(|ent| entitles_linggen(&ent, unix_secs()))
+}
+
+/// The developer account (the site says so on the payload) or any entitling subscription.
+fn entitles_linggen(ent: &serde_json::Value, now: i64) -> bool {
+    ent.get("developer").and_then(|d| d.as_bool()).unwrap_or(false) || app_entitled(ent, "linggen", now)
+}
+
+fn unix_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// Make sure the entitlement has been asked for, so [`subscribed_known`] has
+/// something to read: one cached fetch (60 s memory cache, offline snapshot),
+/// given two seconds — a page waiting on a voice must not wait on a dead network.
+pub async fn learn_entitlement() {
+    if let Some((token, _)) = resolve_token() {
+        let _ = tokio::time::timeout(Duration::from_secs(2), entitlement_cached(&token)).await;
+    }
+}
+
 /// Whether the entitlement payload entitles `app` right now. Mirrors the
 /// site's rowEntitles (active/trialing, else paid-through period end); the
 /// site already expands `suite` into per-app keys. Any entitling app covers
@@ -544,4 +585,26 @@ mod token_verdict_tests {
     }
 
     static TEST_LOCK: Mutex<()> = Mutex::new(());
+}
+
+#[cfg(test)]
+mod voice_entitlement_tests {
+    use super::*;
+
+    /// Cloud voice is for the developer account and for any entitling subscription; a trial, or nothing, is not.
+    #[test]
+    fn voice_is_for_the_developer_and_subscribers_only() {
+        let now = 1_800_000_000;
+        let active = serde_json::json!({"developer": false, "apps": {"suite": {"status": "active", "current_period_end": null}}});
+        let lapsed_paid_through = serde_json::json!({"apps": {"suite": {"status": "canceled", "current_period_end": now + 100}}});
+        let lapsed = serde_json::json!({"apps": {"suite": {"status": "canceled", "current_period_end": now - 100}}});
+        let trial = serde_json::json!({"apps": {}, "trial": {"linggen": {"active": true}}});
+        let developer = serde_json::json!({"developer": true, "apps": {}});
+        assert!(entitles_linggen(&active, now));
+        assert!(entitles_linggen(&lapsed_paid_through, now), "paid through its period");
+        assert!(entitles_linggen(&developer, now));
+        assert!(!entitles_linggen(&lapsed, now));
+        assert!(!entitles_linggen(&trial, now), "a trial does not cover voice");
+        assert!(!entitles_linggen(&serde_json::json!({}), now));
+    }
 }

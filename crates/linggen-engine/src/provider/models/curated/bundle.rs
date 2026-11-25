@@ -61,7 +61,7 @@ pub(crate) enum Adapter { Anthropic, OpenaiCompatible, Chatgpt, LinggenCloud, Ol
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum EntryType { Family, Exact, Live }
+pub(crate) enum EntryType { Family, Exact, Live, Speech }
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -86,6 +86,16 @@ pub(crate) struct FamilyMatcher {
 #[serde(deny_unknown_fields)]
 pub(crate) struct LiveService { pub service: String, pub used_by: Vec<String> }
 
+/// A read-aloud voice the list names: the engine's own wire for it is
+/// `account::cloud_voice`, so the list says which voice, never where.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SpeechVoice {
+    pub voice: String,
+    #[allow(dead_code)]
+    pub used_by: Vec<String>,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Entry {
@@ -98,6 +108,7 @@ pub(crate) struct Entry {
     pub model: String,
     pub family: Option<FamilyMatcher>,
     pub live: Option<LiveService>,
+    pub speech: Option<SpeechVoice>,
     pub starter: bool,
     /// The owner has not checked this entry works in this edition's region.
     #[serde(default)]
@@ -114,7 +125,7 @@ impl Entry {
         match self.kind {
             EntryType::Family => self.family.as_ref().map(|f| f.name.as_str()),
             EntryType::Exact => Some(self.key.as_str()),
-            EntryType::Live => None,
+            EntryType::Live | EntryType::Speech => None,
         }
     }
 }
@@ -269,6 +280,25 @@ impl Bundle {
                 let entry = place.entries().find(|e| e.live.as_ref().is_some_and(|l| l.service == service))?;
                 Some((place, entry))
             })
+    }
+
+    /// The uses Linggen Cloud gives besides chat — live voice and read-aloud —
+    /// as the list names them for an edition. They have no address of their
+    /// own (the account's connection carries them), so no [`Place`] holds
+    /// them; a use appears on a page only where the list names it AND the
+    /// engine has the wire (`check_kind`).
+    pub(crate) fn cloud_uses(&self, edition: Edition) -> impl Iterator<Item = &Entry> {
+        self.providers(edition).iter()
+            .filter(|p| p.adapter == Adapter::LinggenCloud)
+            .flat_map(|p| p.entries.iter())
+            .filter(|e| matches!(e.kind, EntryType::Live | EntryType::Speech))
+    }
+
+    /// Whether either edition's Linggen Cloud row names read-aloud. The list
+    /// holds one voice for both, so a page that has no edition at hand asks here.
+    pub(crate) fn lists_cloud_speech(&self) -> bool {
+        [Edition::International, Edition::Mainland].into_iter()
+            .any(|edition| self.cloud_uses(edition).any(|e| e.kind == EntryType::Speech))
     }
 
     /// The facts for one wire id at one list endpoint: joined by the endpoint's
@@ -428,7 +458,9 @@ impl Bundle {
                 ensure!(word(&entry.key) && word(&entry.label) && word(&entry.model) && entry_keys.insert(&entry.key), "entry fields");
                 ensure!(own.contains(&&entry.endpoint), "entry endpoint is not one of its provider's");
                 entry.check_kind()?;
-                self.check_live_host(entry)?;
+                ensure!(entry.kind != EntryType::Speech || (p.adapter == Adapter::LinggenCloud && self.endpoints.get(&entry.endpoint).is_some_and(|e| e.binding == Some(Binding::LinggenCloud))),
+                    "read-aloud is Linggen Cloud's, at its own connection");
+                self.check_live_host(p, entry)?;
             }
         }
         Ok(())
@@ -453,9 +485,17 @@ impl Bundle {
 }
 
 impl Bundle {
-    /// A live entry sits at the host its service's key is filed for.
-    fn check_live_host(&self, entry: &Entry) -> Result<()> {
+    /// A live entry sits at the host its service's key is filed for — or, in
+    /// Linggen Cloud's own row, at the account's connection (a binding, no host),
+    /// for a service the site gives lesson keys for.
+    fn check_live_host(&self, provider: &Provider, entry: &Entry) -> Result<()> {
         let Some(live) = &entry.live else { return Ok(()) };
+        if provider.adapter == Adapter::LinggenCloud {
+            let service = crate::live::provider_named(&live.service);
+            ensure!(service.is_some_and(|p| p.via_cloud()), "Linggen Cloud gives no lesson keys for that service");
+            ensure!(self.endpoints.get(&entry.endpoint).is_some_and(|e| e.binding == Some(Binding::LinggenCloud)), "a Linggen Cloud use sits at its own connection");
+            return Ok(());
+        }
         let host = self.endpoints.get(&entry.endpoint).and_then(|e| e.base.as_deref())
             .and_then(|base| url::Url::parse(base).ok()).and_then(|u| u.host_str().map(str::to_ascii_lowercase));
         let service = crate::live::PROVIDERS.iter().find(|p| p.id == live.service);
@@ -467,11 +507,18 @@ impl Bundle {
 impl Entry {
     fn check_kind(&self) -> Result<()> {
         match self.kind {
-            EntryType::Family => ensure!(self.live.is_none(), "a family entry has no live descriptor"),
-            EntryType::Exact => ensure!(self.live.is_none() && self.family.is_none(), "an exact entry is a pin"),
+            EntryType::Family => ensure!(self.live.is_none() && self.speech.is_none(), "a family entry has no use descriptor"),
+            EntryType::Exact => ensure!(self.live.is_none() && self.speech.is_none() && self.family.is_none(), "an exact entry is a pin"),
+            EntryType::Speech => {
+                let speech = self.speech.as_ref().ok_or_else(|| anyhow!("speech entry needs its descriptor"))?;
+                ensure!(!self.starter && self.family.is_none() && self.live.is_none() && !speech.used_by.is_empty(), "a speech entry is a reference");
+                // Only the voice this engine has a wire for: the list cannot claim another.
+                ensure!(self.model == crate::account::cloud_voice::SPEECH_MODEL && speech.voice == crate::account::cloud_voice::SPEECH_VOICE,
+                    "speech model or voice is not one the engine declares");
+            }
             EntryType::Live => {
                 let live = self.live.as_ref().ok_or_else(|| anyhow!("live entry needs its descriptor"))?;
-                ensure!(!self.starter && self.family.is_none() && !live.used_by.is_empty(), "a live entry is a reference");
+                ensure!(!self.starter && self.family.is_none() && self.speech.is_none() && !live.used_by.is_empty(), "a live entry is a reference");
                 // Only a voice this engine's dialect runs: the list cannot claim a newer one.
                 ensure!(crate::live::PROVIDERS.iter().any(|p| p.id == live.service && p.model == self.model),
                     "live model is not one the engine declares");

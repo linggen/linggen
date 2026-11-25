@@ -15,6 +15,7 @@ mod assets;
 mod background;
 mod browser_tools;
 mod claude_rules;
+mod cloud_voice;
 mod day_places;
 mod day_session;
 mod delegate;

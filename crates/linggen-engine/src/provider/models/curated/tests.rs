@@ -81,10 +81,62 @@ fn the_list_agrees_with_the_engine_on_what_it_runs() {
             providers.iter().filter(|p| p.key == key).flat_map(|p| &p.entries).map(|e| e.model.as_str()).collect()
         };
         assert_eq!(models("chatgpt"), Snapshot::seed().builtin_ids().iter().map(String::as_str).collect::<Vec<_>>(), "chatgpt built-ins");
-        assert_eq!(models("linggen-cloud"), [LINGGEN_CLOUD_MODEL_ID]);
+        // Linggen Cloud lists exactly three uses: chat, live voice, read-aloud.
+        assert_eq!(models("linggen-cloud"), [LINGGEN_CLOUD_MODEL_ID, "qwen-audio-3.1-realtime-flash", "qwen3-tts-flash"]);
         let live: Vec<_> = providers.iter().flat_map(|p| &p.entries).filter(|e| e.live.is_some()).collect();
-        assert_eq!(live.len(), 1, "Qwen Audio Realtime only; Gemini Live is development-only");
-        assert!(crate::live::PROVIDERS.iter().any(|p| Some(p.id) == live[0].live.as_ref().map(|l| l.service.as_str()) && p.model == live[0].model));
+        assert_eq!(live.len(), 2, "Qwen Audio Realtime only (on its own card and through Linggen Cloud); Gemini Live is development-only");
+        for entry in &live {
+            assert!(crate::live::PROVIDERS.iter().any(|p| Some(p.id) == entry.live.as_ref().map(|l| l.service.as_str()) && p.model == entry.model));
+        }
+        let speech: Vec<_> = providers.iter().flat_map(|p| &p.entries).filter(|e| e.speech.is_some()).collect();
+        assert_eq!(speech.len(), 1, "one read-aloud voice, Linggen Cloud's");
+        assert_eq!(
+            (speech[0].model.as_str(), speech[0].speech.as_ref().map(|s| s.voice.as_str())),
+            (crate::account::cloud_voice::SPEECH_MODEL, Some(crate::account::cloud_voice::SPEECH_VOICE))
+        );
+        assert_eq!(list.cloud_uses(edition).count(), 2, "the uses besides chat");
+        assert!(list.lists_cloud_speech());
+    }
+}
+
+/// Where Linggen Cloud's entry of this type sits in the shipped list's international side.
+fn cloud_entry(v: &serde_json::Value, kind: &str) -> (usize, usize) {
+    let providers = v["international"].as_array().unwrap();
+    let c = providers.iter().position(|p| p["key"] == "linggen-cloud").unwrap();
+    let e = providers[c]["entries"].as_array().unwrap().iter().position(|e| e["type"] == kind).unwrap();
+    (c, e)
+}
+
+/// What Linggen Cloud's row may claim: only a live service the site holds keys for, and only the
+/// read-aloud voice the engine has a wire for — whatever the list says.
+#[test]
+fn the_list_cannot_claim_a_cloud_use_the_engine_has_no_wire_for() {
+    let with = |change: fn(&mut serde_json::Value)| {
+        let mut value: serde_json::Value = serde_json::from_slice(shipped().raw()).unwrap();
+        change(&mut value);
+        format!("{value}\n").into_bytes()
+    };
+    assert!(decode(&with(|_| {})).is_ok());
+    let changes: [(&str, fn(&mut serde_json::Value)); 7] = [
+        ("another read-aloud model", |v| { let (c, e) = cloud_entry(v, "speech"); v["international"][c]["entries"][e]["model"] = "qwen3-tts-other".into(); }),
+        ("another read-aloud voice", |v| { let (c, e) = cloud_entry(v, "speech"); v["international"][c]["entries"][e]["speech"]["voice"] = "Cherry".into(); }),
+        ("a read-aloud starter", |v| { let (c, e) = cloud_entry(v, "speech"); v["international"][c]["entries"][e]["starter"] = true.into(); }),
+        ("a speech entry with no descriptor", |v| { let (c, e) = cloud_entry(v, "speech"); v["international"][c]["entries"][e]["speech"] = serde_json::Value::Null; }),
+        ("a live use for a service the site holds no key for", |v| {
+            let (c, e) = cloud_entry(v, "live");
+            v["international"][c]["entries"][e]["live"]["service"] = "google".into();
+            v["international"][c]["entries"][e]["model"] = "gemini-3.8-live".into();
+        }),
+        ("a live use of a model the engine does not run", |v| { let (c, e) = cloud_entry(v, "live"); v["international"][c]["entries"][e]["model"] = "qwen-audio-9".into(); }),
+        ("read-aloud under a key provider", |v| {
+            let (c, e) = cloud_entry(v, "speech");
+            let speech = v["international"][c]["entries"][e].clone();
+            let at = v["international"].as_array().unwrap().iter().position(|p| p["key"] == "anthropic").unwrap();
+            v["international"][at]["entries"].as_array_mut().unwrap().push(speech);
+        }),
+    ];
+    for (name, change) in changes {
+        assert!(decode(&with(change)).is_err(), "{name}");
     }
 }
 

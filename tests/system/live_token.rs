@@ -500,7 +500,7 @@ async fn the_owner_is_given_a_qwen_short_key_address_and_never_the_long_lived_ke
     let listed = w.api.get("/api/live").await;
     assert_eq!(
         listed,
-        json!({"providers": [{"id": "alibaba", "ready": true}]}),
+        json!({"providers": [{"id": "alibaba", "ready": true, "via": "own_key"}]}),
         "{listed}"
     );
     assert!(
@@ -557,7 +557,7 @@ async fn the_providers_are_listed_alibaba_first_then_google() {
     let listed = w.api.get("/api/live").await;
     assert_eq!(
         listed,
-        json!({"providers": [{"id": "alibaba", "ready": true}]}),
+        json!({"providers": [{"id": "alibaba", "ready": true, "via": "own_key"}]}),
         "{listed}"
     );
     // Each provider's key goes to its own service alone.

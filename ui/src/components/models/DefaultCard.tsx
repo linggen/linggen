@@ -98,7 +98,7 @@ export function DefaultCard({ view, busy, failed, retry, pick }: {
           inline={<Effort view={view} busy={busy} pick={pick} />}
           note={<ChatFallbacks view={view} busy={busy} pick={pick} />} />
         <UseLine busy={busy} id="speak" label={W.readAloud} purpose={W.speakPurpose} row={view.speak} automatic={W.automatic} downloadable onPick={(choice) => pick({ use: 'speak', choice: choice || null })}
-          note={view.voice.options.length >= 2 && <label className={`${hintCls} mt-1 flex flex-wrap items-center gap-1.5`}>
+          note={view.voice.options.length >= 2 && view.speak.effective !== 'linggen-cloud' && <label className={`${hintCls} mt-1 flex flex-wrap items-center gap-1.5`}>
             <span>{W.speaker}</span>
             <select data-testid="default-voice" className={`${inputCls} px-2 py-1 dark:[color-scheme:dark]`} value={view.voice.choice ?? ''} disabled={busy} onChange={(e) => pick({ use: 'voice', choice: e.target.value })}>
               {!view.voice.choice && <option value="" disabled>{W.notSet}</option>}

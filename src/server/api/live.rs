@@ -38,7 +38,8 @@ fn why_not_ready(owner: bool, key_found: impl FnOnce() -> bool) -> Option<&'stat
     (!key_found()).then_some("no_key")
 }
 
-/// GET /api/live — which live providers this Mac can use now. Starts
+/// GET /api/live — which live providers this Mac can use now, and who pays
+/// (`via`: the person's own key, or Linggen Cloud's subscription). Starts
 /// nothing, calls no provider, and says nothing of any key but whether one
 /// is stored.
 pub(crate) async fn status_handler(
@@ -48,13 +49,19 @@ pub(crate) async fn status_handler(
     let level = crate::server::api::pair::caller_level(&headers);
     let owner = crate::server::person::owners_only(level).is_none();
     let config = state.manager.get_config_snapshot().await;
+    // Linggen Cloud's lessons need a known subscription (a cached read, two seconds at most).
+    if owner {
+        crate::account::learn_entitlement().await;
+    }
     let providers: Vec<Value> = live::offered_to_pages().into_iter()
-        .map(
-            |p| match why_not_ready(owner, || live::find_key(p, &config.models).is_some()) {
+        .map(|p| {
+            let source = owner.then(|| live::find_source(p, &config.models)).flatten();
+            match why_not_ready(owner, || source.is_some()) {
                 Some(why) => json!({"id": p.id, "ready": false, "why": why}),
-                None => json!({"id": p.id, "ready": true}),
-            },
-        )
+                // `via`: who pays (the person's own key, or Linggen Cloud's subscription).
+                None => json!({"id": p.id, "ready": true, "via": source.as_ref().map(live::Source::as_str)}),
+            }
+        })
         .collect();
     Json(json!({ "providers": providers })).into_response()
 }
@@ -96,6 +103,7 @@ pub(crate) async fn token_handler(
         return refused;
     }
     let configured = state.manager.get_config_snapshot().await.models;
+    crate::account::learn_entitlement().await;
     match asked_of(&body) {
         Ok((provider, setup)) => answer(provider, &setup, &configured, &state.live_rate).await,
         Err(why) => refuse(why, "?"),
@@ -113,23 +121,29 @@ async fn answer(
     let Some(p) = asked else {
         return refuse(Refusal::UnknownProvider, "?");
     };
-    let Some(key) = live::find_key(p, configured) else {
+    let Some(source) = live::find_source(p, configured) else {
         return refuse(Refusal::NoKey, p.id);
     };
     if !rate.allow(Instant::now()) {
         return refuse(Refusal::SlowDown, p.id);
     }
-    match live::mint(p, &live::http_base(p), &key, chrono::Utc::now(), setup).await {
+    match live::grant(p, &source, chrono::Utc::now(), setup).await {
         Ok(minted) => {
-            tracing::info!("live token made for {}", minted.provider);
-            let mut res = Json(json!({
+            tracing::info!("live token made for {} ({})", minted.provider, source.as_str());
+            let mut grant = json!({
                 "provider": minted.provider,
                 "model": minted.model,
                 "ws_url": minted.ws_url.expose(),
                 "token": minted.token.expose(),
                 "expires": minted.expires,
-            }))
-            .into_response();
+            });
+            // Linggen Cloud's lesson terms, when it names them: the page ends a lesson at its cap.
+            for (name, value) in [("max_minutes", minted.max_minutes), ("lessons_left", minted.lessons_left)] {
+                if let Some(n) = value {
+                    grant[name] = json!(n);
+                }
+            }
+            let mut res = Json(grant).into_response();
             // A grant is for one page, once: nothing keeps a copy.
             res.headers_mut().insert(
                 header::CACHE_CONTROL,
@@ -217,9 +231,9 @@ mod tests {
             "each route asks the one owner rule"
         );
         assert_eq!(
-            production.matches("live::find_key(").count(),
+            production.matches("live::find_source(").count(),
             2,
-            "the key is looked up by the status and the token only"
+            "who pays (the key, or Linggen Cloud) is looked up by the status and the token only"
         );
         assert_eq!(
             production.matches(".expose()").count(),

@@ -71,7 +71,7 @@ async fn the_live_voice_routes_are_unchanged_by_a_live_voice_row() {
     let listed = w.api.get("/api/live").await;
     assert_eq!(
         listed,
-        json!({"providers": [{"id": "alibaba", "ready": true}]}),
+        json!({"providers": [{"id": "alibaba", "ready": true, "via": "own_key"}]}),
         "{listed}"
     );
 }

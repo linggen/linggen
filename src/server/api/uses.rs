@@ -116,6 +116,14 @@ fn hear_use(state: &ServerState) -> Use {
     Use::new(None, vec![apple], Some("apple-speech"))
 }
 
+/// Linggen Cloud's read-aloud: Yinyue's voice, Serena, paid by the subscription.
+fn cloud_voice_row(id: &str, ready: bool) -> OptionRow {
+    let source = Source { provider: Some("Linggen Cloud".into()), ..Source::new(Way::Account, None) };
+    let signed_in = crate::account::resolve_token().is_some();
+    let state = match (ready, signed_in) { (true, _) => "ready", (false, false) => "signed_out", (false, true) => "unavailable" };
+    OptionRow::new(id, "Serena", source, state)
+}
+
 async fn table(state: &ServerState, config: &Config) -> Table {
     let models = state.manager.models.read().await.clone();
     let chain = config.routing.default_models.clone();
@@ -126,9 +134,13 @@ async fn table(state: &ServerState, config: &Config) -> Table {
         let options: Vec<_> = models.effort_choices(&row.id).into_iter().map(|id| OptionRow::new(id, id, row.source.clone(), "ready")).collect();
         (row.id.clone(), Use::new(config.uses.model_effort.get(&row.id).map(String::as_str), options, None))
     }).collect();
+    // The entitlement is asked for here (a cached fetch), so the Cloud voice's readiness,
+    // which reads it with no network, is not stale on a freshly started engine.
+    crate::account::learn_entitlement().await;
     let speech = tts::Source::readiness();
     let speak = tts::Source::ALL.into_iter().zip(speech).filter(|(s, _)| s.exists()).map(|(source, ready)| {
         match source {
+            tts::Source::Cloud => cloud_voice_row(source.id(), ready),
             tts::Source::Qwen => OptionRow::local(source.id(), runtime::TTS_MODEL, ready, runtime::lane_verdict(&runtime::VOICE_LANE).is_ok()),
             tts::Source::Kokoro => {
                 OptionRow::new(source.id(), "Kokoro", Source::new(Way::Local, None), if ready { "ready" } else { "download" })

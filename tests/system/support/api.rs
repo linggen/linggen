@@ -65,6 +65,19 @@ impl Api {
         (status, serde_json::from_str(&text).unwrap_or(Value::Null))
     }
 
+    /// POST that answers bytes (a spoken clip): the status and the body as it came.
+    pub async fn post_for_bytes(&self, path: &str, payload: Value) -> (u16, Vec<u8>) {
+        let resp = self
+            .client
+            .post(format!("{}{path}", self.base))
+            .json(&payload)
+            .send()
+            .await
+            .unwrap_or_else(|e| panic!("POST {path}: {e}"));
+        let status = resp.status().as_u16();
+        (status, resp.bytes().await.map(|b| b.to_vec()).unwrap_or_default())
+    }
+
     /// POST raw bytes (a clip, say): the status and the JSON body (`null` if none).
     pub async fn post_bytes(&self, path: &str, content_type: &str, bytes: Vec<u8>) -> (u16, Value) {
         let resp = self
