@@ -147,6 +147,55 @@ pub(crate) async fn model_of(
     turn_model_of(&models, (member.model.clone(), pet), standing.as_deref(), asker)
 }
 
+/// The model an app's page declares for `member` (SKILL.md `model:`), when
+/// it can run now: the standing model of a turn at that app, in front of the
+/// agent's own. `None`: no app, none declared, or the declared one cannot
+/// run (and the session may switch). The one reader of it — a turn
+/// (`handler::resolve_effective_model`) and the "Default" label
+/// ([`default_model_of`]) both ask here.
+pub(crate) async fn app_standing_model(
+    manager: &AgentManager,
+    app: Option<&str>,
+    member: &str,
+    may_switch: bool,
+) -> Option<String> {
+    let skill = manager.skills.reload_one(app?).await?;
+    manager.app_model_id(member, &skill, may_switch).await
+}
+
+/// The model session `session_id` runs on when nobody picks one — what its
+/// model picker's "Default" names: the answering member's turn with the
+/// session's kept model left out (the companion keeps her Pet setting),
+/// standing on the app's declared model, else the agent's own chain, asked
+/// as `asker`. `None`: no model that `asker` may run.
+///
+/// An owner's turn at the session's app only: another person's apps are
+/// decided by their own policy at the turn, which this does not read.
+pub(crate) async fn default_model_of(
+    manager: &AgentManager,
+    session_id: &str,
+    asker: crate::engine::model_choice::Asker<'_>,
+) -> Option<Choice> {
+    let meta = manager.global_sessions.get_session_meta(session_id).ok().flatten()?;
+    let root = std::path::PathBuf::from(&meta.cwd);
+    let members = of_session(manager, session_id).await;
+    let id = default_responder(&members);
+    let may_switch = manager.session_may_switch(session_id);
+    let app = super::turn_place::of_session_id(manager, session_id).skill;
+    let app = app.filter(|_| matches!(asker, crate::engine::model_choice::Asker::Owner));
+    let app_model = app_standing_model(manager, app.as_deref(), &id, may_switch).await;
+    let pet = match is_companion(&id) {
+        true => crate::server::resident::resolve_pet_model(&manager.get_config_snapshot().await.pet.model),
+        false => None,
+    };
+    let standing = match app_model {
+        Some(model) => Some(model),
+        None => manager.agent_model_id(&root, &id).await,
+    };
+    let models = manager.models.read().await.clone();
+    turn_model_of(&models, (None, pet), standing.as_deref(), asker)
+}
+
 /// [`model_of`] on the facts: the kept and the Pet models, the agent's own.
 pub(crate) fn turn_model_of(
     models: &crate::provider::models::ModelManager,

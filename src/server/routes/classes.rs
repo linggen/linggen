@@ -40,6 +40,7 @@ pub(crate) const CLASSES: &[(&str, &str, RouteClass)] = &[
     ("POST", "/api/chat/compact", At(Chat)),
     ("POST", "/api/sessions", At(Chat)),
     ("GET", "/api/sessions/day", At(Chat)),
+    ("GET", "/api/sessions/default-model", At(Chat)),
     ("GET", "/api/notes", At(Chat)),
     ("GET", "/api/skill-sessions", At(Chat)),
     ("GET", "/api/skill-sessions/state", At(Chat)),

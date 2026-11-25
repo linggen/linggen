@@ -32,7 +32,8 @@ test('chat fallbacks are chosen by hand and survive reload', async ({ page, worl
   await expectWebRtc(page, httpRequests);
   const summary = page.getByTestId('chat-fallback-summary');
   await expect(summary).toHaveText('无备用');
-  await page.getByRole('button', { name: '改', exact: true }).click();
+  // The fallback's own 改 (the region line has one too).
+  await page.locator('[aria-controls="chat-fallback-editor"]').click();
   const add = page.getByRole('combobox', { name: '添加备用' });
   const rows = page.getByTestId('chat-fallback');
   const eye = rows.and(page.locator('[data-model="fake-eye"]'));
@@ -60,7 +61,7 @@ test('chat fallbacks are chosen by hand and survive reload', async ({ page, worl
   await expectWebRtc(page, httpRequests);
   await expect(summary).toContainText('→');
   await expect(toggle).toBeChecked();
-  await page.getByRole('button', { name: '改', exact: true }).click();
+  await page.locator('[aria-controls="chat-fallback-editor"]').click();
   await expect(rows.nth(0)).toHaveAttribute('data-model', 'fake-sol');
   await expect(rows.nth(0)).toContainText('模型已不在配置中');
   await expect(rows.nth(1)).toHaveAttribute('data-model', 'fake-eye');

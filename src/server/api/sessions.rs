@@ -683,6 +683,26 @@ pub(crate) fn running_work(runs: &[AgentRunRecord], tasks: &[BackgroundTask]) ->
     }
 }
 
+#[derive(Deserialize)]
+pub(crate) struct DefaultModelQuery {
+    session_id: String,
+}
+
+/// GET /api/sessions/default-model?session_id= — the model a turn of this
+/// session runs on when no model is picked: what the picker's "Default"
+/// names. Decided by the turn's own rule (`members::default_model_of`); the
+/// page never works it out. `model` is null when there is none.
+pub(crate) async fn default_model_api(
+    State(state): State<Arc<ServerState>>,
+    Query(query): Query<DefaultModelQuery>,
+) -> impl IntoResponse {
+    let given = crate::server::people::household_person_of_session(&state, &query.session_id)
+        .map(|person| crate::server::people::current().ceiling_of(&person, &[]).models);
+    let by = crate::engine::model_choice::AskedBy::of(given);
+    let choice = crate::server::chat::members::default_model_of(&state.manager, &query.session_id, by.asker()).await;
+    Json(serde_json::json!({ "model": choice.map(|c| c.model().to_string()) }))
+}
+
 /// GET /api/sessions/running — what deleting this session would stop.
 pub(crate) async fn running_work_api(
     State(state): State<Arc<ServerState>>,

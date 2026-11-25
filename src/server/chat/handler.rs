@@ -671,13 +671,7 @@ pub(super) async fn resolve_effective_model(
 ) {
     use crate::engine::model_choice::{self, Rule};
     let may_switch = engine.switching(session_id).session_allows();
-    let standing = match app {
-        Some(name) => match manager.skills.reload_one(name).await {
-            Some(skill) => manager.app_model_id(member, &skill, may_switch).await,
-            None => None,
-        },
-        None => None,
-    };
+    let standing = super::members::app_standing_model(manager, app, member, may_switch).await;
     let choice = model_choice::resolve(
         &engine.model_manager,
         asked.id(),
@@ -1819,6 +1813,7 @@ mod tests {
                 vec![],
                 &crate::credentials::Credentials::default(),
             ));
+            let cfg = EngineConfig::from_app_config(&config, root.path().into(), InterfaceMode::Web);
             let mut engine = AgentEngine::new(cfg, models, "gpt-6-luna".into(), AgentRole::Lead).unwrap();
             engine.set_spec("ling".into(), spec.clone(), body.clone());
             engine.set_manager_context(manager.clone());
@@ -1842,6 +1837,80 @@ mod tests {
             let pick = meta.member("ling").and_then(|m| m.model.as_deref());
             let want_pick = kept.then_some("ghost-model");
             assert_eq!(pick, want_pick, "the pick: config {config_on}, session {session_switch:?}");
+        }
+    }
+
+    /// The picker's "Default" names the model the session's turn runs on
+    /// with nothing picked — the one rule, not the routing list's first
+    /// entry. Here the first routing default has no key (so the turn passes
+    /// over it), and an app's SKILL.md declares a model of its own: the
+    /// label and the turn must agree in a plain chat and at the app.
+    #[tokio::test]
+    async fn the_default_label_names_the_model_the_turn_runs_on() {
+        use super::{resolve_effective_model, TurnModel};
+        use crate::engine::agent::AgentManager;
+        use crate::engine::model_choice::Asker;
+        use crate::engine::{AgentEngine, AgentRole, EngineConfig, InterfaceMode};
+        use std::sync::Arc;
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("agents")).unwrap();
+        let ling = "---\nname: ling\ndescription: d\ntools: []\n---\nYou are ling.\n";
+        std::fs::write(root.path().join("agents/ling.md"), ling).unwrap();
+        let (spec, body) = crate::extensions::agents::parse_agent_markdown(ling).unwrap();
+        let model = |id: &str, key: Option<&str>| -> crate::config::ModelConfig {
+            serde_json::from_value(serde_json::json!({
+                "id": id, "provider": "openai", "url": "https://api.example.com/v1",
+                "model": id, "api_key": key,
+                // A ChatGPT sign-in this scratch home does not have: the
+                // first routing default cannot run now.
+                "auth_mode": if key.is_some() { "api_key" } else { "chatgpt_oauth" },
+            }))
+            .unwrap()
+        };
+        let mut config = crate::config::Config::default();
+        config.models = vec![model("m-route", None), model("m-other", Some("sk-x")), model("m-app", Some("sk-x"))];
+        config.routing.default_models = vec!["m-route".into(), "m-other".into()];
+        config.routing.model_fallback = true;
+        let app = crate::extensions::skills::parse_skill_text(
+            "---\nname: cfo\ndescription: d\nmodel: m-app\n---\nBody.",
+            crate::engine::skill::SkillSource::Global,
+        )
+        .unwrap();
+        let (mut manager, _events) = AgentManager::new(
+            config.clone(),
+            None,
+            Arc::new(crate::engine::test_registries::Installed(vec![app])),
+            Arc::new(crate::extensions::agents::AgentLoader::new()),
+            Arc::new(crate::engine::test_registries::Empty),
+            InterfaceMode::Web,
+        );
+        Arc::get_mut(&mut manager).expect("a fresh manager").global_sessions =
+            crate::state_fs::SessionStore::leaked(root.path().join("sessions"));
+        let models = Arc::new(crate::provider::models::ModelManager::new_with_credentials(
+            vec![],
+            &crate::credentials::Credentials::default(),
+        ));
+        for (session, skill, want) in [("s-plain", None, "m-other"), ("s-app", Some("cfo"), "m-app")] {
+            manager
+                .global_sessions
+                .add_session(&crate::state_fs::sessions::SessionMeta {
+                    id: session.into(),
+                    skill: skill.map(Into::into),
+                    cwd: root.path().to_string_lossy().into_owned(),
+                    ..Default::default()
+                })
+                .unwrap();
+            let named = crate::server::chat::members::default_model_of(&manager, session, Asker::Owner)
+                .await
+                .map(|c| c.model().to_string());
+            let cfg = EngineConfig::from_app_config(&config, root.path().into(), InterfaceMode::Web);
+            let mut engine = AgentEngine::new(cfg, models.clone(), "m-route".into(), AgentRole::Lead).unwrap();
+            engine.set_spec("ling".into(), spec.clone(), body.clone());
+            engine.set_manager_context(manager.clone());
+            engine.read_changes_if_any(&manager).await;
+            resolve_effective_model(&mut engine, Asker::Owner, &TurnModel::Default, (Some(session), "ling"), &manager, skill).await;
+            assert_eq!(engine.model_id, want, "the turn of {session}");
+            assert_eq!(named.as_deref(), Some(want), "the label of {session}");
         }
     }
 

@@ -207,6 +207,8 @@ One rule, `engine/model_choice::resolve(asked, standing, rule)`, for a chat turn
 
 `AgentEngine::run_on` is the one writer of a turn's model; a lock test fails on any other.
 
+The chat bar's "Default (…)" is that rule with nothing asked, for this session: the app's declared `model:` (`members::app_standing_model`, read by the turn too), else the agent's chain. The page asks `GET /api/sessions/default-model?session_id=` and words the answer; it never reads the routing list itself.
+
 ## Auto-fallback
 
 Fallback is on by default. Use the chat row’s switch in Settings → Models or set `model_fallback = false` under `[routing]` to turn it off. The retired `auto_fallback` key is ignored and never saved.

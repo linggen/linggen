@@ -49,7 +49,7 @@ for (const [width, theme] of [[1280, 'light'], [420, 'light'], [1280, 'dark'], [
     await shot('claude');
 
     const summary = page.getByTestId('chat-fallback-summary');
-    await page.getByRole('button', { name: '改', exact: true }).click();
+    await page.locator('[aria-controls="chat-fallback-editor"]').click();
     const add = page.getByRole('combobox', { name: '添加备用' });
     const sonnet = row.getByRole('checkbox', { name: 'Sonnet', exact: true });
     await sonnet.click();

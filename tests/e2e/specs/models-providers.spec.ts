@@ -249,6 +249,9 @@ test.describe('a narrow window', () => {
 });
 
 test.describe('the region', () => {
+  // As the other key tests: the Anthropic endpoint already has a row to paste the key on.
+  test.use({ scenario: { families: { today: '2026-11-23', lists: LISTS }, configAppend: PINNED_OPUS } });
+
   test('choosing mainland changes what is offered; a provider already connected stays, marked kept', async ({ page, world, httpRequests }) => {
     await openModels(page, world, httpRequests);
     const anthropic = provider(page, 'Anthropic');

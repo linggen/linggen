@@ -373,6 +373,15 @@ pub fn next_down(
         })
 }
 
+impl crate::engine::agent::AgentManager {
+    /// The session's own switch, read for a call made outside a turn (the
+    /// "Default" label asks what the turn would). [`AgentEngine::switching`]
+    /// reads it through here: the one reader of a stored session's switch.
+    pub fn session_may_switch(&self, session_id: &str) -> bool {
+        self.global_sessions.model_fallback_allowed(session_id)
+    }
+}
+
 impl AgentEngine {
     /// Start a turn on the machine as it is now: the models as they are (a
     /// model registered after this engine was built — a room's proxy model,
@@ -390,7 +399,7 @@ impl AgentEngine {
     /// [`Self::read_live_state`].
     pub fn switching(&self, session_id: Option<&str>) -> Switching {
         let session = match (self.tools.get_manager(), session_id) {
-            (Some(manager), Some(id)) => manager.global_sessions.model_fallback_allowed(id),
+            (Some(manager), Some(id)) => manager.session_may_switch(id),
             _ => true,
         };
         Switching {

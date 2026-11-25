@@ -41,8 +41,8 @@ const LISTED: &[(&str, usize, &str)] = &[
     // A session's settings written by a door, not their owner.
     (
         "src/server/chat/handler.rs",
-        5,
-        "ChatRequest's session and agent",
+        6,
+        "ChatRequest's session and agent; two tests give their manager a session store",
     ),
     (
         "crates/linggen-engine/src/extensions/missions/enter.rs",

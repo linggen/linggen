@@ -14,6 +14,8 @@ import { apiErrorMessage } from '../../lib/api';
 import { sessionApi } from '../../lib/endpoints';
 import { EFFORT_WORD } from '../../lib/effortChip.mts';
 import { W } from '../../lib/modelsWords.mts';
+import { defaultOptionText, modelInUse } from '../../lib/defaultModel.mts';
+import { useSessionDefaultModel } from '../../hooks/useSessionDefaultModel';
 
 const control = 'h-6 shrink-0 text-[11px] border border-slate-200 dark:border-white/10 rounded px-1.5 bg-white dark:bg-black/30';
 import type { SessionInfo } from '../../types';
@@ -39,6 +41,20 @@ export const SessionStats: React.FC = () => {
   );
 };
 
+/** What the engine's default model for a session may follow: the routing list,
+ *  each model's sign-in, and the session's own skill and switch. A change in
+ *  any asks the engine again. */
+const engineDefaultChanged = (
+  defaultModels: string[],
+  models: { id: string; auth_ok?: boolean }[],
+  session: SessionInfo | undefined,
+) => [
+  defaultModels.join(),
+  models.map((m) => `${m.id}:${m.auth_ok}`).join(),
+  session?.skill ?? '',
+  session?.model_fallback === false ? 'fixed' : '',
+].join('|');
+
 /** Compact per-session model selector shown in the run bar. */
 export const SessionModelSelector: React.FC = () => {
   const models = useServerStore((s) => s.models);
@@ -58,9 +74,11 @@ export const SessionModelSelector: React.FC = () => {
   // the engine's readable name, with the source as a small tag (the rule the
   // Models page follows).
   const nameOf = (id: string) => models.find((m) => m.id === id)?.name ?? id;
-  const defaultLabel = isConsumer
-    ? (models[0] ? nameOf(models[0].id) : 'shared')
-    : (defaultModels.length > 0 ? nameOf(defaultModels[0]) : 'default');
+  // The engine names the model a turn runs on when nothing is picked (the
+  // turn's own rule); the page does not work it out from the routing list. A
+  // room's consumer cannot ask: the server gives them the first shared model.
+  const engineDefault = useSessionDefaultModel(isConsumer ? null : sessionId, engineDefaultChanged(defaultModels, models, session));
+  const defaultLabel = defaultOptionText(isConsumer ? models[0]?.id : engineDefault, nameOf);
 
   if (isOldClaude(session)) return null;
 
@@ -93,7 +111,7 @@ export const SessionModelSelector: React.FC = () => {
       className={`${control} outline-none max-w-[14rem] min-w-0 truncate`}
       title="Session model override"
     >
-      <option value="">Default ({defaultLabel})</option>
+      <option value="">{defaultLabel}</option>
       {/* List every model explicitly — including the global default. With the
           per-skill `model:` tier, "Default" resolves to the skill's pinned
           model for app sessions, so the global default must be selectable on
@@ -101,7 +119,7 @@ export const SessionModelSelector: React.FC = () => {
           switch off it (the only escape is an explicit, non-"Default" pin). */}
       {models.map((m) => (
         <option key={m.id} value={m.id}>
-          {m.name ?? m.id}{m.provided_by ? ` (${m.provided_by})` : ''}{defaultModels[0] === m.id ? ' — default' : ''}{m.auth_ok === false ? ' — sign in required' : ''}
+          {m.name ?? m.id}{m.provided_by ? ` (${m.provided_by})` : ''}{engineDefault === m.id ? ' — default' : ''}{m.auth_ok === false ? ' — sign in required' : ''}
         </option>
       ))}
     </select>
@@ -117,8 +135,9 @@ export const SessionEffortChip: React.FC = () => {
   const sessionModel = useUiStore((s) => s.sessionModel);
   const sessionId = useSessionStore((s) => s.activeSessionId);
   const session = useSessionStore((s) => s.allSessions.find((item) => item.id === s.activeSessionId));
+  const engineDefault = useSessionDefaultModel(sessionId, engineDefaultChanged(defaultModels, models, session));
   if (!sessionId || !session || isOldClaude(session)) return null;
-  const model = models.find((item) => item.id === (sessionModel ?? defaultModels[0]));
+  const model = models.find((item) => item.id === modelInUse(sessionModel, engineDefault));
   if (!model?.effort?.length) return null;
   const change = (value: string) => {
     const previous = session.effort ?? null;
