@@ -177,7 +177,9 @@ pub async fn run(rollback: bool, engine: (String, u16)) -> Result<()> {
         );
         true
     } else {
-        update().await?
+        update()
+            .await
+            .inspect_err(|e| crate::telemetry::global().error("update", update_error_code(e)))?
     };
     engine_restart::report_others(&found);
     if !swapped {
@@ -213,9 +215,25 @@ async fn update() -> Result<bool> {
     update_binary(&client, &source, "ling", Some(current_version), None).await
 }
 
+/// The coarse cause of a failed update, for the usage digest
+/// (`error.update.<code>`): which step broke, never what the error said.
+fn update_error_code(e: &anyhow::Error) -> &'static str {
+    let text = format!("{e:#}");
+    if text.contains("integrity check") || text.contains("sha256") {
+        "verify"
+    } else if text.contains("failed to start") {
+        "start"
+    } else if text.contains("Failed to download") || text.contains("HTTP") {
+        "download"
+    } else {
+        "other"
+    }
+}
+
 /// A fetch problem: the default path reports it and exits cleanly (as it
 /// always has); an override is a test run, so it fails loudly.
 fn soft_fail(source: &ReleaseSource, msg: String) -> Result<bool> {
+    crate::telemetry::global().error("update", "manifest");
     if source.is_override() {
         anyhow::bail!(msg);
     }
@@ -711,6 +729,15 @@ mod tests {
         let short = Duration::from_millis(300);
         assert!(install_tarball(&bytes, digest, dir.path(), "ling", short).is_err());
         assert_eq!(version_in(dir.path(), "ling"), "1.0.0");
+    }
+
+    #[test]
+    fn an_update_error_is_a_coarse_cause_never_its_words() {
+        let code = |m: &str| update_error_code(&anyhow::anyhow!(m.to_string()));
+        assert_eq!(code("[ling] Download failed its integrity check (sha256 ab, expected cd)"), "verify");
+        assert_eq!(code("[ling] The new binary failed to start (exit 1)"), "start");
+        assert_eq!(code("https://x/y: HTTP 503"), "download");
+        assert_eq!(code("/home/me/secret: permission denied"), "other");
     }
 
     #[test]

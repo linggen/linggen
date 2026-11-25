@@ -115,18 +115,30 @@ impl Telemetry {
     /// the enum charset defensively so a dynamically built code can never
     /// smuggle content into a count key.
     pub fn error(&self, stage: &str, code: &str) {
-        let code: String = code
-            .to_ascii_lowercase()
-            .chars()
-            .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
-            .take(32)
-            .collect();
-        let code = if code.is_empty() {
-            "other".to_string()
-        } else {
-            code
-        };
-        self.bump(&format!("error.{stage}.{code}"));
+        self.bump(&format!("error.{stage}.{}", slug(code)));
+    }
+
+    /// Count a use: `use.<app>.<verb>.<surface>`. `app` is normalized like an
+    /// error code; `verb` and `surface` are ours (a closed word, an enum).
+    pub fn used(&self, app: &str, verb: &str, surface: crate::telemetry::Surface) {
+        self.bump(&use_key(app, verb, surface));
+    }
+
+    /// Send a one-time milestone, the first time only on this machine: the
+    /// latch is saved before the POST, so a crash never sends it twice.
+    pub fn step(&self, step: crate::telemetry::Step) {
+        if !self.inner.enabled || self.inner.installation_id.is_empty() {
+            return;
+        }
+        let state_path = state_path(&self.inner.data_dir, self.inner.product);
+        let mut state = load_state(&state_path).unwrap_or_default();
+        let name = step.as_str();
+        if state.steps.iter().any(|s| s == name) {
+            return;
+        }
+        state.steps.push(name.to_string());
+        let _ = save_state(&state_path, &state);
+        self.spawn_post("step", Some(serde_json::json!({ "step": name })));
     }
 
     /// Ship every completed day as one `digest` event. A day is held in
@@ -285,6 +297,31 @@ struct State {
     /// fired. Compared against `today_utc_day()` to gate per-day dedup.
     #[serde(default)]
     last_command_day: i64,
+    /// `step` milestones already sent from this machine (one send each).
+    #[serde(default)]
+    steps: Vec<String>,
+}
+
+/// `use.<app>.<verb>.<surface>`: the shape the receiver's `isUseKey` accepts.
+fn use_key(app: &str, verb: &str, surface: crate::telemetry::Surface) -> String {
+    format!("use.{}.{verb}.{}", slug(app), surface.as_str())
+}
+
+/// A count-key segment from free input: lower case `[a-z0-9_-]`, 32 chars,
+/// `other` when nothing is left — a dynamically built word can never smuggle
+/// content into a count key.
+fn slug(word: &str) -> String {
+    let slug: String = word
+        .to_ascii_lowercase()
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
+        .take(32)
+        .collect();
+    if slug.is_empty() {
+        "other".to_string()
+    } else {
+        slug
+    }
 }
 
 /// Days since 1970-01-01 UTC. Used as the daily-dedup key for the
@@ -393,5 +430,35 @@ fn platform_name() -> &'static str {
         "windows"
     } else {
         "unknown"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::telemetry::Surface;
+
+    #[test]
+    fn a_use_key_is_app_verb_surface_and_never_free_text() {
+        assert_eq!(use_key("dj", "open", Surface::MacUi), "use.dj.open.mac_ui");
+        assert_eq!(
+            use_key("My Skill/../x", "open", Surface::MacUi),
+            "use.myskillx.open.mac_ui"
+        );
+        assert_eq!(use_key("", "turn", Surface::Phone), "use.other.turn.phone");
+        let long = use_key(&"a".repeat(80), "open", Surface::Other);
+        assert_eq!(long, format!("use.{}.open.other", "a".repeat(32)));
+    }
+
+    #[test]
+    fn a_milestone_is_a_closed_name() {
+        assert_eq!(crate::telemetry::Step::PhonePaired.as_str(), "phone_paired");
+    }
+
+    #[test]
+    fn surfaces_are_the_receivers_words() {
+        // linggensite analyticsSchema.ts SURFACES: phone | mac_ui | other, among others.
+        let names = [Surface::MacUi, Surface::Phone, Surface::Other].map(Surface::as_str);
+        assert_eq!(names, ["mac_ui", "phone", "other"]);
     }
 }

@@ -125,7 +125,15 @@ async fn prepare_server(
     // Bound before the background tasks start: one of them connects the
     // built-in memory MCP server, which is this port (`memory_host`). Until
     // `axum::serve` runs, connections wait in the backlog.
-    let listener = tokio::net::TcpListener::bind(format!("{}:{}", host, port)).await?;
+    let listener = tokio::net::TcpListener::bind(format!("{}:{}", host, port))
+        .await
+        .inspect_err(|e| {
+            let code = match e.kind() {
+                std::io::ErrorKind::AddrInUse => "port_in_use",
+                _ => "bind",
+            };
+            crate::telemetry::global().error("start", code);
+        })?;
 
     // Who is met, settled before anything can ask or bind: an agent that
     // appears only once met is latched now when it already has history here

@@ -22,6 +22,7 @@ pub(super) fn routes() -> Routes {
             }),
         )
         // A skill script bringing its app's page up (no model turn for RunApp).
+        // Opens are counted where the page is served (`serve_app_file`), not here.
         .route("/api/apps/launch", post(api::app_launch::launch))
         .route("/api/skill-cloud/{skill}", get(api::skill_cloud::get_cloud))
         .route(

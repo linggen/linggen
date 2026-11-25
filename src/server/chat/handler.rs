@@ -1036,6 +1036,23 @@ pub(crate) enum TurnOrigin {
     LocalPerson,
 }
 
+/// Where a chat message came from, for the usage count: this Mac's own page,
+/// a paired phone (its token, or the tunnel naming it), or any other door.
+fn turn_surface(
+    peer: std::net::SocketAddr,
+    headers: &axum::http::HeaderMap,
+    origin: TurnOrigin,
+) -> crate::telemetry::Surface {
+    use crate::telemetry::Surface;
+    if matches!(crate::memory_host::caller::resolve(peer.ip(), headers), crate::memory_host::caller::Caller::Phone(_)) {
+        return Surface::Phone;
+    }
+    match origin {
+        TurnOrigin::LocalPerson => Surface::MacUi,
+        TurnOrigin::Person | TurnOrigin::Resumed => Surface::Other,
+    }
+}
+
 pub(crate) async fn chat_handler(
     State(state): State<Arc<ServerState>>,
     axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<std::net::SocketAddr>,
@@ -1050,6 +1067,10 @@ pub(crate) async fn chat_handler(
     } else {
         TurnOrigin::Person
     };
+    // A person's chat message, counted by where it came from (the digest's
+    // `use.chat.turn.<surface>`). Only this door: the avatar's door, missions
+    // and the engine's own starts are not a person at a surface.
+    crate::telemetry::global().used("chat", "turn", turn_surface(peer, &headers, origin));
     start_turn(state, req, origin).await
 }
 
@@ -1726,6 +1747,23 @@ pub(crate) async fn start_turn(
 
 #[cfg(test)]
 mod tests {
+    /// The usage count names a chat message's surface: this Mac's own page,
+    /// else (an unknown token or device, a non-phone door) `other`. A paired
+    /// phone is `Caller::Phone` (`memory_host::caller` tests hold that).
+    #[test]
+    fn a_chat_messages_surface_is_this_macs_page_or_other() {
+        use super::{turn_surface, TurnOrigin};
+        use crate::telemetry::Surface;
+        let at = |ip: &str| std::net::SocketAddr::new(ip.parse().unwrap(), 9527);
+        let none = axum::http::HeaderMap::new();
+        assert_eq!(turn_surface(at("127.0.0.1"), &none, TurnOrigin::LocalPerson), Surface::MacUi);
+        assert_eq!(turn_surface(at("127.0.0.1"), &none, TurnOrigin::Person), Surface::Other);
+        assert_eq!(turn_surface(at("192.168.1.9"), &none, TurnOrigin::Person), Surface::Other);
+        let mut ghost = axum::http::HeaderMap::new();
+        ghost.insert("x-linggen-device", "no-such-token".parse().unwrap());
+        assert_eq!(turn_surface(at("192.168.1.9"), &ghost, TurnOrigin::Person), Surface::Other);
+    }
+
     /// A door asks `model_choice::Switching::session_allows`: an asked model
     /// this machine lacks gives way to the standing one, and the pick is
     /// cleared, unless the SESSION's switch is off — then it is kept and the
