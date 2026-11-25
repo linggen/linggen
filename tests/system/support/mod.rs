@@ -78,7 +78,7 @@ pub struct Setup {
     /// Text appended to the rendered config before the engine starts (an
     /// extra `[[models]]` block, say). Rendered like the fixture files.
     pub config_append: Option<&'static str>,
-    /// Leave `[memory]` to the engine's own defaults (v2 since 3.0). Unset:
+    /// Leave `[memory]` to the engine's own defaults (v1; v2 is opt-in). Unset:
     /// the world is pinned to the old v1 memory, unless `config_append`
     /// writes a `[memory]` section of its own — most tests are about
     /// something else and were written against v1.

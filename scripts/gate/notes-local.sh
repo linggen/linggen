@@ -3,10 +3,12 @@
 # (vm/notes.sh holds the checks; the VM runs the same ones on a real install
 # and a real upgrade). Three homes, each its own engine on a free port:
 #
-#   fresh      no config: ends on v2, nothing to move
+#   fresh      no config: ends on v1 (the default; v2 is opt-in in 2.7), nothing moved
 #   old, v1    a home with v1 rows and `[memory]` written as v1: stays v1
-#   old, v2    the same home with the section taken out (the default): the rows
-#              move into notes once; a second start moves nothing again
+#   old, dflt  the same home with the section taken out (the default, as an
+#              upgrade from 2.6.1 leaves it): stays v1, nothing moved
+#   old, v2    the same home with `[memory]` written as v2: the rows move into
+#              notes once; a second start moves nothing again
 #
 # Usage: scripts/gate/notes-local.sh <ling binary>
 # Prints the gate's RESULT lines (vm/common.sh); the last line is GATE_EXIT.
@@ -148,17 +150,24 @@ scenario_old() {
 
   # The default: the section taken out, as an upgrade from 2.6.1 leaves it.
   write_config ""
+  engine_up default
+  check "notes (old home, default): the engine starts on the old home" $? "no health on $EP — $(tail -3 "$OUT/engine-default.log")" "port $EP"
+  notes_stays_v1 "upgrade on the default stays v1 (scratch engine)" "$WORK"
+  engine_down
+
+  # Written as v2 (opt-in): the old rows move into notes once.
+  write_config $'[memory]\nlinggen = "v2"\noutside_agents = "v2"'
   engine_up v2
-  check "notes (old home, default): the engine starts on the old home" $? "no health on $EP — $(tail -3 "$OUT/engine-v2.log")" "port $EP"
-  notes_moved "upgrade from v1 (scratch engine)" "$TK_IDS"
-  notes_door "upgrade from v1 (scratch engine)"
-  notes_prompts "upgrade from v1 (scratch engine)" yes "$WORK"
+  check "notes (old home, v2): the engine starts on the old home" $? "no health on $EP — $(tail -3 "$OUT/engine-v2.log")" "port $EP"
+  notes_moved "explicit v2 on a v1 home (scratch engine)" "$TK_IDS"
+  notes_door "explicit v2 on a v1 home (scratch engine)"
+  notes_prompts "explicit v2 on a v1 home (scratch engine)" yes "$WORK"
   # Once: a second start looks at the record and moves nothing again.
   before="$(cat "$NOTES_MOVED" 2>/dev/null)"; notes_before="$(notes_files | xargs -I{} shasum "$NOTES/{}" 2>/dev/null | shasum)"
   engine_down; engine_up v2-again
   after="$(cat "$NOTES_MOVED" 2>/dev/null)"
   [ -n "$before" ] && [ "$before" = "$after" ] && [ "$notes_before" = "$(notes_files | xargs -I{} shasum "$NOTES/{}" 2>/dev/null | shasum)" ]
-  check "upgrade from v1 (scratch engine): a second start moves nothing again" $? "record or notes changed on the second start" "record and every note file as before"
+  check "explicit v2 on a v1 home (scratch engine): a second start moves nothing again" $? "record or notes changed on the second start" "record and every note file as before"
   engine_down
 }
 

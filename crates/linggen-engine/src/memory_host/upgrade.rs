@@ -1,5 +1,5 @@
 //! The move from the v1 store to the notes, at the engine's start: once, when
-//! the person's memory is v2 (the default since 3.0), a v1 store has rows and
+//! the person's memory is written as v2 (opt-in), a v1 store has rows and
 //! no note exists yet. What moves, and the one-time record, is
 //! `own_memory::migrate`; this is only where the rows come from — the store
 //! this process hosts — and the log line.

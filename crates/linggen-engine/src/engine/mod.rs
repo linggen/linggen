@@ -2364,9 +2364,8 @@ mod member_tests {
         let v1_tool = "mcp__memory__memory_add";
         for md in [include_str!("../../../../agents/ling.md"), include_str!("../../../../agents/yinyue.md")] {
             let mut person = spec_engine("ling", md);
-            // v2 is the default; v1, set in the config, is byte for byte what it was.
-            assert_eq!(person.cfg.memory_linggen, Mode::V2);
-            person.cfg.memory_linggen = Mode::V1;
+            // v1, the default: byte for byte what it was.
+            assert_eq!(person.cfg.memory_linggen, Mode::V1);
             assert!(person.is_withheld(TOOL) && !person.is_withheld(v1_tool));
             assert!(!person.allowed_tool_names().is_some_and(|set| set.contains(TOOL)));
             assert!(!person.offered_tool_definitions(person.allowed_tool_names().as_ref()).iter().any(|d| d["function"]["name"] == TOOL));

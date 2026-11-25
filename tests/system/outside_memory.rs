@@ -1,7 +1,7 @@
 //! Linggen reads what other agents remember and forwards it, through the
 //! MCP door's `memory_agents` tool (doc/mcp-spec.md § memory_agents), and
 //! `[memory] outside_agents` says whether outside hosts get that (v2) or
-//! today's save-and-recall (v1, the way back; v2 is the default since 3.0).
+//! today's save-and-recall (v1, the default; v2 is opt-in).
 //!
 //! The folders are made-up fixtures in the world's own home.
 
@@ -91,11 +91,11 @@ async fn with_v1_outside_hosts_are_served_the_old_way_and_the_tool_still_reads()
     }
 }
 
-/// Nothing written in the config: the door says v2.
+/// Nothing written in the config: the door says v1 (v2 is opt-in).
 #[tokio::test]
-async fn by_default_the_door_says_v2() {
+async fn by_default_the_door_says_v1() {
     let w = World::start(Setup { memory_defaults: true, ..Setup::default() }).await;
-    assert_eq!(agents(&w, json!({"op": "mode"})).await.unwrap()["outside_agents"], "v2");
+    assert_eq!(agents(&w, json!({"op": "mode"})).await.unwrap()["outside_agents"], "v1");
 }
 
 /// v2: the door says so, the server text no longer asks a host to save into

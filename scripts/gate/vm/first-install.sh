@@ -54,8 +54,8 @@ check "memory: the engine is the one listener on $EP" $? "$PORT_DETAIL" "$PORT_D
 mcp_answers "$ENGINE_MEM/mcp"
 check "memory: $EP/mem/mcp initialize + tools/list" $? "$MCP_DETAIL" "$MCP_DETAIL"
 
-# Since 3.0 the person's memory is Linggen's own notes unless the config says
-# v1: a fresh home ends on v2 with nothing to move (notes.sh).
+# Memory V2 is opt-in in 2.7: a fresh home ends on v1 with nothing moved and
+# no notes served (notes.sh).
 notes_fresh "first install: notes"
 
 # ── One chat turn on the fake model ────────────────────────────────────────

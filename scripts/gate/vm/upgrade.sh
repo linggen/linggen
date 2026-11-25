@@ -147,12 +147,16 @@ check "upgrade: memory answers through the engine after a restart" $? "no ok fro
 nothing_on "$LP"
 check "upgrade: nothing listens on the old port $LP" $? "$PORT_DETAIL" "$PORT_DETAIL"
 
-# Memory V2 is the default since 3.0: the old home's rows were moved into
-# notes once, at that start, and the home ends on v2 (notes.sh). The rows
-# seeded through the baseline are in $TK_IDS.
-notes_moved "upgrade: notes" "$TK_IDS" "$NOTES_RECORD_BEFORE"
-notes_door "upgrade: notes"
-notes_prompts "upgrade: notes" yes
+# Memory V2 is opt-in in 2.7: an upgrade with no `[memory]` written as v2
+# stays on v1 and moves nothing (notes.sh). The move itself, written as v2, is
+# rehearsed on the host (notes-local.sh). The VM is not switched to v2 here: a
+# green run is kept as the next baseline, which must still be an un-moved v1
+# home. A baseline that already holds the record or notes is a GAP.
+if [ "$NOTES_RECORD_BEFORE" = 1 ]; then
+  gap "upgrade: notes: an upgrade on the default stays v1, nothing moved" "the baseline already holds .state/moved-from-v1.json (it ran v2 before)"
+else
+  notes_stays_v1 "upgrade: notes (the default)"
+fi
 
 "$LING" status >"$OUT/status.txt" 2>&1
 grep -q 'fake-ling' "$OUT/status.txt" || grep -qiE 'models?[^0-9]*[1-9]' "$OUT/status.txt"

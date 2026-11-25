@@ -614,9 +614,9 @@ fn an_app_is_given_the_index_alone_and_the_person_only_when_it_has_core() {
 }
 
 #[test]
-fn the_switch_is_v2_unless_the_file_says_v1() {
+fn the_switch_is_v1_unless_the_file_says_v2() {
     use super::Mode;
-    assert_eq!(Mode::default(), Mode::V2);
+    assert_eq!(Mode::default(), Mode::V1);
     assert_eq!((Mode::V1.word(), Mode::V2.word()), ("v1", "v2"));
 }
 
