@@ -159,6 +159,9 @@ pub struct Filters {
     /// or digest. Implies `include_expired` (the members are archived by
     /// definition).
     pub superseded_by: Option<String>,
+    /// Leave out rows heat has silenced (`heat::silenced`): the automatic
+    /// recall sets it; an agent's own search does not.
+    pub unsilenced_only: bool,
 }
 
 impl Filters {
@@ -185,6 +188,7 @@ impl Filters {
             && self.source_session.is_none()
             && self.scope_root.is_none()
             && self.superseded_by.is_none()
+            && !self.unsilenced_only
     }
 
     /// The rendered WHERE clause, for tests outside this module.
@@ -531,7 +535,7 @@ async fn ensure_late_schema_additions(table: &lancedb::Table) -> Result<()> {
         .context("reading existing memory table schema")?;
     // Every column added after the initial schema, in add order:
     // `host` (2026-05-20), the archive pair (2026-08-17), the account pair
-    // (2026-09-08), the scope pair (2026-10-04).
+    // (2026-09-08), the scope pair (2026-10-04), the heat pair (2026-11-25).
     let late: &[(&str, DataType)] = &[
         ("host", DataType::Utf8),
         (
@@ -543,6 +547,8 @@ async fn ensure_late_schema_additions(table: &lancedb::Table) -> Result<()> {
         ("account_name", DataType::Utf8),
         ("summary", DataType::Utf8),
         ("indexed", DataType::Boolean),
+        ("recalled", DataType::UInt32),
+        ("used", DataType::UInt32),
     ];
     // A v1 table may carry a renamed column under its v1 name (`hook` for
     // `summary`); the 1→2 step renames it, so it is not added twice.
@@ -1463,6 +1469,9 @@ impl MemoryStore {
         }
         let mut facts = self.collect_query(q).await?;
         apply_origin_filter(&mut facts, filters.origin);
+        if filters.unsilenced_only {
+            facts.retain(|f| !super::heat::silenced(f));
+        }
 
         Ok(facts
             .into_iter()
@@ -1586,6 +1595,20 @@ impl MemoryStore {
         // atomic, no delete-then-insert window.
         self.upsert(&existing).await?;
         Ok(Some(existing))
+    }
+
+    /// Add to a row's heat counters (`memory::heat`). Bookkeeping, not an
+    /// edit: `updated_at` stays, so the row keeps its age and its place.
+    /// `None` when the id is not in this table.
+    pub async fn bump_heat(&self, id: &str, recalled: u32, used: u32) -> Result<Option<Memory>> {
+        let _guard = self.write_lock.lock().await;
+        let Some(mut row) = self.get(id).await? else {
+            return Ok(None);
+        };
+        row.recalled = row.recalled.saturating_add(recalled);
+        row.used = row.used.saturating_add(used);
+        self.upsert(&row).await?;
+        Ok(Some(row))
     }
 
     /// [`Self::update`] without touching `updated_at` — for bookkeeping
@@ -2118,6 +2141,7 @@ mod tests {
             scope_root: None,
             include_expired: false,
             superseded_by: None,
+            unsilenced_only: false,
             account: AccountScope::Owner,
         };
         let sql = f.to_sql().unwrap();
@@ -3234,7 +3258,7 @@ mod tests {
 
     /// Every column added after the first schema, in the order
     /// `ensure_late_schema_additions` adds them.
-    const LATE_COLUMNS: [&str; 7] = [
+    const LATE_COLUMNS: [&str; 9] = [
         "host",
         "expired_at",
         "superseded_by",
@@ -3242,10 +3266,12 @@ mod tests {
         "account_name",
         "summary",
         "indexed",
+        "recalled",
+        "used",
     ];
 
     /// A table from before every late column (the first schema, v2 names):
-    /// opening it adds all seven through lancedb's `add_columns`, the old
+    /// opening it adds all nine through lancedb's `add_columns`, the old
     /// rows read back as they were written, and the table takes writes that
     /// fill the new columns — on both tables, and again after a reopen.
     #[tokio::test]

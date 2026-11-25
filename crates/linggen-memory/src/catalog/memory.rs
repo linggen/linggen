@@ -142,7 +142,7 @@ pub const BRANCHES: &[Branch<&str>] = &[
         // recall sets it, so it is refused at once while memory warms
         // instead of waiting for the warm-up.
         extra: None,
-        hidden: &["min_score", "from", "outcome", "type", "skip_if_warming"],
+        hidden: &["min_score", "from", "outcome", "type", "skip_if_warming", "push"],
         stamps: &[Stamp::always("scope_root")],
         fixed: &[],
         check: None,
@@ -307,7 +307,7 @@ pub const BRANCHES: &[Branch<&str>] = &[
             })
         },
         extra: None,
-        hidden: &[],
+        hidden: &["bump_recalled", "bump_used"],
         stamps: &[],
         fixed: &[],
         check: None,

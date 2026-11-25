@@ -67,6 +67,7 @@ impl FilterDTO {
             scope_root: self.scope_root,
             include_expired: self.include_expired,
             superseded_by: self.superseded_by,
+            unsilenced_only: false,
         })
     }
 }
@@ -99,7 +100,8 @@ pub(in crate::ops) async fn search(state: &Memory, req: SearchRequest) -> Result
         .embed_query_serialized(req.query.clone())
         .await
         .map_err(MemError::internal)?;
-    let filters = req.filters.into_filters()?;
+    let mut filters = req.filters.into_filters()?;
+    filters.unsilenced_only = req.push;
 
     // Store-wide recall floor: when the client omits `min_score`, apply the
     // daemon's configured `recall_min_score` so every host shares one recall

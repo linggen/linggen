@@ -15,7 +15,7 @@ use anyhow::{anyhow, Context, Result};
 use arrow_array::{
     builder::{FixedSizeListBuilder, Float32Builder, ListBuilder, StringBuilder},
     Array, BooleanArray, FixedSizeListArray, ListArray, RecordBatch, StringArray,
-    TimestampMicrosecondArray,
+    TimestampMicrosecondArray, UInt32Array,
 };
 use arrow_schema::{DataType, Field, Schema, TimeUnit};
 use chrono::{DateTime, TimeZone, Utc};
@@ -92,6 +92,10 @@ pub fn build_schema() -> Arc<Schema> {
         // A v1 store names the first one `hook` (see [`LEGACY_RENAMES`]).
         Field::new("summary", DataType::Utf8, true),
         Field::new("indexed", DataType::Boolean, true),
+        // Heat pair (2026-11-25, `memory::heat`): pushed by recall / cited in
+        // a reply. NULL reads as 0.
+        Field::new("recalled", DataType::UInt32, true),
+        Field::new("used", DataType::UInt32, true),
     ]))
 }
 
@@ -215,6 +219,8 @@ pub fn memories_to_record_batch(facts: &[Memory]) -> Result<RecordBatch> {
     let vectors = build_vector_column(facts)?;
     let summaries = StringArray::from_iter(facts.iter().map(|f| f.summary.clone()));
     let indexed = BooleanArray::from_iter(facts.iter().map(|f| Some(f.indexed)));
+    let recalled = UInt32Array::from_iter(facts.iter().map(|f| Some(f.recalled)));
+    let used = UInt32Array::from_iter(facts.iter().map(|f| Some(f.used)));
 
     let created_at = TimestampMicrosecondArray::from_iter_values(
         facts.iter().map(|f| f.created_at.timestamp_micros()),
@@ -267,6 +273,8 @@ pub fn memories_to_record_batch(facts: &[Memory]) -> Result<RecordBatch> {
             Arc::new(account_names),
             Arc::new(summaries),
             Arc::new(indexed),
+            Arc::new(recalled),
+            Arc::new(used),
         ],
     )
     .context("building facts RecordBatch")
@@ -310,6 +318,8 @@ pub fn record_batch_to_memories(batch: &RecordBatch) -> Result<Vec<Memory>> {
         })
         .unwrap_or_else(|| vec![None; n]);
     let indexed = col_bool_missing_ok(batch, "indexed");
+    let recalled = col_u32_missing_ok(batch, "recalled");
+    let used = col_u32_missing_ok(batch, "used");
 
     let mut out = Vec::with_capacity(n);
     for i in 0..n {
@@ -355,6 +365,8 @@ pub fn record_batch_to_memories(batch: &RecordBatch) -> Result<Vec<Memory>> {
             superseded_by: superseded_bys.get(i).cloned().flatten(),
             account_id: account_ids.get(i).cloned().flatten(),
             account_name: account_names.get(i).cloned().flatten(),
+            recalled: recalled[i],
+            used: used[i],
         });
     }
     Ok(out)
@@ -434,6 +446,20 @@ fn col_bool_missing_ok(batch: &RecordBatch, name: &str) -> Vec<bool> {
     };
     (0..arr.len())
         .map(|i| !arr.is_null(i) && arr.value(i))
+        .collect()
+}
+
+/// A nullable UInt32 column, zero when absent (a table from before the heat
+/// pair) or null.
+fn col_u32_missing_ok(batch: &RecordBatch, name: &str) -> Vec<u32> {
+    let Some(arr) = batch
+        .column_by_name(name)
+        .and_then(|c| c.as_any().downcast_ref::<UInt32Array>())
+    else {
+        return vec![0; batch.num_rows()];
+    };
+    (0..arr.len())
+        .map(|i| if arr.is_null(i) { 0 } else { arr.value(i) })
         .collect()
 }
 
@@ -601,6 +627,8 @@ mod tests {
         f2.updated_at = Some(f2.created_at + Duration::minutes(20));
         f2.occurred_at = Some(f2.created_at - Duration::hours(3));
         f2.source_session = Some("sess-abc".into());
+        f2.recalled = 4;
+        f2.used = 2;
 
         // f3 leaves updated_at None — proves the null path round-trips too.
         let f3 = Memory::new("", MemoryType::Learned, Origin::Derived);
@@ -609,9 +637,9 @@ mod tests {
     }
 
     #[test]
-    fn schema_has_nineteen_fields() {
+    fn schema_has_twentyone_fields() {
         let schema = build_schema();
-        assert_eq!(schema.fields().len(), 19);
+        assert_eq!(schema.fields().len(), 21);
         assert!(schema.field_with_name("contexts").is_err());
         assert!(schema.field_with_name("tags").is_err());
     }
@@ -642,6 +670,8 @@ mod tests {
                 "account_name",
                 "summary",
                 "indexed",
+                "recalled",
+                "used",
             ]
         );
     }

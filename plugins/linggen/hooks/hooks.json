@@ -6,6 +6,9 @@
     "UserPromptSubmit": [
       { "hooks": [{ "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/recall.sh" }] }
     ],
+    "Stop": [
+      { "hooks": [{ "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/heat-stop.sh" }] }
+    ],
     "PreToolUse": [
       {
         "matcher": "mcp__.*__memory_(add|search|upkeep)",

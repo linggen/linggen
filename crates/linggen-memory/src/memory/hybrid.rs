@@ -8,7 +8,7 @@
 //! ```text
 //! hybrid = cosine + keyword_boost
 //! keyword_boost = W · (Σ idf of matched query terms) / (Σ idf of all query terms)
-//! score  = hybrid × scope_weight        (ranks, and min_score gates it)
+//! score  = hybrid × scope_weight × heat  (ranks, and min_score gates it)
 //! shown  = clamp01(score)
 //! ```
 //!
@@ -255,8 +255,10 @@ pub fn fuse(
         .zip(boosts)
         .map(|(c, boost)| {
             let hybrid = (c.cosine + boost).max(0.0);
+            // Heat (see `super::heat`): used rows lift, idle pushes lower.
+            let heat = super::heat::factor(c.memory.recalled, c.memory.used);
             Hit {
-                score: hybrid * c.weight,
+                score: hybrid * c.weight * heat,
                 memory: c.memory,
                 cosine: c.cosine,
                 hybrid,
@@ -510,5 +512,17 @@ mod tests {
             vec!["alpha", "beta"],
             "cosine order, gamma floored out"
         );
+    }
+
+    #[test]
+    fn heat_changes_the_rank() {
+        let mut used = cand("used row", 0.50);
+        used.memory.recalled = 3;
+        used.memory.used = 3;
+        let mut idle = cand("idle row", 0.52);
+        idle.memory.recalled = 4;
+        let out = fuse(vec![idle, used], "", 10, None);
+        assert_eq!(out[0].memory.content, "used row", "use outranks a higher cosine");
+        assert!(out[0].score > 0.5 && out[1].score < 0.52);
     }
 }

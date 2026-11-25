@@ -59,16 +59,15 @@ struct CoreRow {
     created_at: Option<String>,
 }
 
-/// Footer instruction appended after the rows when there are ≥2 of them.
-/// Same intent as CC's `recall.sh` footer (so linggen and CC speak one
-/// reconcile-on-recall protocol), but (a) rephrased to use the
-/// `memory_*` tools instead of the `ling-mem` CLI — in owner sessions the
-/// agent calls the memory server, never shells out — and (b) carrying the "don't ambush" gate inline
-/// so the rule and its scope live in one place instead of forcing the
-/// model to reconcile a footer instruction against a separate user
-/// preference row. Single-row blocks skip the footer — nothing to dedup
-/// or compare against.
-pub const RECONCILE_FOOTER: &str = "\n\nNote: If duplicates or conflicting rows appear above AND the user's current turn is unrelated to memory itself (incidental recall hit), resolve them on the side — merge authority follows voice: `memory_delete({id:\"<id>\"})` for exact dups; rows that are all your own notes (from=derived — built/fixed/tried/learned) merge freely into one current-truth row via `memory_add({content:\"<merged>\", replace_ids:[\"<loser_id_1>\", ...], ...})`, no AskUser; if any row is in the user's voice (from=user — preference/decision/identity), AskUser first, then the same atomic `replace_ids` write (never separate add + delete). If the user IS explicitly steering memory (\"clean up\", \"remember X\", \"what's in memory\", \"ignore the hits\"), follow their instruction and do NOT side-quest into dedup. Either way, keep memory in good shape.";
+/// Footer instruction appended after the rows when there are ≥2 of them:
+/// what to do with a recalled row that is wrong. The text is one file,
+/// `plugins/linggen/hooks/recall-note.txt`, which the plugin's `recall.sh`
+/// prints too — Claude Code, Codex and Linggen speak one protocol, decided
+/// in one place.
+pub const RECONCILE_FOOTER: &str = concat!(
+    "\n\n",
+    include_str!("../../../../../plugins/linggen/hooks/recall-note.txt")
+);
 
 /// Per-turn capture nudge, injected model-only every owner turn (NOT
 /// rendered in the recall widget — it's an instruction to the agent, not a

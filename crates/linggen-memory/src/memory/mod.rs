@@ -10,6 +10,7 @@
 
 pub mod backups;
 pub mod changes;
+pub mod heat;
 pub mod hybrid;
 pub mod maintenance;
 pub mod recall;

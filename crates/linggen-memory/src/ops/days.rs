@@ -401,6 +401,8 @@ pub struct SweepRequest {
 }
 
 pub(in crate::ops) async fn sweep(state: &Memory, req: SweepRequest) -> Result<Value, MemError> {
+    // Heat first: a row used twice is kept before the TTL can take it.
+    let promoted = crate::ops::memory::update::promote_used(state, req.dry_run).await?;
     let days_state = load(&state.data_dir).await;
     let cfg = crate::ops::config::load(&state.data_dir).await;
     let ttl_cutoff = Utc::now() - chrono::Duration::days(cfg.episodic_ttl_days as i64);
@@ -447,6 +449,7 @@ pub(in crate::ops) async fn sweep(state: &Memory, req: SweepRequest) -> Result<V
 
     Ok(json!({
         "removed": removed,
+        "promoted": promoted,
         "dry_run": req.dry_run,
         "days": per_day,
     }))

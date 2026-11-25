@@ -4,7 +4,7 @@
       { "hooks": [{ "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/autostart.sh" }] }
     ],
     "UserPromptSubmit": [
-      { "hooks": [{ "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/recall.sh" }] }
+      { "hooks": [{ "type": "command", "command": "LINGGEN_CLIENT=codex ${CLAUDE_PLUGIN_ROOT}/hooks/recall.sh" }] }
     ],
     "PreToolUse": [
       {

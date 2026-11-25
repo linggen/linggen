@@ -7,7 +7,7 @@ use crate::handle::Memory;
 use crate::memory::Memory as Row;
 use crate::memory::{MemoryPatch, MemoryStore, Tier};
 use crate::ops::memory::dto::{fact_public, UpdateRequest};
-use crate::ops::memory::place::{check_cap, clean_summary, scope_patch};
+use crate::ops::memory::place::{check_cap, clean_summary, lock_tier, scope_patch};
 use crate::ops::memory::stores_for_read;
 use crate::ops::memory::write::guard_user_voice;
 use chrono::{SubsecRound, Utc};
@@ -15,6 +15,9 @@ use serde_json::Value;
 use std::sync::Arc;
 
 pub(in crate::ops) async fn update(state: &Memory, req: UpdateRequest) -> Result<Value, MemError> {
+    if req.bump_recalled > 0 || req.bump_used > 0 {
+        return bump_heat(state, req).await;
+    }
     let rewrites = req.content.is_some();
     let outcome_patch = match (req.outcome, req.clear_outcome) {
         (Some(o), _) => Some(Some(o)),
@@ -146,6 +149,52 @@ pub(in crate::ops) async fn update(state: &Memory, req: UpdateRequest) -> Result
     Ok(fact_public(&moved))
 }
 
+/// The dream's heat rule: every episodic row used `heat::PROMOTE_AFTER_USES`
+/// times moves to semantic, id and counters kept — unless `lock_tier` says
+/// the row may not live there (over the 600-char cap): it stays staged.
+/// Returns the ids moved (with `dry_run`, the ids that would be).
+pub(in crate::ops) async fn promote_used(
+    state: &Memory,
+    dry_run: bool,
+) -> Result<Vec<String>, MemError> {
+    let staged = state
+        .episodic
+        .list(&Default::default(), crate::memory::SortOrder::Oldest, usize::MAX, 0)
+        .await?;
+    let mut moved = Vec::new();
+    for row in staged.into_iter().filter(crate::memory::heat::promotable) {
+        if lock_tier(Tier::Semantic, row.r#type, row.origin, &row.content, true).is_err() {
+            continue;
+        }
+        if !dry_run {
+            let mut up = row.clone();
+            up.tier = Tier::Semantic;
+            state.store.insert(std::slice::from_ref(&up)).await?;
+            state.episodic.delete(&row.id).await?;
+        }
+        moved.push(row.id);
+    }
+    Ok(moved)
+}
+
+/// Heat bookkeeping: add to the counters of the row, wherever it lives.
+async fn bump_heat(state: &Memory, req: UpdateRequest) -> Result<Value, MemError> {
+    for store in stores_for_read(state, None) {
+        let Some(fact) = store.get(&req.id).await? else {
+            continue;
+        };
+        if !req.scope.scope().admits(&fact) {
+            break;
+        }
+        let row = store
+            .bump_heat(&req.id, req.bump_recalled, req.bump_used)
+            .await?
+            .ok_or_else(|| MemError::not_found(format!("no fact with id {}", req.id)))?;
+        return Ok(fact_public(&row));
+    }
+    Err(MemError::not_found(format!("no fact with id {}", req.id)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -259,5 +308,76 @@ mod tests {
 
         release.send(()).unwrap();
         warmup.await.unwrap();
+    }
+
+    async fn staged(state: &Memory, content: &str, recalled: u32, used: u32) -> Row {
+        let mut row = Row::new(content, MemoryType::Fact, Origin::Derived);
+        row.tier = Tier::Episodic;
+        row.recalled = recalled;
+        row.used = used;
+        state.episodic.insert(std::slice::from_ref(&row)).await.unwrap();
+        row
+    }
+
+    /// The counters add up through the update verb, in either table, and
+    /// the bump leaves the row's age alone.
+    #[tokio::test]
+    async fn a_heat_bump_adds_to_the_counters_and_keeps_the_age() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = crate::hosted::open_quiet_fake(dir.path(), String::new())
+            .await
+            .unwrap();
+        let row = staged(&state, "Alex keeps bees", 0, 0).await;
+        for _ in 0..2 {
+            call(&state, "update", serde_json::json!({"id": row.id, "bump_recalled": 1, "bump_used": 1}))
+                .await
+                .unwrap();
+        }
+        let got = state.episodic.get(&row.id).await.unwrap().unwrap();
+        assert_eq!((got.recalled, got.used), (2, 2));
+        assert_eq!(got.updated_at, None, "a bump is not an edit");
+        let missing = call(&state, "update", serde_json::json!({"id": "nope", "bump_used": 1})).await;
+        assert!(missing.is_err());
+    }
+
+    /// The dream's rule: used twice → semantic; once → stays; too long for
+    /// semantic (the tier-lock's cap) → stays.
+    #[tokio::test]
+    async fn the_sweep_promotes_rows_used_twice_within_the_cap() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = crate::hosted::open_quiet_fake(dir.path(), String::new())
+            .await
+            .unwrap();
+        let hot = staged(&state, "Alex keeps bees", 3, 2).await;
+        let once = staged(&state, "Alex keeps goats", 3, 1).await;
+        let long = staged(&state, &"x".repeat(601), 3, 5).await;
+
+        let dry = call(&state, "sweep", serde_json::json!({"dry_run": true})).await.unwrap();
+        assert_eq!(dry["promoted"], serde_json::json!([hot.id]));
+        assert!(state.episodic.get(&hot.id).await.unwrap().is_some(), "a dry run moves nothing");
+
+        call(&state, "sweep", serde_json::json!({})).await.unwrap();
+        let moved = state.store.get(&hot.id).await.unwrap().unwrap();
+        assert_eq!((moved.tier, moved.used), (Tier::Semantic, 2));
+        assert!(state.episodic.get(&hot.id).await.unwrap().is_none());
+        assert!(state.episodic.get(&once.id).await.unwrap().is_some());
+        assert!(state.episodic.get(&long.id).await.unwrap().is_some());
+    }
+
+    /// The noise cutoff: the automatic recall (`push`) skips a row pushed
+    /// five times and never used; a plain search still finds it.
+    #[tokio::test]
+    async fn a_silenced_row_is_not_pushed_but_stays_searchable() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = crate::hosted::open_quiet_fake(dir.path(), String::new())
+            .await
+            .unwrap();
+        let noisy = staged(&state, "Alex keeps bees", crate::memory::heat::SILENT_AFTER_PUSHES, 0).await;
+        let ask = |push: bool| serde_json::json!({"query": "Alex keeps bees", "min_score": 0.0, "push": push});
+        let ids = |v: Value| -> Vec<String> {
+            v.as_array().unwrap().iter().map(|r| r["id"].as_str().unwrap().to_string()).collect()
+        };
+        assert!(ids(call(&state, "search", ask(true)).await.unwrap()).is_empty());
+        assert_eq!(ids(call(&state, "search", ask(false)).await.unwrap()), [noisy.id]);
     }
 }

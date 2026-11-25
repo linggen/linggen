@@ -41,8 +41,9 @@ min_score="${LINGGEN_RECALL_MIN_SCORE:-0}"
 # Address + `mcp_call`, shared with autostart.sh. Located from this script's
 # own path rather than a plugin-root env var — Codex's hook runner doesn't set
 # one, and recall has to keep working there.
+hooks_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./mcp.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/mcp.sh" 2>/dev/null || exit 0
+. "$hooks_dir/mcp.sh" 2>/dev/null || exit 0
 
 # Scope the search to where this session stands, as its root (git root, or
 # where the session started): rows under it, rows at its parents, and rows
@@ -60,7 +61,7 @@ if [ -n "$cwd" ] && command -v session_root >/dev/null 2>&1; then
   scope="$(session_root "$cwd")"
 fi
 search_args="$(jq -nc --arg q "$prompt" --argjson l "$limit" --arg c "$scope" '
-  {query:$q, limit:$l, skip_if_warming:true}
+  {query:$q, limit:$l, skip_if_warming:true, push:true}
   + (if ($c | length) > 0 then {scope_root: $c} else {} end)
 ')"
 out="$(mcp_call memory_search "$search_args" "$to")"
@@ -74,6 +75,19 @@ hits="$(printf '%s' "$out" | jq -r --argjson k "$topk" --argjson min "$min_score
   | .[]
   | "From memory (\(.type), from=\(.from // "derived"), \(.host // "unknown"), \((.created_at // "")[0:10]), score=\((.hybrid_score // .score // 0) * 100 | floor / 100), id=\(.id)): \(.content)"
 ' 2>/dev/null || true)"
+
+# Heat (memory::heat): remember which rows this turn pushed, so the Stop hook
+# (heat-stop.sh) can count them as recalled, and as used when the reply cites
+# one. Claude Code only: Codex has no Stop hook with a transcript, so its
+# pushes would never be matched with a use and must not be counted at all.
+session_id="$(printf '%s' "$input" | jq -r '.session_id // empty' 2>/dev/null || true)"
+pushed_file="${TMPDIR:-/tmp}/linggen-pushed-$(id -u)-${session_id//[^A-Za-z0-9_-]/}"
+if [ -n "$session_id" ] && [ "${LINGGEN_CLIENT:-}" != "codex" ]; then
+  printf '%s' "$out" | jq -r --argjson k "$topk" --argjson min "$min_score" '
+    (if type == "array" then . else [] end)
+    | map(select((.hybrid_score // .score // 0) >= $min)) | .[:$k] | .[] | select(.id) | "\(.id)\t\((.content // "")[0:30] | gsub("[\\t\\n]"; " "))"
+  ' > "$pushed_file" 2>/dev/null || true
+fi
 
 hit_count="$(printf '%s\n' "$hits" | grep -c .)"
 [ -n "$hits" ] && printf '%s\n' "$hits"
@@ -118,12 +132,8 @@ CAPTURE
 # unstamped until it ships PreToolUse input rewrite.
 
 if [ "$hit_count" -ge 1 ]; then
-  # Mirrors linggen/src/engine/prompt/core_block.rs:RECONCILE_FOOTER.
-  # Fires on ANY hit: a single recalled row can still conflict with the
-  # user's current turn, and memory's user-voice guard needs the
-  # resolved write to carry user_directed:true.
-  cat <<'NOTE'
-
-Note: If a recalled row above duplicates or conflicts with another row or with what the user just said AND the user's current turn is unrelated to memory itself (incidental recall hit), resolve it on the side — merge authority follows voice: memory_delete for exact dups; rows that are all your own notes (from=derived — built/fixed/tried/learned) merge freely into one current-truth row via memory_add with replace_ids listing the losers (atomic insert + delete), no ask; if any row is in the user's voice (from=user — preference/decision/identity), ask first via the host's ask-user primitive (AskUserQuestion on Claude Code; plain chat elsewhere), then write the winner via memory_add with replace_ids AND user_directed:true — memory BLOCKS user-voice replaces without that flag, and a hedged reflection ("X feels about right to me") never justifies it (never separate add + delete). If the user IS explicitly steering memory ("clean up", "remember X", "what's in memory", "ignore the hits"), follow their instruction and do NOT side-quest into dedup. Either way, keep memory in good shape.
-NOTE
+  # THE wrong-memory footer is recall-note.txt, beside this script; the
+  # engine's RECONCILE_FOOTER (core_block.rs) include_str!s the same file.
+  # Fires on ANY hit: a single recalled row can be wrong too.
+  printf '\n%s\n' "$(cat "$hooks_dir/recall-note.txt" 2>/dev/null)"
 fi

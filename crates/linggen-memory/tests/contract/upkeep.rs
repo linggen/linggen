@@ -90,12 +90,12 @@ async fn sweep_removes_judged_rows_past_the_ttl() {
     m.add(json!({"content": "Alex kept a diary", "tier": "semantic", "occurred_at": local_noon(&old)})).await;
     assert_eq!(
         m.ok("sweep", json!({"dry_run": true})).await,
-        json!({"removed": 1, "dry_run": true, "days": {old.clone(): 1}})
+        json!({"removed": 1, "promoted": [], "dry_run": true, "days": {old.clone(): 1}})
     );
     assert_eq!(m.ok("count", json!({})).await["count"], 4);
     assert_eq!(
         m.ok("sweep", json!({})).await,
-        json!({"removed": 1, "dry_run": false, "days": {old.clone(): 1}})
+        json!({"removed": 1, "promoted": [], "dry_run": false, "days": {old.clone(): 1}})
     );
     assert_refused(
         &m.call("get", json!({"id": id(&judged)})).await,

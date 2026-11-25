@@ -144,6 +144,16 @@ pub struct Memory {
     /// Display name for `account_id` — a label, never a key.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub account_name: Option<String>,
+
+    /// Heat (see [`super::heat`]): how often the automatic recall pushed this
+    /// row into a turn. Counted only where `used` can be detected too.
+    #[serde(skip_serializing_if = "is_zero", default)]
+    pub recalled: u32,
+
+    /// Heat: how often a reply cited this row (its id or a "From memory"
+    /// line). Rows recalled often and never used stop being pushed.
+    #[serde(skip_serializing_if = "is_zero", default)]
+    pub used: u32,
 }
 
 impl Memory {
@@ -174,6 +184,8 @@ impl Memory {
             superseded_by: None,
             account_id: None,
             account_name: None,
+            recalled: 0,
+            used: 0,
         }
     }
 
@@ -194,6 +206,10 @@ impl Memory {
     pub fn activity_timestamp(&self) -> DateTime<Utc> {
         self.updated_at.unwrap_or(self.created_at)
     }
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
 }
 
 fn is_false(b: &bool) -> bool {
