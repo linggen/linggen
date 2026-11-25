@@ -12,8 +12,51 @@ calls 2.4 — everything in §5, which for two days (2026-11-16/17) was to ship 
 MCP door). **3.0** is a long-term goal, perhaps after 2.9, half a year to a
 year out; what it holds is decided then. The file keeps its name.
 
+**3.0 decided, 2026-11-24** (Hanli: 「memoryV2可以作为linggen 3.0发布了, 和lingyu一起」,
+「中间可以发2.7, 2.8, 如果有必要」): 3.0 is no longer far off. It is **Memory V2 + 灵语
+(Lingyu)**. 2.7 and 2.8 go out before it only if needed; their unreleased work is
+folded into the 3.0.0 CHANGELOG. See §0 below.
+
 Every number is tagged **(measured)** — taken on his Mac on 2026-11-15 — or
 **(estimate)**.
+
+## 0. 3.0 — Memory V2 and Lingyu
+
+**Why.** Linggen grows up with the person: years later it still knows what they
+did and how far they came, and every agent they use shares one memory
+(product-spec.md, principle 0). Delegating tasks is a commodity; shared, lasting
+memory is not.
+
+**What ships.**
+
+| Part | What the person gets | State |
+|---|---|---|
+| Memory V2 | Notes in plain Markdown under `~/.linggen/memory/`, one writer, an index instead of vector recall; Claude Code, Codex and Linggen read the same notes; body, mind, people and moments are fenced from coding agents | built |
+| V2 by default | Upgrading moves V1 rows into notes once, by rule, with no model call; `[memory] linggen = "v1"` stays the way back | built |
+| Chronicle | A monthly "what you did and how far you came", written on the Mac when idle, editable | built |
+| Yinyue's day | On this day in past years, recurring days, topics marked "don't bring this up" | built |
+| Settings → Notes | Notes by source; void, restore, delete | built |
+| Phone | The owner's phone memory goes into V2 | built (engine side); untried on a device |
+| Lingyu | Spoken English lessons with Ling as teacher, live voice | built on its own branch; waits on Hanli (below) |
+| Analytics | Where a new install came from (Apple Ads keyword or organic) and what it did after | built on phone and site branches; ships with the next phone build |
+
+**Checked.** The unit, system, UI and end-to-end suites pass. The release gate
+on a local 3.0.0 build passes: a fresh install lands on V2, an upgrade from 2.6.1
+moves V1 rows into notes, rollback and forward keep every row, and an explicit
+v1 stays v1. Not yet run: the gate on a signed draft, the 灵境 play bot, the 2.2.1
+takeover baseline, or the app-bundle legs.
+
+**Waiting on Hanli.**
+1. Release from main (merge `refactor/53` first) or from the branch.
+2. His yes to cut the draft, run the full gate, and publish, and whether the phone and the Mac ship on the same day.
+3. Lingyu: whether 3.0 announces it, and the five owner questions in its design (its own app or inside Linggen, which market, cloud cost, voice, whether the synced record is in the first release).
+4. The migration rows marked unsure (the builder-name conflict, two superseded rules, sensitive rows).
+5. Turning on Sign in with Apple in the Apple developer portal, deploying the site, and the phone's App Store release.
+
+**Not in 3.0.** Phone-side entry-by-entry sync (the Mac answers the phone's
+existing verbs instead); the chronicle reading other agents' session logs;
+anyone's memory besides the owner's on a shared Mac (2.8's per-person sharing
+stays as built).
 
 ## 1. What this work is
 
