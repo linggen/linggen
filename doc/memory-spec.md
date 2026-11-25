@@ -9,499 +9,396 @@ guide: |
 
 # Memory
 
-Persistent knowledge that travels with the user across sessions and
-hosts — who they are, how they want to work, the decisions they've
-made. Memory helps every kind of user, not just coders.
+Memory V2 is Linggen's memory. Linggen grows up with the person: years later it
+still knows what they did and how far they came, and it knows them well enough
+to be a companion, not only a tool (product-spec, principle 0). Models get
+stronger, and each tool's own memory stays inside that tool and short-lived;
+the person's long record, kept on their own devices, is what Linggen holds that
+nobody else will. So memory is small, plain and the person's: Markdown files
+they can read, edit and delete.
 
-**Is:** identity, preferences, decisions with their reasoning, gotchas
-the user re-hits. **Isn't:** an activity log (git records that), a
-codebase snapshot (files are truth), a transcript (the session store
-records that). A candidate that earns no place is dropped. Memory
-never writes to project files.
+**Is:** facts about the person, rules they state, decisions with their why,
+gotchas they would re-hit, dated life moments, and a monthly chronicle of what
+they did. **Isn't:** an activity log (git records that), where work stands (the
+docs hold that), a codebase snapshot (files are truth), a transcript (the
+session store has it). Secrets never go in. Memory never writes to project
+files.
 
-## Parts
+**Other agents' memory is read, never written.** Claude Code and Codex keep
+their own memory their own way. Linggen reads it, never edits, moves or copies
+it, and tells each agent what the others remember. Linggen writes only its own
+notes: what Ling and Yinyue keep about the person and the work.
 
-- **ling-mem** — standalone binary + local daemon; owns the store and
-  all mechanical operations (dedup, search, export). No LLM inside;
-  every frontend goes through it, so deleting a frontend never loses
-  data.
-- **Linggen engine** — memory tools for every agent, the always-on
-  identity block in each session, per-turn recall, and the capture
-  protocol in the system prompt.
-- **Memory agent + missions** — the offline judgment brain; runs the
-  nightly **dream** mission (remember → forget → condense) and the two
-  manual operations, **scan** and **solve** (missions `memory-scan`,
-  `memory-solve`). Settings → Memory in Linggen's UI shows rows, days and
-  the review queue, and starts them.
-- **linggen plugin** — the same store in Claude Code and Codex:
-  recall each turn, capture protocol, runbooks, and `/linggen:scan` for
-  backfilling days. Third-party hosts reach the store through the engine's
-  `/mcp` door (`mcp-spec.md`): memory is five of its tools
-  (`memory_search`, `memory_add`, `memory_update`, `memory_delete`,
-  `memory_upkeep`). Any MCP-capable agent can add `http://127.0.0.1:9527/mcp`
-  as an MCP server.
+Code: `crates/linggen-engine/src/own_memory/` (the notes) and
+`crates/linggen-engine/src/outside_memory/` (other agents' memory).
 
-## Tiers
+## The store
 
-- **Core** — a handful of high-confidence universals about the person
-  (name, role, location, family), present in every session. Never
-  scoped, never a work rule.
-- **Long-term** — everything else durable, retrieved on demand. Holds
-  *state and lessons, never events*: would the row still matter in
-  three months?
-- **Short-term** — per-turn working capture. Events and uncertain
-  signal land here; once the dream pass has judged a day, its rows
-  fade after about a week unless promoted.
+Plain Markdown, UTF-8, under `~/.linggen/memory/`:
 
-## Features
+```
+person/<topic>.md                    about the person
+areas/<area>/<topic>.md              area: body, mind, people, music, money, play, home
+projects/<encoded path>/<topic>.md   work, per project folder
+moments/<yyyy>/<yyyy-mm>.md          Yinyue's dated life moments
+chronicle/<yyyy>/<yyyy-mm>.md        the chronicle, a month; <yyyy>.md is the year
+.state/                              prior versions, use counts, the move record (local only)
+```
 
-- **Capture** — the live agent saves signal in the same turn it
-  appears, on every host. Explicit statements go straight to
-  long-term; incidental signal stages in short-term.
-- **Recall** — relevant memories surface at the start of each turn;
-  facts used in a reply are cited ("From memory: …"). The identity
-  set is always present.
-- **Scope** — a row's `scope` is the directory it is *about*
-  (ling-mem `doc/scope-index-spec.md`); none = about the person. The
-  host stamps the session's `cwd` (the default scope) and `root`; at session start it shows
-  "Memory scopes here: …" and the model picks another one as `scope`
-  when the row is about it (the daemon validates). Recall sees rows
-  under the session root, at its parents, and about the person. A
-  skill's own session stands in `~/.linggen/skills/<name>` and sees
-  only its rows (`memory-context:` is now just the skill's opt-in to
-  memory). Home, `~/.linggen` and temp see rows about the person, plus at most two
-  strong matches filed under a directory (cosine ≥ the daemon's
-  `no_root_project_min_score`, 0.70; never preferences).
-  Rows carried forward by the dream or a backfill keep their scope.
-- **Index** — standing rules carry `indexed` and a one-line `summary`:
-  every session in their directory or below loads the summaries at
-  start (nearest first, 3000 chars; no summary → the content's opening),
-  and reads a row in full when its summary bears on the task. The dream
-  fixes scope, index and summary itself when sure (`memory_update`, ≤ 10
-  per run, a `FIX` line each; never content); unsure → left alone. No
-  one reviews scope by hand. The engine reloads the index when the
-  session's cwd changes.
-- **Dedup** — exact duplicates collapse automatically at write time.
-  Anything fuzzier is judgment, not mechanics.
-- **Reconcile** — authority follows voice: the agent freely merges
-  and rewrites *its own* notes into current truth; anything the
-  *user* said changes only with the user (ask first). The store
-  itself enforces the floor — a silent rewrite of the user's voice
-  is refused, on every host. Whoever sees garbage fixes it in that
-  moment — there is no cleanup queue.
-- **Dream** (nightly) — reviews each day's short-term staging,
-  promotes what's durable, and lets the rest fade. Never deletes
-  unjudged rows. Day-by-day, with a visible per-day state on the
-  calendar. Ends with the condense stage once the worklist is clear.
-- **Scan** (user-triggered) — backfills a past day from host session
-  logs, for days live capture missed. Safe to re-run: sessions that
-  already contributed are skipped. See **Scan and solve** below.
-- **Audit** (dream's last stage) — cures stale long-term memory by
-  confidence: what the agent can solve it solves, the rest is queued
-  for the user. Two confident lanes, both capped per night, store
-  snapshot before every run: condense — high-confidence cited chains
-  of its own notes collapse into one current-truth row each — and
-  completion-bar marker merges — a provisional-state note whose
-  strictly newer same-subject derived neighbor asserts the work done
-  collapses the same way (the store already holds the answer).
-  Everything else the dream **settles itself from evidence**
-  (2026-11-09) — the rows in full, a newer row on the subject, and
-  code or git where the run has those tools — the way solve does:
-  derived rows are fixed in place (or left as they are), and the
-  ruling is recorded as a review item closed at once (resolved or
-  dismissed, with a one-line why). It queues an open **review item**
-  only when a user-voice row would change, the user must pick between
-  rows, or the evidence is out of reach on that run. The dream mission
-  holds READ over the home directory with Read / Glob / Grep / Bash:
-  it looks at code, docs and git history, and the engine refuses any
-  write (missions never prompt). The marker scan excludes rows any review
-  item names, open or closed, so a settled or queued candidate is not
-  served again.
+A project folder is named as Claude Code names it: every character that is not
+an ASCII letter or digit becomes `-`. A note filed under a project reaches
+sessions in that folder and below. Nothing else under `memory/` is read as a
+note (the v1 store keeps its database and backups there).
 
-  Merges ARCHIVE, never delete (2026-08-17): a `replace_ids` loser in
-  the semantic table gets `expired_at` + `superseded_by = <survivor>`
-  — invisible to search, list, scans, and counts, kept on disk, so
-  every merge and digest can be unpacked (`list --superseded-by
-  <id>`; `--include-expired` widens any read). Episodic losers stay
-  hard-deleted: staging is disposable. The stats surface reports the
-  archive count — archived state is visible state.
+**One topic per file, one note per `##` entry.** A topic file starts with its
+name and scope; each entry is a one-line summary, a meta comment, then the body:
 
-  The third confident lane, **subject digests**, runs in the dream
-  too: the `subject` detector (cosine star clusters, 3–12 members)
-  serves only QUIET clusters (newest member >30 days — a live
-  subject keeps its detail) and skips rows a `subject`-kind ruling
-  covers. The judge digests clusters it is confident share one
-  subject (one digest row, ≤5 per night — a digest is known by the
-  rows whose `superseded_by` points at it), rules clearly separate
-  clusters itself (a dismissed `subject` item), and queues only the
-  ones it cannot tell as open `subject` review items — listing ALL member
-  ids, so a ruled cluster can never re-form. In solve, the user's
-  keep-separate answer becomes the permanent (dismissed) ruling.
-  Digesting unattended is safe because merges archive: a wrong
-  digest is an unpack, not a loss.
-- **Solve** (attended, the rare leftover path) — a host agent drains
-  what the dream could not settle, with the user present: gathers evidence at solve time (git history,
-  files), fixes what the evidence proves, asks the user one item at a
-  time for the rest, closes each item. Surfaces: `/linggen:solve` on
-  plugin hosts; in Linggen the `memory-solve` mission, started from
-  Settings → Memory, which shows the queue. Dream reports and the recall
-  footer carry the open count.
-- **Across machines** — one memory shared by every machine the user
-  works on; see the section below.
-- **Secrets** — credentials never enter memory; deleted on sight.
+```
+---
+topic: Build and test
+scope: project:/Users/alex/work/app
+---
 
-## Scan and solve
+## Run tests with just test
+<!-- id: 3f9a2c71b0 · kind: rule · voice: user · created: 2026-11-24 · updated: 2026-11-24 · source: claude-code -->
+Plain `cargo test` leaves the fixtures stale; `just test` rebuilds them first.
+```
 
-Both are built-in missions on the `memory` agent with no schedule: they run
-only when started, the way a calendar day's dream is. Their procedures are
-in `agents/memory.md` ("Procedure — scan one day", "Procedure — solve the
-review queue"); the mission files carry only the pacing and the grants.
+| Field | Meaning |
+|---|---|
+| `id` | 10 characters; a note keeps it for life, so files merge by entry |
+| `kind` | `person`, `rule`, `decision` (with its why; "tried X, dropped because Y" belongs here), `gotcha`, `moment`, `chronicle` |
+| `voice` | `user` (the person's own words) or `agent` |
+| `created`, `updated` | days, `YYYY-MM-DD` |
+| `source` | who wrote it: `claude-code`, `codex`, `linggen`, `yinyue`, `phone`, … |
+| `void: <why>` | known wrong; shown only in Settings |
+| `no-raise` | Yinyue never brings it up herself |
+| `yearly: MM-DD` | a day that repeats every year (`YYYY-MM-DD` when the first year is known) |
 
-- **Scan a day** — `POST /api/missions/memory-scan/trigger`
-  `{"day":"YYYY-MM-DD","attended":true}`. Before the first turn the
-  engine itself runs `ling mem scan <day>` (the mission's `prepare` step;
-  `cli.md` § mem: the day's session logs of Claude Code, Codex, OpenClaw
-  and Linggen, flattened and secret-filtered into
-  `~/.linggen/memory/.scan-output.jsonl`; no model, no network); if that
-  fails the run ends failed, unstamped, with no model call. The CLI reads the
-  Mac's local account even with the engine stopped and supplies the owner
-  identity to the collector, which skips other people's Linggen sessions
-  (`skipped_other_person` in the summary); signed out, only local or untagged
-  Linggen sessions qualify. The transcript includes Yinyue's replies to
-  a direct address or an explicitly requested moment as assistant text,
-  not unsolicited lines, hidden prompts, tool observations or compaction
-  summaries. The agent then
-  checks the file's header is that day's, lists the candidates, skips
-  every session that already has rows for the day (by `source_session`),
-  judges one candidate per turn and stages what is worth keeping as
-  short-term rows, each carrying its session id and the session's
-  directory. It ends by stamping the day scanned (`harvest_day`), also
-  when nothing new was staged; a missing or stale file ends `FAILED`,
-  unstamped. It never promotes:
-  the next dream judges the rows. Today can be staged but not stamped. A
-  day with more sessions than one run's turns ends `PARTIAL`, unstamped;
-  scanning again continues. Scan works on every machine.
-- **Solve** — `POST /api/missions/memory-solve/trigger` `{"attended":true}`.
-  Works the open review items from evidence (rows, files, docs, git
-  history — read only); asks the user one plain question with a
-  recommendation only when evidence cannot settle an item; a row in the
-  user's words changes only after their answer. `attended` puts AskUser in
-  the run's tools; without it, items needing the user stay open. On a
-  replica it stops at once: solve runs on the primary.
-- **What the trigger answers** — `200 {"ok":true,"message":"Mission
-  triggered","session_id":"<id>"}`: the run's session, open at once, where
-  the user watches (and answers, for solve). `409 {"ok":false,
-  "in_flight":true,…}` while a run of the same mission is going;
-  `400` for a malformed day; `404` when the mission was deleted. The run's
-  end is in `GET /api/missions/<id>/runs` (`status`, `failure_count`) and
-  the day's `scanned` flag in `days`. Scan, solve and dream are separate
-  missions, so one of each can run at once.
-- **Grants** — the scan agent has memory's tools and `Read`, no shell,
-  and one grant: read on the candidates file. The session logs are read
-  by the engine's own step, not by the agent. The solve holds the dream's
-  READ over the home directory. Missions never prompt: a call outside the
-  grants is refused.
+Keys a build does not know are kept, so another writer's survive.
 
-## Memory is hosted by the engine
+**Limits** (Claude Code's own): a summary is at most 80 characters, a body at
+most 4,000, a topic file under 200 lines and 16 KB. Past that the oldest notes
+move to `<topic>-part2.md`, then `-part3`, and on. A moment goes only in
+`moments`, a chronicle line only in the chronicle, every other kind anywhere
+else.
 
-Since 2.3 (unreleased) there is no `ling-mem` process: `ling` opens the store
-at start-up and serves it (`src/memory_host/`, code in `crates/linggen-memory`).
+Every save is atomic, and the old file is kept under `.state/history` (the last
+20 versions of each file).
 
-- **One writer.** The engine holds `memory/.store.lock` (flock) for its life;
-  the file names its pid and port. A second opener is refused.
-- **Doors.** `/mem/*` (memory's own routes) and `/mcp` (memory's five tools among the
-  door's; `/mcp/memory` is retired and answers 410) on the engine's
-  port — the only port; the phone's `/api/memory/<verb>`. Who reaches which
-  is below. Nothing listens on the old daemon's 9528.
-- **No address to set.** The engine's own callers use the store it hosts
-  (`memory_host::url`); `[agent].ling_mem_url` and `$LING_MEM_URL` are gone,
-  and an old config's key is ignored.
-- **The old binary.** `~/.local/bin/ling-mem` becomes a stand-in: data verbs
-  run as `ling mem`, `status` says running at the engine's version and port,
-  lifecycle verbs do nothing; a stand-in that differs from what this engine
-  writes is rewritten. The real binary is kept as `ling-mem.prev`.
-- **Takeover.** A running `ling-mem` named in `daemon.json` is stopped
-  first; each engine version copies the store once to
-  `memory/backups/takeover-<stamp>/` before it first opens it.
-- **CLI.** `ling mem <verb>`: to the engine when it is up, else on the store
-  directly under the lock.
+## What a session sees at start
 
-The engine loads the embedding model and runs one throw-away inference in the
-background. Startup, health, and calls that do not embed (`memory_search
-op=list`, `op=get`, upkeep reads) do not wait. A call that embeds (a search
-with a query, an add, an update) waits for that inference up to 20 seconds
-(`embed::WARM_WAIT`, under the MCP door's 25), then runs as usual; only a
-warm-up that outlasts the bound refuses the call, saying how long memory has
-been warming — on the host door (`/mcp`) as a tool error, on the internal door
-(`/mem/mcp`) as JSON-RPC error `-32001`. A refused write is neither applied
-nor queued; retry once memory is warm. Automatic recall (the engine's and the
-plugin hook's) sends `skip_if_warming` (accepted by `memory_search`, never
-advertised) and skips the turn quietly at once — a recall never holds a
-prompt. A replica sends its writes with a client that waits out the primary's
-bound, so it never queues a write the primary applies. Warm-up refuses an
-individual tool call, not the agent run, so it does not set a run's
-`cannot_run`.
+The engine makes an index from the entries' meta comments; nobody keeps one by
+hand, so no note falls out by accident. A session of Ling or Yinyue has the
+index in its prompt, a few lines on how to use notes, and the `memory_notes`
+tool. It has no per-turn recall and no capture reminder: what is worth keeping
+is written at the moment it appears, and what is not in the index is one search
+away.
 
-### Who reaches memory, and whose rows they see
+- **Line:** summary, kind, topic and id ("don't raise" when set). Void notes and
+  the chronicle are not listed.
+- **Order:** the person's notes (all of them); then the session's place (the
+  folder's notes, nearest first, up to but never the home folder; for Yinyue,
+  her areas); then notes read in the last 90 days, most read first; then the
+  rest, newest first.
+- **Budget:** 200 lines and 25 KB, Claude Code's own limit for its index. What
+  does not fit is forgotten, not gone: the index says how many, `op=search`
+  finds them, and reading a note brings it back into the index.
+- **An app's session** gets only the notes filed at its own folder or above, and
+  the person's when it has core, and no tool.
+- **Yinyue's day** is added to her prompt alone (see the chronicle section).
+- **A mission** has no notes, except the chronicle's own run.
 
-One rule, in one place (`memory_host::caller`), for every memory route on
-the engine's port. Every paired device is one row in `paired-devices.json`
-with a **kind**:
+## The one writer
 
-| Caller | Who it is | Sees |
-|---|---|---|
-| This machine (loopback; its own web UI over its channel) | the owner | all of the owner's memory |
-| A `machine` — approved with Allow on this machine | the owner's other computer | all of the owner's memory |
-| A `phone` — paired with the on-screen code | its own person | its person's rows only |
-| No token, an unknown token | no one | nothing |
+`memory_notes op=write` is the only thing that saves. Ling, Yinyue, the phone, an
+outside host with no memory of its own, Settings and the move from v1 all go
+through it, so its checks hold for everyone:
 
-- **Whose rows** comes from the caller, never from the request body — unless
-  the caller is the owner or a machine. Every memory call names its caller
-  (`Who`: the owner, or one person); for a person, memory itself removes the
-  body's own claims and stamps the person (`/api/memory/<verb>`, a skill
-  page's memory calls). The engine's door decides which caller a request
-  is; memory decides what that caller may reach.
-- **Over the network** (through the LAN gate, with a token) a machine
-  reaches `/mcp` — the five memory tools, for a machine with only a plugin — and the replica
-  protocol under `/mem`: `/api/sync/changes`, `/api/sync/rows`,
-  `/api/sync/role` and the writes a replica pushes. Asking to connect
-  (`/mem/api/connect/request`, `/mem/api/connect/status/<id>`) needs no
-  token. Everything else under `/mem` is this machine's. A phone's token is
-  refused on all of these (403); its door is `/api/memory/<verb>`.
-- **A phone that is another person** (not the owner's own phone: one whose
-  claim of this machine's account is verified, `permission-spec.md` § A
-  paired device's standing follows its account — a claim not verified is
-  its device) runs only the verbs kept per person: `search`, `list`, `count`,
-  `get`, `add`, `add_batch`, `update`, `delete`, `forget`,
-  `session_start`. Any other verb — including one memory gains later — is
-  refused (403 `FORBIDDEN`), and so is a body the stamp cannot mark (not a
-  JSON object). The owner's own phone runs every verb but `restamp` and
-  `accounts`.
-- **Memory checks the person too.** A write stamped with a person
-  (`account_id`) may name only that person's rows in `replace_ids`; any
-  other id refuses the whole call before anything is written, with the
-  same not-found answer whether the id is missing or someone else's. Its
-  duplicate check (same table and the other table) looks only at that
-  person's rows, so it never merges into, promotes over or deletes another
-  person's row. `add_batch` stamps every row with its person. `update`
-  checks the row's person before the user-voice guard reads it. The
-  owner's writes (no `account_id`) deduplicate and replace as before.
-- **Allow / Deny** happen only at this machine.
-- **On by default**, for approved machines only.
-- **Old rows** are classified once: a row the Allow ceremony recorded
-  (`memory/connect-devices.json`) is a machine; any other is a phone.
+- **Only memory.** A rule, a decision with its why, a gotcha, a fact about the
+  person, or (Yinyue's) a moment. Status, progress and "what was done" are
+  refused with one fixed sentence a caller can pass on. A chronicle line is
+  exempt: what the person did is what it is for.
+- **Actions:** add, update by id, void (with a reason), no-raise, yearly. The same
+  summary twice in a topic is refused, with the id of the note that has it.
+- **The person's own words change only with the person.** A `voice: user` note
+  is shown to them first; after they agree, the caller passes `user_directed`.
+- **Merge by entry.** The caller says which version of the file it read. If only
+  other entries changed, the write merges; if the same entry changed, it is
+  refused with the current text.
+- **The fence applies:** a caller cannot write where it cannot see (below).
+- **Un-void and delete are the person's, from Settings.** The tool has no word
+  for them, so an agent cannot bring back a note the person marked wrong or
+  remove one.
+- **A topic name belongs to one scope**, and two writes never run at once.
 
-## Across machines
+## Reads and use counts
 
-One person, one memory across all their machines (designed 2026-10-21,
-building). The stores form a star: one **primary**, any number of
-**replicas**.
+`memory_notes` has four ops: `index` (the notes for a folder), `read` (one note
+by id, or a topic file by path; a void note is read and says so), `search` (words
+in any language) and `write`. Search ranks a note by how many of the words it
+holds, newest first among equals; a run of Chinese is matched two characters at
+a time. It never finds void notes, and it also returns what other agents'
+memory says on the words, under `other_agents`.
 
-- **Setup** — every machine runs its own Linggen with its own store;
-  clients talk only to the local one. One setting picks the primary:
-  *local* (default) or another machine's Linggen (`host:port`, its engine
-  port). Set it in Settings → Memory → Settings → Other machines. An engine never uses
-  another machine's store by address; an old config that names one is
-  ignored. A replica that saved a primary at the old daemon's `host:9528`
-  reaches nothing there: it pairs again with `host:9527`.
-- **Plugin only** — a machine with a plugin and no Linggen has no store: the
-  plugin points at another machine's `/mcp` with that machine's
-  token (`/linggen:config`).
-- **Joining** — a replica asks; the primary's machine shows Allow /
-  Deny. Allow issues a device token the replica keeps, on a `machine`
-  row. Only the primary's own machine can approve.
-- **Reads** — from the local copy, synced from the primary; work
-  offline.
-- **Writes** — go to the primary; queued while it is away, sent when it
-  returns. The primary wins a conflict and files a review item.
-- **Dream and solve** — only on the primary's engine, one run per day
-  (a lock). Inline fixes and scan work on every machine.
-- **Status** — role, primary, online/away, queued writes: shown in the
-  console, 9527 and `/linggen:config`.
+A note that is read or found counts a use (`.state/uses.jsonl`, local, never
+synced). Uses are what keep a note in the index for 90 days. The index itself and
+Settings count none, or everything shown would count as used.
 
-Settings → Memory → Settings holds memory's two own knobs, the days a
-short-term row is kept and the recall threshold (`GET`/`PUT
-/api/ling-mem/config`, the owner only), above the primary setting.
+## The privacy fence
 
-A star needs one machine reliably online; multi-primary sync is in
-Future.
+What the person says about their body, their mind and the people close to them,
+Yinyue's moments, and the chronicle (which holds all of those in a line a
+month) never go to a coding host. One decision, by audience:
 
-## Rules
+| Audience | Who | Sees | Writes |
+|---|---|---|---|
+| Companion | Yinyue, outside a coding session | everything | everything |
+| Work | Ling, apps, Claude Code, Codex, any host on the door; Yinyue in a coding session | person, projects, areas music, money, play, home | the same |
+| Chronicler | the chronicle's own run | everything | the chronicle only |
 
-1. The user's voice changes only with the user — no silent rewrites
-   of anything they said.
-2. Record what was said; never invent details. Stamp ages to a date,
-   not "now".
-3. The file beats the memory — anything readable from the workspace
-   stays out.
-4. Curate, don't accumulate — value grows over time, not row count.
-5. Merging the agent's notes is free; generalizing about the user is
-   always done in front of them.
-6. Never store secrets, at any layer.
-7. Status rows are perishable — a capture that changes a subject's
-   status supersedes the prior status row in the same write; the
-   review queue is the backstop, never the plan.
+The fence sits at every way out of the store: the index, a read by id or by
+path, a search hit, and the lookup a write does by id. A fenced note answers "no
+such note", the same as a missing one. A test fails when any other code loads a
+topic for a caller. Settings → Notes reads as the owner, who sees all of it.
 
-## Evaluation
+## The tools
 
-LongMemEval is a retrieval regression check only — it rewards
-hoarding, the opposite of this design; never optimize toward it. The
-real scorecard is the write-side eval (six axes: extraction, routing,
-dedup, reconcile, decay, secrets), which drives each scenario through
-a real engine against a throwaway store and judges the end state.
+`memory_notes` and `memory_agents`, defined once for Linggen's sessions and the
+MCP door (`mcp-spec.md`; the catalogue lists every tool, and no doc counts them).
 
-## Memory V2 — Linggen's own notes (the default since 3.0)
+- **`memory_notes`** — Linggen's own notes, the ops above. One definition of its
+  text and fields serves a session and the door. On the door it answers only the
+  owner at this Mac, when `outside_agents` is v2; the host is always a Work
+  audience and is recorded as the writer.
+- **`memory_agents`** — what other agents remember, read only: `mode` (v1 or v2),
+  `index` (their index lines for a folder, never the calling host's own), `read`
+  (one note by path, only inside a registered source) and `search`. The owner, at
+  this Mac only.
 
-Design: the memory-v2 design (§ 4a is the build spec). Other agents' memory
-is read, never written (`outside_memory`, `mcp-spec.md` § memory_agents).
-This is the memory Linggen writes: what Ling and Yinyue keep about the
-person and the work, as plain Markdown under `$LINGGEN_HOME/memory/`
-(module `own_memory`). `[memory] linggen = "v1" | "v2"` (absent: v2) says
-which memory Linggen's own sessions have, and `outside_agents` (absent: v2)
-how outside hosts are served. v1 is everything above, unchanged, and stays
-the way back: write `v1` in the config and it is v1.
+## Outside agents and forwarding
 
-- **Files** — `person/`, `areas/<body|mind|people|music|money|play|home>/`,
-  `projects/<encoded path>/`, `moments/<yyyy>/<yyyy-mm>.md`,
-  `chronicle/<yyyy>/<yyyy-mm>.md` (and `<yyyy>.md`); one topic per
-  file, one note per `##` entry with an id, kind (person, rule, decision,
-  gotcha, moment), voice (user, agent), dates, source. A topic file stays
-  under 200 lines and 16 KB: the oldest notes move to `<topic>-part2.md`.
-  Prior versions and use counts are under `.state/` (local, not synced).
-- **One writer** — `memory_notes op=write` (add, update by id, void,
-  no_raise), the only thing that saves. It refuses status and progress with
-  one fixed reason, never changes a note in the person's own voice without
-  `user_directed`, and merges by entry against the version the caller read
-  (the same note changed since = a conflict, shown). Yinyue alone writes
-  moments.
-- **Index** — made by the engine at session start, never by hand: the
-  person's notes, the session's own scope, notes read in the last 90 days,
-  the rest newest first; at most 200 lines and 25 KB. What does not fit is
-  forgotten, not gone: `op=search` (Chinese and English, and other agents'
-  memory) finds it, and reading a note keeps it in the index.
-- **Privacy fence** — notes about body, mind and people, moments and the
-  chronicle reach Yinyue (outside a coding session) alone: not Ling, not an
-  app, not Claude Code or Codex. A third audience, the chronicler (the
-  chronicle mission's agent), reads all and may write the chronicle only.
-  One decision (`own_memory::fence`), at every way out.
-- **A v2 session** has the index in its prompt and `memory_notes` instead of
-  the memory server's tools, its protocol, the per-turn recall and the
-  capture reminder. Missions stay on v1, but the chronicle's own run, which
-  has `memory_notes` alone. An app gets the index of its own
-  folder (and the person's, with core) and no tool.
-- **Outside hosts** — the same tool is on the MCP door (`mcp-spec.md`) for a
-  host with no memory of its own, served when `outside_agents = "v2"`.
-- **The chronicle** (`own_memory::chronicle`, `missions/chronicle`,
-  `agents/chronicler.md`) — what the person did and how far they came, month
-  by month, for years. A built-in mission (1st of the month, catch-up in a
-  quiet window; the model is the mission default) whose engine step
-  `ling chronicle prepare` READS the sources — Linggen's notes and moments
-  (not void, not no-raise), the sessions the person made and spoke in, the
-  first lines of other agents' notes changed that month — into
-  `memory/.chronicle-input.jsonl`, and lists the months that have ended and
-  have no file (at most 12 a run, oldest first) and past years whose months
-  are all written. The agent writes dated lines (`YYYY-MM-DD what`, source in
-  the body) through `memory_notes op=write scope=chronicle`, the same one
-  writer; a month with a file is never offered again, so the person's edits
-  stand and deleting the file has it written afresh. Only under v2: with v2
-  off or nothing waiting the step exits "nothing to do"
-  (`missions::NOTHING_TO_DO`) and the run ends with no model call.
-  Backfill is the same run by hand: `ling chronicle backfill` (repeat until
-  nothing waits). Only the companion and the chronicler read it; not in the
-  index; `op=search` finds it. Other agents' session logs are not read yet.
-- **Yinyue's day** (`own_memory::companion::today`, called by
-  `prompt::owner_block` for the companion only) — "on this day" lines
-  (moments and dated chronicle lines of the same date in past years) and
-  recurring days within a week (`op=write action=yearly day=MM-DD`, or
-  `YYYY-MM-DD`; kept as `yearly:` in the note's meta line). No-raise and void
-  notes never appear in it, and her guidance says she never raises a
-  no-raise note herself. Facts only: whether, when and how gently to speak is
-  hers.
-- **Settings → Notes** — the owner sees and tends what Linggen remembers,
-  by source: Linggen's own notes, and each agent the registry reads (Claude
-  Code, Codex, …; the tabs come from `outside_memory::listing`, the page names
-  no agent). Linggen's notes can be edited, marked wrong and right again,
-  kept from being raised (`no-raise`), and deleted (the file's last version
-  stays in `.state/history`, which keeps 20 per file; a file left with no
-  notes goes). Each is one call to the one writer as the person
-  (`user_directed`, so a note in their own voice changes too). Un-void and
-  delete are the page's alone: the tool has no word for them. Other agents'
-  files are listed and read (redacted, as `memory_agents` does) with their
-  path, and no route changes them: the routes that change a note name a note
-  id and no source (`api/memory_sources.rs`; all admin). A review list
-  shows notes marked wrong and notes not read for 90 days and not changed in
-  them (the chronicle's lines only when marked wrong: they are never read
-  into an index, so "not read" says nothing of them). Looking counts no
-  use, or opening the page would empty that list. The
-  page reads as the person, who sees the fenced notes too (`page::OWNER`).
-  It sits beside the v1 Memory page, which stays while v1 is on.
-- **The move from v1** (`own_memory::migrate`) — rule-based, no model, through
-  the one writer (`write::carry`: the same checks as an add, the row's id and
-  dates kept, one save per file). Kept: a preference (rule), a decision, a
-  learned gotcha, and a fact about the person (a row with no scope; voice
-  user where the row is `from=user`; a row's scope is a folder = a project,
-  none = the person). Not kept, each counted by reason: what was done
-  (built, fixed, tried), episodic staging, a fact about a project, a row
-  another person's phone wrote or v1 already replaced, a key-shaped secret,
-  what the writer refuses (reads as status, too long, same summary in the
-  topic). A topic is the first word of the summary's subject (two when it is
-  short), so the same row always lands in the same file. The v1 store is only read. Rules let
-  more through than a judged pass would; thinning what remains is the
-  dream's job, later.
-  - `ling mem migrate-v2 [--dry-run] [--from export.ndjson]` — by hand,
-    safe to run again (a row whose id is already a note is left as it is).
-    `--dry-run` prints the counts of a real run and writes nothing.
-  - At the engine's start, once: when either switch is v2, no note exists and
-    the v1 store has rows, the move runs, and `.state/moved-from-v1.json`
-    records it. A Mac that already has notes is recorded and left alone.
-    Both switches written as `v1` skip it. A failed read records nothing; the
-    next start tries again. Delete the record to have it looked at again.
-- **Not built yet** — phone sync, other agents' session logs in the
-  chronicle.
+Claude Code and Codex write memory their own way; Linggen does not touch it.
 
-### The owner's phone under v2
+- **Sources** are one declared list: Claude Code's project memory and
+  `~/.claude/CLAUDE.md`, and Codex's memories (reported as "format not known
+  yet" until its files are read). A new agent is one entry. A source that is
+  missing or unreadable is skipped and shown as such, never fatal. Reading is
+  confined to a source's own files, and text leaves only after key-shaped strings
+  (keys, tokens, `password=…`) are replaced.
+- **Forwarding happens once, at session start.** The plugin's hook asks
+  `memory_agents op=index` for the folder and the host, and injects the answer:
+  the other agents' index lines, tagged with their source and grouped by
+  project. Nearest project first, then the person (a quarter of the budget is
+  kept for the person), newest first inside each; 4 KB in all; what does not
+  fit is counted. A host never gets its own memory back. Nothing is sent per
+  turn, and no host is reminded to write memory.
+- **Bodies on demand:** `memory_agents op=read path=…`, or `op=search`.
+- **Who writes where.** An agent with memory of its own writes there, and
+  Linggen reads it. It uses `memory_notes` only when the person says to let
+  every agent know. A host with no readable memory of its own (any other MCP
+  client; Codex until its memories can be read) uses `memory_notes` as its
+  memory, at the same moments: the person says remember or forget, a decision or
+  rule is stated, a gotcha is found.
+- **Linggen's own notes are not injected into those hosts at start.** They are
+  one `op=index` away. Where two notes disagree, the newer wins unless the person
+  says otherwise.
 
-The phone is unchanged: it still sends `add`, `delete`, `search` and `list`
-to `/api/memory/<verb>`. Under v2 the door answers those four for the
-owner's own phone from the notes (`own_memory::phone`); every other caller
-(a phone that is another person, a machine, a skill page) stays on the
-ling-mem store, because the notes have no per-person partition. A phone note
-is one `write` with source `phone`, in the place its app has (a table in
-`phone.rs`); a note naming no app goes to `area:mind`, which coding hosts
-never see. `list` answers the pull: the person's notes as `core`, the
-areas' notes as `semantic` under the app's folder, nothing staged. A search
-carrying `min_score` is the per-turn recall; v2 has none, so it finds
-nothing. A note that can never land (status, empty) is answered ok with no
-id so the phone's queue does not stop on it. The first pull after the switch
-drops the phone's rows that carry an old-store id (the notes hold none of
-them): migrate first. Entry-by-entry sync (design § 4a) is later.
+## The chronicle and Yinyue's day
 
-## Open / next
+**The chronicle** is what the person did and how far they came, month by month,
+for years. It is not in the index; Yinyue and the chronicler read it, and
+`op=search` finds it. A built-in mission runs it on the 1st of each month (a
+missed run catches up in a quiet window):
 
-- Scope on Codex is read-side only: its hook runner cannot rewrite
-  tool input yet, so recall is scoped but the model's own writes go
-  unstamped there (no `source_session` either).
-- Schema v2 (contexts/tags dropped; `hook` → `summary`, `cwd` →
-  `scope`, values carried) runs only on `ling-mem apply-schema --yes`,
-  after a backup to `~/.linggen/memory/backups/schema-v2-<ts>/`. Until
-  then v1 stores keep working; the engine sends `scope_root` or
-  `cwd_scope`, whichever the server declares.
+- The engine's own step, `ling chronicle prepare`, reads the sources first, with
+  no model: Linggen's notes and moments (not void, not no-raise), the sessions
+  the person made and spoke in, and the first lines of other agents' notes
+  changed that month. It writes them to `memory/.chronicle-input.jsonl` and lists
+  the months that have ended and have no file (at most 12 a run, oldest first)
+  and past years whose months are all written.
+- The chronicler agent writes dated lines (`YYYY-MM-DD what`) through
+  `memory_notes op=write scope=chronicle`, one month or year per turn.
+- A month that has a file is never offered again: the person's edits stand, and
+  deleting the file has it written afresh.
+- With v2 off, or nothing waiting, the step exits quietly and the run makes no
+  model call. `ling chronicle backfill` starts the same run by hand; repeat it
+  until nothing waits.
 
-## Future
+**Yinyue's day** is built for her prompt alone, as facts: recurring days (a
+note's `yearly` day) within the next week, and moments and dated chronicle lines
+from this date in past years (at most six). No-raise and void notes never appear,
+and her guidance says she never raises a no-raise note herself. Whether, when and
+how gently to speak is hers.
 
-- Cross-device sync — machines: see **Across machines** above; the
-  phone's half is designed in `phone-memory-spec.md` (2026-09-08, not
-  built).
-- Multi-primary sync (an op log per store, merged by version vectors) —
-  when no machine can be the primary.
-- Soft-forget (archive): hidden from search but recoverable.
+## The phone
 
-## Where the detail lives
+The phone is unchanged: it still sends `add`, `delete`, `search` and `list` to
+`/api/memory/<verb>`. The door answers those four for the owner's own phone from
+the notes. Every other caller (a phone that is another person, an approved
+computer, a skill page) stays on the v1 store, because the notes have no
+per-person partition.
 
-Capture protocol: the engine system prompt + the skill's MCP
-instructions · offline judgment, scan and solve: `agents/memory.md` ·
-the session scan: `crates/linggen-memory/scan/` (`ling mem scan`) ·
-dream/condense procedures on plugin hosts: the linggen skill's runbooks · store schema and
-CLI: `linggen-memory` docs · layout: `storage-spec.md` · tool
-dispatch: `tool-spec.md` · the phone's memory and the account stamp
-on rows from a phone: `phone-memory-spec.md`.
+- **A phone note** is one write with source `phone`, filed by app: `yinyue` is
+  `area:mind` (also the default for a note naming no app, so coding hosts never
+  see it), `dj` is `area:music`, `cfo` `area:money`, `health` `area:body`,
+  `shifu` `area:home`, `photos` `area:play`.
+- **`list`** is the pull: the person's notes as `core`, the areas' notes as
+  `semantic` under the app's folder. Moments, the chronicle and work notes are
+  not the phone's.
+- **A search that carries `min_score`** is the old per-turn recall. v2 has none,
+  so it finds nothing.
+- **A note that can never land** (status, empty) is answered ok with no id, so the
+  phone's queue does not stop on it. Only a failure worth retrying (the disk, a
+  note changed under the write) is an error.
+- Run the move from v1 first: rows that carry an old-store id are not in the
+  notes.
+
+## Settings → Notes
+
+The owner sees and tends what Linggen remembers, by source: Linggen's own notes,
+and each agent the registry reads (the tabs come from the registry; the page
+names no agent).
+
+- **Linggen's notes** can be edited, marked wrong and right again, kept from being
+  raised, and deleted (the file's last version stays in history; a file left with
+  no notes goes). Each is one call to the one writer as the person
+  (`user_directed`, so a note in their own voice changes too).
+- **Other agents' notes** are listed and read (redacted, with their path). No
+  route changes them: the routes that change a note name a note id and no
+  source. All are admin.
+- **A review list** shows notes marked wrong, and notes neither read nor changed
+  for 90 days. The chronicle's lines appear only when marked wrong: they are
+  never read into an index, so "not read" says nothing of them. Looking counts no
+  use.
+- Settings → Memory remains the page for the v1 store.
+
+## The switch
+
+Two settings in the engine's config, each `"v1"` or `"v2"`, absent meaning v2
+(the default since 3.0):
+
+```toml
+[memory]
+linggen = "v2"          # Ling, Yinyue, apps, the owner's phone, the chronicle
+outside_agents = "v2"   # Claude Code, Codex and other hosts on the door
+```
+
+`linggen` says which memory Linggen's own sessions have, and whether the phone's
+four verbs and the chronicle use the notes. `outside_agents` says how hosts
+outside Linggen are served: v2 forwards other agents' memory at start and serves
+`memory_notes`; v1 is the plugin's old recall and capture. The two are
+independent. Writing `v1` is the way back, and an explicit `v1` stays v1. The
+settings are hand-edited; a saved settings page keeps what the file holds.
+
+## Moving over from v1
+
+Rule-based, no model, through the one writer (the same checks as an add, the
+row's id and dates kept, one save per file). The v1 store is only read.
+
+- **Kept:** a preference (becomes a rule), a decision, a learned gotcha, and a
+  fact about the person. A row with no scope is about the person; a folder scope
+  is that project. Voice is `user` where the row is from the user.
+- **Not kept**, each counted by reason: what was done (built, fixed, tried),
+  episodic staging, a fact about a project, a row another person's phone wrote or
+  v1 already replaced, a key-shaped secret, and what the writer refuses (reads as
+  status, too long, same summary in the topic).
+- **Topic names** are the first word of the summary's subject (two when it is
+  short), so the same row always lands in the same file. The rules let more
+  through than a judged pass would; thinning what remains is later work.
+- **By hand:** `ling mem migrate-v2 [--dry-run] [--from export.ndjson]`. Safe to
+  run again: a row whose id is already a note is left as it is. `--dry-run` prints
+  the counts of a real run and writes nothing.
+- **Once, at the engine's start:** when either switch is v2, no note exists and
+  the v1 store has rows, the move runs, and `.state/moved-from-v1.json` records
+  it. A Mac that already has notes is recorded and left alone. Both switches `v1`
+  skip it. A failed read records nothing, and the next start tries again. Delete
+  the record to have it looked at again.
+
+## Not built yet
+
+Entry-by-entry sync with the phone (each note its own unit, newest `updated`
+wins per entry, void travels as an edit; the phone's side is in
+`phone-memory-spec.md`). Other agents' session logs in the chronicle. Suggesting
+that a note used again and again move into a project's `AGENTS.md`.
+
+## V1 (the way back)
+
+`linggen = "v1"` and `outside_agents = "v1"` bring back what ran before 3.0. The
+v1 store (ling-mem rows) is still opened and served by the engine under v2, for
+what v2 does not cover: a phone that is another person, approved computers, skill
+pages, and the move above. The built-in dream, scan and solve missions are not
+gated by the switch.
+
+- **Tiers.** Core (a handful of high-confidence universals, in every session),
+  long-term (durable state and lessons, never events), short-term (per-turn
+  staging that fades after about a week once judged).
+- **Per session.** Capture protocol and reminder, per-turn recall ("From memory:
+  …"), the always-on identity block, scope (a row's `scope` is the folder it is
+  about) and an index of standing rules. Exact duplicates collapse at write time;
+  the agent merges its own notes freely, but a row in the user's voice changes
+  only with the user. Tools: `memory_search`, `memory_add`, `memory_update`,
+  `memory_delete`, `memory_upkeep`.
+- **Offline judgment.** The nightly **dream** remembers each day's staging, lets
+  the rest fade, and audits long-term rows (merges archive, never delete; what
+  needs the user becomes a review item). **Scan** backfills a day from host
+  session logs; **solve** drains review items with the user. Both are missions on
+  the `memory` agent, started from Settings → Memory.
+- **Rules.** The user's voice changes only with the user; record what was said,
+  never invent; the file beats the memory; curate, don't accumulate; never store
+  secrets; status rows are perishable.
+
+### Hosted by the engine
+
+`ling` opens the v1 store at start-up; there is no separate `ling-mem` process.
+
+- **One writer:** the engine holds `memory/.store.lock` for its life; a second
+  opener is refused. `ling mem <verb>` goes to the engine when it is up, else to
+  the store directly under the lock.
+- **Doors, one port:** `/mem/*`, `/mcp` (the memory tools among the door's;
+  `/mcp/memory` is retired and answers 410) and the phone's `/api/memory/<verb>`.
+  Nothing listens on the old daemon's 9528, and there is no address to set.
+- **The old binary** `~/.local/bin/ling-mem` is a stand-in whose data verbs run as
+  `ling mem`. A running old daemon is stopped first, and each engine version
+  copies the store to `memory/backups/takeover-<stamp>/` before it first opens it.
+- **Warm-up.** A call that embeds waits up to 20 seconds for the embedding model,
+  then is refused with how long memory has been warming; it is neither applied nor
+  queued. Automatic recall skips quietly at once.
+- **Who reaches memory** (decided once, in `memory_host::caller`): this machine
+  and an approved computer (`machine`) see all of the owner's memory; a `phone`
+  sees its person's rows only and runs only the per-person verbs (`search`,
+  `list`, `count`, `get`, `add`, `add_batch`, `update`, `delete`, `forget`,
+  `session_start`); no token or an unknown one, nothing. Whose rows comes from the
+  caller, never the request body, and a write stamped with a person may name only
+  that person's rows. Allow and Deny happen only at this machine.
+
+### Across machines
+
+One person, one memory: the stores form a star with one **primary** and any
+number of **replicas**. A machine picks its primary in Settings → Memory → Other
+machines: local (the default) or another machine's Linggen (`host:port`, its
+engine port). A replica asks to join; the primary's machine shows Allow / Deny.
+Reads come from the local copy; writes go to the primary, queued while it is
+away; the primary wins a conflict and files a review item. Dream and solve run on
+the primary only. A machine with only the plugin points at another machine's
+`/mcp` with that machine's token (`/linggen:config`).
+
+### Scan and solve
+
+Both are missions with no schedule. Scan: `POST
+/api/missions/memory-scan/trigger {"day":"YYYY-MM-DD","attended":true}`; the
+engine first runs `ling mem scan <day>` (`cli.md` § mem: session logs of Claude
+Code, Codex, OpenClaw and Linggen, secret-filtered, no model), then the agent
+stages candidates as short-term rows and stamps the day. Solve: `POST
+/api/missions/memory-solve/trigger {"attended":true}`; it settles items from
+evidence and asks the user only when evidence cannot. A trigger answers 200 with
+the run's session, 409 while the same mission is running, 400 for a malformed
+day. Missions never prompt: a call outside their grants is refused.
+
+### Where the v1 detail lives
+
+Capture protocol: the engine system prompt and the plugin's MCP instructions ·
+offline judgment, scan and solve procedures: `agents/memory.md` and `missions/` ·
+store schema and CLI: `linggen-memory` docs · layout: `storage-spec.md` · tool
+dispatch: `tool-spec.md` · the phone's memory and the account stamp on its rows:
+`phone-memory-spec.md`.

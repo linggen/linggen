@@ -57,7 +57,7 @@ For background on why an AI app engine is needed, plus landscape and roadmap, se
 | `permission-spec.md` | Privilege model — modes, layers, deny floor, remote trust |
 | `chat-spec.md` | Chat system — events, message model, rendering, APIs |
 | `plan-spec.md` | Plan mode — research-then-execute |
-| `memory-spec.md` | Memory — extraction, storage, two-tier loading |
+| `memory-spec.md` | Memory — Linggen's own notes, one writer, the privacy fence, other agents' memory read and forwarded; v1 as the way back |
 | `models.md` | Hardware abstraction — providers, routing |
 | `webrtc-spec.md` | Transport — P2P, signaling, data channels |
 | `room-spec.md` | Sharing — rooms, shared models, token budgets |

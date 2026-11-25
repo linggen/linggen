@@ -144,7 +144,7 @@ agent remembers to the others. One tool, this machine's owner at this Mac only:
 
 ## Linggen's own notes (`memory_notes`) — memory v2, in trial
 
-Linggen's own memory (`memory-spec.md` § Memory V2), for a host that has none
+Linggen's own memory (`memory-spec.md`), for a host that has none
 of its own to keep: one tool, ops `index` (the notes for a project), `read`
 (a note by id, or a topic file by path), `search` (words, also across other
 agents' memory), `write` (add, update, void, no_raise by id). Served to the
