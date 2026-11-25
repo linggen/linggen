@@ -378,6 +378,7 @@ mod tests {
     /// just the pieces. The server is the hosted memory on a temp store.
     #[tokio::test]
     async fn a_configured_server_reaches_the_model_s_tool_list() {
+        let _registry = crate::mcp_client::test_memory::global_registry().await;
         let (url, _store) = crate::mcp_client::test_memory::mcp_url().await;
 
         let mut cfgs = BTreeMap::new();

@@ -253,7 +253,7 @@ async fn an_engine_on_its_own_model_runs_a_shared_one_for_a_guest() {
         .unwrap()
     };
     let mut owner = engine_on("gpt-6-luna");
-    owner.run_as_child(Some("gpt-6.1-terra"), "test").await;
+    owner.run_as_child("gpt-6.1-terra", "test").await;
     assert_eq!(owner.model_id, "gpt-6.1-terra");
 
     let mut child = engine_on("gpt-6.1-terra");
@@ -262,7 +262,7 @@ async fn an_engine_on_its_own_model_runs_a_shared_one_for_a_guest() {
         ..Default::default()
     })
     .apply(&mut child);
-    child.run_as_child(Some("gpt-6.1-terra"), "test").await;
+    child.run_as_child("gpt-6.1-terra", "test").await;
     assert_eq!(child.model_id, "gpt-6.2-sol");
 }
 
@@ -581,15 +581,11 @@ async fn a_task_child_runs_the_parents_model_unless_its_agent_declares_one() {
         let (manager, root) = (manager.clone(), dir.clone());
         async move {
             let mut child = manager.spawn_delegation_engine(&root, agent).await.unwrap();
-            child.run_as_child(Some(parent), "test").await;
+            child.run_as_child(parent, "test").await;
             child.model_id
         }
     };
     assert_eq!(child_model("plain").await, parent, "no model declared: the parent's");
     assert_eq!(child_model("inheriting").await, parent, "`inherit` declares none");
     assert_eq!(child_model("picky").await, "gpt-6-luna", "a declared model wins");
-
-    let mut unknown = manager.spawn_delegation_engine(&dir, "plain").await.unwrap();
-    unknown.run_as_child(None, "test").await;
-    assert_eq!(unknown.model_id, "gpt-6.2-sol", "no parent known: its agent's own");
 }

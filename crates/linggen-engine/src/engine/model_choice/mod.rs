@@ -429,10 +429,9 @@ impl AgentEngine {
     /// names: an owner's runs the parent's model, a guest's the parent's too
     /// (the room shares it) or the first the room shares. Whether a model
     /// that cannot run gives way follows the parent's session
-    /// ([`Switching::session_allows`]). `parent_model` is `None` where the
-    /// caller does not know the parent's (the child then runs its agent's own
-    /// model).
-    pub async fn run_as_child(&mut self, parent_model: Option<&str>, place: &str) {
+    /// ([`Switching::session_allows`]). The one entrance of a Task child is the
+    /// delegation dispatch (`dispatch.rs`), which always knows the parent's model.
+    pub async fn run_as_child(&mut self, parent_model: &str, place: &str) {
         let asker = self
             .tools
             .builtins
@@ -444,7 +443,7 @@ impl AgentEngine {
             asker,
             may_switch: self.switching(session.as_deref()).session_allows(),
         };
-        let asked = parent_model.filter(|_| !self.declares_own_model);
+        let asked = Some(parent_model).filter(|_| !self.declares_own_model);
         let choice = resolve(&self.model_manager, asked, &self.default_model_id, rule);
         self.run_on(&choice, place).await;
     }

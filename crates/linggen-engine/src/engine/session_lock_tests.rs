@@ -341,7 +341,7 @@ fn a_write_is_told_from_a_read() {
     assert_eq!(writes("look(&engine.chat_history);", "chat_history"), 0);
     assert_eq!(
         writes(
-            "if let Some(ref mut set) = engine.cfg.mission_allowed_tools {",
+            "if let Some(ref mut set) = engine.cfg.session_toolset {",
             "cfg"
         ),
         1
@@ -354,5 +354,5 @@ fn a_write_is_told_from_a_read() {
     assert_eq!(writes("engine.plan.as_ref().map(|p| p);", "plan"), 0);
     assert_eq!(writes("let c = engine.last_call.take();", "last_call"), 1);
     assert_eq!(writes("match x { a => engine.plan }", "plan"), 0);
-    assert_eq!(writes("engine.cfg.mission_allowed_tools.get_or_insert_with(f);", "cfg"), 1);
+    assert_eq!(writes("engine.cfg.session_toolset.get_or_insert_with(f);", "cfg"), 1);
 }

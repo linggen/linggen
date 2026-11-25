@@ -1,6 +1,6 @@
 //! Handing work on: Task, Skill, RunApp.
 
-use super::super::delegation::{RunAppArgs, SkillArgs, TaskArgs};
+use super::super::delegation::{RunAppArgs, SkillArgs};
 use super::super::{ToolCall, ToolResult, Tools};
 use super::Tool;
 use crate::engine::permission::PermissionMode;
@@ -50,16 +50,20 @@ impl Tool for TaskTool {
             "notes": "Delegates a task to another agent. Subject to max delegation depth."
         })
     }
-    async fn execute(&self, tools: &Tools, call: ToolCall) -> Result<ToolResult> {
-        let args: TaskArgs = serde_json::from_value(call.args)
-            .map_err(|e| anyhow::anyhow!("invalid args for Task: {}", e))?;
-        tools.task(args).await
+    /// A Task is run by the engine's delegation dispatch
+    /// (`AgentEngine::handle_delegation_batch`), the one entrance: only it
+    /// knows the parent's model, grants and tool ceiling a child inherits.
+    /// Reaching here means a call skipped it; refuse rather than run a child
+    /// that inherits nothing.
+    async fn execute(&self, _tools: &Tools, _call: ToolCall) -> Result<ToolResult> {
+        anyhow::bail!("Task runs through the engine's delegation dispatch, not Tools::execute")
     }
 }
 
 #[cfg(test)]
 mod task_tests {
     use super::*;
+    use crate::engine::tools::TaskArgs;
 
     #[test]
     fn background_is_an_optional_task_argument_in_both_schemas() {
@@ -69,6 +73,19 @@ mod task_tests {
         assert_eq!(TaskTool.legacy_schema_entry()["args"]["run_in_background"], "bool?");
         let args: TaskArgs = serde_json::from_value(json!({"target_agent_id": "ling", "task": "test"})).unwrap();
         assert!(!args.run_in_background);
+    }
+
+    /// One entrance: a Task call that reaches `Tools::execute` is refused.
+    #[tokio::test]
+    async fn a_task_reaching_the_tool_registry_is_refused_not_run() {
+        let tools = Tools::new(std::env::temp_dir()).unwrap();
+        let call = ToolCall {
+            tool: "Task".into(),
+            args: json!({"target_agent_id": "ling", "task": "test"}),
+            block_id: None,
+        };
+        let error = tools.execute(call).await.unwrap_err().to_string();
+        assert!(error.contains("delegation dispatch"), "{error}");
     }
 }
 

@@ -144,9 +144,12 @@ pub struct EngineConfig {
     pub permission_mode: crate::engine::permission::PermissionMode,
     pub prompt_loop_breaker: Option<String>,
     pub interface_mode: InterfaceMode,
-    /// When set, restricts available tools to this set (mission permission tiers).
-    /// This is applied at engine level, before the agent spec tool list.
-    pub mission_allowed_tools: Option<std::collections::HashSet<String>>,
+    /// The session's own toolset (`SessionSpec::tools`), written only by
+    /// `SessionSpec::apply`. Kept as the declaration, not as its expansion:
+    /// `effective_tool_restrictions` reads it each time the turn's tool list
+    /// is built, so an MCP server that connects after the engine was born
+    /// (a delegate's `mcp__memory`) is seen.
+    pub session_toolset: crate::engine::session_spec::Tools,
     /// When set, restricts available tools for proxy room consumers.
     /// Owner configures which tools consumers can use via room_config.toml.
     pub consumer_allowed_tools: Option<std::collections::HashSet<String>>,
@@ -202,7 +205,7 @@ impl EngineConfig {
             permission_mode: config.agent.default_permission_mode.unwrap_or_default(),
             prompt_loop_breaker: config.agent.prompt_loop_breaker.clone(),
             interface_mode,
-            mission_allowed_tools: None,
+            session_toolset: crate::engine::session_spec::Tools::Lead,
             consumer_allowed_tools: None,
             skill_allowed_tools: None,
             delegated_allowed_tools: None,
@@ -240,8 +243,9 @@ impl EngineConfig {
     /// tool restrictions. Each present set narrows the allowed tools;
     /// absent sets impose no constraint. Returns None when none apply.
     pub fn effective_tool_restrictions(&self) -> Option<std::collections::HashSet<String>> {
+        let session = self.session_toolset.allowlist();
         let sets = [
-            self.mission_allowed_tools.as_ref(),
+            session.as_ref(),
             self.consumer_allowed_tools.as_ref(),
             self.skill_allowed_tools.as_ref(),
             self.delegated_allowed_tools.as_ref(),
@@ -1053,7 +1057,7 @@ mod tests {
         // Skill ∩ mission → only tools in BOTH survive.
         let mut c = cfg();
         c.skill_allowed_tools = Some(set(&["Read", "Bash", "Edit"]));
-        c.mission_allowed_tools = Some(set(&["Read", "Bash"]));
+        c.session_toolset = crate::engine::session_spec::Tools::Mission(Some(set(&["Read", "Bash"])));
         let eff = c.effective_tool_restrictions().unwrap();
         assert_eq!(eff, set(&["Read", "Bash"]));
         assert!(!c.is_tool_allowed("Edit"));

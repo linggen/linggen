@@ -254,7 +254,7 @@ impl Seen {
     /// `None` for a run that never loads it (a `Task` child).
     fn of(engine: &AgentEngine, on_disk: Option<bool>) -> Self {
         let restricted = engine.cfg.consumer_allowed_tools.is_some()
-            || engine.cfg.mission_allowed_tools.is_some();
+            || engine.cfg.session_toolset.allowlist().is_some();
         let interactive = match on_disk {
             Some(file) => file && !restricted,
             None => engine.session_permissions.interactive,
@@ -266,8 +266,8 @@ impl Seen {
             task: p.task_bootstrap,
             tools: engine
                 .cfg
-                .mission_allowed_tools
-                .clone()
+                .session_toolset
+                .allowlist()
                 .map(|s| s.into_iter().collect()),
             interactive,
             world: crate::engine::prompt::world::world_rides(
@@ -407,7 +407,7 @@ fn an_attended_missions_askuser_is_in_its_spec() {
     spec.apply(&mut engine);
     engine.respec(|spec| spec.tools.permit_in_mission("AskUser"));
     engine.respec(|spec| spec.memory = Memory::None);
-    let tools = engine.cfg.mission_allowed_tools.clone().unwrap();
+    let tools = engine.cfg.session_toolset.allowlist().unwrap();
     assert!(tools.contains("AskUser") && tools.contains("Read"));
     assert!(!engine.session_permissions.interactive);
 }
@@ -568,6 +568,36 @@ fn a_typed_turn_in_a_delegates_session_keeps_its_spec() {
         false,
     );
     assert_eq!(Seen::of(&e, Some(false)), want);
+}
+
+/// A delegate's `mcp__memory` is read when the turn's tool list is built, not
+/// when the engine was: an engine born before the memory server connected (right
+/// after a restart) has the memory tools on the turn after it does.
+#[tokio::test]
+async fn a_delegates_memory_tools_are_read_when_the_turn_is_built() {
+    use crate::mcp_client::{registry, McpServerConfig};
+    let _registry = crate::mcp_client::test_memory::global_registry().await;
+    let search = "mcp__memory__memory_search";
+    registry().connect_all(&Default::default()).await;
+
+    let mut meta = meta("sess-4-late", "external", None);
+    meta.params.insert(delegate::TOOLS_PARAM.into(), "read".into());
+    let mut e = engine_for(&meta);
+    SessionSpec::of(&meta).apply(&mut e);
+    let before = e.cfg.effective_tool_restrictions().unwrap();
+    assert!(before.contains("Read") && !before.contains(search), "no server yet");
+    assert!(!e.cfg.is_tool_allowed(search));
+
+    // The server connects; the engine is not rebuilt and not re-specced.
+    let (url, _store) = crate::mcp_client::test_memory::mcp_url().await;
+    let servers = [("memory".to_string(), McpServerConfig { url: Some(url), ..Default::default() })];
+    registry().connect_all(&servers.into_iter().collect()).await;
+    let after = e.cfg.effective_tool_restrictions().unwrap();
+    assert!(after.contains(search), "{after:?}");
+    assert!(e.cfg.is_tool_allowed(search));
+    assert!(!after.contains("Bash"), "still read-only");
+
+    registry().connect_all(&Default::default()).await;
 }
 
 /// A turn a device sent is typed at its level: it asks no one and carries

@@ -12,7 +12,7 @@ use std::collections::HashSet;
 /// Translate an `allowed-tools` list into the engine's restriction set.
 /// Empty input → `None` (unrestricted); non-empty → `Some(set)`.
 ///
-/// Used by mission dispatch (`mission_allowed_tools`) and by skill
+/// Used by mission dispatch (`Tools::Mission`) and by skill
 /// activation when a skill declares `allowed-tools` for its child agent.
 ///
 /// A built-in may be named by any name it answers to (an alias, or an old name

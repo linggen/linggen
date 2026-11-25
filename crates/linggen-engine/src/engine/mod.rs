@@ -1914,7 +1914,7 @@ mod member_tests {
             let mut parent = engine_at(root.path());
             match source {
                 "plan" => parent.plan_mode = true,
-                "mission" => parent.cfg.mission_allowed_tools = Some(set(&["Read", "Task"])),
+                "mission" => parent.cfg.session_toolset = crate::engine::session_spec::Tools::Mission(Some(set(&["Read", "Task"]))),
                 _ => parent.cfg.skill_allowed_tools = Some(set(&["Read", "Task"])),
             }
             let ceiling = effective(&mut parent);

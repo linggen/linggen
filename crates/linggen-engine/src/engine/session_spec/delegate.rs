@@ -16,8 +16,10 @@ const READ_TOOLS: &[&str] = &[
     "ImageSearch",
     "VideoSearch",
     "WebFetch",
-    // The memory server by name, expanded to the tools it advertises — so
-    // this list doesn't have to be re-edited when ling-mem gains a verb.
+    // The memory server by name, expanded to the tools it advertises each
+    // time the turn's tool list is built (`EngineConfig::effective_tool_restrictions`)
+    // — so this list doesn't have to be re-edited when ling-mem gains a verb,
+    // and a server that connects after the engine was born is seen.
     "mcp__memory",
     "Skill",
     // Its checklist shows in the session, as in any chat (it writes nothing).
