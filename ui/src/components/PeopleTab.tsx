@@ -1,13 +1,16 @@
 import React from 'react';
 import { User } from 'lucide-react';
 import { ApiError, apiErrorMessage } from '../lib/api';
-import { peopleApi } from '../lib/endpoints';
+import { peopleApi, usesApi } from '../lib/endpoints';
 import {
   LEVELS, WORDS, appChoices, appRows, personTitle, splitApps, appsAfterToggle, arrivalLine, deviceLabel, limitFromText, limitText,
   modelRows, modelsAfterToggle, offeredApps, usedLine,
   type AppChoice, type AppRow, type PeopleReply, type Person, type PersonPatch,
 } from '../lib/people.mts';
 import { useServerStore } from '../stores/serverStore';
+import type { UseOption } from '../lib/modelUses';
+import { W } from '../lib/modelsWords.mts';
+import { nativeModelLabel } from './models/UseOptionLabel';
 import { Section, inputCls, sectionCls } from './settings/kit';
 
 const POLL_MS = 5000;
@@ -71,10 +74,23 @@ function usePeople() {
   return { reply, busy, refused, error, save };
 }
 
+/** This Mac's chat models as the Models page lists them (`GET /api/uses`): the readable name and its source.
+ *  Null until the engine has answered. Read again when the Mac's model list changes. */
+function useMacModels(): UseOption[] | null {
+  const [options, setOptions] = React.useState<UseOption[] | null>(null);
+  const changed = useServerStore((s) => s.models.map((m) => m.id).join());
+  React.useEffect(() => {
+    let live = true;
+    usesApi.list().then((uses) => { if (live) setOptions(uses.chat.options); }).catch(() => {});
+    return () => { live = false; };
+  }, [changed]);
+  return options;
+}
+
 export const PeopleTab: React.FC = () => {
   const { reply, busy, refused, error, save } = usePeople();
-  const models = useServerStore((s) => s.models);
-  const macModels = React.useMemo(() => models.map((m) => m.id).filter(Boolean), [models]);
+  const macModels = useMacModels();
+  const skills = useServerStore((s) => s.skills);
 
   if (refused || (reply && !reply.at_this_mac)) {
     return <Section title={WORDS.title}><p className="text-xs text-slate-500 dark:text-slate-400">{WORDS.notHere}</p></Section>;
@@ -84,7 +100,7 @@ export const PeopleTab: React.FC = () => {
   }
 
   const mineOnly = reply.owner.mine_only;
-  const apps = appChoices(reply.apps);
+  const apps = appChoices(reply.apps, skills);
   const setPerson = (person: Person, patch: PersonPatch) => save(person.id, () => peopleApi.set(person.id, patch));
   return (
     <div className="space-y-6">
@@ -115,7 +131,7 @@ const PersonCard: React.FC<{
   title: string;
   apps: AppChoice[];
   mineOnly: string[];
-  macModels: string[];
+  macModels: UseOption[] | null;
   busy: boolean;
   onChange: (patch: PersonPatch) => void;
 }> = ({ person, title, apps, mineOnly, macModels, busy, onChange }) => {
@@ -191,7 +207,7 @@ const PersonCard: React.FC<{
           <span className={labelCls}>{WORDS.models}</span>
           <p className={hintCls}>{WORDS.modelsHint}</p>
           <div className="mt-1.5 flex flex-wrap gap-1.5">
-            {modelRows(macModels, settings.models).map((row) => (
+            {macModels && modelRows(macModels.map((o) => o.id), settings.models).map((row) => (
               <button
                 key={row.id}
                 data-model={row.id}
@@ -199,7 +215,7 @@ const PersonCard: React.FC<{
                 onClick={() => onChange({ models: modelsAfterToggle(settings.models, row.id) })}
                 className={chipCls(row.on)}
               >
-                {row.on ? '✓ ' : ''}{row.id}
+                {row.on ? '✓ ' : ''}{modelChipLabel(row.id, macModels)}
                 {row.gone && <span className="ml-1 text-slate-400">{WORDS.gone}</span>}
               </button>
             ))}
@@ -216,6 +232,13 @@ const PersonCard: React.FC<{
     </section>
   );
 };
+
+/** A model chip's words: its readable name and source, as the Models page says them. A model
+ *  this Mac no longer has has no name to give — never its internal id. */
+function modelChipLabel(id: string, options: readonly UseOption[]): string {
+  const option = options.find((o) => o.id === id);
+  return option ? nativeModelLabel(option) : W.modelMissing;
+}
 
 /** The daily limit: typed, and sent when the field is left or Enter is pressed. */
 const LimitField: React.FC<{
@@ -295,7 +318,7 @@ const OwnerSide: React.FC<{
   );
 };
 
-/** A checklist of skills: the ones with an app page first, the others under their own label. */
+/** A checklist of skills: the ones with an app page first, the others folded under More (closed). */
 const GroupedApps: React.FC<{
   rows: AppRow[];
   lead?: React.ReactNode;
@@ -306,10 +329,10 @@ const GroupedApps: React.FC<{
     <>
       <div className="mt-1 flex flex-wrap gap-1.5">{lead}{apps.map(chip)}</div>
       {others.length > 0 && (
-        <>
-          <span className={`${labelCls} block mt-3`}>{WORDS.otherSkills}</span>
+        <details className="mt-3" data-testid="more-skills">
+          <summary className={`${labelCls} cursor-pointer select-none`}>{WORDS.more}</summary>
           <div className="mt-1 flex flex-wrap gap-1.5">{others.map(chip)}</div>
-        </>
+        </details>
       )}
     </>
   );

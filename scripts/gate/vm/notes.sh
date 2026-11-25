@@ -1,12 +1,12 @@
-# Release gate — Memory V2, the default since 3.0: Linggen's own notes
+# Release gate — Memory V2, opt-in in 2.7 (`[memory] linggen = "v2"`): Linggen's own notes
 # (doc/memory-spec.md; engine own_memory/ and memory_host/upgrade.rs).
 # Sourced by first-install.sh and upgrade.sh in the VM, and by notes-local.sh
 # on the host against a scratch engine — the same checks, so a rehearsal here
 # is the gate's own. Needs common.sh (LG, EP, mcp_answers, mem_post, check).
 #
-#   notes_fresh <label>               a fresh home ends on v2 with nothing to move
-#   notes_moved <label> <ids.tsv>     an old v1 home's rows became notes, once
-#   notes_stays_v1 <label>            `v1` written in the config stays v1
+#   notes_fresh <label>               a fresh home ends on v1 (the default) with nothing moved
+#   notes_moved <label> <ids.tsv>     a v1 home written as v2: its rows became notes, once
+#   notes_stays_v1 <label>            v1 (written so, or no [memory]) stays v1, nothing moved
 #   notes_door <label>                the one door lists memory_notes (and the catalogue)
 #   notes_prompts <label> yes|no      Ling's and Yinyue's prompts hold the notes section, or not
 #
@@ -89,18 +89,13 @@ notes_door() { # label [v1]
   fi
 }
 
-# A first install: v2, with no v1 store to move.
-notes_fresh() { # label
-  [ ! -e "$NOTES_MOVED" ]
-  check "$1: no move from v1 is recorded (a fresh home has nothing to move)" $? "$NOTES_MOVED holds: $(head -c 160 "$NOTES_MOVED" 2>/dev/null)" "no .state/moved-from-v1.json"
-  [ "$(notes_count)" = 0 ]
-  check "$1: no note exists before the person's first" $? "$(notes_count) topic files: $(notes_files | head -3 | tr '\n' ' ')" "0 topic files"
-  notes_door "$1"
-  notes_prompts "$1" yes
+# A first install: v1, the default — v2 is opt-in — with nothing moved.
+notes_fresh() { # label [project-root]
+  notes_stays_v1 "$1 (fresh home, the default)" "${2:-$HOME}"
 }
 
 # An old v1 home (rows written by the previous release) after the release has
-# started on it: the move ran once and recorded itself, every kept row is a
+# started on it with `[memory]` written as v2: the move ran once and recorded itself, every kept row is a
 # note by its own id, staged rows are not. ids.tsv is takeover.sh's
 # (id<TAB>tier<TAB>written by), which the baseline's rows were noted in.
 # A record that was already there before the upgrade (an upgraded VM kept as
@@ -108,7 +103,7 @@ notes_fresh() { # label
 notes_moved() { # label ids.tsv [record-was-there-before: 1]
   local id tier by bad="" n=0 carried
   if [ "${3:-0}" = 1 ]; then
-    gap "$1: the v1 rows were moved into notes" "the baseline already holds .state/moved-from-v1.json (it ran 3.0 before) — no move is due"
+    gap "$1: the v1 rows were moved into notes" "the baseline already holds .state/moved-from-v1.json (it ran v2 before) — no move is due"
     return 0
   fi
   [ -s "$NOTES_MOVED" ] && jq -e . "$NOTES_MOVED" >/dev/null 2>&1
@@ -129,8 +124,9 @@ notes_moved() { # label ids.tsv [record-was-there-before: 1]
   check "$1: a long-term and a core row are notes by their own id, a staged row is not" $? "${bad:-no seeded rows in $2}" "$carried"
 }
 
-# `v1` in the config is the old memory and nothing of the new: no record, no
-# notes, no section in the prompts, the tool refused at the door.
+# v1 — written in the config, or no `[memory]` section (the default) — is the
+# old memory and nothing of the new: no record, no notes, no section in the
+# prompts, the tool refused at the door.
 notes_stays_v1() { # label [project-root]
   [ ! -e "$NOTES_MOVED" ]
   check "$1: no move from v1 is recorded" $? "$NOTES_MOVED holds: $(head -c 160 "$NOTES_MOVED" 2>/dev/null)" "no .state/moved-from-v1.json"

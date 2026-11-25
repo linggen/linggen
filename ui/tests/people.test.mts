@@ -13,9 +13,9 @@ const ZH: Record<string, string> = new Function(
 )();
 
 const installed = [
-  { name: 'dice', label: 'Dice', app: true },
-  { name: 'music', label: 'Music', app: true },
-  { name: 'money', label: 'Money', app: true },
+  { name: 'dice', label: 'Dice', app: true, listed: true },
+  { name: 'music', label: 'Music', app: true, listed: true },
+  { name: 'money', label: 'Money', app: true, listed: true },
 ];
 
 test('every sentence is at most twenty words and has a Chinese entry', () => {
@@ -112,11 +112,38 @@ test('signed-out phones are told apart by their device only when there are sever
     devices: [{ id: `d-${device}`, name: device, kind: 'phone' }],
   });
   const lone = [one('device:a', 'Guest', "Ana's phone"), one('u-friend', 'Friend', 'Friend phone')];
-  assert.equal(personTitle(lone[0], lone), 'Guest');
+  assert.equal(personTitle(lone[0], lone), 'Signed-out phone');
+  assert.equal(translateFrom(ZH, personTitle(lone[0], lone)), '未登录的手机');
   const two = [...lone, one('device:b', 'Guest', "Ben's phone")];
-  assert.equal(personTitle(two[0], two), "Guest · Ana's phone");
-  assert.equal(personTitle(two[2], two), "Guest · Ben's phone");
+  assert.equal(personTitle(two[0], two), "Signed-out phone · Ana's phone");
+  assert.equal(personTitle(two[2], two), "Signed-out phone · Ben's phone");
   assert.equal(personTitle(two[1], two), 'Friend');
-  assert.equal(translateFrom(ZH, personTitle(two[0], two)), "访客 · Ana's phone");
-  assert.equal(translateFrom(ZH, WORDS.otherSkills), '其他技能');
+  assert.equal(translateFrom(ZH, personTitle(two[0], two)), "未登录的手机 · Ana's phone");
+  assert.equal(translateFrom(ZH, WORDS.more), '更多');
+});
+
+test('apps carry the name the sidebar shows; an unlisted app is held in the lists but never drawn', () => {
+  const sent = [
+    { name: 'apple-shifu', app: true },
+    { name: 'lingyu', app: true },
+    { name: 'weather', app: false },
+  ];
+  const skills = [
+    { name: 'apple-shifu', app: { title: 'Apple Shifu' } },
+    { name: 'lingyu', app: { list: false } },
+    { name: 'weather' },
+  ];
+  const choices = appChoices(sent, skills);
+  assert.deepEqual(choices.map((c) => [c.name, c.label, c.listed]), [
+    ['apple-shifu', 'Apple Shifu', true], ['lingyu', 'lingyu', false], ['weather', 'weather', true],
+  ]);
+  const rows = appRows(choices, [], null);
+  const { apps, others } = splitApps(rows);
+  assert.deepEqual(apps.map((r) => r.name), ['apple-shifu']);
+  assert.deepEqual(others.map((r) => r.name), ['weather']);
+  // Switching one off from "all" lists what is drawn; a list that already holds the unlisted app keeps it.
+  assert.deepEqual(appsAfterToggle(null, offeredApps(choices, []), 'weather'), ['apple-shifu']);
+  assert.deepEqual(appsAfterToggle(['lingyu', 'weather'], offeredApps(choices, []), 'weather'), ['lingyu']);
+  // A list holding an unlisted app does not show it as "not installed".
+  assert.deepEqual(appRows(choices, [], ['lingyu']).filter((r) => r.gone), []);
 });

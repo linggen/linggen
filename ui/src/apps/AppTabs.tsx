@@ -11,7 +11,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { skillsApi } from '../lib/endpoints';
 import { useServerStore } from '../stores/serverStore';
-import { appLabel } from './appLabel.mts';
+import { appLabel, appListed } from './appLabel.mts';
 import type { SkillAppConfig, SkillInfoFull } from '../types';
 import { frameAllow } from '../lib/frameAllow.mts';
 import { launcherNote, type ListState } from '../lib/launcherNote.mts';
@@ -111,7 +111,7 @@ export function useAppTabs({ enabled, covered }: { enabled: boolean; covered: bo
   }, [listState, apps, active, show]);
 
   // `list: false` keeps an unfinished app out of the bar; opened directly, it gets a tab.
-  const tabs = apps.filter((a) => a.app.list !== false || opened.includes(a.name));
+  const tabs = apps.filter((a) => appListed(a) || opened.includes(a.name));
 
   const appsRef = useRef(apps);
   appsRef.current = apps;
@@ -120,7 +120,7 @@ export function useAppTabs({ enabled, covered }: { enabled: boolean; covered: bo
     setAppHost({
       open: (name, view, unlisted) => {
         const app = appsRef.current.find((a) => a.name === name);
-        if (!app || (app.app.list === false && !unlisted)) return false;
+        if (!app || (!appListed(app) && !unlisted)) return false;
         // A launch that names a view reloads that app's frame there: the page
         // reads `?view=` as it loads, and what a view means is its own.
         if (view) setViews((prev) => ({ ...prev, [name]: view }));

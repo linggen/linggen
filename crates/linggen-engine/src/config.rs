@@ -124,13 +124,13 @@ pub struct Config {
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum OutsideAgents {
-    /// The old way, kept as the way back (`outside_agents = "v1"`): the
-    /// plugin has the host write into Linggen's store and recalls from it
-    /// every turn.
-    V1,
-    /// Each agent keeps its own memory; Linggen reads it (never writes it)
-    /// and forwards the other agents' index at session start.
+    /// The default: the plugin has the host write into Linggen's store and
+    /// recalls from it every turn.
     #[default]
+    V1,
+    /// Opt-in (`outside_agents = "v2"`): each agent keeps its own memory;
+    /// Linggen reads it (never writes it) and forwards the other agents'
+    /// index at session start.
     V2,
 }
 
@@ -147,18 +147,18 @@ impl OutsideAgents {
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct MemoryConfig {
-    /// `outside_agents = "v1" | "v2"`; absent: v2.
+    /// `outside_agents = "v1" | "v2"`; absent: v1 (v2 is opt-in).
     pub outside_agents: OutsideAgents,
     /// `linggen = "v1" | "v2"`: which memory Linggen's own sessions (Ling,
-    /// Yinyue, apps) have; absent: v1. Read into `EngineConfig` and nowhere
+    /// Yinyue, apps) have; absent: v1 (v2 is opt-in). Read into `EngineConfig` and nowhere
     /// else (`own_memory::Mode`).
     pub linggen: crate::own_memory::Mode,
 }
 
 impl MemoryConfig {
-    /// Whether either switch is v2: the person's memory is these notes, so
-    /// the v1 store is moved into them once (`own_memory::migrate`). Both
-    /// written as v1 is the person staying where they are.
+    /// Whether either switch is written as v2: the person's memory is these
+    /// notes, so the v1 store is moved into them once (`own_memory::migrate`).
+    /// Both v1 — written so, or absent — is the person staying where they are.
     pub fn wants_v2(&self) -> bool {
         self.linggen == crate::own_memory::Mode::V2 || self.outside_agents == OutsideAgents::V2
     }
@@ -1154,25 +1154,28 @@ fn is_valid_go_duration(s: &str) -> bool {
 mod tests {
     use super::*;
 
-    /// `[memory] outside_agents` is v2 unless the file says v1, and a
+    /// `[memory]` is v1 unless the file says v2 (v2 is opt-in), and a
     /// config on the default is written back without the section.
     #[test]
-    fn memory_is_v2_unless_the_file_says_v1() {
+    fn memory_is_v1_unless_the_file_says_v2() {
         use crate::own_memory::Mode;
         let base = toml::to_string(&Config::default()).unwrap();
         let default: Config = toml::from_str(&base).unwrap();
-        assert_eq!(default.memory.outside_agents, OutsideAgents::V2);
-        assert_eq!(default.memory.linggen, Mode::V2);
-        assert!(default.memory.wants_v2());
+        assert_eq!(default.memory.outside_agents, OutsideAgents::V1);
+        assert_eq!(default.memory.linggen, Mode::V1);
+        assert!(!default.memory.wants_v2());
         assert!(!toml::to_string(&default).unwrap().contains("[memory]"));
-        // Written as v1, it stays v1 and is written back so.
+        // Written as v2, it is v2 and is written back so.
+        let v2: Config = toml::from_str(&format!("{base}\n[memory]\nlinggen = \"v2\"\noutside_agents = \"v2\"\n")).unwrap();
+        assert_eq!((v2.memory.linggen, v2.memory.outside_agents), (Mode::V2, OutsideAgents::V2));
+        assert!(v2.memory.wants_v2());
+        let text = toml::to_string(&v2).unwrap();
+        assert!(text.contains("outside_agents = \"v2\"") && text.contains("linggen = \"v2\""), "{text}");
+        // Written as v1, it stays v1.
         let v1: Config = toml::from_str(&format!("{base}\n[memory]\nlinggen = \"v1\"\noutside_agents = \"v1\"\n")).unwrap();
-        assert_eq!((v1.memory.linggen, v1.memory.outside_agents), (Mode::V1, OutsideAgents::V1));
         assert!(!v1.memory.wants_v2());
-        let text = toml::to_string(&v1).unwrap();
-        assert!(text.contains("outside_agents = \"v1\"") && text.contains("linggen = \"v1\""), "{text}");
-        // One switch left to v2 is still v2 for the move of the old rows.
-        let half: Config = toml::from_str(&format!("{base}\n[memory]\nlinggen = \"v1\"\n")).unwrap();
+        // One switch written as v2 is v2 for the move of the old rows.
+        let half: Config = toml::from_str(&format!("{base}\n[memory]\nlinggen = \"v2\"\n")).unwrap();
         assert!(half.memory.wants_v2());
         assert_eq!(OutsideAgents::V2.word(), "v2");
     }

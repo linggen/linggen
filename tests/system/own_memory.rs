@@ -1,6 +1,6 @@
 //! Linggen's own memory (Memory V2): `[memory] linggen` says whether
-//! Linggen's own sessions have the ling-mem store (v1, the way back) or the
-//! notes under `$LINGGEN_HOME/memory` (v2, the default since 3.0): an index in the prompt, the
+//! Linggen's own sessions have the ling-mem store (v1, the default) or the
+//! notes under `$LINGGEN_HOME/memory` (v2, opt-in): an index in the prompt, the
 //! `memory_notes` tool, no per-turn recall and no capture reminder. The
 //! same tool is on the MCP door for outside hosts when `outside_agents` is
 //! v2. The notes are made-up fixtures in the world's own home.
@@ -76,10 +76,11 @@ async fn v1_in_the_config_is_the_old_memory_and_nothing_of_the_new() {
     assert!(refused.contains("not served"), "{refused}");
 }
 
-/// Nothing written in the config: the person's memory is v2 — the tool at
-/// the door and in the session, the index in the prompt, no capture reminder.
+/// Nothing written in the config: the person's memory is v1 (v2 is opt-in) —
+/// notes on disk are not read: no `memory_notes` in the session, no index in
+/// the prompt, the tool refused at the door.
 #[tokio::test]
-async fn by_default_a_session_has_the_notes() {
+async fn by_default_a_session_has_the_old_memory() {
     let w = World::start_with_home(
         Setup { memory_defaults: true, ..Setup::default() }.script(Agent::Ling, vec![text("Hello.")]),
         seed,
@@ -88,9 +89,12 @@ async fn by_default_a_session_has_the_notes() {
     let sid = w.api.create_session(json!({"title": "Chat"})).await;
     let export = w.api.export(&sid, "ling", &w.work()).await;
     let names = tool_names(&export);
-    assert!(names.iter().any(|n| n == "memory_notes"), "{names:?}");
-    assert!(export["system_prompt"].as_str().unwrap().contains("Name is Alex"));
-    assert!(notes(&w, json!({"op": "index"})).await.is_ok());
+    assert!(!names.iter().any(|n| n == "memory_notes"), "{names:?}");
+    assert!(names.iter().any(|n| n.starts_with("mcp__memory__")), "{names:?}");
+    let prompt = export["system_prompt"].as_str().unwrap();
+    assert!(!prompt.contains("Name is Alex") && !prompt.contains("Linggen keeps notes"), "{prompt}");
+    let refused = notes(&w, json!({"op": "index"})).await.unwrap_err();
+    assert!(refused.contains("not served"), "{refused}");
 }
 
 /// v2: Ling is given the index (the person's notes, never Yinyue's mind

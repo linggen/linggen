@@ -293,8 +293,8 @@ names no agent).
 
 ## The switch
 
-Two settings in the engine's config, each `"v1"` or `"v2"`, absent meaning v2
-(the default since 3.0):
+Two settings in the engine's config, each `"v1"` or `"v2"`, absent meaning v1.
+V2 is opt-in in 2.7; write `v2` to try it:
 
 ```toml
 [memory]
@@ -306,7 +306,7 @@ outside_agents = "v2"   # Claude Code, Codex and other hosts on the door
 four verbs and the chronicle use the notes. `outside_agents` says how hosts
 outside Linggen are served: v2 forwards other agents' memory at start and serves
 `memory_notes`; v1 is the plugin's old recall and capture. The two are
-independent. Writing `v1` is the way back, and an explicit `v1` stays v1. The
+independent. Writing `v1`, or taking the section out, is the way back. The
 settings are hand-edited; a saved settings page keeps what the file holds.
 
 ## Moving over from v1
@@ -342,7 +342,8 @@ that a note used again and again move into a project's `AGENTS.md`.
 
 ## V1 (the way back)
 
-`linggen = "v1"` and `outside_agents = "v1"` bring back what ran before 3.0. The
+`linggen = "v1"` and `outside_agents = "v1"` (or no `[memory]` section) is
+what ran before Memory V2. The
 v1 store (ling-mem rows) is still opened and served by the engine under v2, for
 what v2 does not cover: a phone that is another person, approved computers, skill
 pages, and the move above. The built-in dream, scan and solve missions are not

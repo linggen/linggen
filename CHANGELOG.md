@@ -1,19 +1,21 @@
 # Changelog
 
-## [3.0.0] - unreleased — Linggen keeps its own notes; you can talk to Yinyue; share your Mac with your household
+## [2.7.0] - 2026-11-25 — share your Mac with your household; you can talk to Yinyue; Linggen's own notes, to try
 
 Built and tested with fakes and made-up rows; not yet tried on a second
 person's Mac or phone. The move of old memory is tested on made-up rows only.
 
-### Memory
+### Memory — notes, opt-in
 
-- **Notes are the default memory.** What Linggen keeps about you and your work
-  is plain Markdown under `~/.linggen/memory/` — `person/`, `areas/`,
-  `projects/`, `moments/`, `chronicle/` — which you can read and edit. Ling
-  and Yinyue start each session with an index of it and a `memory_notes` tool;
-  nothing is recalled into each turn any more and no reminder is sent to
-  write. Write `[memory] linggen = "v1"` and `outside_agents = "v1"` to stay
-  on the old store; nothing else changes for you.
+- **Linggen can keep its own notes; you turn them on.** Nothing changes
+  until you do: memory stays as it was. Set `[memory] linggen = "v2"` (and
+  `outside_agents = "v2"` for Claude Code and Codex) in the config to try it.
+  What Linggen keeps about you and your work is then plain Markdown under
+  `~/.linggen/memory/` — `person/`, `areas/`, `projects/`, `moments/`,
+  `chronicle/` — which you can read and edit. Ling and Yinyue start each
+  session with an index of it and a `memory_notes` tool; nothing is recalled
+  into each turn and no reminder is sent to write. Take the section out to go
+  back.
 - **Your old memory moves over once.** The first start with notes on, when no
   note exists yet, keeps your preferences and rules, decisions, learned
   gotchas and facts about you as notes. What was done (built, fixed, tried),
@@ -68,7 +70,7 @@ person's Mac or phone. The move of old memory is tested on made-up rows only.
   Mac's models, and a daily limit of tokens on them.
 - **Nothing is given until you give it.** A person nobody set anything for is
   at read, with your apps except those you keep, and none of this Mac's
-  models — before 2.8 their turns ran on yours.
+  models — before 2.7 their turns ran on yours.
 - **Keep an app to yourself.** An app you mark as yours alone is in no
   person's list, however their list is set.
 - **One rule holds on every way in**: an app's page, its tools, its saves and

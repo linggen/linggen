@@ -51,18 +51,18 @@ pub use store::Store;
 pub const TOOL: &str = "memory_notes";
 
 /// Which memory Linggen's own sessions (Ling, Yinyue, apps) have — `[memory]
-/// linggen = "v1" | "v2"`; absent: v2. The one place that decides; every
+/// linggen = "v1" | "v2"`; absent: v1 (v2 is opt-in). The one place that decides; every
 /// site that differs between the two matches on it
 /// (`tests::the_switch_is_read_in_the_listed_places_only`).
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Mode {
-    /// The old way, kept as the way back (`linggen = "v1"` in the config):
-    /// the ling-mem store, recalled every turn, the capture reminder.
-    V1,
-    /// These notes: an index at session start, the `memory_notes` tool, no
-    /// per-turn recall or reminder.
+    /// The default: the ling-mem store, recalled every turn, the capture
+    /// reminder.
     #[default]
+    V1,
+    /// Opt-in (`linggen = "v2"` in the config): these notes, an index at
+    /// session start, the `memory_notes` tool, no per-turn recall or reminder.
     V2,
 }
 
