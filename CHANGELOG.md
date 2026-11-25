@@ -1,30 +1,64 @@
 # Changelog
 
-## [3.0.0] - unreleased — memory is Linggen's own notes
+## [3.0.0] - unreleased — Linggen keeps its own notes; you can talk to Yinyue; share your Mac with your household
 
-Built and tested with fakes and made-up rows; the move is not yet tried on a
-second person's Mac.
+Built and tested with fakes and made-up rows; not yet tried on a second
+person's Mac or phone. The move of old memory is tested on made-up rows only.
 
 ### Memory
 
-- **Notes are the default memory.** Linggen's own sessions and the agents
-  outside it (Claude Code, Codex) both use the v2 notes unless the config says
-  otherwise. Write `[memory] linggen = "v1"` and `outside_agents = "v1"` to stay
+- **Notes are the default memory.** What Linggen keeps about you and your work
+  is plain Markdown under `~/.linggen/memory/` — `person/`, `areas/`,
+  `projects/`, `moments/`, `chronicle/` — which you can read and edit. Ling
+  and Yinyue start each session with an index of it and a `memory_notes` tool;
+  nothing is recalled into each turn any more and no reminder is sent to
+  write. Write `[memory] linggen = "v1"` and `outside_agents = "v1"` to stay
   on the old store; nothing else changes for you.
-- **Your old memory moves over once.** The first start with v2 on, when no note
-  exists yet, keeps your preferences and rules, decisions, learned gotchas and
-  facts about you as notes. What was done (built, fixed, tried), staged lines
-  and anything that reads as status are left behind, with every key-shaped
-  secret. Your old store is not touched.
+- **Your old memory moves over once.** The first start with notes on, when no
+  note exists yet, keeps your preferences and rules, decisions, learned
+  gotchas and facts about you as notes. What was done (built, fixed, tried),
+  staged lines and anything that reads as status are left behind, with every
+  key-shaped secret. Your old store is not touched.
 - **`ling mem migrate-v2`** does the same by hand. `--dry-run` prints what it
   would keep and drop, by reason, and writes nothing; run again, it adds
   nothing twice. A Mac that already has notes is left alone.
 - The rules keep more than a careful read would; the dream thins them later.
+- **Only decisions, rules and gotchas are written, never status.** A note
+  that reads as "what was done" is refused with a fixed reason; a note in your
+  own words changes only after you agree; a note can be marked "don't raise"
+  and she never brings it up herself. Every change keeps its older copies.
+- **Notes about your body, mind, people and moments never reach a coding
+  agent.** Yinyue sees them; Claude Code and Codex see the rest.
+- **Claude Code and Codex are read, never written.** Linggen forwards what
+  they remember about the project at session start, and the new door tool
+  `memory_agents` lets any agent look it up. A host with no memory of its own
+  keeps its notes in `memory_notes`.
+- **Settings → Notes** shows what Linggen remembers, by source: yours (edit,
+  void, don't raise, delete) and each other agent's (read only).
+- **A month at a time, a chronicle.** On the 1st a built-in mission writes the
+  months that have ended into `chronicle/`; `ling chronicle backfill` writes
+  them now. Yinyue's day knows what happened on this day, the days that
+  recur, and what you asked her not to raise.
+- **Your phone's memory goes to the notes too.** The owner's phone adds,
+  deletes, searches and lists through the same notes, so the phone's Yinyue and
+  the Mac's share one memory.
 
-## [2.8.0] - unreleased — share your Mac with your household
+### Models
 
-Built and tested with fakes; not yet seen live with a second person's phone.
-The phone's part ships with the phone app.
+- **Settings → Models lists a provider once.** One card per sign-in and
+  address holds its key, its models and the families you tick; paste a key
+  once and the page checks it. A default you pick keeps your fallbacks; a
+  fallback is never added for you.
+- **A ticked family follows its newest model.** When the provider lists a
+  newer one the row moves with one notice; "Switch back" returns, and a model
+  the provider refuses on its first call is sent back by itself. A catalogue
+  of kinds and prices, checked weekly, tells chat models from voice, picture
+  and embedding ones, and prices a call by its own rate.
+- **Thinking effort is one slider**, remembered per model, in Settings and in
+  the chat's model menu; 自动 is its first stop. A model offers only the
+  values its provider lists.
+- **The chat's model menu and the spinner name the model** and not its
+  internal row id.
 
 ### People
 
@@ -53,12 +87,6 @@ The phone's part ships with the phone app.
 - **A phone that signs in keeps what you set for it** when its account has no
   settings yet; when the account has its own, those stand.
 
-## [2.7.0] - unreleased — one way to an app's actions; hold Yinyue and talk to her
-
-Built and tested with fakes; not yet tried on a real Mac (no microphone, no
-hearing model and no sound has run). The live talk this release is planned
-around (`doc/plan-3.0.md`) is not started.
-
 ### Tools
 
 - **A skill can declare a destructive tool, and a model that asks for one
@@ -75,8 +103,8 @@ around (`doc/plan-3.0.md`) is not started.
   calls instead of four; never in a turn she started herself, and never
   anything that deletes — that you do in the app. A destructive action a
   model asks for always asks you first, by its own name.
-- **Claude Code and Codex can use your apps.** The one MCP door has a
-  thirteenth tool, `app`: "play some jazz on my Mac" plays it. It lists and
+- **Claude Code and Codex can use your apps.** The one MCP door has an
+  `app` tool: "play some jazz on my Mac" plays it. It lists and
   runs the same actions Ling's `AppTool` does, judged the same way, for you at
   this Mac only; an action that deletes is refused — you do that in the app.
   No file or shell tool is at the door.
@@ -146,6 +174,23 @@ around (`doc/plan-3.0.md`) is not started.
   The token carries the session the page asked for — its instruction, never
   tools — with the model fixed by the engine; `GET /api/live` says whether
   it can.
+
+### Fixes
+
+- A restarted engine gives a delegated run its own tools back: it no longer
+  enters plan mode or starts a helper on another model.
+- A subagent runs on the model its parent turn runs on, unless its agent names
+  one.
+- A mission with nothing to prepare leaves no empty session; a mission that
+  names its own model never falls back to another.
+- The chat's session bar is one line, with the task panel's control in it.
+
+### Anonymous counts
+
+- The daily count adds which of Linggen's own apps you open, chat turns by
+  where they started, a phone paired, and start and update errors as coarse
+  codes. Nothing you say, write or keep is in it.
+
 
 ## [2.6.1] - 2026-11-22 — a private app answers in its own session; the moon's real phase
 
