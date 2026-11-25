@@ -35,7 +35,7 @@ pub struct SessionStart {
 
 /// What a session at `cwd` is forwarded. `own` is Linggen's own store when
 /// its notes are served (`outside_agents = "v2"`), `None` when they are not.
-pub fn session_start(env: &Env, own: Option<&Store>, host: Option<Agent>, cwd: Option<&Path>, now: i64) -> SessionStart {
+pub fn session_start(env: &Env, own: Option<&Store>, host: Option<&Agent>, cwd: Option<&Path>, now: i64) -> SessionStart {
     let others_room = if own.is_some() { BUDGET_BYTES / 2 } else { BUDGET_BYTES };
     let others = outside::slice(env, host, cwd, others_room);
     let others_text = others.block();

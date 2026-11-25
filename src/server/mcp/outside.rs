@@ -13,7 +13,7 @@ use super::catalog::OutsideOp;
 use super::{tool_content, McpDeps};
 use crate::config::OutsideAgents;
 use crate::own_memory::{forward, Store};
-use crate::outside_memory::{self as outside, Agent, Env};
+use crate::outside_memory::{self as outside, Env};
 use serde_json::{json, Value};
 use std::path::Path;
 
@@ -43,10 +43,10 @@ fn answer(env: &Env, store: Option<&Store>, mode: OutsideAgents, op: OutsideOp, 
     match op {
         OutsideOp::Mode => Ok(json!({ "outside_agents": mode.word() })),
         OutsideOp::Index => {
-            let host = text("host").and_then(Agent::of_host);
+            let host = text("host").and_then(|word| outside::host_agent(env, word));
             let own = store.filter(|_| mode == OutsideAgents::V2);
             let now = crate::util::now_ts_secs() as i64;
-            let start = forward::session_start(env, own, host, text("cwd").map(Path::new), now);
+            let start = forward::session_start(env, own, host.as_ref(), text("cwd").map(Path::new), now);
             let slice = &start.others;
             let lines: Vec<Value> = slice
                 .entries()

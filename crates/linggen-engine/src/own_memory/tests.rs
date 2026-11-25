@@ -1105,7 +1105,7 @@ mod phone_verbs {
 
 use super::forward::session_start;
 use super::index::index_for_forwarding;
-use crate::outside_memory::{Agent, BUDGET_BYTES};
+use crate::outside_memory::{host_agent, BUDGET_BYTES};
 
 fn decision(store: &Store, scope: Scope, topic: &str, summary: &str, at: i64) -> String {
     let action = add_action(scope, topic, summary, Kind::Decision, Voice::User, "the body that must never be forwarded");
@@ -1123,7 +1123,7 @@ fn a_session_start_carries_linggens_notes_fenced_and_without_bodies() {
     let near = decision(&store, Scope::Project(PathBuf::from("/work/app")), "build", "Release builds use the fast profile", NOW);
     let reply = decision(&store, Scope::Person, "language", "Reply to the person in Chinese", NOW - DAY);
     mind(&store, "A hard year with the family");
-    let got = session_start(store.env(), Some(&store), Some(Agent::ClaudeCode), Some(Path::new("/work/app")), NOW);
+    let got = session_start(store.env(), Some(&store), host_agent(store.env(), "claude-code").as_ref(), Some(Path::new("/work/app")), NOW);
     assert!(got.block.contains("Release builds use the fast profile") && got.block.contains(&near), "{}", got.block);
     assert!(got.block.contains("Reply to the person in Chinese") && got.block.contains(&reply));
     assert!(!got.block.contains("hard year"), "a note of the mind reached a coding host");
@@ -1153,7 +1153,7 @@ fn linggens_notes_and_the_others_share_one_budget() {
     std::fs::create_dir_all(&memory).unwrap();
     let lines: String = (0..60).map(|i| format!("- [Note {i}](note_{i}.md) — a line that Claude Code keeps about the project, number {i}\n")).collect();
     std::fs::write(memory.join("MEMORY.md"), lines).unwrap();
-    let got = session_start(store.env(), Some(&store), Some(Agent::Codex), Some(Path::new("/work/app")), NOW);
+    let got = session_start(store.env(), Some(&store), host_agent(store.env(), "codex").as_ref(), Some(Path::new("/work/app")), NOW);
     assert!(got.block.len() <= BUDGET_BYTES, "{} bytes", got.block.len());
     assert!(got.own.left_out > 0 && got.others.cut > 0, "both were cut");
     let own_bytes = got.own.text.len();

@@ -1,0 +1,8 @@
+format = 1
+agent  = "codex"
+label  = "Codex"
+hosts  = ["codex"]
+
+[[place]]
+id   = "memories"
+path = ["~/.codex/memories/*.md", "~/.codex/memories/*/*.md"]

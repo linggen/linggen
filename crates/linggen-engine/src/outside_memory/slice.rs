@@ -6,9 +6,10 @@
 //! index cannot push them out. Lines that do not fit are counted, not cut
 //! mid-line.
 
+use super::lines::{place_results, Line, Skip};
+use super::readers::{Agent, Registry};
 use super::redact::{clean, Clean};
-use super::sources::{Line, Skip, SOURCES};
-use super::{Agent, Env, Scope};
+use super::{Env, Scope};
 use std::path::Path;
 
 /// What a session start is forwarded, at most, in bytes, of every source
@@ -25,7 +26,7 @@ const PERSON_SHARE: usize = 4;
 /// A source that gave nothing, and why.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SourceNote {
-    pub source: &'static str,
+    pub source: String,
     pub state: String,
 }
 
@@ -43,15 +44,15 @@ pub struct Slice {
 /// The other agents' index lines for a session at `cwd`, for the calling
 /// `host` (an agent never gets its own memory back; a host Linggen knows no
 /// memory of gets everyone's), in at most `budget` bytes.
-pub fn slice(env: &Env, host: Option<Agent>, cwd: Option<&Path>, budget: usize) -> Slice {
+pub fn slice(env: &Env, host: Option<&Agent>, cwd: Option<&Path>, budget: usize) -> Slice {
     let scope = Scope { cwd: cwd.map(Path::to_path_buf) };
     let mut all = Vec::new();
     let mut notes = Vec::new();
-    for source in SOURCES.iter().filter(|s| Some(s.agent) != host) {
-        match (source.lines)(env, &scope) {
+    for result in place_results(&Registry::load(env), env, &scope).into_iter().filter(|r| Some(&r.agent) != host) {
+        match result.outcome {
             Ok(lines) => all.extend(lines),
-            Err(Skip::NoData) => {}
-            Err(skip) => notes.push(SourceNote { source: source.id, state: skip.to_string() }),
+            Err(Skip::NoData | Skip::Older(_)) => {}
+            Err(skip) => notes.push(SourceNote { source: result.source, state: skip.to_string() }),
         }
     }
     let total = all.len();
@@ -101,7 +102,7 @@ fn body(env: &Env, lines: &[Line]) -> Clean {
     let mut out = String::new();
     let mut group: Option<(&str, &str)> = None;
     for line in lines {
-        let key = (line.source, line.about.as_str());
+        let key = (line.source.as_str(), line.about.as_str());
         if group != Some(key) {
             group = Some(key);
             out.push_str(&format!(
@@ -128,10 +129,10 @@ impl Slice {
     }
 
     /// The lines as data: source id, agent, group, text.
-    pub fn entries(&self) -> Vec<(&'static str, Agent, &str, Clean)> {
+    pub fn entries(&self) -> Vec<(&str, &Agent, &str, Clean)> {
         self.lines
             .iter()
-            .map(|l| (l.source, l.agent, l.about.as_str(), clean(&l.text)))
+            .map(|l| (l.source.as_str(), &l.agent, l.about.as_str(), clean(&l.text)))
             .collect()
     }
 

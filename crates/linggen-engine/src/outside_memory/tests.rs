@@ -1,9 +1,13 @@
 //! The reader registry, the slice, the confinement and the redaction, on
 //! made-up folders in a scratch home. No real note text, no real path.
 
-use super::sources::encode_project_path;
+use super::paths::encode_project_path;
 use super::*;
 use std::fs;
+
+fn host(env: &Env, word: &str) -> Option<Agent> {
+    host_agent(env, word)
+}
 
 fn put(path: &Path, text: &str) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -60,7 +64,7 @@ fn the_chain_runs_nearest_first_and_stops_before_home_and_root() {
 }
 
 fn project_chain_of(env: &Env, cwd: &Path) -> Vec<PathBuf> {
-    super::sources::project_chain(env, cwd)
+    super::paths::project_chain(env, cwd)
 }
 
 // ── the slice ──────────────────────────────────────────────────────────────
@@ -73,7 +77,7 @@ fn codex_is_forwarded_what_claude_code_remembers_for_the_nearest_projects_first(
     put(&cc_memory(&env, &near).join("MEMORY.md"), &index_of(&[("Near rule", "near.md")]));
     put(&cc_memory(&env, &far).join("MEMORY.md"), &index_of(&[("Far rule", "far.md")]));
     let cwd = near.join("src");
-    let got = slice(&env, Some(Agent::Codex), Some(&cwd), BUDGET_BYTES);
+    let got = slice(&env, host(&env, "codex").as_ref(), Some(&cwd), BUDGET_BYTES);
     let block = got.block().into_string();
     let near_at = block.find("Near rule").expect("near line");
     let far_at = block.find("Far rule").expect("far line");
@@ -88,18 +92,18 @@ fn an_agent_is_not_forwarded_its_own_memory_and_an_unknown_host_gets_everyones()
     let (_d, env) = scratch();
     let project = env.home().join("work/app");
     put(&cc_memory(&env, &project).join("MEMORY.md"), &index_of(&[("A rule", "a.md")]));
-    assert!(slice(&env, Some(Agent::ClaudeCode), Some(&project), BUDGET_BYTES).is_empty());
+    assert!(slice(&env, host(&env, "claude-code").as_ref(), Some(&project), BUDGET_BYTES).is_empty());
     assert!(!slice(&env, None, Some(&project), BUDGET_BYTES).is_empty());
-    assert!(!slice(&env, Agent::of_host("cursor"), Some(&project), BUDGET_BYTES).is_empty());
-    assert_eq!(Agent::of_host("claude-code"), Some(Agent::ClaudeCode));
-    assert_eq!(Agent::of_host("Codex"), Some(Agent::Codex));
+    assert!(!slice(&env, host(&env, "cursor").as_ref(), Some(&project), BUDGET_BYTES).is_empty());
+    assert_eq!(host(&env, "claude-code").map(|a| a.id().to_string()), Some("claude-code".to_string()));
+    assert_eq!(host(&env, "Codex").map(|a| a.id().to_string()), Some("codex".to_string()));
 }
 
 #[test]
 fn the_person_is_forwarded_as_the_headings_of_claudes_own_file() {
     let (_d, env) = scratch();
     put(&env.home().join(".claude/CLAUDE.md"), "# Title\n\nbody text\n\n## First area\nmore\n## Second area\n");
-    let got = slice(&env, Some(Agent::Codex), None, BUDGET_BYTES);
+    let got = slice(&env, host(&env, "codex").as_ref(), None, BUDGET_BYTES);
     let block = got.block().into_string();
     assert!(block.contains("the person, from ~/.claude/CLAUDE.md"), "{block}");
     assert!(block.contains("- First area") && block.contains("- Second area"), "{block}");
@@ -116,7 +120,7 @@ fn the_budget_holds_keeps_the_persons_share_and_counts_what_it_left_out() {
     }
     put(&cc_memory(&env, &project).join("MEMORY.md"), &text);
     put(&env.home().join(".claude/CLAUDE.md"), "## Who I am\n## How I work\n");
-    let got = slice(&env, Some(Agent::Codex), Some(&project), BUDGET_BYTES);
+    let got = slice(&env, host(&env, "codex").as_ref(), Some(&project), BUDGET_BYTES);
     let block = got.block().into_string();
     assert!(block.len() <= BUDGET_BYTES, "{} bytes", block.len());
     assert!(got.cut > 0 && got.cut < 150 + 2, "cut {}", got.cut);
@@ -133,7 +137,7 @@ fn an_index_is_read_the_way_claude_code_loads_it() {
         text.push_str(&format!("- [Note {n}](n{n}.md)\n"));
     }
     put(&cc_memory(&env, &project).join("MEMORY.md"), &text);
-    let got = slice(&env, Some(Agent::Codex), Some(&project), BUDGET_BYTES);
+    let got = slice(&env, host(&env, "codex").as_ref(), Some(&project), BUDGET_BYTES);
     // Only the first 200 lines are the index; the rest are not forwarded.
     assert_eq!(got.entries().len() + got.cut, 200);
 }
@@ -147,13 +151,13 @@ fn a_source_that_is_missing_or_unreadable_is_skipped_and_reported() {
     put(&env.home().join(".codex/memories/some-file.md"), "something");
     let states: Vec<_> = reports(&env, &Scope { cwd: None })
         .into_iter()
-        .map(|r| (r.id, r.state))
+        .map(|r| (r.id.as_str().to_owned(), r.state))
         .collect();
-    assert!(states.contains(&("codex-memories", "format not known yet".to_string())), "{states:?}");
-    assert!(states.contains(&("claude-code-instructions", "no data".to_string())), "{states:?}");
-    let got = slice(&env, Some(Agent::ClaudeCode), None, BUDGET_BYTES);
+    assert!(states.contains(&("codex/memories".to_string(), "format not known yet".to_string())), "{states:?}");
+    assert!(states.contains(&("claude-code/instructions".to_string(), "no data".to_string())), "{states:?}");
+    let got = slice(&env, host(&env, "claude-code").as_ref(), None, BUDGET_BYTES);
     assert!(got.is_empty());
-    assert!(got.notes.iter().any(|n| n.source == "codex-memories"), "{:?}", got.notes);
+    assert!(got.notes.iter().any(|n| n.source == "codex/memories"), "{:?}", got.notes);
 }
 
 // ── read confinement ───────────────────────────────────────────────────────
@@ -171,7 +175,7 @@ fn with_a_note() -> (tempfile::TempDir, Env, PathBuf) {
 fn a_note_inside_a_source_is_read_by_either_spelling_of_its_path() {
     let (_d, env, folder) = with_a_note();
     let note = read(&env, folder.join("rule.md").to_str().unwrap()).unwrap();
-    assert_eq!(note.source, "claude-code-project");
+    assert_eq!(note.source, "claude-code/project-notes");
     assert!(note.text.as_str().contains("The rule, in full."));
     let tilde = env.tilde(&folder.join("rule.md"));
     assert!(tilde.starts_with("~/"), "{tilde}");
@@ -257,7 +261,7 @@ fn key_shaped_strings_are_redacted_everywhere_they_could_leave() {
     );
     let note = read(&env, folder.join("rule.md").to_str().unwrap()).unwrap();
     let hits = search(&env, "BEGIN", 5);
-    let block = slice(&env, Some(Agent::Codex), Some(&env.home().join("work/app")), BUDGET_BYTES).block();
+    let block = slice(&env, host(&env, "codex").as_ref(), Some(&env.home().join("work/app")), BUDGET_BYTES).block();
     for text in [note.text.as_str(), hits[0].text.as_str(), block.as_str()] {
         for secret in [key.as_str(), hub.as_str(), "abcdef123456", "MIIB", "abcdefghijklmnop1234"] {
             assert!(!text.contains(secret), "{secret} left in: {text}");
@@ -276,14 +280,24 @@ fn file_names_and_ids_in_an_index_line_are_not_mistaken_for_keys() {
 // ── locks ──────────────────────────────────────────────────────────────────
 
 /// The module's own files without this one: what runs in production.
-fn production_files() -> [(&'static str, &'static str); 5] {
+fn production_files() -> [(&'static str, &'static str); 9] {
     [
         ("mod.rs", include_str!("mod.rs")),
         ("access.rs", include_str!("access.rs")),
+        ("decl.rs", include_str!("decl.rs")),
+        ("disk.rs", include_str!("disk.rs")),
+        ("lines.rs", include_str!("lines.rs")),
+        ("paths.rs", include_str!("paths.rs")),
+        ("readers.rs", include_str!("readers.rs")),
         ("redact.rs", include_str!("redact.rs")),
         ("slice.rs", include_str!("slice.rs")),
-        ("sources.rs", include_str!("sources.rs")),
     ]
+}
+
+/// A file's code: no comments, and without its own test module.
+fn code_of(text: &str) -> String {
+    let before_tests = text.split("#[cfg(test)]").next().unwrap_or(text);
+    before_tests.lines().filter(|l| !l.trim_start().starts_with("//")).collect::<Vec<_>>().join("\n")
 }
 
 /// Nothing here can change another agent's files: no production file of the
@@ -295,32 +309,42 @@ fn this_module_never_writes() {
         "File::create", "OpenOptions", "create_dir", "hard_link", "symlink(",
     ];
     for (name, text) in production_files() {
-        // Doc and line comments may name them; code may not.
-        let code: String = text
-            .lines()
-            .filter(|l| !l.trim_start().starts_with("//"))
-            .collect::<Vec<_>>()
-            .join("\n");
+        let code = code_of(text);
         for call in writes {
             assert!(!code.contains(call), "{name} names `{call}`");
         }
     }
 }
 
-/// Another agent's folder is named in the registry alone.
+/// Another agent's folder is named in a reader file and nowhere in Rust: no
+/// production file of this module or of `own_memory`'s forwarding holds
+/// a vendor's dot-folder.
 #[test]
-fn only_the_source_list_names_other_agents_folders() {
-    for (name, text) in production_files() {
-        if name == "sources.rs" {
-            continue;
-        }
-        let code: String = text
-            .lines()
-            .filter(|l| !l.trim_start().starts_with("//"))
-            .collect::<Vec<_>>()
-            .join("\n");
+fn no_rust_file_names_another_agents_folder() {
+    let own_and_door: [(&str, &str); 2] = [
+        ("own_memory/index.rs", include_str!("../own_memory/index.rs")),
+        ("own_memory/forward.rs", include_str!("../own_memory/forward.rs")),
+    ];
+    let all = production_files().into_iter().chain(own_and_door);
+    for (name, text) in all {
+        let code = code_of(text);
         for folder in [".claude", ".codex", ".hermes", ".gemini", ".openclaw"] {
             assert!(!code.contains(folder), "{name} names `{folder}`");
+        }
+    }
+}
+
+/// Only `disk.rs` reads a file or lists a folder; every other file asks it.
+#[test]
+fn only_disk_reads_the_disk() {
+    let reads = ["fs::read", "File::open", "read_dir", "read_to_string", "fs::metadata", "symlink_metadata", "canonicalize"];
+    for (name, text) in production_files() {
+        if name == "disk.rs" {
+            continue;
+        }
+        let code = code_of(text);
+        for call in reads {
+            assert!(!code.contains(call), "{name} names `{call}`");
         }
     }
 }
@@ -334,13 +358,20 @@ fn only_redact_builds_clean_text() {
         if name == "redact.rs" {
             continue;
         }
-        assert!(!text.contains("Clean("), "{name} builds a Clean");
+        assert!(!code_of(text).contains("Clean("), "{name} builds a Clean");
     }
 }
 
 #[test]
-fn source_ids_are_distinct() {
-    let mut ids: Vec<_> = super::sources::SOURCES.iter().map(|s| s.id).collect();
+fn the_embedded_readers_load_and_their_place_ids_are_distinct() {
+    let (_d, env) = scratch();
+    let registry = super::readers::Registry::load(&env);
+    assert!(registry.problems.is_empty(), "{:?}", registry.problems);
+    let mut ids: Vec<String> = registry
+        .readers
+        .iter()
+        .flat_map(|r| r.decl.places.iter().map(|p| r.source_id(p)).collect::<Vec<_>>())
+        .collect();
     let n = ids.len();
     ids.sort();
     ids.dedup();

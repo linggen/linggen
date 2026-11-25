@@ -1,0 +1,31 @@
+# Claude Code's memory, read where Claude Code keeps it. Read only: Linggen
+# never writes, tidies or summarises it. The same declaration, as a skill's
+# `reader.toml`, replaces this one by its `agent` id (doc/memory-spec.md).
+format = 1
+agent  = "claude-code"
+label  = "Claude Code"
+hosts  = ["claude-code", "claude", "cc"]
+
+# A project's index, read as Claude Code loads it: the first 200 lines or
+# 25 KB. Forwarded only for the folders of the session's chain.
+[[place]]
+id      = "project-index"
+path    = "~/.claude/projects/{project}/memory/MEMORY.md"
+project = "dash"
+scope   = "project"
+lines   = { each = "item", read_first_lines = 200, read_first_bytes = 25600, note_link = "markdown" }
+
+# The person's own instructions to Claude Code: forwarded in every folder.
+[[place]]
+id    = "instructions"
+path  = "~/.claude/CLAUDE.md"
+scope = "person"
+lines = { each = "heading", first = 12 }
+
+# The notes the index points to: opened and searched, never listed. A note
+# keeps the scope its writer gave it: nothing here is promoted to the person.
+[[place]]
+id      = "project-notes"
+forward = false
+project = "dash"
+path    = ["~/.claude/projects/{project}/memory/*.md", "~/.claude/projects/{project}/memory/*/*.md"]

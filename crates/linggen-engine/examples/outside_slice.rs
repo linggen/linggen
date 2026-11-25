@@ -5,17 +5,17 @@
 //!
 //!   cargo run -q --example outside_slice -- --cwd <folder> [--host claude-code|codex]
 
-use linggen_engine::outside_memory::{slice, Agent, Env};
+use linggen_engine::outside_memory::{host_agent, slice, Env, BUDGET_BYTES};
 use std::path::PathBuf;
 
 fn main() {
     let mut cwd: Option<PathBuf> = None;
-    let mut host: Option<Agent> = None;
+    let mut host_word: Option<String> = None;
     let mut args = std::env::args().skip(1);
     while let Some(flag) = args.next() {
         match flag.as_str() {
             "--cwd" => cwd = args.next().map(PathBuf::from),
-            "--host" => host = args.next().as_deref().and_then(Agent::of_host),
+            "--host" => host_word = args.next(),
             other => {
                 eprintln!("unknown flag {other}");
                 std::process::exit(2);
@@ -26,7 +26,8 @@ fn main() {
         eprintln!("no home folder");
         std::process::exit(1);
     };
-    let got = slice(&env, host, cwd.as_deref());
+    let host = host_word.as_deref().and_then(|w| host_agent(&env, w));
+    let got = slice(&env, host.as_ref(), cwd.as_deref(), BUDGET_BYTES);
     print!("{}", got.block());
     for note in &got.notes {
         eprintln!("skipped {}: {}", note.source, note.state);
