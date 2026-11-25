@@ -369,8 +369,10 @@ names no agent).
 
 ## The switch
 
-Two settings in the engine's config, each `"v1"` or `"v2"`, absent meaning v1.
-V2 is opt-in in 2.7; write `v2` to try it:
+Two settings in the engine's config, each `"v1"` or `"v2"`, absent meaning the default of the running version (v1 in
+2.7). V2 is opt-in in 2.7; write `v2` to try it. A value written here is kept on
+every save, `"v1"` too, even when it equals the default — so a later version that
+moves the default does not move you (`doc/storage-spec.md`, `config/explicit.rs`):
 
 ```toml
 [memory]

@@ -214,7 +214,8 @@ async fn apply(state: &Arc<ServerState>, edit: Edit) -> Result<(Config, Credenti
     if let Edit::Edition(body) = edit {
         let creds = Credentials::load_with(&path, &config.models);
         let choice = EditionChoice::parse(&parse::<EditionEdit>(&body)?.choice).ok_or(BAD)?;
-        if config.model_catalog.choice() != choice {
+        // Compared whole: choosing Auto when none was chosen is still a choice to write.
+        if config.model_catalog != ModelCatalog::chosen(choice) {
             config.model_catalog = ModelCatalog::chosen(choice);
             save_config(state, &config).await?;
         }

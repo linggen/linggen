@@ -141,7 +141,7 @@ fn server_text(door: Door) -> &'static str {
 /// `memory_agents` tool, and nowhere else. No daemon state (a unit test): v1.
 async fn outside_mode(deps: &McpDeps<'_>) -> OutsideAgents {
     match deps.state {
-        Some(state) => state.manager.get_config_snapshot().await.memory.outside_agents,
+        Some(state) => state.manager.get_config_snapshot().await.memory.outside_agents(),
         // No engine state is a unit test's door: the old text its facts are checked against.
         None => OutsideAgents::V1,
     }

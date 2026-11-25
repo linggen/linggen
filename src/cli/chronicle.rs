@@ -34,7 +34,7 @@ pub async fn run(action: ChronicleAction, config: &Config) -> Result<()> {
 }
 
 fn prepare(config: &Config) -> Result<()> {
-    if config.memory.linggen != Mode::V2 {
+    if config.memory.linggen() != Mode::V2 {
         println!("The chronicle is kept only when [memory] linggen = \"v2\".");
         std::process::exit(NOTHING_TO_DO);
     }
@@ -51,7 +51,7 @@ fn prepare(config: &Config) -> Result<()> {
 }
 
 async fn backfill(config: &Config) -> Result<()> {
-    if config.memory.linggen != Mode::V2 {
+    if config.memory.linggen() != Mode::V2 {
         bail!("The chronicle is kept only when [memory] linggen = \"v2\".");
     }
     let port = config.server.port();

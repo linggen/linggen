@@ -407,10 +407,11 @@ async fn the_edition_is_chosen_by_the_owner_and_changes_only_what_is_offered() {
     assert_eq!(w.api.post_status("/api/config", config).await, 200);
     assert_eq!(w.api.get("/api/providers").await["edition"]["choice"], "mainland");
     assert_eq!(w.api.put_json("/api/providers/edition", json!({"choice": "world"})).await.0, 400);
-    // Back to Auto: the choice is gone from the file, the cards are as they were.
+    // Back to Auto: a choice like the others, so it stays in the file (a later
+    // default may move; `config/explicit.rs`); the cards are as they were.
     let (_, auto) = w.api.put_json("/api/providers/edition", json!({"choice": "auto"})).await;
     assert_eq!(auto["edition"]["choice"], "auto");
-    assert!(w.api.get("/api/config").await.get("model_catalog").is_none());
+    assert_eq!(w.api.get("/api/config").await["model_catalog"]["edition"], "auto");
     assert_eq!(what_a_person_has(&w).await, had);
 }
 

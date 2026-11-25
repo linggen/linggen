@@ -41,7 +41,7 @@ Project path encoding: `/Users/foo/project` → `-Users-foo-project` (same conve
 ```
 ~/.linggen/
 ├── config/
-│   ├── linggen.runtime.toml    # Runtime config overrides (TOML). A file that cannot load is set aside, never overwritten: linggen.runtime.toml.unreadable-<unix secs> (named by `ling status`)
+│   ├── linggen.runtime.toml    # Runtime config overrides (TOML). A file that cannot load is set aside, never overwritten: linggen.runtime.toml.unreadable-<unix secs> (named by `ling status`). Written only by `Config::save_runtime`. A setting whose absence means "follow this version's default" (`[memory]`, `[model_catalog]`) is an `Explicit<T>` (`config/explicit.rs`): what the person chose is always written, even when it equals today's default, and what they never chose is left out, so a later default can move for them and only them. No config type leaves a value out for equalling `Default` (a lock test holds it)
 ├── logs/
 │   └── linggen-{YYYY-MM-DD}.log  # Daily rolling logs (text)
 ├── agents/

@@ -12,6 +12,7 @@
 //! (`edition_is_decided_only_in_this_file`) holds that.
 
 use super::bundle::Edition;
+use crate::config::Explicit;
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
 
@@ -46,20 +47,22 @@ impl EditionChoice {
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ModelCatalog {
-    edition: EditionChoice,
+    #[serde(skip_serializing_if = "Explicit::is_unset")]
+    edition: Explicit<EditionChoice>,
 }
 
 impl ModelCatalog {
     pub fn chosen(edition: EditionChoice) -> Self {
-        Self { edition }
+        Self { edition: Explicit::set(edition) }
     }
 
     pub fn choice(&self) -> EditionChoice {
-        self.edition
+        self.edition.get()
     }
 
-    pub fn is_default(&self) -> bool {
-        self == &Self::default()
+    /// Nothing chosen: no `[model_catalog]` on disk.
+    pub fn is_unset(&self) -> bool {
+        self.edition.is_unset()
     }
 
     /// The edition this person is offered now. The one decision.
@@ -69,12 +72,12 @@ impl ModelCatalog {
 
     /// What a page is told: the edition in force and the choice behind it.
     pub fn shown(&self) -> serde_json::Value {
-        serde_json::json!({"edition": self.offered().as_str(), "choice": self.edition.as_str()})
+        serde_json::json!({"edition": self.offered().as_str(), "choice": self.edition.get().as_str()})
     }
 
     /// [`offered`](Self::offered) for a given Mac region (what the tests hold fixed).
     pub(crate) fn offered_in(&self, region: Option<&str>) -> Edition {
-        match self.edition {
+        match self.edition.get() {
             EditionChoice::International => Edition::International,
             EditionChoice::Mainland => Edition::Mainland,
             EditionChoice::Auto => match region {
@@ -144,8 +147,8 @@ mod tests {
 
     #[test]
     fn the_setting_is_written_only_when_chosen_and_an_unknown_word_is_refused() {
-        assert!(ModelCatalog::default().is_default());
-        assert!(!ModelCatalog::chosen(EditionChoice::Mainland).is_default());
+        assert!(ModelCatalog::default().is_unset());
+        assert!(!ModelCatalog::chosen(EditionChoice::Mainland).is_unset());
         let read = |text: &str| toml::from_str::<ModelCatalog>(text);
         assert_eq!(read("edition = \"mainland\"").unwrap().choice(), EditionChoice::Mainland);
         assert_eq!(read("").unwrap().choice(), EditionChoice::Auto);
