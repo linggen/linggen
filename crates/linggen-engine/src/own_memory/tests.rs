@@ -1172,6 +1172,27 @@ fn project_notes_are_forwarded_only_in_their_chain_and_never_promoted() {
 }
 
 #[test]
+fn a_project_note_follows_the_repository_into_its_other_worktrees() {
+    let (_d, store) = scratch();
+    let home = store.env().home().to_path_buf();
+    let main = home.join("work/app");
+    let wts = crate::outside_memory::test_repo::repo_with_worktrees(&main, &["app-wt-a"]);
+    decision(&store, Scope::Project(main.clone()), "build", "Main checkout rule", NOW);
+    decision(&store, Scope::Project(wts[0].clone()), "build", "Worktree rule", NOW);
+    decision(&store, Scope::Project(home.join("work/other")), "build", "Other project rule", NOW);
+    for cwd in [&wts[0], &main] {
+        let notes = notes_for_forwarding(&store, Some(cwd), NOW);
+        let all = notes.topics.join("\n");
+        assert!(all.contains("Main checkout rule") && all.contains("Worktree rule"), "{cwd:?}: {all}");
+        assert!(!all.contains("Other project rule"), "{all}");
+        // The session's own folder first.
+        let own = if cwd == &main { "Main checkout rule" } else { "Worktree rule" };
+        let other = if cwd == &main { "Worktree rule" } else { "Main checkout rule" };
+        assert!(all.find(own).unwrap() < all.find(other).unwrap(), "{all}");
+    }
+}
+
+#[test]
 fn without_the_store_only_the_other_agents_are_forwarded() {
     let (_d, store) = scratch();
     decision(&store, Scope::Person, "language", "Reply to the person in Chinese", NOW);

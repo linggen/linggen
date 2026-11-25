@@ -2,7 +2,7 @@
 //! the chain of folders a session stands in, and a project's folder name in
 //! the one encoding a declaration may name (`dash`).
 
-use super::disk::canonical;
+use super::disk::{canonical, sibling_worktrees};
 use super::Env;
 use std::path::{Path, PathBuf};
 
@@ -24,14 +24,17 @@ pub(crate) fn encode_project_path(path: &Path) -> String {
 /// The folders a session at `cwd` is inside, nearest first: `cwd`, its
 /// parents, up to but never including the home folder or `/` (a memory
 /// there belongs to no project). The real path is tried too, as a host may
-/// have resolved a link.
+/// have resolved a link. Then, in a git repository, the roots of its other
+/// worktrees (the main one first): worktrees of one repository are one
+/// project, though they are siblings on disk. The one place that decides
+/// what a session's project folders are; the outside readers and Linggen's
+/// own notes both ask it.
 pub(crate) fn project_chain(env: &Env, cwd: &Path) -> Vec<PathBuf> {
     let mut chain: Vec<PathBuf> = Vec::new();
     let real = canonical(cwd);
     for start in std::iter::once(cwd.to_path_buf()).chain(real) {
         for dir in start.ancestors() {
-            let stop = dir == env.home() || dir.parent().is_none();
-            if stop {
+            if is_no_project(env, dir) {
                 break;
             }
             if !chain.iter().any(|seen| seen == dir) {
@@ -39,5 +42,15 @@ pub(crate) fn project_chain(env: &Env, cwd: &Path) -> Vec<PathBuf> {
             }
         }
     }
+    for root in sibling_worktrees(&chain) {
+        if !is_no_project(env, &root) && !chain.contains(&root) {
+            chain.push(root);
+        }
+    }
     chain
+}
+
+/// The home folder and `/` hold no project's memory.
+fn is_no_project(env: &Env, dir: &Path) -> bool {
+    dir == env.home() || dir.parent().is_none()
 }

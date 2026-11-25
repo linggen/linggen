@@ -236,6 +236,13 @@ engine release.
 
 ### What the built-in readers read
 
+- **The session's chain** is decided in one place (`outside_memory/paths.rs`
+  `project_chain`), for the other agents' notes and Linggen's own project notes
+  alike: the folder and its parents up to home, nearest first, then, when the
+  folder is in a git repository, the roots of its other worktrees (the main one
+  first). Worktrees of one repository are one project. They are found by reading
+  the `.git` files (no `git` process), in `disk.rs` only.
+
 - **Claude Code:** each folder of the session's chain has a project index
   (`~/.claude/projects/<folder>/memory/MEMORY.md`, read as Claude Code loads it:
   the first 200 lines or 25 KB), forwarded for that project; the notes it points

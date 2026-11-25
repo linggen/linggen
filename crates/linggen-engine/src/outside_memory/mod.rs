@@ -33,6 +33,8 @@ mod room;
 mod slice;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+pub(crate) mod test_repo;
 
 pub use access::{listing, read, search, touched, AgentMemory, Hit, Note, NoteFile, Place, ReadError, Touched};
 pub use lines::{reports, SourceReport};
