@@ -2,7 +2,9 @@
 //! their own files and never written (`outside_memory`). The registry, the
 //! confinement and the redaction are there; this side reads the arguments,
 //! says which way (`v1` / `v2`) this Linggen serves outside agents, and
-//! words the answer.
+//! words the answer. `op=index` is the session-start block: under v2 it
+//! carries Linggen's own notes too, put together in
+//! `own_memory::forward`.
 //!
 //! For the owner at this Mac alone: another machine's agent has its own
 //! memory there, and these are this Mac's files.
@@ -10,7 +12,8 @@
 use super::catalog::OutsideOp;
 use super::{tool_content, McpDeps};
 use crate::config::OutsideAgents;
-use crate::outside_memory::{self as outside, Agent, Env};
+use crate::own_memory::{forward, Store};
+use crate::outside_memory::{self as outside, Env};
 use serde_json::{json, Value};
 use std::path::Path;
 
@@ -26,20 +29,25 @@ pub(super) async fn run(deps: &McpDeps<'_>, op: OutsideOp, args: Value) -> Value
     let Some(env) = Env::this_machine() else {
         return tool_content("this machine has no home folder to read memories from".to_string(), true);
     };
-    match answer(&env, mode, op, &args) {
+    let store = Store::this_machine();
+    match answer(&env, store.as_ref(), mode, op, &args) {
         Ok(data) => tool_content(data.to_string(), false),
         Err(why) => tool_content(why, true),
     }
 }
 
-/// One op's answer, from what is on disk under `env`.
-fn answer(env: &Env, mode: OutsideAgents, op: OutsideOp, args: &Value) -> Result<Value, String> {
+/// One op's answer, from what is on disk under `env` (and, for the index
+/// under v2, Linggen's own notes in `store`).
+fn answer(env: &Env, store: Option<&Store>, mode: OutsideAgents, op: OutsideOp, args: &Value) -> Result<Value, String> {
     let text = |key: &str| args.get(key).and_then(Value::as_str).map(str::trim).filter(|v| !v.is_empty());
     match op {
         OutsideOp::Mode => Ok(json!({ "outside_agents": mode.word() })),
         OutsideOp::Index => {
-            let host = text("host").and_then(Agent::of_host);
-            let slice = outside::slice(env, host, text("cwd").map(Path::new));
+            let host = text("host").and_then(|word| outside::host_agent(env, word));
+            let own = store.filter(|_| mode == OutsideAgents::V2);
+            let now = crate::util::now_ts_secs() as i64;
+            let start = forward::session_start(env, own, host.as_ref(), text("cwd").map(Path::new), now);
+            let slice = &start.others;
             let lines: Vec<Value> = slice
                 .entries()
                 .into_iter()
@@ -52,12 +60,19 @@ fn answer(env: &Env, mode: OutsideAgents, op: OutsideOp, args: &Value) -> Result
                 .iter()
                 .map(|n| json!({ "source": n.source, "state": n.state }))
                 .collect();
+            let refused: Vec<Value> = outside::refused_readers(env)
+                .iter()
+                .map(|p| json!({ "reader": p.reader, "why": p.why }))
+                .collect();
             Ok(json!({
                 "outside_agents": mode.word(),
-                "block": slice.block().as_str(),
+                "block": start.block,
+                "own_notes": start.own_shown,
+                "own_left_out": start.own_left_out,
                 "lines": lines,
                 "left_out": slice.cut,
                 "skipped": notes,
+                "refused_readers": refused,
             }))
         }
         OutsideOp::Read => {
@@ -97,9 +112,9 @@ mod tests {
     fn mode_says_which_way_this_linggen_serves() {
         let h = home();
         let env = Env::new(h.path());
-        let got = answer(&env, OutsideAgents::V2, OutsideOp::Mode, &json!({})).unwrap();
+        let got = answer(&env, None, OutsideAgents::V2, OutsideOp::Mode, &json!({})).unwrap();
         assert_eq!(got, json!({ "outside_agents": "v2" }));
-        let got = answer(&env, OutsideAgents::V1, OutsideOp::Mode, &json!({})).unwrap();
+        let got = answer(&env, None, OutsideAgents::V1, OutsideOp::Mode, &json!({})).unwrap();
         assert_eq!(got, json!({ "outside_agents": "v1" }));
     }
 
@@ -107,7 +122,7 @@ mod tests {
     fn an_index_with_nothing_to_forward_is_an_empty_block_not_an_error() {
         let h = home();
         let env = Env::new(h.path());
-        let got = answer(&env, OutsideAgents::V2, OutsideOp::Index, &json!({"cwd": "/x/y", "host": "claude-code"})).unwrap();
+        let got = answer(&env, None, OutsideAgents::V2, OutsideOp::Index, &json!({"cwd": "/x/y", "host": "claude-code"})).unwrap();
         assert_eq!(got["block"], "");
         assert_eq!(got["lines"], json!([]));
     }
@@ -116,7 +131,31 @@ mod tests {
     fn read_and_search_name_what_they_need() {
         let h = home();
         let env = Env::new(h.path());
-        assert!(answer(&env, OutsideAgents::V2, OutsideOp::Read, &json!({})).is_err());
-        assert!(answer(&env, OutsideAgents::V2, OutsideOp::Search, &json!({"words": "  "})).is_err());
+        assert!(answer(&env, None, OutsideAgents::V2, OutsideOp::Read, &json!({})).is_err());
+        assert!(answer(&env, None, OutsideAgents::V2, OutsideOp::Search, &json!({"words": "  "})).is_err());
+    }
+
+    /// The door names no other agent's folder: those live in reader files
+    /// (`outside_memory/readers/`), the one place that does.
+    #[test]
+    fn the_door_names_no_other_agents_folder() {
+        for (name, text) in [
+            ("outside.rs", include_str!("outside.rs")),
+            ("notes.rs", include_str!("notes.rs")),
+            ("catalog.rs", include_str!("catalog.rs")),
+            ("dispatch.rs", include_str!("dispatch.rs")),
+        ] {
+            let code: String = text
+                .split("#[cfg(test)]")
+                .next()
+                .unwrap_or("")
+                .lines()
+                .filter(|l| !l.trim_start().starts_with("//"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            for folder in [".claude", ".codex", ".hermes", ".gemini", ".openclaw"] {
+                assert!(!code.contains(folder), "{name} names `{folder}`");
+            }
+        }
     }
 }

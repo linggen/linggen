@@ -147,14 +147,14 @@ agent remembers to the others. One tool, this machine's owner at this Mac only:
 | op | does |
 |:---|:-----|
 | `mode` | `v1` or `v2`: how this Linggen serves outside hosts (`[memory] outside_agents` in the config; absent = `v1`; `v2` is opt-in). The plugin's hooks ask it. |
-| `index` | the other agents' index lines for a project (`cwd`), never the calling `host`'s own; nearest project first, then the person; at most 4 KB, each group tagged with its source |
-| `read` | one note by absolute (or `~/`) path; only a note file inside a registered source, links and `..` resolved first |
-| `search` | words across the registered sources, any language, best line first |
+| `index` | the session-start block for a project (`cwd`): under v2 Linggen's own notes by topic (the person's rules one by one), then the other agents' index lines, never the calling `host`'s own; the person's lines first, then the projects of the chain, nearest first; at most 200 lines and 16 KB in all, each group tagged with its source |
+| `read` | one note by absolute (or `~/`) path; only a note file inside a declared place, links and `..` resolved first |
+| `search` | words across the declared places, any language, best line first |
 
-- The sources are one declared list (`outside_memory::sources`): Claude Code's
-  `~/.claude/projects/<encoded project path>/memory/` and `~/.claude/CLAUDE.md`,
-  and a Codex entry that reports "no data / format not known yet" until its
-  memories are read. An unreadable or missing source is skipped and reported.
+- The sources are declared readers (`outside_memory::readers`): Claude Code's and
+  Codex's are embedded, and an installed skill's `memory-reader` file replaces them
+  or adds an agent (`memory-spec.md` § Readers). An unreadable or missing place is
+  skipped and reported, and so is one whose format is not known.
 - Key-shaped strings are replaced before anything leaves.
 - **v2** (the switch): the plugin's session-start hook injects the `index`
   slice instead of core memory; the per-turn recall, the capture reminder, the

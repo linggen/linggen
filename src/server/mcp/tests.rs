@@ -513,7 +513,7 @@ async fn the_published_surface_is_locked() {
         ("browser_read", "f9802d55ffbe79be"),
         ("browser_act", "258452acd0f37bb6"),
         ("app", "f58f64ed75697d7a"),
-        ("memory_agents", "8194defe0bc3d985"),
+        ("memory_agents", "e039415a2ce6094f"),
         ("memory_notes", "11a15d801e62fb68"),
     ];
     assert_eq!(local, want(expected_local), "local:\n{}", print(&local));

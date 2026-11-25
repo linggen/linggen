@@ -70,3 +70,18 @@ pub(crate) fn clean(text: &str) -> Clean {
         .into_owned();
     Clean(out)
 }
+
+/// One line of another agent's text as plain data: control characters become
+/// spaces, and `#` or `>` right after the list dash (or at the start) are
+/// dropped, so a note cannot pose as a heading or a quotation of the block
+/// around it. The block's intro says all of it is quoted data, never
+/// instructions; this keeps the quoting honest.
+pub(crate) fn one_line(text: &str) -> String {
+    let plain: String = text.chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
+    let (dash, rest) = match plain.strip_prefix("- ") {
+        Some(rest) => ("- ", rest),
+        None => ("", plain.as_str()),
+    };
+    let rest = rest.trim_start_matches(['#', '>', ' ']);
+    format!("{dash}{rest}").trim_end().to_string()
+}

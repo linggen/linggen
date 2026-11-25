@@ -8,9 +8,15 @@
 //! the last 90 days, most read first → the rest, newest first. Budget: 200
 //! lines and 25 KB, Claude Code's own limit for its index. The chronicle is
 //! not in it: it is long, and found by search when the past is asked about.
+//!
+//! What a coding host is forwarded of the same notes at its session start is
+//! [`notes_for_forwarding`]: grouped by topic, the person's rules one by one,
+//! and only the person's notes and the projects in the session's chain
+//! (nothing is promoted from one to the other). How much of it fits is
+//! decided in [`super::forward`].
 
 use super::fence::{self, Audience, Seen};
-use super::format::Scope;
+use super::format::{Kind, Scope, Voice};
 use super::TOOL;
 use crate::outside_memory::project_chain;
 use std::path::Path;
@@ -143,3 +149,97 @@ fn fit(ordered: Vec<Seen>) -> Index {
     }
     Index { text, shown: body.len(), left_out }
 }
+
+/// Linggen's own notes as a coding host is forwarded them, before anything is
+/// cut: the lines in the order they should be kept.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ForwardedNotes {
+    /// The person's rules, one line each: the person's own words first, then
+    /// the most read, then newest.
+    pub rules: Vec<String>,
+    /// One line per topic file: its name, how many notes, a gist (the newest
+    /// note's summary) and the path that opens it. The nearest project
+    /// first, then the person's topics; newest first inside each.
+    pub topics: Vec<String>,
+}
+
+/// The notes a coding host may see ([`Audience::Work`]: the fence keeps back
+/// body, mind, people, moments and the chronicle), for a session at `cwd`:
+/// person-scope notes, and project notes of the folders in its chain. A note
+/// of any other project, and of any area, is found by search, not listed.
+pub fn notes_for_forwarding(store: &super::Store, cwd: Option<&Path>, now: i64) -> ForwardedNotes {
+    let (all, _) = fence::seen(store, Audience::Work);
+    let uses = store.uses_since(now - USE_WINDOW_SECS);
+    let chain = cwd.map(|c| project_chain(store.env(), c)).unwrap_or_default();
+    let mut rules: Vec<&Seen> = Vec::new();
+    // One group per topic file: where it stands (the person's, or a chain
+    // distance) and its notes.
+    let mut files: Vec<(Where, Vec<&Seen>)> = Vec::new();
+    for note in all.iter().filter(|s| s.entry.void.is_none()) {
+        let at = match &note.scope {
+            Scope::Person if note.entry.kind == Kind::Rule => {
+                rules.push(note);
+                continue;
+            }
+            Scope::Person => Where::Person,
+            Scope::Project(p) => match chain.iter().position(|c| c == p) {
+                Some(distance) => Where::Project(distance),
+                None => continue,
+            },
+            _ => continue,
+        };
+        match files.iter_mut().find(|(_, notes)| notes[0].rel == note.rel) {
+            Some((_, notes)) => notes.push(note),
+            None => files.push((at, vec![note])),
+        }
+    }
+    rules.sort_by(|a, b| {
+        let reads = |s: &Seen| uses.get(&s.entry.id).copied().unwrap_or(0);
+        (a.entry.voice != Voice::User)
+            .cmp(&(b.entry.voice != Voice::User))
+            .then(reads(b).cmp(&reads(a)))
+            .then(b.entry.updated.cmp(&a.entry.updated))
+            .then(a.entry.id.cmp(&b.entry.id))
+    });
+    files.sort_by(|(wa, na), (wb, nb)| wa.cmp(wb).then(newest(nb).cmp(newest(na))).then(na[0].rel.cmp(&nb[0].rel)));
+    ForwardedNotes {
+        rules: rules.into_iter().map(line_of).collect(),
+        topics: files.iter().map(|(at, notes)| topic_line(store, at, &chain, notes)).collect(),
+    }
+}
+
+/// Where a topic file stands for a session: the person's come after the
+/// session's own projects, nearest first.
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+enum Where {
+    Project(usize),
+    Person,
+}
+
+fn newest<'a>(notes: &[&'a Seen]) -> &'a str {
+    notes.iter().map(|n| n.entry.updated.as_str()).max().unwrap_or("")
+}
+
+/// `- Build (3 notes, project ~/work/app): the gist — memory_notes op=read path=…`
+fn topic_line(store: &super::Store, at: &Where, chain: &[std::path::PathBuf], notes: &[&Seen]) -> String {
+    let first = notes[0];
+    let gist = notes
+        .iter()
+        .max_by(|a, b| a.entry.updated.cmp(&b.entry.updated).then(b.entry.id.cmp(&a.entry.id)))
+        .map_or("", |n| n.entry.summary.as_str());
+    let whose = match at {
+        Where::Person => "the person".to_string(),
+        Where::Project(d) => format!("project {}", store.env().tilde(&chain[*d])),
+    };
+    let count = notes.len();
+    let plural = if count == 1 { "" } else { "s" };
+    format!(
+        "- {} ({count} note{plural}, {whose}): {} — {TOOL} op=read path={}",
+        first.topic,
+        crate::outside_memory::shorten(gist, GIST_CHARS),
+        first.rel
+    )
+}
+
+/// A topic's gist, in characters.
+const GIST_CHARS: usize = 80;

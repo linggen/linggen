@@ -772,7 +772,7 @@
     },
     {
       "name": "memory_agents",
-      "description": "What other agents (Claude Code, Codex) remember, read from their own files. Linggen only reads: it never edits, moves or copies them, and each agent keeps its memory its own way. op=index: their index lines for a project (cwd), never the calling host's own (host); op=read: one note by path, only inside those memories; op=search: words across them, any language. For this Mac's owner at this Mac.",
+      "description": "What other agents (Claude Code, Codex) remember, read from their own files. Linggen only reads: it never edits, moves or copies them, and each agent keeps its memory its own way. op=index: what a session starts with for a project (cwd) — Linggen's own notes by topic, then their index lines, never the calling host's own (host); op=read: one note by path, only inside those memories; op=search: words across them, any language. For this Mac's owner at this Mac.",
       "inputSchema": {
         "type": "object",
         "properties": {

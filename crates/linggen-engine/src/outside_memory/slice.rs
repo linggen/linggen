@@ -1,29 +1,25 @@
-//! The slice: what the OTHER agents remember for a session, trimmed to a
-//! budget and tagged with where each line came from.
+//! The slice: what the OTHER agents remember for a session, put in the room
+//! it was given and tagged with where each line came from.
 //!
-//! Order: the nearest project first, then the person, newest first inside
-//! each. The person's lines keep a quarter of the budget so a long project
-//! index cannot push them out. Lines that do not fit are counted, not cut
-//! mid-line.
+//! Inside one agent the person's lines come first (they are the same in every
+//! folder), then the projects, the nearest first, newest first inside each.
+//! When two or more agents have lines, none takes more than the share it is
+//! given. Lines that do not fit are counted, never cut mid-line. How big the
+//! room is, and who gets how much of it, is decided in
+//! `own_memory::forward`; this file only fills what it is handed
+//! ([`super::room::Room`]).
 
+use super::lines::{place_results, Line, Skip};
+use super::readers::{Agent, Registry};
 use super::redact::{clean, Clean};
-use super::sources::{Line, Skip, SOURCES};
-use super::{Agent, Env, Scope};
+use super::room::Room;
+use super::{Env, Scope};
 use std::path::Path;
-
-/// What a session start is forwarded, at most, in bytes — aligned to
-/// neither agent's own limit: Claude Code's index is its own memory (25 KB),
-/// this is what it is told about the others'.
-pub const BUDGET_BYTES: usize = 4096;
-/// Kept free for the "N more" line.
-const FOOTER_BYTES: usize = 128;
-/// The person's share of the budget.
-const PERSON_SHARE: usize = 4;
 
 /// A source that gave nothing, and why.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SourceNote {
-    pub source: &'static str,
+    pub source: String,
     pub state: String,
 }
 
@@ -32,7 +28,8 @@ pub struct SourceNote {
 pub struct Slice {
     env: Env,
     lines: Vec<Line>,
-    /// How many lines the budget left out.
+    /// How many lines were left out: what the room could not hold, and the
+    /// project lines whose heading names no folder of the session's chain.
     pub cut: usize,
     /// Sources that gave no lines.
     pub notes: Vec<SourceNote>,
@@ -40,52 +37,53 @@ pub struct Slice {
 
 /// The other agents' index lines for a session at `cwd`, for the calling
 /// `host` (an agent never gets its own memory back; a host Linggen knows no
-/// memory of gets everyone's).
-pub fn slice(env: &Env, host: Option<Agent>, cwd: Option<&Path>) -> Slice {
+/// memory of gets everyone's), in `room`, no agent taking more than `each`
+/// when several have lines.
+pub fn slice(env: &Env, host: Option<&Agent>, cwd: Option<&Path>, room: Room, each: Room) -> Slice {
     let scope = Scope { cwd: cwd.map(Path::to_path_buf) };
-    let mut all = Vec::new();
+    let mut by_agent: Vec<(Agent, Vec<Line>)> = Vec::new();
     let mut notes = Vec::new();
-    for source in SOURCES.iter().filter(|s| Some(s.agent) != host) {
-        match (source.lines)(env, &scope) {
-            Ok(lines) => all.extend(lines),
-            Err(Skip::NoData) => {}
-            Err(skip) => notes.push(SourceNote { source: source.id, state: skip.to_string() }),
+    let mut unmatched = 0;
+    for result in place_results(&Registry::load(env), env, &scope).into_iter().filter(|r| Some(&r.agent) != host) {
+        unmatched += result.unmatched;
+        match result.outcome {
+            Ok(lines) => match by_agent.iter_mut().find(|(a, _)| *a == result.agent) {
+                Some((_, all)) => all.extend(lines),
+                None => by_agent.push((result.agent, lines)),
+            },
+            Err(Skip::NoData | Skip::Older(_)) => {}
+            Err(skip) => notes.push(SourceNote { source: result.source, state: skip.to_string() }),
         }
     }
-    let total = all.len();
-    let lines = fit(env, all);
-    Slice { env: env.clone(), cut: total - lines.len(), lines, notes }
+    let total: usize = by_agent.iter().map(|(_, lines)| lines.len()).sum();
+    let share = if by_agent.len() > 1 { each } else { room };
+    let mut kept: Vec<Line> = Vec::new();
+    for (_, mut lines) in by_agent {
+        order(&mut lines);
+        let left = room.minus(body(env, &kept).as_str());
+        let mine = fit(env, lines, share.at_most(left));
+        kept.extend(mine);
+    }
+    Slice { env: env.clone(), cut: total - kept.len() + unmatched, lines: kept, notes }
 }
 
-/// Newest first; a project's nearer lines before a farther one's.
+/// The person first, then the nearest project; newest first inside each.
 fn order(lines: &mut [Line]) {
     lines.sort_by(|a, b| {
         a.distance
             .cmp(&b.distance)
             .then(b.changed.cmp(&a.changed))
+            .then(a.source.cmp(&b.source))
+            .then(a.text.cmp(&b.text))
     });
 }
 
-/// The lines that fit: the person's share first, the projects in the rest.
-fn fit(env: &Env, all: Vec<Line>) -> Vec<Line> {
-    let (mut person, mut projects): (Vec<Line>, Vec<Line>) =
-        all.into_iter().partition(|l| l.distance.is_none());
-    order(&mut person);
-    order(&mut projects);
-    let room = BUDGET_BYTES - FOOTER_BYTES - INTRO.len();
-    let person = take_while_fits(env, person, Vec::new(), room / PERSON_SHARE);
-    let used = body(env, &person).as_str().len();
-    let mut kept = take_while_fits(env, projects, Vec::new(), room.saturating_sub(used));
-    kept.extend(person);
-    kept
-}
-
-/// Add `candidates` one by one to `kept` while the rendered whole stays
-/// within `limit` bytes; stop at the first that does not.
-fn take_while_fits(env: &Env, candidates: Vec<Line>, mut kept: Vec<Line>, limit: usize) -> Vec<Line> {
+/// The leading lines that fit `room` once rendered with their headers.
+fn fit(env: &Env, candidates: Vec<Line>, room: Room) -> Vec<Line> {
+    let mut kept: Vec<Line> = Vec::new();
     for line in candidates {
         kept.push(line);
-        if body(env, &kept).as_str().len() > limit {
+        if !room.holds(body(env, &kept).as_str()) {
             kept.pop();
             break;
         }
@@ -99,25 +97,20 @@ fn body(env: &Env, lines: &[Line]) -> Clean {
     let mut out = String::new();
     let mut group: Option<(&str, &str)> = None;
     for line in lines {
-        let key = (line.source, line.about.as_str());
+        let key = (line.source.as_str(), line.about.as_str());
         if group != Some(key) {
             group = Some(key);
-            out.push_str(&format!(
-                "{} · {} — notes in {}\n",
-                line.agent.label(),
-                line.about,
-                env.tilde(&line.place)
-            ));
+            let notes_in = match line.distance {
+                Some(_) => format!(" — notes in {}", env.tilde(&line.place)),
+                None => String::new(),
+            };
+            out.push_str(&format!("{} · {}{notes_in}\n", line.agent.label(), line.about));
         }
         out.push_str(&line.text);
         out.push('\n');
     }
     clean(&out)
 }
-
-const INTRO: &str = "What other agents remember here (read-only: Linggen forwards it and never edits it). \
-Open a note with memory_agents op=read path=<folder>/<file>; find words with op=search. \
-If two disagree, the newer one wins unless the person says otherwise.\n";
 
 impl Slice {
     /// Whether anything is forwarded.
@@ -126,26 +119,16 @@ impl Slice {
     }
 
     /// The lines as data: source id, agent, group, text.
-    pub fn entries(&self) -> Vec<(&'static str, Agent, &str, Clean)> {
+    pub fn entries(&self) -> Vec<(&str, &Agent, &str, Clean)> {
         self.lines
             .iter()
-            .map(|l| (l.source, l.agent, l.about.as_str(), clean(&l.text)))
+            .map(|l| (l.source.as_str(), &l.agent, l.about.as_str(), clean(&l.text)))
             .collect()
     }
 
-    /// What a host is injected at session start; empty when there is
-    /// nothing to forward.
-    pub fn block(&self) -> Clean {
-        if self.lines.is_empty() {
-            return clean("");
-        }
-        let mut text = format!("{INTRO}{}", body(&self.env, &self.lines));
-        if self.cut > 0 {
-            text.push_str(&format!(
-                "({} more lines left out; memory_agents op=search finds them.)\n",
-                self.cut
-            ));
-        }
-        clean(&text)
+    /// The lines under their headers, as the block carries them; empty when
+    /// there is nothing to forward.
+    pub fn body(&self) -> Clean {
+        body(&self.env, &self.lines)
     }
 }

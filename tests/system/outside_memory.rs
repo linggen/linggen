@@ -167,3 +167,41 @@ async fn v2_is_what_the_door_says_and_a_settings_save_keeps_it() {
     w.api.post("/api/config", config).await;
     assert_eq!(agents(&w, json!({"op": "mode"})).await.unwrap()["outside_agents"], "v2");
 }
+
+/// Codex's real files (its summary and an ad-hoc note) reach Claude Code at
+/// the door, the person's lines in every folder and a project's only in its
+/// chain; an installed reader adds another agent's memory with no release.
+#[tokio::test]
+async fn codex_and_an_installed_readers_agent_are_forwarded_from_their_files() {
+    let w = World::start(Setup { config_append: V2, ..Setup::default() }).await;
+    let home = w.home.home();
+    let (here, elsewhere) = (home.join("work"), home.join("play"));
+    std::fs::create_dir_all(&here).unwrap();
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    let write = |path: std::path::PathBuf, text: &str| {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    };
+    write(
+        home.join(".codex/memories/memory_summary.md"),
+        &format!("v1\n\n## User preferences\n- Keep replies short.\n\n## What's in Memory\n\n### {}\n\n#### 2026-11-24\n\n- Release flow: gate\n  - desc: x\n", here.display()),
+    );
+    write(home.join(".codex/memories/extensions/ad_hoc/notes/20261125-chinese.md"), "Alex prefers answers in Chinese.\n");
+    write(home.join(".linggen/skills/memory-reader-gem/SKILL.md"), "---\nname: memory-reader-gem\ndescription: reader\nmemory-reader: reader.toml\n---\n");
+    write(
+        home.join(".linggen/skills/memory-reader-gem/reader.toml"),
+        "format = 1\nagent = \"gem\"\nlabel = \"Gem\"\nhosts = [\"gem\"]\n[[place]]\nid = \"notes\"\npath = \"~/.gem/*.md\"\nlines = { each = \"item\" }\n",
+    );
+    write(home.join(".gem/notes.md"), "- Gem keeps the Friday rule\n");
+
+    let at = |dir: &std::path::Path| json!({"op": "index", "cwd": dir.display().to_string(), "host": "claude-code"});
+    let block = agents(&w, at(&here)).await.unwrap()["block"].as_str().unwrap().to_string();
+    for want in ["Keep replies short", "Alex prefers answers in Chinese", "Release flow", "Gem keeps the Friday rule", "Codex ·", "Gem ·"] {
+        assert!(block.contains(want), "{want}: {block}");
+    }
+    let block = agents(&w, at(&elsewhere)).await.unwrap()["block"].as_str().unwrap().to_string();
+    assert!(block.contains("Keep replies short") && !block.contains("Release flow"), "{block}");
+    // The host's own agent is never given its own memory.
+    let own = agents(&w, json!({"op": "index", "cwd": here.display().to_string(), "host": "codex"})).await.unwrap();
+    assert!(!own["block"].as_str().unwrap().contains("Keep replies short"), "{own}");
+}

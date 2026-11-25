@@ -1,27 +1,24 @@
-//! Reading a note and searching, confined to the registered sources.
+//! Reading a note and searching, confined to the declared places.
 //!
-//! A path is read only when, once links and `..` are resolved, it is a
-//! regular note file inside one of a source's roots. Anything else — another
-//! file of the person's, a session transcript beside a project's memory
-//! folder, a path that does not exist — gets the same refusal, so a caller
-//! cannot use this to learn what is on the disk.
+//! A path is read only when, once links and `..` are resolved, it is a note
+//! file one of the registry's places names ([`Registry::locate`]). Anything
+//! else — another file of the person's, a session transcript beside a
+//! project's memory folder, a path that does not exist — gets the same
+//! refusal, so a caller cannot use this to learn what is on the disk. The
+//! files themselves are read by [`super::disk`] alone.
 
+use super::disk;
+use super::readers::{Agent, Located, Registry};
 use super::redact::{clean, Clean};
-use super::sources::{Source, SOURCES};
-use super::{shorten, Agent, Env};
-use std::fs;
+use super::{shorten, Env};
 use std::path::{Path, PathBuf};
-use std::time::UNIX_EPOCH;
 
 /// A note is returned up to this many bytes.
 const NOTE_BYTES: u64 = 64 * 1024;
 /// Search reads each note up to this many bytes.
 const SEARCH_FILE_BYTES: u64 = 256 * 1024;
-/// A search looks at most at this many files.
-const SEARCH_FILES: usize = 5000;
 /// A hit's line, in characters.
 const HIT_CHARS: usize = 200;
-const NOTE_EXTENSIONS: [&str; 3] = ["md", "markdown", "txt"];
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ReadError {
@@ -48,7 +45,7 @@ impl std::fmt::Display for ReadError {
 /// One note, as read.
 #[derive(Clone, Debug)]
 pub struct Note {
-    pub source: &'static str,
+    pub source: String,
     pub path: PathBuf,
     pub text: Clean,
     pub truncated: bool,
@@ -57,28 +54,26 @@ pub struct Note {
 /// One line found by [`search`].
 #[derive(Clone, Debug)]
 pub struct Hit {
-    pub source: &'static str,
+    pub source: String,
     pub path: PathBuf,
     pub line: usize,
     pub text: Clean,
 }
 
-/// The note at `path` (absolute, or `~/…`), if it is inside a source.
+/// The note at `path` (absolute, or `~/…`), if it is inside a declared place.
 pub fn read(env: &Env, path: &str) -> Result<Note, ReadError> {
     let wanted = expand(env, path).ok_or(ReadError::NotAbsolute)?;
-    let (source, file) = locate(env, &wanted)?;
-    let bytes = read_head(&file, NOTE_BYTES)
-        .map_err(|e| ReadError::Unreadable(e.kind().to_string()))?;
-    let truncated = fs::metadata(&file).is_ok_and(|m| m.len() > NOTE_BYTES);
+    let file = Registry::load(env).locate(&wanted).ok_or(ReadError::OutsideSources)?;
+    let bytes = disk::read_note(&file, NOTE_BYTES).map_err(|e| ReadError::Unreadable(e.kind().to_string()))?;
     Ok(Note {
-        source,
-        path: file,
+        source: file.source().to_string(),
+        path: file.path().to_path_buf(),
         text: clean(&String::from_utf8_lossy(&bytes)),
-        truncated,
+        truncated: disk::size_of(&file) > NOTE_BYTES,
     })
 }
 
-/// Lines of the registered notes that hold the most of `words` (any case,
+/// Lines of the readable notes that hold the most of `words` (any case,
 /// any language: plain substring), best first, then newest file first.
 pub fn search(env: &Env, words: &str, limit: usize) -> Vec<Hit> {
     let words: Vec<String> = words.split_whitespace().map(str::to_lowercase).collect();
@@ -86,15 +81,11 @@ pub fn search(env: &Env, words: &str, limit: usize) -> Vec<Hit> {
         return Vec::new();
     }
     let mut scored: Vec<(usize, u64, Hit)> = Vec::new();
-    for (source, file) in note_files(env) {
-        let Ok(bytes) = read_head(&file, SEARCH_FILE_BYTES) else {
+    for file in Registry::load(env).files() {
+        let Ok(bytes) = disk::read_note(&file, SEARCH_FILE_BYTES) else {
             continue;
         };
-        let changed = fs::metadata(&file)
-            .and_then(|m| m.modified())
-            .ok()
-            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-            .map_or(0, |d| d.as_secs());
+        let changed = disk::changed(&file);
         for (n, line) in String::from_utf8_lossy(&bytes).lines().enumerate() {
             let lower = line.to_lowercase();
             let found = words.iter().filter(|w| lower.contains(w.as_str())).count();
@@ -102,8 +93,8 @@ pub fn search(env: &Env, words: &str, limit: usize) -> Vec<Hit> {
                 continue;
             }
             let hit = Hit {
-                source,
-                path: file.clone(),
+                source: file.source().to_string(),
+                path: file.path().to_path_buf(),
                 line: n + 1,
                 text: clean(&shorten(line.trim(), HIT_CHARS)),
             };
@@ -116,36 +107,37 @@ pub fn search(env: &Env, words: &str, limit: usize) -> Vec<Hit> {
             .then(a.2.path.cmp(&b.2.path))
             .then(a.2.line.cmp(&b.2.line))
     });
-    scored
-        .into_iter()
-        .take(limit)
-        .map(|(_, _, hit)| hit)
-        .collect()
+    scored.into_iter().take(limit).map(|(_, _, hit)| hit).collect()
 }
 
 /// One of another agent's notes, as the chronicle sees it: when it last
 /// changed and its first line.
 #[derive(Clone, Debug)]
 pub struct Touched {
-    pub source: &'static str,
+    pub source: String,
     pub path: PathBuf,
     /// Seconds since the epoch the file last changed.
     pub changed: u64,
     pub first_line: Clean,
 }
 
-/// Every note of every source with the time it last changed and its first
-/// line (a heading's `#` dropped) — what the monthly chronicle reads to say
-/// what other agents learned that month. Read-only, like the rest.
+/// Every readable note with the time it last changed and its first line (a
+/// heading's `#` dropped) — what the monthly chronicle reads to say what
+/// other agents learned that month. Read-only, like the rest.
 pub fn touched(env: &Env) -> Vec<Touched> {
-    note_files(env)
+    Registry::load(env)
+        .files()
         .into_iter()
-        .filter_map(|(source, path)| {
-            let changed = fs::metadata(&path).and_then(|m| m.modified()).ok()?.duration_since(UNIX_EPOCH).ok()?.as_secs();
-            let head = read_head(&path, 4096).ok()?;
+        .filter_map(|file| {
+            let head = disk::read_note(&file, 4096).ok()?;
             let text = String::from_utf8_lossy(&head);
             let line = text.lines().map(|l| l.trim().trim_start_matches('#').trim()).find(|l| !l.is_empty())?;
-            Some(Touched { source, path, changed, first_line: clean(&shorten(line, HIT_CHARS)) })
+            Some(Touched {
+                source: file.source().to_string(),
+                path: file.path().to_path_buf(),
+                changed: disk::changed(&file),
+                first_line: clean(&shorten(line, HIT_CHARS)),
+            })
         })
         .collect()
 }
@@ -158,87 +150,6 @@ fn expand(env: &Env, path: &str) -> Option<PathBuf> {
     Path::new(path).is_absolute().then(|| PathBuf::from(path))
 }
 
-/// The source `wanted` is inside, and its real path.
-fn locate(env: &Env, wanted: &Path) -> Result<(&'static str, PathBuf), ReadError> {
-    let real = wanted
-        .canonicalize()
-        .map_err(|_| ReadError::OutsideSources)?;
-    if !real.is_file() || !is_note(&real) {
-        return Err(ReadError::OutsideSources);
-    }
-    for source in SOURCES {
-        for root in (source.roots)(env) {
-            let Ok(root) = root.canonicalize() else {
-                continue;
-            };
-            if real == root || (root.is_dir() && real.starts_with(&root)) {
-                return Ok((source.id, real));
-            }
-        }
-    }
-    Err(ReadError::OutsideSources)
-}
-
-fn is_note(path: &Path) -> bool {
-    path.extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|e| NOTE_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
-}
-
-/// Every note file of every source: a root that is a file, or the files in
-/// a root folder (two levels down). Links are not followed.
-fn note_files(env: &Env) -> Vec<(&'static str, PathBuf)> {
-    let mut found: Vec<(&'static str, PathBuf)> = by_root(env)
-        .into_iter()
-        .flat_map(|(source, _, files)| files.into_iter().map(move |f| (source.id, f)))
-        .collect();
-    found.truncate(SEARCH_FILES);
-    found
-}
-
-/// Each root of each source, with the note files in it.
-fn by_root(env: &Env) -> Vec<(&'static Source, PathBuf, Vec<PathBuf>)> {
-    let mut out = Vec::new();
-    for source in SOURCES {
-        for root in (source.roots)(env) {
-            let mut files = Vec::new();
-            collect(source.id, &root, 0, &mut files);
-            out.push((source, root, files.into_iter().map(|(_, f)| f).collect()));
-        }
-    }
-    out
-}
-
-fn collect(
-    source: &'static str,
-    path: &Path,
-    depth: usize,
-    found: &mut Vec<(&'static str, PathBuf)>,
-) {
-    let Ok(meta) = fs::symlink_metadata(path) else {
-        return;
-    };
-    if meta.is_file() && is_note(path) {
-        found.push((source, path.to_path_buf()));
-    } else if meta.is_dir() && depth < 2 {
-        let Ok(entries) = fs::read_dir(path) else {
-            return;
-        };
-        let mut children: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
-        children.sort();
-        for child in children {
-            collect(source, &child, depth + 1, found);
-        }
-    }
-}
-
-fn read_head(path: &Path, max: u64) -> std::io::Result<Vec<u8>> {
-    use std::io::Read;
-    let mut bytes = Vec::new();
-    fs::File::open(path)?.take(max).read_to_end(&mut bytes)?;
-    Ok(bytes)
-}
-
 /// One note file a person can open, as the page lists it.
 #[derive(Clone, Debug)]
 pub struct NoteFile {
@@ -249,14 +160,14 @@ pub struct NoteFile {
     pub changed: u64,
 }
 
-/// A folder (or single file) of an agent's notes.
+/// A folder of an agent's notes.
 #[derive(Clone, Debug)]
 pub struct Place {
     pub root: PathBuf,
     pub files: Vec<NoteFile>,
 }
 
-/// One agent's memory as it is on this machine: every place the registry
+/// One agent's memory as it is on this machine: every folder the registry
 /// reads for it.
 #[derive(Clone, Debug)]
 pub struct AgentMemory {
@@ -268,30 +179,27 @@ pub struct AgentMemory {
 /// listed in the registry's order, an agent once. A listing only: the
 /// files are read with [`read`].
 pub fn listing(env: &Env) -> Vec<AgentMemory> {
-    let mut out: Vec<AgentMemory> = Vec::new();
-    for source in SOURCES {
-        if !out.iter().any(|m| m.agent == source.agent) {
-            out.push(AgentMemory { agent: source.agent, places: Vec::new() });
+    let registry = Registry::load(env);
+    let mut out: Vec<AgentMemory> = registry.readers.iter().map(|r| AgentMemory { agent: r.agent(), places: Vec::new() }).collect();
+    for file in registry.files() {
+        let Some(memory) = out.iter_mut().find(|m| m.agent == *file.agent()) else {
+            continue;
+        };
+        let root = file.path().parent().map(Path::to_path_buf).unwrap_or_default();
+        let note = note_file(&file);
+        match memory.places.iter_mut().find(|p| p.root == root) {
+            Some(place) => place.files.push(note),
+            None => memory.places.push(Place { root, files: vec![note] }),
         }
-    }
-    for (source, root, files) in by_root(env) {
-        let files = files.into_iter().filter_map(|path| note_file(&path)).collect();
-        let memory = out.iter_mut().find(|m| m.agent == source.agent).expect("every source's agent is listed");
-        memory.places.push(Place { root, files });
     }
     out
 }
 
-fn note_file(path: &Path) -> Option<NoteFile> {
-    let meta = fs::metadata(path).ok()?;
-    Some(NoteFile {
-        path: path.to_path_buf(),
-        name: path.file_name()?.to_string_lossy().to_string(),
-        bytes: meta.len(),
-        changed: meta
-            .modified()
-            .ok()
-            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-            .map_or(0, |d| d.as_secs()),
-    })
+fn note_file(file: &Located) -> NoteFile {
+    NoteFile {
+        path: file.path().to_path_buf(),
+        name: file.path().file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
+        bytes: disk::size_of(file),
+        changed: disk::changed(file),
+    }
 }
