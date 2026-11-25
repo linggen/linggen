@@ -36,6 +36,8 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 hyper-util = { version = "0.1", features = ["client-proxy"] }
 uuid = { version = "1", features = ["v4"] }
 sha2 = "0.10"
+# Verifies the signed curated model list (provider/models/curated).
+ring = "0.17"
 # Answer pictures: decode and scale to ~1000 px before keeping (engine/answer_refs).
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 base64 = "0.22"

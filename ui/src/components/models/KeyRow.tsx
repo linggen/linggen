@@ -32,7 +32,7 @@ export const KeyRow: React.FC<Props> = (props) => {
   const { provider: p, open, onToggle } = props;
   return (
     <Row testId={p.provider} name={p.label} way={p.way} subtitle={summary(p)} open={open} onToggle={onToggle}
-      tags={<>{p.used_by.includes('chat') && <Tag tone="blue">{W.chat}</Tag>}{p.used_by.includes('live_voice') && <Tag tone="blue">{W.liveVoice}</Tag>}</>}
+      tags={<>{p.retained && <span title={W.keptNote} data-testid="retained"><Tag tone="amber">{W.kept}</Tag></span>}{p.used_by.includes('chat') && <Tag tone="blue">{W.chat}</Tag>}{p.used_by.includes('live_voice') && <Tag tone="blue">{W.liveVoice}</Tag>}</>}
       detail={p.key?.set ? <span>{say(W.billedBy, { provider: p.label })}</span> : <span className="rounded-md border border-slate-200 bg-white px-2 py-0.5 font-semibold dark:border-white/10 dark:bg-white/5">{W.fillKey}</span>}>
       <KeyField {...props} />
       <Models {...props} />

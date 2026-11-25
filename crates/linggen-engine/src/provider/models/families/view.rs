@@ -3,7 +3,8 @@
 //! already held; it asks no provider and fails no list.
 
 use super::{binding, Endpoint, Families};
-use super::super::family_catalog::{FamilyCurrent, ModelFacts, Snapshot};
+use super::super::curated::Bundle;
+use super::super::family_catalog::{FamilyCurrent, Target};
 use super::super::pricing::{price_in, Price, PriceSource};
 use crate::config::{Config, ModelConfig};
 use crate::credentials::Credentials;
@@ -32,7 +33,7 @@ struct CatalogView {
 #[derive(Serialize)]
 struct FamilyView {
     family: String,
-    /// The short name a page shows beside the checkbox (`label_of`).
+    /// The short name a page shows beside the checkbox: the list's label.
     label: String,
     ticked: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -47,6 +48,9 @@ struct FamilyView {
     /// newer model a following row has not moved to yet.
     #[serde(skip_serializing_if = "Option::is_none")]
     next: Option<ModelLine>,
+    /// The owner has not checked this entry in the offered edition's region.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    unverified: bool,
     /// Why the family cannot be moved or ticked by itself (a `Hold` code).
     #[serde(skip_serializing_if = "Option::is_none")]
     hold: Option<&'static str>,
@@ -56,8 +60,6 @@ struct FamilyView {
     /// Past the first few, unticked and without a notice: under 「更多」.
     folded: bool,
     references: Vec<Reference>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    merge_into: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -113,31 +115,31 @@ struct Reference {
 }
 
 pub(super) fn of(f: &Families, config: &Config, creds: &Credentials, (name, url): (&str, &str)) -> Option<FamiliesView> {
-    let endpoint = Endpoint::of(name, url, creds)?;
-    let snapshot = f.catalog();
+    let list = f.catalog();
+    let endpoint = Endpoint::of(&list, config.model_catalog.offered(), name, url, creds)?;
+    // A provider the list approves nothing at (Groq, OpenRouter) has no families to show.
+    endpoint.place.tickable().next()?;
     let today = f.today();
     let result = endpoint.read_result(f);
     let listing = result.as_ref().and_then(|entry| entry.as_deref());
-    let ranked = snapshot.chat_families(endpoint.preset);
-    let keys: Vec<&str> = ranked.iter().map(|(key, _)| key.as_str()).collect();
-    let borrowed = endpoint.preset.catalog.is_some_and(|b| b.borrowed);
-    let access = if borrowed && endpoint.key.is_some() {
+    // No facts at this address: no rate is shown and none is borrowed from another.
+    let rates_unavailable = list.facts_at(endpoint.place.endpoint_key).next().is_none();
+    let access = if rates_unavailable && endpoint.key.is_some() {
         match &result { None => Some("checking"), Some(None) => Some("list_failed"), _ => None }
     } else { None };
     let mut families = Vec::new();
-    for (family, _) in &ranked {
-        let row = binding::row_of(config, endpoint.preset.key, &family);
+    for (family, entry) in endpoint.place.tickable() {
+        let row = binding::row_of(&list, config, endpoint.place.endpoint_key, family);
         let current = row.map(|r| r.model.as_str());
         let answer = if matches!(result, Some(None)) {
-            endpoint.select(&snapshot, family, current, super::Access::Failed, today)
+            endpoint.select(&list, family, current, super::Access::Failed, today)
         } else {
-            endpoint.ask(&snapshot, family, current, listing, today)
+            endpoint.ask(&list, family, current, listing, today)
         };
-        if borrowed && row.is_none() && matches!(answer, FamilyCurrent::Unavailable { .. }) { continue; }
         let (next, hold, choose) = match &answer {
             FamilyCurrent::Current { next, current } => {
-                let moves = current.is_none_or(|c| c != next.id());
-                (moves.then(|| line(&endpoint, &snapshot, next)), None, Vec::new())
+                let moves = current.is_none_or(|c| c != next.id);
+                (moves.then(|| line(&endpoint, &list, *next)), None, Vec::new())
             }
             FamilyCurrent::Choose { reason, choices, .. } => (None, Some(reason.code()), choices.iter().map(|c| ChoiceView {
                 model: c.facts.id().into(),
@@ -146,10 +148,10 @@ pub(super) fn of(f: &Families, config: &Config, creds: &Credentials, (name, url)
                 held: c.held.map(|h| h.code()),
                 chooseable: c.facts.chooseable(),
             }).collect()),
-            FamilyCurrent::Checking { next } => (Some(line(&endpoint, &snapshot, next)), Some("checking"), Vec::new()),
+            FamilyCurrent::Checking { next } => (Some(line(&endpoint, &list, *next)), Some("checking"), Vec::new()),
             FamilyCurrent::ListFailed => (None, Some("list_failed"), Vec::new()),
             FamilyCurrent::NoKey => (None, Some("no_key"), Vec::new()),
-            FamilyCurrent::Unavailable { .. } => (None, Some("unavailable"), Vec::new()),
+            FamilyCurrent::Unavailable => (None, Some("unavailable"), Vec::new()),
         };
         let held = row.and_then(|r| r.family_binding.as_ref());
         let notice = held.and_then(|b| b.notice()).map(|m| NoticeView {
@@ -162,7 +164,7 @@ pub(super) fn of(f: &Families, config: &Config, creds: &Credentials, (name, url)
             to: m.to().into(),
             on: m.on().into(),
             can_go_back: m.kind() == binding::MoveKind::Followed
-                && snapshot.entry(endpoint.preset, m.from()).is_some_and(ModelFacts::chooseable)
+                && Target { id: m.from(), facts: list.facts_for(endpoint.place.endpoint_key, m.from()) }.is_chat()
                 && listing.as_ref().is_some_and(|l| l.usable.contains(m.from())),
         });
         let folded = families.len() >= SHOWN && row.is_none() && notice.is_none();
@@ -170,60 +172,39 @@ pub(super) fn of(f: &Families, config: &Config, creds: &Credentials, (name, url)
             ticked: row.is_some(),
             row: row.map(|r| r.id.clone()),
             mode: held.map(|b| if b.follows() { "follow" } else { "pinned" }),
-            current: row.and_then(|r| snapshot.exact(r).map(|facts| line(&endpoint, &snapshot, facts))),
+            current: row.map(|r| line(&endpoint, &list, Target { id: &r.model, facts: list.exact(r) })),
             next,
             hold,
             choose,
             folded,
             notice,
-            merge_into: row.and_then(|r| binding::duplicate(config, endpoint.preset, &r.model)).map(|r| r.id.clone()),
             references: row.map(|r| references(config, &r.id)).unwrap_or_default(),
-            label: label_of(family, &keys),
-            family: family.clone(),
+            label: entry.label.clone(),
+            unverified: entry.unverified,
+            family: family.to_string(),
         });
     }
     Some(FamiliesView {
         access,
-        rates_unavailable: borrowed,
+        rates_unavailable,
         catalog: CatalogView {
-            observed_at: snapshot.observed_on().to_string(),
-            age_days: snapshot.age_days(today),
-            stale: snapshot.is_stale(today),
+            observed_at: list.facts_observed_on().to_string(),
+            age_days: list.age_days(today),
+            stale: list.is_stale(today),
         },
         families,
     })
 }
 
-/// A family's short name: its key in words, without the first word when other
-/// families of the endpoint start with it too ("claude-opus" beside
-/// "claude-sonnet" is "Opus"). A key that is only that word stays whole
-/// ("gpt" is "GPT"). The one place a family is named for a page.
-fn label_of(key: &str, siblings: &[&str]) -> String {
-    let mut words: Vec<&str> = key.split('-').collect();
-    let first = words[0];
-    let shared = siblings.iter().any(|other| *other != key && other.split('-').next() == Some(first));
-    let stripped = shared && words.len() > 1;
-    if stripped {
-        words.remove(0);
-    }
-    // A short key that stood alone is an acronym ("gpt"); a short word left over is a name ("sol").
-    let acronym = !stripped && words.len() == 1 && words[0].len() <= 3;
-    words.iter().map(|word| {
-        if acronym { return word.to_uppercase(); }
-        let mut chars = word.chars();
-        chars.next().map(|c| c.to_uppercase().chain(chars).collect()).unwrap_or_default()
-    }).collect::<Vec<String>>().join(" ")
-}
-
 /// A model of the endpoint as a line: its name, date and dated price.
-fn line(endpoint: &Endpoint, snapshot: &Snapshot, facts: &ModelFacts) -> ModelLine {
+fn line(endpoint: &Endpoint, list: &Bundle, target: Target<'_>) -> ModelLine {
     let mut row: ModelConfig = endpoint.probe.clone();
-    row.model = facts.id().into();
+    row.model = target.id.into();
     ModelLine {
-        model: facts.id().into(),
-        name: facts.name().into(),
-        released: facts.release_date().map(str::to_string),
-        price: price_in(&row, snapshot).map(|p| PriceLine { rates: p.base_rates(), source: p.source }),
+        model: target.id.into(),
+        name: target.name().into(),
+        released: target.released().map(str::to_string),
+        price: price_in(&row, list).map(|p| PriceLine { rates: p.base_rates(), source: p.source }),
     }
 }
 
@@ -237,18 +218,4 @@ fn references(config: &Config, id: &str) -> Vec<Reference> {
     let agents = config.agents.iter().filter(|a| a.model.as_deref() == Some(id))
         .map(|a| Reference { place: "agent", who: Some(a.id.clone()) });
     chain.chain(pet).chain(agents).collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::label_of;
-
-    #[test]
-    fn a_family_is_named_without_the_word_its_siblings_share() {
-        let keys = ["claude-fable", "claude-haiku", "claude-opus", "claude-sonnet"];
-        assert_eq!(keys.map(|k| label_of(k, &keys)), ["Fable", "Haiku", "Opus", "Sonnet"]);
-        let gpt = ["gpt", "gpt-sol", "gpt-deep-research"];
-        assert_eq!(gpt.map(|k| label_of(k, &gpt)), ["GPT", "Sol", "Deep Research"]);
-        assert_eq!(label_of("deepseek-flash", &["deepseek-flash"]), "Deepseek Flash");
-    }
 }

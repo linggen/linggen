@@ -17,6 +17,7 @@ import { AddProvider } from './models/AddProvider';
 import { DefaultCard } from './models/DefaultCard';
 import { KeyRow } from './models/KeyRow';
 import { LocalRow } from './models/LocalRow';
+import { RegionLine } from './models/RegionLine';
 import { ReadyRow } from './models/ReadyRows';
 import { cardCls, headingCls, hintCls, linkBtn } from './models/shell';
 import { useProviders } from './models/useProviders';
@@ -96,6 +97,7 @@ export const ModelsTab: React.FC<{
           <div className="min-w-0">
             <h2 className={headingCls}>{W.providers}</h2>
             <p className={`${hintCls} mt-1`}>{W.providersHint}</p>
+            <RegionLine edition={answer.edition} run={run} busy={busy} />
           </div>
           <button type="button" data-testid="add-provider-button" className={`${linkBtn} flex items-center gap-1`} onClick={() => setAdding(!adding)}>
             <Plus size={12} />{W.addProvider}

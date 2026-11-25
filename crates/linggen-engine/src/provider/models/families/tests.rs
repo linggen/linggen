@@ -1,9 +1,9 @@
 use super::*;
+use super::super::family_catalog::Target as Approved;
 use super::evidence::{ListFailed, ModelLister, Target};
 use async_trait::async_trait;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-const FIXTURE: &str = include_str!("../family_catalog/family-fixture.json");
 const TODAY: &str = "2026-11-23";
 const KEY: &str = "test-only-marker";
 const ANTHROPIC: &str = "https://api.anthropic.com";
@@ -13,6 +13,8 @@ const ANTHROPIC: &str = "https://api.anthropic.com";
 struct Provider {
     lists: Mutex<std::collections::HashMap<&'static str, BTreeSet<String>>>,
     asks: AtomicUsize,
+    /// Which list endpoint an address is, under the list the world runs on.
+    bases: Mutex<Vec<(String, String)>>,
 }
 
 #[async_trait]
@@ -20,12 +22,17 @@ impl ModelLister for Arc<Provider> {
     async fn list(&self, target: &Target<'_>) -> Result<BTreeSet<String>, ListFailed> {
         self.asks.fetch_add(1, Ordering::SeqCst);
         assert!(!target.key.is_empty());
-        let preset = crate::config::providers::PRESETS.iter().find(|p| p.url == target.url).unwrap();
-        self.lists.lock().unwrap().get(preset.key).cloned().ok_or(ListFailed)
+        let key = self.bases.lock().unwrap().iter().find(|(url, _)| credentials::same_endpoint("", url, "", target.url)).map(|(_, key)| key.clone()).unwrap();
+        self.lists.lock().unwrap().get(key.as_str()).cloned().ok_or(ListFailed)
     }
 }
 
 impl Provider {
+    fn knows(&self, list: &Bundle) {
+        let places = list.offered(curated::Edition::International).chain(list.offered(curated::Edition::Mainland));
+        *self.bases.lock().unwrap() = places.map(|p| (p.base.to_string(), p.endpoint_key.to_string())).collect();
+    }
+
     fn lists(&self, preset: &'static str, ids: &[&str]) {
         self.lists.lock().unwrap().insert(preset, ids.iter().map(|s| s.to_string()).collect());
     }
@@ -36,7 +43,7 @@ struct World {
     provider: Arc<Provider>,
     settings: Config,
     creds: Credentials,
-    snapshot: Arc<Snapshot>,
+    list: Arc<Bundle>,
 }
 
 fn day(s: &str) -> NaiveDate { s.parse().unwrap() }
@@ -44,15 +51,25 @@ fn day(s: &str) -> NaiveDate { s.parse().unwrap() }
 fn world(today: &str) -> World {
     let provider = Arc::new(Provider::default());
     provider.lists("anthropic", &["claude-opus-5", "claude-opus-5-5", "claude-sonnet-5-5", "claude-sonnet-5", "claude-haiku-5-5"]);
-    let snapshot = Arc::new(Snapshot::parse(FIXTURE.as_bytes()).unwrap());
+    // The shipped list: anthropic approves opus-5-5, sonnet-5-5, haiku-5-5, fable-5-2; facts observed 2026-11-23.
+    let list = curated::shipped().clone();
+    provider.knows(&list);
     let mut families = Families::with(Evidence::new(Arc::new(provider.clone()), std::time::Duration::from_secs(3600)), Some(day(today)));
-    families.fixed_catalog = Some(snapshot.clone());
+    families.fixed_catalog = Some(list.clone());
     let mut creds = Credentials::default();
     creds.set_endpoint_key("anthropic", ANTHROPIC, Some(KEY.into()));
-    World { families, provider, settings: Config::default(), creds, snapshot }
+    World { families, provider, settings: Config::default(), creds, list }
 }
 
 impl World {
+    /// The same world under another list: the next one the owner publishes.
+    fn under(&mut self, list: Bundle) {
+        let list = Arc::new(list);
+        self.provider.knows(&list);
+        self.families.fixed_catalog = Some(list.clone());
+        self.list = list;
+    }
+
     async fn gather(&self) {
         self.families.gather(&self.settings, &self.creds, Some(("anthropic", ANTHROPIC))).await;
     }
@@ -62,14 +79,14 @@ impl World {
     }
 
     fn row(&self, family: &str) -> &ModelConfig {
-        binding::row_of(&self.settings, "anthropic", family).expect("ticked")
+        binding::row_of(&self.list, &self.settings, "anthropic", family).expect("ticked")
     }
 
     /// A following row on an older model, as an earlier tick would have left it.
     fn ticked_on(&mut self, family: &str, model: &str, mode: Mode) -> String {
-        let preset = crate::config::providers::PRESETS.iter().find(|p| p.key == "anthropic").unwrap();
-        let facts = self.snapshot.entry(preset, model).unwrap();
-        binding::tick(&mut self.settings, preset, family, facts, mode)
+        let place = self.list.place_at(ANTHROPIC).unwrap();
+        let facts = self.list.facts_for(place.endpoint_key, model);
+        binding::tick(&mut self.settings, &place, family, Approved { id: model, facts }, mode)
     }
 }
 
@@ -372,7 +389,7 @@ async fn choosing_a_version_pins_it_and_needs_a_stable_listed_chat_model() {
 }
 
 #[tokio::test]
-async fn the_view_lists_families_newest_first_with_price_and_notice() {
+async fn the_view_lists_the_lists_families_in_its_order_with_price_and_notice() {
     let mut w = world(TODAY);
     w.ticked_on("claude-opus", "claude-opus-5", Mode::Follow);
     w.gather().await;
@@ -380,7 +397,7 @@ async fn the_view_lists_families_newest_first_with_price_and_notice() {
     let json = serde_json::to_value(w.families.view(&w.settings, &w.creds, ("anthropic", ANTHROPIC)).unwrap()).unwrap();
     assert_eq!(json["catalog"], serde_json::json!({"observed_at": TODAY, "age_days": 0, "stale": false}));
     let families: Vec<_> = json["families"].as_array().unwrap().iter().map(|f| f["family"].as_str().unwrap()).collect();
-    assert_eq!(families, ["claude-fable", "claude-haiku", "claude-sonnet", "claude-opus"]);
+    assert_eq!(families, ["claude-fable", "claude-opus", "claude-sonnet", "claude-haiku"]);
     let opus = json["families"].as_array().unwrap().iter().find(|f| f["family"] == "claude-opus").unwrap();
     assert_eq!((opus["ticked"].clone(), opus["mode"].clone()), (true.into(), "follow".into()));
     assert_eq!(opus["current"]["model"], "claude-opus-5-5");
@@ -434,10 +451,11 @@ fn a_row_without_the_field_runs_as_an_exact_row_and_the_field_survives_a_save() 
     config.validate().unwrap();
     // A bound row, with the starts and other tables present, round-trips.
     let mut config = Config::default();
-    let preset = crate::config::providers::PRESETS.iter().find(|p| p.key == "anthropic").unwrap();
-    let snap = Snapshot::parse(FIXTURE.as_bytes()).unwrap();
-    let id = binding::tick(&mut config, preset, "claude-opus", snap.entry(preset, "claude-opus-5").unwrap(), Mode::Follow);
-    binding::follow_to(&mut config, &id, "claude-opus-5", snap.entry(preset, "claude-opus-5-5").unwrap(), day(TODAY));
+    let list = curated::shipped().clone();
+    let place = list.place_at(ANTHROPIC).unwrap();
+    let at = |id| Approved { id, facts: list.facts_for(place.endpoint_key, id) };
+    let id = binding::tick(&mut config, &place, "claude-opus", at("claude-opus-5"), Mode::Follow);
+    binding::follow_to(&mut config, &id, "claude-opus-5", at("claude-opus-5-5"), day(TODAY));
     binding::mark_started(&mut config, "anthropic");
     let text = toml::to_string_pretty(&config).unwrap();
     let loaded: Config = toml::from_str(&text).unwrap();
@@ -457,4 +475,217 @@ fn a_row_without_the_field_runs_as_an_exact_row_and_the_field_survives_a_save() 
     assert_eq!(crate::provider::kinds::kind_of(&after.models[0]), crate::provider::kinds::Kind::Chat);
     let families = Families::with(Evidence::new(Arc::new(Arc::new(Provider::default())), std::time::Duration::from_secs(1)), Some(day(TODAY)));
     assert!(!families.follow(&mut after, &Credentials::default()), "an exact row is not followed");
+}
+
+// ── the list decides what is offered ──
+
+const LAB: &str = "https://api.example-lab.test/v1";
+
+/// The shipped list plus one provider and one model nobody wrote code for.
+fn with_a_new_provider() -> Bundle {
+    Bundle::variant(|v| {
+        v["endpoints"]["lab"] = serde_json::json!({"base": LAB});
+        v["international"].as_array_mut().unwrap().push(serde_json::json!({
+            "key": "lab", "label": "Example Lab", "name": "openai", "sign_in": "key",
+            "adapter": "openai-compatible", "default_endpoint": "lab",
+            "entries": [
+                {"key": "lab-one", "label": "Lab One", "endpoint": "lab", "type": "exact", "model": "lab-1", "starter": true},
+                {"key": "lab-flash", "label": "Lab Flash", "endpoint": "lab", "type": "family", "model": "lab-flash-2",
+                 "family": {"source_id": "lab", "name": "lab-flash"}, "starter": false}
+            ]
+        }));
+    })
+}
+
+#[tokio::test]
+async fn a_provider_and_a_model_added_to_the_list_are_offered_and_usable_with_no_code() {
+    let mut w = world(TODAY);
+    w.under(with_a_new_provider());
+    // Offered: on the page's list, in the list's order, last.
+    let offered: Vec<_> = w.list.offered(curated::Edition::International).map(|p| (p.provider.label.clone(), p.base.to_string())).collect();
+    assert_eq!(offered.last().unwrap(), &("Example Lab".to_string(), LAB.to_string()));
+    // Usable: a key at its address, a provider list that holds the models, a tick.
+    w.creds.set_endpoint_key("openai", LAB, Some(KEY.into()));
+    w.provider.lists("lab", &["lab-1", "lab-flash-2"]);
+    w.families.gather(&w.settings, &w.creds, Some(("openai", LAB))).await;
+    let at = ("openai", LAB);
+    // The first verified connection ticks the exact starter, pinned, with no facts to borrow.
+    assert!(w.families.start_endpoint(&mut w.settings, &w.creds, at));
+    assert_eq!(w.families.act(&mut w.settings, &w.creds, at, "lab-flash", Action::Tick), Ok(true));
+    let rows: Vec<_> = w.settings.models.iter().map(|r| (r.model.as_str(), r.url.as_str(), r.context_window)).collect();
+    assert!(rows.contains(&("lab-flash-2", LAB, None)) && rows.contains(&("lab-1", LAB, None)), "{rows:?}");
+    let pinned = w.settings.models.iter().find(|r| r.model == "lab-1").unwrap();
+    assert!(!pinned.family_binding.as_ref().unwrap().follows(), "an exact starter stays put");
+    assert_eq!(w.families.act(&mut w.settings, &w.creds, at, "lab-one", Action::Follow), Err(Refusal::Unsupported));
+    // Chat uses them: both rows are chat rows the model manager serves.
+    let manager = crate::provider::models::ModelManager::new_with_credentials(w.settings.models.clone(), &w.creds);
+    for row in &w.settings.models {
+        assert_eq!(crate::provider::kinds::kind_in(row, &w.list), crate::provider::kinds::Kind::Chat);
+        assert!(manager.list_models().iter().any(|m| m.id == row.id), "{} is not served", row.model);
+    }
+}
+
+#[tokio::test]
+async fn a_list_update_never_ticks_a_starter() {
+    let mut w = world(TODAY);
+    w.gather().await;
+    assert!(w.families.start_endpoint(&mut w.settings, &w.creds, ("anthropic", ANTHROPIC)));
+    assert_eq!(w.settings.models.len(), 1, "the first connection ticked Sonnet");
+    w.act("claude-sonnet", Action::Untick { replacement: None }).unwrap();
+    // The owner now marks Opus a starter too, and approves a newer Sonnet.
+    w.under(Bundle::variant(|v| {
+        let anthropic = v["international"].as_array_mut().unwrap().iter_mut().find(|p| p["key"] == "anthropic").unwrap();
+        for entry in anthropic["entries"].as_array_mut().unwrap() { entry["starter"] = true.into(); }
+    }));
+    w.gather().await;
+    assert!(!w.families.start_endpoint(&mut w.settings, &w.creds, ("anthropic", ANTHROPIC)), "already recorded");
+    assert!(!w.families.follow(&mut w.settings, &w.creds));
+    assert!(w.settings.models.is_empty(), "a list update ticks nothing");
+}
+
+// ── THE GUARD: a key is filed under its exact address and goes nowhere else ──
+
+/// The anthropic endpoint at `base`, its facts following it (as the owner's builder writes them).
+fn anthropic_moved_to(base: &'static str) -> Bundle {
+    Bundle::variant(move |v| {
+        v["endpoints"]["anthropic"]["base"] = base.into();
+        for record in v["facts"].as_array_mut().unwrap() {
+            if record["address"] == ANTHROPIC { record["address"] = base.into(); }
+        }
+    })
+}
+
+#[tokio::test]
+async fn a_list_that_moves_an_address_gives_a_new_connection_with_no_key_and_sends_none_there() {
+    for new in ["https://api.anthropic.example.test", "https://api.anthropic.com/proxy/v2"] {
+        let mut w = world(TODAY);
+        w.ticked_on("claude-opus", "claude-opus-5", Mode::Follow);
+        w.gather().await;
+        assert_eq!(w.provider.asks.load(Ordering::SeqCst), 1);
+        // Anthropic's native client with no address written: its key is filed at its own default base.
+        let mut bare = w.settings.models[0].clone();
+        (bare.id, bare.url, bare.family_binding) = ("bare".into(), String::new(), None);
+        w.settings.models.push(bare);
+        w.creds.set_endpoint_key("anthropic", "", Some(KEY.into()));
+        let (config, creds) = (toml::to_string(&w.settings).unwrap(), serde_json::to_string(&w.creds).unwrap());
+        w.under(anthropic_moved_to(new));
+        w.provider.lists("anthropic", &["claude-opus-5-5"]);
+        // Everything the engine does on a list update, and a page read of both addresses.
+        w.families.gather(&w.settings, &w.creds, None).await;
+        w.families.gather(&w.settings, &w.creds, Some(("anthropic", new))).await;
+        assert!(!w.families.follow(&mut w.settings, &w.creds), "{new}: the old row is not this endpoint's family now");
+        assert!(!w.families.start_endpoint(&mut w.settings, &w.creds, ("anthropic", new)), "{new}: no key, no connection");
+        assert_eq!(w.provider.asks.load(Ordering::SeqCst), 1, "{new}: no request was made, so none carried a key");
+        // Nothing was written, and no key resolves at the new address.
+        assert_eq!((toml::to_string(&w.settings).unwrap(), serde_json::to_string(&w.creds).unwrap()), (config, creds), "{new}");
+        let probe: ModelConfig = serde_json::from_value(serde_json::json!({"id": "p", "provider": "anthropic", "url": new, "model": "-"})).unwrap();
+        assert!(credentials::resolve_api_key(&probe, &w.creds).is_none(), "{new}");
+        assert_eq!(w.creds.endpoint_key("anthropic", ANTHROPIC), Some(KEY), "{new}: the old key stays at the old address");
+        let seen = serde_json::to_value(w.families.view(&w.settings, &w.creds, ("anthropic", new)).unwrap()).unwrap();
+        assert!(seen["families"].as_array().unwrap().iter().all(|f| f["hold"] == "no_key" && f["ticked"] == false), "{new}");
+        // The old address is no longer a connection the list knows.
+        assert!(w.families.view(&w.settings, &w.creds, ("anthropic", ANTHROPIC)).is_none(), "{new}");
+    }
+}
+
+#[test]
+fn a_list_update_does_not_touch_keys_it_has_no_writer_for() {
+    // The only code that copies a key to another address is the settings page's
+    // address edit (`Edit::Address`). Nothing under `provider/models` writes keys.
+    fn visit(dir: &std::path::Path, hits: &mut Vec<String>) {
+        for entry in std::fs::read_dir(dir).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() { visit(&path, hits); continue; }
+            if path.extension().is_none_or(|e| e != "rs") || path.ends_with("tests.rs") { continue; }
+            let text = std::fs::read_to_string(&path).unwrap();
+            let production = text.split("#[cfg(test)]").next().unwrap_or("");
+            if production.contains("set_endpoint_key(") { hits.push(path.display().to_string()); }
+        }
+    }
+    let mut hits = Vec::new();
+    for dir in ["families", "curated", "family_catalog"] {
+        visit(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/provider/models").join(dir), &mut hits);
+    }
+    assert!(hits.is_empty(), "a list or family path writes a key: {hits:?}");
+}
+
+// ── an exact entry with no facts ──
+
+#[tokio::test]
+async fn an_exact_starter_with_no_facts_is_ticked_pinned_on_the_first_verified_connection() {
+    let mut w = world(TODAY);
+    const QWEN: &str = "https://ap-southeast-1.maas.qwencloudapi.com/compatible-mode/v1";
+    w.creds.set_endpoint_key("qwen", QWEN, Some(KEY.into()));
+    w.provider.lists("qwen-cloud", &["qwen-plus", "qwen-max"]);
+    w.families.gather(&w.settings, &w.creds, Some(("qwen", QWEN))).await;
+    assert!(w.families.start_endpoint(&mut w.settings, &w.creds, ("qwen", QWEN)));
+    let row = &w.settings.models[0];
+    assert_eq!((row.model.as_str(), row.url.as_str(), row.context_window, row.supports_tools), ("qwen-plus", QWEN, None, None));
+    assert!(!row.family_binding.as_ref().unwrap().follows());
+    assert!(w.list.facts_for("qwen-cloud", "qwen-plus").is_none(), "no price borrowed from DashScope");
+    let seen = serde_json::to_value(w.families.view(&w.settings, &w.creds, ("qwen", QWEN)).unwrap()).unwrap();
+    assert_eq!(seen["rates_unavailable"], true);
+}
+
+#[tokio::test]
+async fn a_key_on_a_provider_with_nothing_approved_is_still_recorded_as_its_first_connection() {
+    let mut w = world(TODAY);
+    const GROQ: &str = "https://api.groq.com/openai/v1";
+    w.creds.set_endpoint_key("groq", GROQ, Some(KEY.into()));
+    w.provider.lists("groq", &["llama-3.3-70b-versatile"]);
+    w.families.gather(&w.settings, &w.creds, Some(("groq", GROQ))).await;
+    assert!(w.families.start_endpoint(&mut w.settings, &w.creds, ("groq", GROQ)));
+    assert!(w.settings.models.is_empty() && w.settings.family_starts.contains("groq"));
+    assert!(w.families.view(&w.settings, &w.creds, ("groq", GROQ)).is_none(), "nothing to tick, nothing shown");
+}
+
+// ── editions: what is offered changes, what a person has does not ──
+
+const DEEPSEEK: &str = "https://api.deepseek.com/v1";
+
+fn deepseek_world(choice: crate::provider::models::EditionChoice) -> World {
+    let mut w = world(TODAY);
+    w.creds.set_endpoint_key("deepseek", DEEPSEEK, Some(KEY.into()));
+    w.provider.lists("deepseek", &["deepseek-flash", "deepseek-v4-pro"]);
+    w.settings.model_catalog = crate::provider::models::ModelCatalog::chosen(choice);
+    w
+}
+
+#[tokio::test]
+async fn a_mainland_first_key_ticks_no_starter_and_a_later_switch_never_replays_one() {
+    use crate::provider::models::EditionChoice::{International, Mainland};
+    let mut w = deepseek_world(Mainland);
+    w.families.gather(&w.settings, &w.creds, Some(("deepseek", DEEPSEEK))).await;
+    let seen = serde_json::to_value(w.families.view(&w.settings, &w.creds, ("deepseek", DEEPSEEK)).unwrap()).unwrap();
+    assert!(seen["families"].as_array().unwrap().iter().all(|f| f["unverified"] == true && f["ticked"] == false), "{seen}");
+    assert!(w.families.start_endpoint(&mut w.settings, &w.creds, ("deepseek", DEEPSEEK)), "the first connection is recorded");
+    assert!(w.settings.models.is_empty(), "mainland entries are unverified: no starter");
+    // Now the owner picks the international edition: the record stands, nothing is ticked.
+    let (config, creds) = (toml::to_string(&w.settings).unwrap(), serde_json::to_string(&w.creds).unwrap());
+    w.settings.model_catalog = crate::provider::models::ModelCatalog::chosen(International);
+    assert!(!w.families.start_endpoint(&mut w.settings, &w.creds, ("deepseek", DEEPSEEK)), "no starter replay");
+    assert!(!w.families.follow(&mut w.settings, &w.creds));
+    assert_eq!(serde_json::to_string(&w.creds).unwrap(), creds, "no key moved or copied");
+    assert_eq!(toml::to_string(&w.settings).unwrap().replace("[model_catalog]\nedition = \"international\"\n", ""), config.replace("[model_catalog]\nedition = \"mainland\"\n", ""), "no row or default moved");
+    let seen = serde_json::to_value(w.families.view(&w.settings, &w.creds, ("deepseek", DEEPSEEK)).unwrap()).unwrap();
+    assert!(seen["families"].as_array().unwrap().iter().all(|f| f.get("unverified").is_none()), "the international line carries no mark: {seen}");
+}
+
+#[tokio::test]
+async fn a_ticked_row_follows_the_same_target_in_either_edition() {
+    use crate::provider::models::EditionChoice::{International, Mainland};
+    let mut moved = Vec::new();
+    for choice in [International, Mainland] {
+        let mut w = deepseek_world(choice);
+        w.provider.lists("deepseek", &["deepseek-flash"]);
+        let place = w.list.place_at(DEEPSEEK).unwrap();
+        binding::tick(&mut w.settings, &place, "deepseek-flash", Approved { id: "deepseek-flash", facts: None }, Mode::Follow);
+        w.families.gather(&w.settings, &w.creds, None).await;
+        w.families.follow(&mut w.settings, &w.creds);
+        let view = serde_json::to_value(w.families.view(&w.settings, &w.creds, ("deepseek", DEEPSEEK)).unwrap()).unwrap();
+        let flash = view["families"].as_array().unwrap().iter().find(|f| f["family"] == "deepseek-flash").unwrap().clone();
+        assert_eq!(flash["ticked"], true, "{choice:?}: the tick stays on the page");
+        moved.push((w.settings.models[0].model.clone(), w.settings.models[0].url.clone()));
+    }
+    assert_eq!(moved[0], moved[1], "the edition does not change what a family follows");
 }

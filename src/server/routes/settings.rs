@@ -62,6 +62,7 @@ pub(super) fn routes() -> Routes {
         .route("/api/remembered-notes/{id}/no-raise", post(api::memory_sources::no_raise))
         .route("/api/uses", get(api::uses::list).put(api::uses::put))
         .route("/api/providers", get(api::providers::list).post(api::providers::create))
+        .route("/api/providers/edition", put(api::providers::set_edition))
         .route("/api/providers/{id}", axum::routing::patch(api::providers::edit))
         .route("/api/providers/{id}/key", put(api::providers::edit))
         .route("/api/providers/{id}/families/{family}", put(api::provider_families::put))

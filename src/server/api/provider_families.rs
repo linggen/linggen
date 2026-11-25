@@ -33,7 +33,6 @@ impl Request {
         let Request { action, model, moved } = self;
         match (action.as_str(), model, moved) {
             ("tick", None, None) => Ok(Action::Tick),
-            ("merge", Some(target), None) => Ok(Action::Merge { target }),
             ("untick", replacement, None) => Ok(Action::Untick { replacement }),
             ("pin", None, moved) => Ok(Action::Pin { moved }),
             ("follow", None, None) => Ok(Action::Follow),

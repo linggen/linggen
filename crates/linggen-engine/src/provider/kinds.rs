@@ -18,7 +18,7 @@
 //! production file builds a list from the raw rows instead.
 
 use crate::config::ModelConfig;
-use crate::provider::models::family_catalog::{self, Snapshot};
+use crate::provider::models::curated::{self, Bundle};
 
 /// What a model is used for. A closed set: every `match` on it names each
 /// case, so a new kind is found by the compiler wherever it was missed.
@@ -52,12 +52,12 @@ impl Kind {
 
 /// The kind of a configured model, from the catalog in force.
 pub fn kind_of(cfg: &ModelConfig) -> Kind {
-    kind_in(cfg, &family_catalog::current())
+    kind_in(cfg, &curated::current())
 }
 
 /// [`kind_of`] against one captured snapshot: a caller that decides about
 /// many rows captures once, so they cannot disagree with each other.
-pub(crate) fn kind_in(cfg: &ModelConfig, facts: &Snapshot) -> Kind {
+pub(crate) fn kind_in(cfg: &ModelConfig, facts: &Bundle) -> Kind {
     let declared = crate::credentials::url_host(&cfg.url)
         .is_some_and(|host| crate::live::declares(&host, &cfg.model));
     if declared {
@@ -128,7 +128,7 @@ mod tests {
     }
 
     /// Public facts about Gemini-shaped entries: what each takes and gives.
-    fn facts() -> Snapshot {
+    fn facts() -> Bundle {
         let entry = |id: &str, task: Option<&str>, input: &[&str], output: &[&str]| {
             serde_json::json!({
                 "id": id, "name": id, "stability": "stable", "task": task,
@@ -148,7 +148,7 @@ mod tests {
             // A declared live entry whose public facts say audio out.
             entry("gemini-3.8-live", Some("realtime"), &["audio", "text"], &["audio", "text"]),
         ];
-        Snapshot::for_tests("2026-11-23", "google", rows.into())
+        Bundle::for_tests("2026-11-23", GEMINI, rows.into())
     }
 
     #[test]
@@ -192,20 +192,20 @@ mod tests {
     /// Whatever the shipped copy holds today: an entry that is no text
     /// conversation is never a chat row, and every other one is.
     #[test]
-    fn every_entry_of_the_shipped_catalog_is_kinded_by_its_facts() {
-        let shipped = family_catalog::current();
+    fn every_entry_of_the_shipped_list_is_kinded_by_its_facts() {
+        let shipped = curated::current();
         let mut seen = (0, 0);
-        for preset in crate::config::providers::PRESETS.iter().filter(|p| p.catalog.is_some()) {
-            for entry in shipped.entries_of(preset) {
+        for place in shipped.offered(curated::Edition::International).chain(shipped.offered(curated::Edition::Mainland)) {
+            for entry in shipped.facts_at(place.endpoint_key) {
                 let row = serde_json::from_value::<ModelConfig>(serde_json::json!({
-                    "id": "m", "provider": preset.name, "url": preset.url, "model": entry.id(),
+                    "id": "m", "provider": place.provider.name, "url": place.base, "model": entry.id(),
                 }))
                 .unwrap();
                 let kind = kind_of(&row);
                 if kind == Kind::LiveVoice {
                     continue;
                 }
-                assert_eq!(kind == Kind::Chat, entry.text_chat(), "{} {}", preset.key, entry.id());
+                assert_eq!(kind == Kind::Chat, entry.text_chat(), "{} {}", place.endpoint_key, entry.id());
                 seen = (seen.0 + (kind == Kind::Chat) as u32, seen.1 + (kind == Kind::NoLane) as u32);
             }
         }

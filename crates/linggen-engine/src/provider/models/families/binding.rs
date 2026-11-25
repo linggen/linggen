@@ -13,12 +13,13 @@
 //! write lock and saves in the same config write, so a move and its notice
 //! are one change.
 
-use super::super::family_catalog::{preset_for, ModelFacts};
-use crate::config::{providers::Preset, Config, ModelConfig};
+use super::super::curated::{Bundle, Place};
+use super::super::family_catalog::Target;
+use crate::config::{Config, ModelConfig};
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 
-/// Whether a row's model moves when the catalog names a newer one.
+/// Whether a row's model moves when the list approves another one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Mode {
@@ -60,10 +61,10 @@ impl LastMove {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FamilyBinding {
     family: String,
-    /// The preset's key: which endpoint's catalog the family is read from.
+    /// The list's key for the endpoint the family is read at.
     preset: String,
     mode: Mode,
-    /// The release date of the model the row runs, as the catalog gave it.
+    /// The release date of the model the row runs, when the list's facts have one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     released: Option<String>,
     /// Moves made so far; the latest carries this number.
@@ -84,14 +85,14 @@ impl FamilyBinding {
     pub fn notice(&self) -> Option<&LastMove> { self.last_move.as_ref().filter(|m| !m.acknowledged) }
 }
 
-/// Preset keys whose starter families were ticked once.
+/// Endpoint keys whose starter entries were ticked once.
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct FamilyStarts(Vec<String>);
 
 impl FamilyStarts {
     pub fn is_empty(&self) -> bool { self.0.is_empty() }
-    pub fn contains(&self, preset_key: &str) -> bool { self.0.iter().any(|k| k == preset_key) }
+    pub fn contains(&self, endpoint_key: &str) -> bool { self.0.iter().any(|k| k == endpoint_key) }
 }
 
 fn row_mut<'a>(config: &'a mut Config, id: &str) -> Option<(&'a mut ModelConfig, FamilyBinding)> {
@@ -100,66 +101,30 @@ fn row_mut<'a>(config: &'a mut Config, id: &str) -> Option<(&'a mut ModelConfig,
     Some((row, binding))
 }
 
-/// The wire model and what the catalog says about it, in the fields the
-/// released binary already reads.
-fn run_on(row: &mut ModelConfig, facts: &ModelFacts) {
-    row.model = facts.id().to_string();
-    row.context_window = facts.context().map(|n| n as usize);
-    row.supports_tools = facts.tool_call();
+/// The wire model and what the list's facts say about it, in the fields the
+/// released binary already reads. A model with no facts runs with the
+/// engine's safe defaults: nothing is carried over from the one before.
+fn run_on(row: &mut ModelConfig, target: Target<'_>) {
+    row.model = target.id.to_string();
+    row.context_window = target.facts.and_then(|f| f.context()).map(|n| n as usize);
+    row.supports_tools = target.facts.and_then(|f| f.tool_call());
 }
 
-fn new_binding(preset: &Preset, family: &str, facts: &ModelFacts, mode: Mode) -> FamilyBinding {
+fn new_binding(place: &Place<'_>, family: &str, target: Target<'_>, mode: Mode) -> FamilyBinding {
     FamilyBinding {
-        family: family.into(), preset: preset.key.into(), mode,
-        released: facts.release_date().map(str::to_string), moves: 0, last_move: None,
+        family: family.into(), preset: place.endpoint_key.into(), mode,
+        released: target.released().map(str::to_string), moves: 0, last_move: None,
     }
 }
 
-fn ordinary_at(row: &ModelConfig, preset: &Preset, model: &str) -> bool {
-    !row.is_builtin && row.family_binding.is_none() && row.model == model
-        && preset_for(row).is_some_and(|p| p.key == preset.key)
-}
-
-pub(super) fn duplicate<'a>(config: &'a Config, preset: &Preset, model: &str) -> Option<&'a ModelConfig> {
-    config.models.iter().find(|row| ordinary_at(row, preset, model))
-}
-
-pub(super) fn adopt(config: &mut Config, preset: &Preset, family: &str, facts: &ModelFacts) -> bool {
-    let Some(row) = config.models.iter_mut().find(|row| ordinary_at(row, preset, facts.id())) else { return false };
-    row.family_binding = Some(new_binding(preset, family, facts, Mode::Follow));
-    true
-}
-
-/// The named target must still be the ordinary duplicate we offered.
-pub(super) fn merge(config: &mut Config, preset: &Preset, family: &str, target: &str) -> Option<String> {
-    let row = row_of(config, preset.key, family)?;
-    let source = row.id.clone();
-    let binding = row.family_binding.clone()?;
-    let original = duplicate(config, preset, &row.model).filter(|r| r.id == target)?;
-    let target = original.id.clone();
-    config.models.iter_mut().find(|r| r.id == target)?.family_binding = Some(binding);
-    let mut seen_target = false;
-    config.routing.default_models.retain_mut(|id| {
-        if *id == source { *id = target.clone(); }
-        if *id != target { return true; }
-        !std::mem::replace(&mut seen_target, true)
-    });
-    if config.pet.model == source { config.pet.model = target.clone(); }
-    for agent in &mut config.agents {
-        if agent.model.as_deref() == Some(&source) { agent.model = Some(target.clone()); }
-    }
-    remove(config, &source);
-    Some(source)
-}
-
-/// File a family as a new row running `facts`. The caller has checked that
+/// File a family as a new row running `target`. The caller has checked that
 /// the family is not ticked at this endpoint.
-pub(super) fn tick(config: &mut Config, preset: &Preset, family: &str, facts: &ModelFacts, mode: Mode) -> String {
+pub(super) fn tick(config: &mut Config, place: &Place<'_>, family: &str, target: Target<'_>, mode: Mode) -> String {
     let id = config.fresh_model_id("fam");
     let mut row = ModelConfig {
         id: id.clone(),
-        provider: preset.name.into(),
-        url: preset.url.into(),
+        provider: place.provider.name.clone(),
+        url: place.base.into(),
         model: String::new(),
         api_key: None,
         keep_alive: None,
@@ -172,9 +137,9 @@ pub(super) fn tick(config: &mut Config, preset: &Preset, family: &str, facts: &M
         price: None,
         provided_by: None,
         is_builtin: false,
-        family_binding: Some(new_binding(preset, family, facts, mode)),
+        family_binding: Some(new_binding(place, family, target, mode)),
     };
-    run_on(&mut row, facts);
+    run_on(&mut row, target);
     config.models.push(row);
     id
 }
@@ -187,32 +152,32 @@ pub(super) fn remove(config: &mut Config, id: &str) -> bool {
     config.models.len() != before
 }
 
-/// Move a following row from the model it was seen on to `facts`, with the
+/// Move a following row from the model it was seen on to `target`, with the
 /// notice, in the same change. Only a row that still runs `from` and still
 /// follows moves.
-pub(super) fn follow_to(config: &mut Config, id: &str, from: &str, facts: &ModelFacts, today: NaiveDate) -> bool {
+pub(super) fn follow_to(config: &mut Config, id: &str, from: &str, target: Target<'_>, today: NaiveDate) -> bool {
     let Some((row, mut binding)) = row_mut(config, id) else { return false };
-    if !binding.follows() || row.model != from || facts.id() == from {
+    if !binding.follows() || row.model != from || target.id == from {
         return false;
     }
     binding.moves += 1;
-    binding.released = facts.release_date().map(str::to_string);
+    binding.released = target.released().map(str::to_string);
     binding.last_move = Some(LastMove {
         seq: binding.moves,
         kind: MoveKind::Followed,
         from: from.into(),
-        to: facts.id().into(),
+        to: target.id.into(),
         on: today.to_string(),
         acknowledged: false,
     });
-    run_on(row, facts);
+    run_on(row, target);
     row.family_binding = Some(binding);
     true
 }
 
 /// The newer model refused its first call: back to the one before, pinned,
 /// with a notice that says so. Only the move still outstanding is undone.
-pub(super) fn went_back(config: &mut Config, id: &str, seq: u64, previous: Option<&ModelFacts>, today: NaiveDate) -> bool {
+pub(super) fn went_back(config: &mut Config, id: &str, seq: u64, previous: Target<'_>, today: NaiveDate) -> bool {
     let Some((row, mut binding)) = row_mut(config, id) else { return false };
     let Some(last) = binding.notice().filter(|m| m.seq == seq && m.kind == MoveKind::Followed).cloned() else {
         return false;
@@ -230,13 +195,8 @@ pub(super) fn went_back(config: &mut Config, id: &str, seq: u64, previous: Optio
         on: today.to_string(),
         acknowledged: false,
     });
-    match previous {
-        Some(facts) => {
-            binding.released = facts.release_date().map(str::to_string);
-            run_on(row, facts);
-        }
-        None => row.model = last.from,
-    }
+    binding.released = previous.released().map(str::to_string);
+    run_on(row, previous);
     row.family_binding = Some(binding);
     true
 }
@@ -275,41 +235,41 @@ pub(super) fn resume(config: &mut Config, id: &str) -> bool {
 }
 
 /// A version chosen by hand: the row runs it, pinned.
-pub(super) fn choose(config: &mut Config, id: &str, facts: &ModelFacts) -> bool {
+pub(super) fn choose(config: &mut Config, id: &str, target: Target<'_>) -> bool {
     let Some((row, mut binding)) = row_mut(config, id) else { return false };
-    if row.model == facts.id() && binding.mode == Mode::Pinned {
+    if row.model == target.id && binding.mode == Mode::Pinned {
         return false;
     }
     binding.mode = Mode::Pinned;
-    binding.released = facts.release_date().map(str::to_string);
-    run_on(row, facts);
+    binding.released = target.released().map(str::to_string);
+    run_on(row, target);
     row.family_binding = Some(binding);
     true
 }
 
 /// 换回: back to the model before move `seq`, pinned, and that notice answered.
-pub(super) fn rollback(config: &mut Config, id: &str, seq: u64, previous: &ModelFacts) -> bool {
+pub(super) fn rollback(config: &mut Config, id: &str, seq: u64, previous: Target<'_>) -> bool {
     let Some((row, mut binding)) = row_mut(config, id) else { return false };
     let Some(last) = binding.last_move.as_mut().filter(|m| m.seq == seq && m.kind == MoveKind::Followed && !m.acknowledged) else {
         return false;
     };
-    if last.from != previous.id() || row.model != last.to {
+    if last.from != previous.id || row.model != last.to {
         return false;
     }
     last.acknowledged = true;
     binding.mode = Mode::Pinned;
-    binding.released = previous.release_date().map(str::to_string);
+    binding.released = previous.released().map(str::to_string);
     run_on(row, previous);
     row.family_binding = Some(binding);
     true
 }
 
 /// Record that an endpoint's starter families were handled, once.
-pub(super) fn mark_started(config: &mut Config, preset_key: &str) -> bool {
-    if config.family_starts.contains(preset_key) {
+pub(super) fn mark_started(config: &mut Config, endpoint_key: &str) -> bool {
+    if config.family_starts.contains(endpoint_key) {
         return false;
     }
-    config.family_starts.0.push(preset_key.into());
+    config.family_starts.0.push(endpoint_key.into());
     true
 }
 
@@ -331,22 +291,24 @@ pub(crate) fn keep_bindings(next: &mut Config, current: &Config) {
     }
 }
 
-/// Whether a row still sits at the endpoint of the preset its binding names.
-/// A row whose address was edited away is an exact row from then on.
-fn at_its_preset(row: &ModelConfig, binding: &FamilyBinding) -> bool {
-    preset_for(row).is_some_and(|p| p.key == binding.preset)
+/// Whether a row still sits at the address of the endpoint its binding names,
+/// in the list in force. A row whose address was edited away, or whose
+/// address the list no longer places, is an exact row from then on: nothing
+/// follows for it and no key is asked for it.
+fn at_its_endpoint(list: &Bundle, row: &ModelConfig, binding: &FamilyBinding) -> bool {
+    list.place_of(row).is_some_and(|p| p.endpoint_key == binding.preset)
 }
 
-/// The row a preset's family is ticked as.
-pub(super) fn row_of<'a>(config: &'a Config, preset_key: &str, family: &str) -> Option<&'a ModelConfig> {
+/// The row an endpoint's family is ticked as.
+pub(super) fn row_of<'a>(list: &Bundle, config: &'a Config, endpoint_key: &str, family: &str) -> Option<&'a ModelConfig> {
     config.models.iter().find(|row| {
-        row.family_binding.as_ref().is_some_and(|b| b.preset == preset_key && b.family == family && at_its_preset(row, b))
+        row.family_binding.as_ref().is_some_and(|b| b.preset == endpoint_key && b.family == family && at_its_endpoint(list, row, b))
     })
 }
 
-/// Every row that follows its family, at its preset's endpoint.
-pub(super) fn following(config: &Config) -> Vec<&ModelConfig> {
+/// Every row that follows its family, at its endpoint's address.
+pub(super) fn following<'a>(list: &Bundle, config: &'a Config) -> Vec<&'a ModelConfig> {
     config.models.iter()
-        .filter(|row| row.family_binding.as_ref().is_some_and(|b| b.follows() && at_its_preset(row, b)))
+        .filter(|row| row.family_binding.as_ref().is_some_and(|b| b.follows() && at_its_endpoint(list, row, b)))
         .collect()
 }

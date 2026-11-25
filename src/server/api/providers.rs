@@ -6,8 +6,9 @@ use axum::{body::Bytes, extract::{Path, State}, http::{HeaderMap, Method, Status
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::config::{providers::{known_names, Way, PRESETS}, Config, ModelConfig, SignIn};
-use crate::provider::models::providers_view::{editable_row, filed_endpoint, group_keys, keep_model_key, provider_id, ProviderView};
+use crate::config::{providers::{known_names, Way}, Config, SignIn};
+use crate::provider::models::{EditionChoice, ModelCatalog};
+use crate::provider::models::providers_view::{editable_row, live_card_at, preset_named, presets, filed_endpoint, group_keys, keep_model_key, provider_id, ProviderView};
 use crate::credentials::{self, Credentials};
 use crate::server::{person, ServerState};
 
@@ -35,19 +36,15 @@ pub(super) async fn answer(state: &ServerState, config: &Config, creds: &Credent
     let drafts = state.provider_drafts.lock().await;
     for (id, (name, url)) in drafts.iter() {
         if !providers.iter().any(|p| &p.id == id) {
-            providers.push(ProviderView::draft(name, url));
+            providers.push(ProviderView::draft(&config.model_catalog, name, url));
         }
     }
     for provider in providers.iter_mut().filter(|p| p.way == Way::Key.as_str()) {
         let filed = filed_endpoint(config, creds, &provider.id).unwrap_or((&provider.provider, &provider.url));
         provider.families = state.manager.families.view(config, creds, filed);
     }
-    let presets: Vec<_> = PRESETS.iter().map(|p| json!({
-        "name": p.name, "label": p.label, "url": p.url, "way": p.way.as_str(),
-        "default_model": p.default_model, "placeholder": p.placeholder,
-        "live": p.offered_live_models(),
-    })).collect();
-    Json(json!({"presets": presets, "providers": providers})).into_response()
+    let presets = presets(&config.model_catalog);
+    Json(json!({"presets": presets, "providers": providers, "edition": config.model_catalog.shown()})).into_response()
 }
 
 #[derive(Deserialize)]
@@ -72,6 +69,11 @@ enum KeyAction { KeepModelKey }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct AddressEdit { url: String }
+
+/// `"auto"`, `"international"` or `"mainland"`.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EditionEdit { choice: String }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -102,19 +104,25 @@ fn address(input: &str) -> Result<String, Failure> {
     Ok(input.trim().into())
 }
 
-fn new_endpoint(input: NewProvider) -> Result<(String, String), Failure> {
+fn new_endpoint(catalog: &ModelCatalog, input: NewProvider) -> Result<(String, String), Failure> {
     match (input.preset, input.name, input.url) {
         (Some(selector), None, None) => {
-            let preset = PRESETS.iter().find(|p| p.label == selector || p.url == selector)
-                .or_else(|| PRESETS.iter().find(|p| p.name == selector)).ok_or(BAD)?;
-            if !matches!(preset.way, Way::Key | Way::Local) { return Err(BAD); }
-            Ok((preset.name.into(), preset.url.into()))
+            let (name, url, way) = preset_named(catalog, &selector).ok_or(BAD)?;
+            if !matches!(way, Way::Key | Way::Local) { return Err(BAD); }
+            Ok((name, url))
         }
         (None, Some(name), Some(url)) if known_names().contains(&name.as_str()) && name != "chatgpt" => {
             Ok((name, address(&url)?))
         }
         _ => Err(BAD),
     }
+}
+
+/// The owner's choice of edition: what is offered for a new setup. Nothing a
+/// person already has changes (no key, row, default or starter record), so
+/// the same call is safe to make again.
+pub(crate) async fn set_edition(State(state): State<Arc<ServerState>>, headers: HeaderMap, body: Bytes) -> Response {
+    mutate(state, headers, Edit::Edition(body)).await
 }
 
 pub(crate) async fn create(State(state): State<Arc<ServerState>>, headers: HeaderMap, body: Bytes) -> Response {
@@ -168,6 +176,7 @@ pub(crate) async fn remove_model(State(state): State<Arc<ServerState>>, headers:
 }
 
 enum Edit {
+    Edition(Bytes),
     Create(Bytes),
     Key(String, KeyEdit),
     Address(String, Bytes),
@@ -190,9 +199,9 @@ pub(super) async fn endpoint(state: &ServerState, config: &Config, creds: &Crede
         Some(pair) => pair,
         None => {
             let draft = state.provider_drafts.lock().await.get(id).cloned();
-            draft.or_else(|| PRESETS.iter().find(|p| !p.live_models().is_empty()
-                && provider_id(SignIn::Key, p.name, p.url) == id)
-                .map(|p| (p.name.into(), p.url.into()))).ok_or(MISSING)?
+            // A live voice's card has no row or key yet: the list names where it is shown.
+            let live = live_card_at(id);
+            draft.or(live).ok_or(MISSING)?
         },
     };
     if !known_names().contains(&pair.0.as_str()) || pair.0 == "chatgpt" { return Err(BAD); }
@@ -202,9 +211,18 @@ pub(super) async fn endpoint(state: &ServerState, config: &Config, creds: &Crede
 async fn apply(state: &Arc<ServerState>, edit: Edit) -> Result<(Config, Credentials), Failure> {
     let mut config = state.manager.get_config_snapshot().await;
     let path = credentials::credentials_file();
+    if let Edit::Edition(body) = edit {
+        let creds = Credentials::load_with(&path, &config.models);
+        let choice = EditionChoice::parse(&parse::<EditionEdit>(&body)?.choice).ok_or(BAD)?;
+        if config.model_catalog.choice() != choice {
+            config.model_catalog = ModelCatalog::chosen(choice);
+            save_config(state, &config).await?;
+        }
+        return Ok((config, creds));
+    }
     if let Edit::Create(body) = edit {
         let creds = Credentials::load_with(&path, &config.models);
-        let (name, url) = new_endpoint(parse(&body)?)?;
+        let (name, url) = new_endpoint(&config.model_catalog, parse(&body)?)?;
         let mut drafts = state.provider_drafts.lock().await;
         if drafts.len() >= 64 { return Err(CONFLICT); }
         drafts.insert(provider_id(SignIn::Key, &name, &url), (name, url));
@@ -213,7 +231,7 @@ async fn apply(state: &Arc<ServerState>, edit: Edit) -> Result<(Config, Credenti
     let mut creds = Credentials::load_with(&path, &config.models);
     let id = match &edit {
         Edit::Key(id, _) | Edit::Address(id, _) | Edit::AddModel(id, _) | Edit::RemoveModel(id, _) => id,
-        Edit::Create(_) => unreachable!(),
+        Edit::Create(_) | Edit::Edition(_) => unreachable!(),
     };
     let (name, url) = endpoint(state, &config, &creds, id).await?;
     match edit {
@@ -310,7 +328,7 @@ async fn apply(state: &Arc<ServerState>, edit: Edit) -> Result<(Config, Credenti
                 creds.save(&path).map_err(|_| SAVE)?;
             }
         }
-        Edit::Create(_) => unreachable!(),
+        Edit::Create(_) | Edit::Edition(_) => unreachable!(),
     }
     Ok((config, creds))
 }

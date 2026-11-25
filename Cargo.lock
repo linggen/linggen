@@ -5526,6 +5526,7 @@ dependencies = [
  "rand 0.10.4",
  "regex",
  "reqwest 0.12.28",
+ "ring",
  "rust-embed",
  "rustix",
  "serde",

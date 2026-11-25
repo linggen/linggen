@@ -75,7 +75,8 @@ async fn a_held_list_answers_until_the_key_changes_or_it_is_stale() {
             Ok(BTreeSet::from(["m".to_string()]))
         }
     }
-    let preset = crate::config::providers::PRESETS.iter().find(|p| p.key == "anthropic").unwrap();
+    let list = crate::provider::models::curated::shipped().clone();
+    let preset = &list.place_at("https://api.anthropic.com").unwrap();
     let counting = Arc::new(Counting(AtomicUsize::new(0)));
     let evidence = Evidence::new(Arc::new(counting.clone()), Duration::from_secs(3600));
     assert!(evidence.held(preset, "test-only-marker").is_none());

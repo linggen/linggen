@@ -101,6 +101,13 @@ pub struct Config {
     #[serde(default, skip_serializing_if = "MemoryConfig::is_default")]
     #[cfg_attr(any(test, feature = "test-support"), ts(skip))]
     pub memory: MemoryConfig,
+    /// Which edition of the curated model list is offered (`[model_catalog]`):
+    /// only what is offered for a new setup, never what a person already has.
+    /// Absent: Auto. Written only by the owner's route (`PUT /api/providers/edition`);
+    /// a saved config keeps what it holds.
+    #[serde(default, skip_serializing_if = "crate::provider::models::ModelCatalog::is_default")]
+    #[cfg_attr(any(test, feature = "test-support"), ts(skip))]
+    pub model_catalog: crate::provider::models::ModelCatalog,
     /// What was wrong in the file and was set right on load rather than
     /// refusing the whole config (a bad model `price` is dropped, that
     /// model alone). Runtime-only — never read from or written to the file —
@@ -770,7 +777,7 @@ impl Config {
     /// `src/server/model_locks.rs` counts the readers of the raw rows).
     pub fn chat_models(&self) -> impl Iterator<Item = &ModelConfig> {
         use crate::provider::kinds::{kind_in, Kind};
-        let facts = crate::provider::models::family_catalog::current();
+        let facts = crate::provider::models::curated::current();
         self.models.iter().filter(move |m| kind_in(m, &facts) == Kind::Chat)
     }
 
@@ -1102,6 +1109,7 @@ impl Default for Config {
             outside_apps: Vec::new(),
             family_starts: Default::default(),
             memory: MemoryConfig::default(),
+            model_catalog: Default::default(),
             problems: Vec::new(),
         }
     }
@@ -1139,8 +1147,8 @@ fn is_valid_go_duration(s: &str) -> bool {
     true
 }
 
-// The provider names a model may carry are `providers::known_names()`,
-// derived from the one list of presets (`config/providers.rs`).
+// The provider names a model may carry are `providers::known_names()`, a
+// fixed list in `config/providers.rs`; what a page offers is the curated list.
 
 #[cfg(test)]
 mod tests {

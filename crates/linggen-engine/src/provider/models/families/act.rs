@@ -6,13 +6,12 @@
 use super::{binding, Endpoint, Families};
 use crate::config::Config;
 use crate::credentials::Credentials;
-use super::super::family_catalog::FamilyCurrent;
+use super::super::family_catalog::{FamilyCurrent, Target};
+use super::super::curated::EntryType;
 
 pub enum Action {
     /// Tick the family: its row runs the model it means now.
     Tick,
-    /// Consolidate an existing duplicate into the ordinary row shown.
-    Merge { target: String },
     /// Remove the family's row. Refused while the row is the first default
     /// chat model, unless `replacement` names the model that takes its place.
     Untick { replacement: Option<String> },
@@ -31,19 +30,19 @@ pub enum Action {
 /// Why an action was not carried out. Each has one fixed code.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Refusal {
-    /// This endpoint has no catalog families.
+    /// This endpoint has nothing to tick in the list.
     Unsupported,
     /// No such family, row or version here.
     Missing,
     /// No key for this endpoint.
     NoKey,
-    /// The selector cannot name one model: the person picks.
+    /// The list's approved model cannot be used yet: the person picks.
     NeedsChoice,
     /// The provider's list does not hold the model.
     NoAccess,
     /// The row is the first default chat model: name a replacement.
     FirstDefault,
-    /// The model before the move is retired or no longer shown.
+    /// The model before the move is not a chat model, or the list no longer knows it.
     NoPrevious,
 }
 
@@ -70,15 +69,13 @@ impl Refusal {
 }
 
 pub(super) fn run(f: &Families, config: &mut Config, creds: &Credentials, (name, url): (&str, &str), family: &str, action: Action) -> Result<bool, Refusal> {
-    let endpoint = Endpoint::of(name, url, creds).ok_or(Refusal::Unsupported)?;
-    let snapshot = f.catalog();
+    let list = f.catalog();
+    let endpoint = Endpoint::of(&list, config.model_catalog.offered(), name, url, creds).ok_or(Refusal::Unsupported)?;
     let today = f.today();
-    let preset = endpoint.preset;
-    if !snapshot.chat_families(preset).iter().any(|(key, _)| key == family) {
-        return Err(Refusal::Missing);
-    }
+    let place = endpoint.place;
+    let entry = place.entry_for(family).ok_or(Refusal::Missing)?;
     let listing = endpoint.listing(f);
-    let row = binding::row_of(config, preset.key, family).map(|row| (row.id.clone(), row.model.clone()));
+    let row = binding::row_of(&list, config, place.endpoint_key, family).map(|row| (row.id.clone(), row.model.clone()));
     let needs_row = || row.clone().ok_or(Refusal::Missing);
     match action {
         Action::Tick => {
@@ -87,21 +84,15 @@ pub(super) fn run(f: &Families, config: &mut Config, creds: &Credentials, (name,
             }
             endpoint.key.as_ref().ok_or(Refusal::NoKey)?;
             let listing = listing.ok_or(Refusal::NeedsChoice)?;
-            match endpoint.ask(&snapshot, family, None, Some(&listing), today) {
+            match endpoint.ask(&list, family, None, Some(&listing), today) {
                 FamilyCurrent::Current { next, .. } => {
-                    if !binding::adopt(config, preset, family, next) {
-                        binding::tick(config, preset, family, next, binding::Mode::Follow);
-                    }
+                    // An exact entry is a pin from the start; a family follows.
+                    let mode = if entry.kind == EntryType::Exact { binding::Mode::Pinned } else { binding::Mode::Follow };
+                    binding::tick(config, &place, family, next, mode);
                     Ok(true)
                 }
                 _ => Err(Refusal::NeedsChoice),
             }
-        }
-        Action::Merge { target } => {
-            let Some(source) = binding::merge(config, preset, family, &target) else { return Ok(false) };
-            if f.is_armed(&source) { f.arm(&target); }
-            f.disarm(&source);
-            Ok(true)
         }
         Action::Untick { replacement } => {
             let Some((id, _)) = row else { return Ok(false) };
@@ -119,15 +110,19 @@ pub(super) fn run(f: &Families, config: &mut Config, creds: &Credentials, (name,
         }
         Action::Follow => {
             let (id, model) = needs_row()?;
+            // An exact entry stays put: only a family follows.
+            if entry.kind == EntryType::Exact {
+                return Err(Refusal::Unsupported);
+            }
             let resumed = binding::resume(config, &id);
             let next = match (&endpoint.key, &listing) {
-                (Some(_), Some(listing)) => match endpoint.ask(&snapshot, family, Some(&model), Some(listing), today) {
-                    FamilyCurrent::Current { next, .. } if next.id() != model => Some(next),
+                (Some(_), Some(listing)) => match endpoint.ask(&list, family, Some(&model), Some(listing), today) {
+                    FamilyCurrent::Current { next, .. } if next.id != model => Some(next),
                     _ => None,
                 },
                 _ => None,
             };
-            let moved = next.is_some_and(|facts| binding::follow_to(config, &id, &model, facts, today));
+            let moved = next.is_some_and(|target| binding::follow_to(config, &id, &model, target, today));
             if moved {
                 f.arm(&id);
             }
@@ -135,20 +130,20 @@ pub(super) fn run(f: &Families, config: &mut Config, creds: &Credentials, (name,
         }
         Action::Choose { model } => {
             endpoint.key.as_ref().ok_or(Refusal::NoKey)?;
-            let facts = snapshot.entry(preset, &model)
+            let facts = list.facts_for(place.endpoint_key, &model)
                 .filter(|m| m.family() == Some(family) && m.chooseable())
                 .ok_or(Refusal::Missing)?;
-            if (preset.catalog.is_some_and(|b| b.borrowed) || listing.is_some())
-                && !listing.as_ref().is_some_and(|l| l.usable.contains(&model)) {
+            if listing.as_ref().is_some_and(|l| !l.usable.contains(&model)) {
                 return Err(Refusal::NoAccess);
             }
+            let target = Target { id: facts.id(), facts: Some(facts) };
             match row {
                 Some((id, _)) => {
                     f.disarm(&id);
-                    Ok(binding::choose(config, &id, facts))
+                    Ok(binding::choose(config, &id, target))
                 }
                 None => {
-                    binding::tick(config, preset, family, facts, binding::Mode::Pinned);
+                    binding::tick(config, &place, family, target, binding::Mode::Pinned);
                     Ok(true)
                 }
             }
@@ -160,13 +155,16 @@ pub(super) fn run(f: &Families, config: &mut Config, creds: &Credentials, (name,
         }
         Action::Back { moved } => {
             let (id, _) = needs_row()?;
-            let before = binding::row_of(config, preset.key, family)
+            let before = binding::row_of(&list, config, place.endpoint_key, family)
                 .and_then(|row| row.family_binding.as_ref()?.notice())
                 .filter(|m| m.seq() == moved && m.kind() == binding::MoveKind::Followed)
                 .map(|m| m.from().to_string());
             // A stale or repeated 换回 changes nothing.
             let Some(before) = before else { return Ok(false) };
-            let previous = snapshot.entry(preset, &before).filter(|m| m.chooseable()).ok_or(Refusal::NoPrevious)?;
+            let previous = Target { id: &before, facts: list.facts_for(place.endpoint_key, &before) };
+            if !previous.is_chat() {
+                return Err(Refusal::NoPrevious);
+            }
             if !listing.as_ref().is_some_and(|l| l.usable.contains(&before)) {
                 return Err(Refusal::NoAccess);
             }

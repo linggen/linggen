@@ -18,6 +18,8 @@ pub mod chatgpt_catalog;
 mod effort;
 pub use effort::{Effort, EffortAsk, Resolved};
 pub mod families;
+pub(crate) mod curated;
+pub use curated::{EditionChoice, ModelCatalog};
 pub(crate) mod family_catalog;
 mod health;
 #[cfg(test)]
@@ -206,7 +208,7 @@ impl ModelManager {
         // stays in the config and goes nowhere. One catalog capture decides
         // every row.
         let all_configs = configs.clone();
-        let facts = family_catalog::current();
+        let facts = curated::current();
         let (mut chat, mut live_rows) = (Vec::new(), Vec::new());
         for c in configs {
             match kind_in(&c, &facts) {

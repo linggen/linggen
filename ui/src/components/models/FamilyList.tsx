@@ -83,6 +83,7 @@ const FamilyRow: React.FC<Props & { family: Family }> = ({ provider, family: f, 
           <div className="flex flex-wrap items-center gap-1.5 text-xs font-semibold">
             <span data-no-i18n>{f.label}</span>
             {f.mode === 'pinned' && <Tag tone="blue">{W.pinned}</Tag>}
+            {f.unverified && <Tag>{W.unverified}</Tag>}
             {f.references.map((r) => {
               const used = usedWords(r);
               return <Tag key={`${r.place}${r.who ?? ''}`} tone="green">{used.who ? say(used.word, { who: used.who }) : used.word}</Tag>;
@@ -110,7 +111,6 @@ const FamilyRow: React.FC<Props & { family: Family }> = ({ provider, family: f, 
             </select>
           )}
         </div>
-        {f.merge_into && <button type="button" disabled={busy} className={linkBtn} onClick={() => void act({ action: 'merge', model: f.merge_into! })}>{W.mergeRows}</button>}
         {menu.length > 0 && <RowMenu items={menu} disabled={busy} />}
       </div>
       {f.notice && <MoveNotice family={f} act={act} busy={busy} />}

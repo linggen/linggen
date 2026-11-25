@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { W } from '../src/lib/modelsWords.mts';
-import { addedByName, chatChoices, dollars, failureLabel, searchFamilies, splitFamilies, useLines, type Family, type Provider } from '../src/lib/providers.mts';
+import { addedByName, chatChoices, dollars, editionWord, failureLabel, searchFamilies, splitFamilies, useLines, type Family, type Provider } from '../src/lib/providers.mts';
 
 const family = (key: string, over: Partial<Family> = {}): Family => ({ family: key, label: key, ticked: false, choose: [], folded: false, references: [], ...over });
 const provider = (over: Partial<Provider>): Provider => ({ id: 'p', label: 'Anthropic', way: 'key', provider: 'anthropic', url: '', connected: true, models: [], used_by: [], ...over });
@@ -24,6 +24,18 @@ test('a family row is named by what it runs, and an added model by its own name'
 test('the other uses are the engine rows of each kind, ready or not', () => {
   const lanes = provider({ way: 'local', models: [{ id: 'speak', model: 'voice-x', kind: 'speak', ready: false, builtin: true }, { id: 'draw', model: 'pic-y', kind: 'draw', ready: true, builtin: true }] });
   assert.deepEqual(useLines([lanes]).map((u) => [u.word, u.model, u.ready]), [[W.readAloud, 'voice-x', false], [W.drawing, 'pic-y', true]]);
+});
+
+test('a live voice is a reference on its provider, never a default to pick', () => {
+  const live = { id: 'live:alibaba', model: 'qwen-audio-3.1-realtime-flash', kind: 'live_voice' as const, ready: true, builtin: true };
+  const p = provider({ models: [live], used_by: ['live_voice'] });
+  assert.deepEqual(chatChoices([p]), []);
+  assert.deepEqual(useLines([p]), []);
+});
+
+test('the region is said in the page\'s own words', () => {
+  assert.equal(editionWord('international'), W.regionInternational);
+  assert.equal(editionWord('mainland'), W.regionMainland);
 });
 
 test('families are split by the engine\'s fold, and a search matches the name or the key', () => {

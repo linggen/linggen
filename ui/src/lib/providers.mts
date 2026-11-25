@@ -68,11 +68,11 @@ export interface Family {
   current?: ModelLine;
   next?: ModelLine;
   hold?: string;
+  unverified?: boolean;
   choose: Choice[];
   notice?: Notice;
   folded: boolean;
   references: Reference[];
-  merge_into?: string;
 }
 
 export interface FamiliesView {
@@ -94,6 +94,8 @@ export interface Provider {
   models: ProviderModel[];
   used_by: string[];
   disk_gb?: number;
+  /** Named only by the other region's list: the person's own, kept as it is. */
+  retained?: boolean;
   families?: FamiliesView;
 }
 
@@ -102,17 +104,23 @@ export interface Preset {
   label: string;
   url: string;
   way: Way;
+  /** The owner has not checked this provider in the offered region. */
+  unverified?: boolean;
 }
+
+export type Edition = 'international' | 'mainland';
+export type EditionChoice = 'auto' | Edition;
 
 export interface ProvidersAnswer {
   presets: Preset[];
   providers: Provider[];
+  /** The edition in force, and the owner's choice behind it. */
+  edition: { edition: Edition; choice: EditionChoice };
 }
 
 /** What a family action sends (PUT /api/providers/{id}/families/{family}). */
 export type FamilyAction =
   | { action: 'tick' }
-  | { action: 'merge'; model: string }
   | { action: 'untick'; model?: string }
   | { action: 'choose'; model: string }
   | { action: 'follow' }
@@ -194,7 +202,6 @@ export function chatChoices(providers: Provider[]): ChatChoice[] {
 }
 
 const USES: { kind: Exclude<Kind, 'chat'>; word: Word }[] = [
-  { kind: 'live_voice', word: W.liveVoice },
   { kind: 'speak', word: W.readAloud },
   { kind: 'hear', word: W.dictation },
   { kind: 'draw', word: W.drawing },
@@ -238,6 +245,9 @@ export function failureLabel(status: number | undefined, body: string): Word {
   const text = body.trim();
   return FAILURES.find(([answer]) => answer === text)?.[1] ?? W.failOther;
 }
+
+/** The words for an edition. */
+export const editionWord = (edition: Edition): Word => (edition === 'mainland' ? W.regionMainland : W.regionInternational);
 
 /** Two addresses that name the same place (a trailing slash, capitals aside). */
 export const sameAddress = (a: string, b: string): boolean =>

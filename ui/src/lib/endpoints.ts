@@ -8,7 +8,7 @@ import type { AgentFileInfo, AppConfig, BuiltInSkillInfo, SkillInfoFull } from '
 import type { PeopleReply, PersonPatch, PersonSettings } from './people.mts';
 import type { OutsideAppsReply } from './outsideApps.mts';
 import type { FileEntry, Note, ReviewNote, Source, Topic } from './memorySources.mts';
-import type { FamilyAction, ProvidersAnswer } from './providers.mts';
+import type { EditionChoice, FamilyAction, ProvidersAnswer } from './providers.mts';
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from './api';
 
 const q = (params: Record<string, string | undefined>) => {
@@ -121,6 +121,8 @@ export const providersApi = {
   list: () => apiGet<ProvidersAnswer>('/api/providers'),
   /** A provider the person picked from `presets`, by its label. */
   create: (preset: string) => apiPost<ProvidersAnswer>('/api/providers', { preset }),
+  /** The owner's choice of edition: what is offered for new setups only. */
+  setEdition: (choice: EditionChoice) => apiPut<ProvidersAnswer>('/api/providers/edition', { choice }),
   setKey: (id: string, apiKey: string | null) => apiPut<ProvidersAnswer>(`${provider(id)}/key`, { api_key: apiKey }),
   keepModelKey: (id: string) => apiPut<ProvidersAnswer>(`${provider(id)}/key`, { action: 'keep_model_key' }),
   setAddress: (id: string, url: string) => apiPatch<ProvidersAnswer>(provider(id), { url }),

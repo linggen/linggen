@@ -247,3 +247,27 @@ test.describe('a narrow window', () => {
     expect(wider).toEqual([]);
   });
 });
+
+test.describe('the region', () => {
+  test('choosing mainland changes what is offered; a provider already connected stays, marked kept', async ({ page, world, httpRequests }) => {
+    await openModels(page, world, httpRequests);
+    const anthropic = provider(page, 'Anthropic');
+    await connectAnthropic(anthropic);
+    await page.getByTestId('region-change').click();
+    await page.getByTestId('region-choice').selectOption('mainland');
+    await expect(page.getByTestId('region-line')).toHaveText(/Mainland China/);
+    // The connected provider and its key are still there, now marked kept.
+    await expect(anthropic.getByTestId('retained')).toBeVisible();
+    await expect(anthropic.getByTestId('key-set')).toBeVisible();
+    // A new setup is offered the mainland list, every entry marked not verified.
+    await page.getByTestId('add-provider-button').click();
+    const offered = page.getByTestId('add-provider');
+    await expect(offered.getByRole('button', { name: /DashScope/ })).toBeVisible();
+    await expect(offered.getByRole('button', { name: /Anthropic/ })).toHaveCount(0);
+    await expect(offered.getByRole('button', { name: /DashScope/ }).getByText('Not verified')).toBeVisible();
+    // Automatic is always one pick away.
+    await page.getByTestId('region-change').click();
+    await page.getByTestId('region-choice').selectOption('auto');
+    await expect(page.getByTestId('region-choice')).toHaveCount(0);
+  });
+});
