@@ -134,4 +134,28 @@ mod tests {
         assert!(answer(&env, None, OutsideAgents::V2, OutsideOp::Read, &json!({})).is_err());
         assert!(answer(&env, None, OutsideAgents::V2, OutsideOp::Search, &json!({"words": "  "})).is_err());
     }
+
+    /// The door names no other agent's folder: those live in reader files
+    /// (`outside_memory/readers/`), the one place that does.
+    #[test]
+    fn the_door_names_no_other_agents_folder() {
+        for (name, text) in [
+            ("outside.rs", include_str!("outside.rs")),
+            ("notes.rs", include_str!("notes.rs")),
+            ("catalog.rs", include_str!("catalog.rs")),
+            ("dispatch.rs", include_str!("dispatch.rs")),
+        ] {
+            let code: String = text
+                .split("#[cfg(test)]")
+                .next()
+                .unwrap_or("")
+                .lines()
+                .filter(|l| !l.trim_start().starts_with("//"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            for folder in [".claude", ".codex", ".hermes", ".gemini", ".openclaw"] {
+                assert!(!code.contains(folder), "{name} names `{folder}`");
+            }
+        }
+    }
 }

@@ -61,7 +61,11 @@ id      = "details"
 forward = false
 path    = [
   "~/.codex/memories/MEMORY.md",
+  "~/.codex/memories/raw_memories.md",
   "~/.codex/memories/rollout_summaries/*.md",
+  "~/.codex/memories/extensions/ad_hoc/instructions.md",
   "~/.codex/memories_v2/MEMORY.md",
+  "~/.codex/memories_v2/raw_memories.md",
   "~/.codex/memories_v2/rollout_summaries/*.md",
+  "~/.codex/memories_v2/extensions/ad_hoc/instructions.md",
 ]

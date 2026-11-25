@@ -66,8 +66,9 @@ pub(crate) struct PlaceResult {
     pub agent: Agent,
     pub label: String,
     pub outcome: Result<Vec<Line>, Skip>,
-    /// Project lines left out because their heading names no folder of the
-    /// session's chain (still found by search).
+    /// Lines left out because a place's `first` cap, or a project heading that
+    /// names no folder of the session's chain, kept them back (still found by
+    /// search).
     pub unmatched: usize,
 }
 
@@ -80,10 +81,11 @@ pub(crate) fn place_results(registry: &Registry, env: &Env, scope: &Scope) -> Ve
         let newest = newest_in_groups(registry, reader);
         for place in reader.decl.places.iter().filter(|p| p.forward) {
             let source = reader.source_id(place);
-            let superseded = place.group.as_ref().and_then(|g| newest.get(g)).filter(|(id, _)| *id != place.id);
-            let (outcome, unmatched) = match superseded {
-                Some((newer, _)) => (Err(Skip::Older(format!("{}/{newer}", reader.decl.agent))), 0),
-                None => forward_place(registry, env, reader, place, &chain, &readable),
+            let newer = place.group.as_ref().and_then(|g| newest.get(g)).filter(|(id, _)| *id != place.id);
+            let has_files = || !registry.place_files(reader, place, &Projects::Any).is_empty();
+            let (outcome, unmatched) = match newer {
+                Some((newer, _)) if has_files() => (Err(Skip::Older(format!("{}/{newer}", reader.decl.agent))), 0),
+                _ => forward_place(registry, env, reader, place, &chain, &readable),
             };
             results.push(PlaceResult { source, agent: reader.agent(), label: reader.decl.label.clone(), outcome, unmatched });
         }
@@ -210,13 +212,15 @@ impl Ctx<'_> {
         }
         let changed = disk::changed(file);
         let mut out = Vec::new();
+        let mut capped = 0;
         for (scope, distance, raws) in groups {
             let cap = self.lines.first.unwrap_or(usize::MAX);
+            capped += raws.len().saturating_sub(cap);
             for raw in raws.into_iter().take(cap) {
                 out.push(self.line(file, scope, distance, raw, changed));
             }
         }
-        Ok((out, unmatched))
+        Ok((out, unmatched + capped))
     }
 
     fn line(&self, file: &Located, scope: LineScope, distance: Option<usize>, raw: Raw, file_changed: u64) -> Line {

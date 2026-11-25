@@ -327,15 +327,34 @@ fn this_module_never_writes() {
     }
 }
 
+/// The production files of `own_memory`.
+fn own_memory_files() -> Vec<(&'static str, &'static str)> {
+    vec![
+        ("own_memory/call.rs", include_str!("../own_memory/call.rs")),
+        ("own_memory/chronicle.rs", include_str!("../own_memory/chronicle.rs")),
+        ("own_memory/companion.rs", include_str!("../own_memory/companion.rs")),
+        ("own_memory/fence.rs", include_str!("../own_memory/fence.rs")),
+        ("own_memory/find.rs", include_str!("../own_memory/find.rs")),
+        ("own_memory/forward.rs", include_str!("../own_memory/forward.rs")),
+        ("own_memory/format.rs", include_str!("../own_memory/format.rs")),
+        ("own_memory/index.rs", include_str!("../own_memory/index.rs")),
+        ("own_memory/migrate.rs", include_str!("../own_memory/migrate.rs")),
+        ("own_memory/mod.rs", include_str!("../own_memory/mod.rs")),
+        ("own_memory/page.rs", include_str!("../own_memory/page.rs")),
+        ("own_memory/phone.rs", include_str!("../own_memory/phone.rs")),
+        ("own_memory/prompt.rs", include_str!("../own_memory/prompt.rs")),
+        ("own_memory/spec.rs", include_str!("../own_memory/spec.rs")),
+        ("own_memory/store.rs", include_str!("../own_memory/store.rs")),
+        ("own_memory/write.rs", include_str!("../own_memory/write.rs")),
+    ]
+}
+
 /// Another agent's folder is named in a reader file and nowhere in Rust: no
-/// production file of this module or of `own_memory`'s forwarding holds
+/// production file of this module or of `own_memory` holds
 /// a vendor's dot-folder.
 #[test]
 fn no_rust_file_names_another_agents_folder() {
-    let own_and_door: [(&str, &str); 2] = [
-        ("own_memory/index.rs", include_str!("../own_memory/index.rs")),
-        ("own_memory/forward.rs", include_str!("../own_memory/forward.rs")),
-    ];
+    let own_and_door = own_memory_files();
     let all = production_files().into_iter().chain(own_and_door);
     for (name, text) in all {
         let code = code_of(text);
@@ -557,6 +576,11 @@ fn of_two_generations_of_the_codex_folder_only_the_one_that_changed_last_is_forw
     assert!(states.contains(&("codex/summary-v1".to_string(), "older than codex/summary-v2".to_string())), "{states:?}");
     // Both stay readable.
     assert!(read(&env, old.to_str().unwrap()).is_ok() && read(&env, new.to_str().unwrap()).is_ok());
+    // A generation that is not there is "no data", not "older".
+    let (_d2, lone) = scratch();
+    put(&lone.home().join(".codex/memories/memory_summary.md"), "v1\n\n## User preferences\n- Only one.\n");
+    let states: Vec<_> = reports(&lone, &Scope { cwd: None }).into_iter().map(|r| (r.id, r.state)).collect();
+    assert!(states.contains(&("codex/summary-v2".to_string(), "no data".to_string())), "{states:?}");
     // The other way round.
     touch(&old, 3_000_000);
     let block = claude_sees(&env, &env.home().join("work/app"));
@@ -737,14 +761,7 @@ fn headings_and_prose_in_a_note_cannot_pose_as_the_block() {
 /// Every production file that could size or cut the session-start block.
 fn block_files() -> Vec<(&'static str, &'static str)> {
     let mut files: Vec<(&'static str, &'static str)> = production_files().into_iter().collect();
-    files.extend([
-        ("own_memory/forward.rs", include_str!("../own_memory/forward.rs")),
-        ("own_memory/index.rs", include_str!("../own_memory/index.rs")),
-        ("own_memory/call.rs", include_str!("../own_memory/call.rs")),
-        ("own_memory/find.rs", include_str!("../own_memory/find.rs")),
-        ("own_memory/page.rs", include_str!("../own_memory/page.rs")),
-        ("own_memory/companion.rs", include_str!("../own_memory/companion.rs")),
-    ]);
+    files.extend(own_memory_files());
     files
 }
 

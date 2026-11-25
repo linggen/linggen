@@ -30,7 +30,7 @@ fn seed(home: &crate::support::home::Home) -> Theirs {
     let theirs = vec![
         (claude.join("MEMORY.md"), CC_INDEX),
         (claude.join("build.md"), CC_NOTE),
-        (codex.join("summary.md"), CODEX_NOTE),
+        (codex.join("memory_summary.md"), CODEX_NOTE),
     ];
     for (path, text) in &theirs {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -173,7 +173,7 @@ async fn another_agents_memory_cannot_be_changed() {
         }
     }
     // A write route given their file's name, path or what looks like an id.
-    let wanted = ["MEMORY.md", "build.md", "summary.md", "~%2F.claude%2Fprojects%2F-work-app%2Fmemory%2Fbuild.md", "r000000009"];
+    let wanted = ["MEMORY.md", "build.md", "memory_summary.md", "~%2F.claude%2Fprojects%2F-work-app%2Fmemory%2Fbuild.md", "r000000009"];
     for id in wanted {
         let (put, _) = w.api.put_json(&format!("/api/remembered-notes/{id}"), json!({"body": "overwritten"})).await;
         let (del, _) = w.api.call("DELETE", &format!("/api/remembered-notes/{id}")).await;
