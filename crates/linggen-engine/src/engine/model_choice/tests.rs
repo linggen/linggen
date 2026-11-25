@@ -230,9 +230,9 @@ async fn a_model_replaced_before_the_turn_is_told() {
     );
 }
 
-/// An engine that starts on its own model (a Task child) under a guest's
-/// policy runs on a model the room shares, as its parent does; an owner's
-/// stays on its own.
+/// A Task child under a guest's policy runs on a model the room shares,
+/// as its parent does (here the parent's own model is not shared); an
+/// owner's runs the parent's.
 #[tokio::test]
 async fn an_engine_on_its_own_model_runs_a_shared_one_for_a_guest() {
     use crate::engine::session_policy::{ConsumerCeiling, SessionPolicy};
@@ -252,8 +252,8 @@ async fn an_engine_on_its_own_model_runs_a_shared_one_for_a_guest() {
         )
         .unwrap()
     };
-    let mut owner = engine_on("gpt-6.1-terra");
-    owner.run_on_own_model("test").await;
+    let mut owner = engine_on("gpt-6-luna");
+    owner.run_as_child(Some("gpt-6.1-terra"), "test").await;
     assert_eq!(owner.model_id, "gpt-6.1-terra");
 
     let mut child = engine_on("gpt-6.1-terra");
@@ -262,7 +262,7 @@ async fn an_engine_on_its_own_model_runs_a_shared_one_for_a_guest() {
         ..Default::default()
     })
     .apply(&mut child);
-    child.run_on_own_model("test").await;
+    child.run_as_child(Some("gpt-6.1-terra"), "test").await;
     assert_eq!(child.model_id, "gpt-6.2-sol");
 }
 
@@ -508,4 +508,88 @@ fn a_delegated_runs_rule_never_answers_with_the_standing_model() {
         let asked = resolve(&m, Some("gpt-6.1-terra"), standing, rule);
         assert_eq!((asked.model.as_str(), asked.outcome), ("gpt-6.1-terra", Outcome::Asked), "{standing}");
     }
+}
+
+/// A registry holding the given agents only.
+struct Agents(Vec<crate::engine::agent::record::AgentSpecFile>);
+
+#[async_trait::async_trait]
+impl crate::engine::agent::registry::AgentRegistry for Agents {
+    async fn list(
+        &self,
+        _: &std::path::Path,
+    ) -> anyhow::Result<Vec<crate::engine::agent::record::AgentSpecFile>> {
+        Ok(self.0.clone())
+    }
+    async fn find(
+        &self,
+        _: &std::path::Path,
+        id: &str,
+    ) -> anyhow::Result<Option<crate::engine::agent::record::AgentSpecFile>> {
+        Ok(self.0.iter().find(|a| a.agent_id == id).cloned())
+    }
+}
+
+fn agent_declaring(id: &str, model: Option<&str>) -> crate::engine::agent::record::AgentSpecFile {
+    crate::engine::agent::record::AgentSpecFile {
+        agent_id: id.into(),
+        spec: crate::engine::agent::record::AgentSpec {
+            name: id.into(),
+            description: String::new(),
+            tools: Vec::new(),
+            model: model.map(str::to_string),
+            personality: None,
+            reasoning_effort: None,
+            aliases: Vec::new(),
+            internal: false,
+            met_when: None,
+        },
+        spec_path: std::path::PathBuf::new(),
+        system_prompt: String::new(),
+    }
+}
+
+/// A Task child runs on its parent's model unless its agent declares one:
+/// the parent on terra, the routing default sol — an agent with no `model:`
+/// runs terra, one that declares luna runs luna. As the delegation builds
+/// the child: `spawn_delegation_engine`, then `run_as_child`.
+#[tokio::test]
+async fn a_task_child_runs_the_parents_model_unless_its_agent_declares_one() {
+    use crate::engine::agent::AgentManager;
+    use crate::engine::InterfaceMode;
+    let dir = std::env::temp_dir().join(format!("task-child-model-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut config = crate::config::Config::default();
+    config.routing.default_models = vec!["gpt-6.2-sol".into()];
+    config.routing.model_fallback = false;
+    let empty = || std::sync::Arc::new(crate::engine::test_registries::Empty);
+    let agents = std::sync::Arc::new(Agents(vec![
+        agent_declaring("plain", None),
+        agent_declaring("inheriting", Some("inherit")),
+        agent_declaring("picky", Some("gpt-6-luna")),
+    ]));
+    let (manager, _events) = AgentManager::new(
+        config,
+        Some(dir.clone()),
+        empty(),
+        agents,
+        empty(),
+        InterfaceMode::Web,
+    );
+    let parent = "gpt-6.1-terra";
+    let child_model = |agent: &'static str| {
+        let (manager, root) = (manager.clone(), dir.clone());
+        async move {
+            let mut child = manager.spawn_delegation_engine(&root, agent).await.unwrap();
+            child.run_as_child(Some(parent), "test").await;
+            child.model_id
+        }
+    };
+    assert_eq!(child_model("plain").await, parent, "no model declared: the parent's");
+    assert_eq!(child_model("inheriting").await, parent, "`inherit` declares none");
+    assert_eq!(child_model("picky").await, "gpt-6-luna", "a declared model wins");
+
+    let mut unknown = manager.spawn_delegation_engine(&dir, "plain").await.unwrap();
+    unknown.run_as_child(None, "test").await;
+    assert_eq!(unknown.model_id, "gpt-6.2-sol", "no parent known: its agent's own");
 }

@@ -423,22 +423,29 @@ impl AgentEngine {
         self.tell_replaced(choice).await;
     }
 
-    /// Run on this engine's own model, as the asker its policy names: an
-    /// owner's stays as it is, a guest's moves to the first model the room
-    /// shares. For an engine that starts a turn with nothing asked (a Task
-    /// child, which takes its parent's policy).
-    pub async fn run_on_own_model(&mut self, place: &str) {
+    /// Start a Task child: it runs on its parent's model, as a Claude Code
+    /// subagent does — unless its agent declares a model of its own
+    /// (`declares_own_model`), which wins. The child is asked as its policy
+    /// names: an owner's runs the parent's model, a guest's the parent's too
+    /// (the room shares it) or the first the room shares. Whether a model
+    /// that cannot run gives way follows the parent's session
+    /// ([`Switching::session_allows`]). `parent_model` is `None` where the
+    /// caller does not know the parent's (the child then runs its agent's own
+    /// model).
+    pub async fn run_as_child(&mut self, parent_model: Option<&str>, place: &str) {
         let asker = self
             .tools
             .builtins
             .session_policy
             .as_ref()
             .map_or(Asker::Owner, |p| p.asker());
+        let session = self.tools.builtins.session_id.clone();
         let rule = Rule {
             asker,
-            may_switch: true,
+            may_switch: self.switching(session.as_deref()).session_allows(),
         };
-        let choice = resolve(&self.model_manager, None, &self.default_model_id, rule);
+        let asked = parent_model.filter(|_| !self.declares_own_model);
+        let choice = resolve(&self.model_manager, asked, &self.default_model_id, rule);
         self.run_on(&choice, place).await;
     }
 

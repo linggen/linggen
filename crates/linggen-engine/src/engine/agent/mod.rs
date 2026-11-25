@@ -171,6 +171,44 @@ impl AgentManager {
         })
     }
 
+    /// The model an agent declares for itself and this machine can run: the
+    /// config's override of it, else its frontmatter `model:`. `None`: it
+    /// declares none (or an unusable one), so it takes what its asker gives —
+    /// a Task child, the parent's model (`AgentEngine::run_as_child`) — or the
+    /// routing default. The one place "does this agent declare a model" is
+    /// decided; `resolve_model_id` starts from it.
+    fn declared_model(
+        config: &Config,
+        models: &ModelManager,
+        agent_id: &str,
+        frontmatter_model: Option<String>,
+    ) -> Option<String> {
+        // 1. Config agent override
+        if let Some(choice) =
+            Self::normalize_model_choice(Self::model_override_for_agent(config, agent_id))
+        {
+            if let Ok(live) = model_choice::live(models, model_choice::Asker::Owner, &choice) {
+                return Some(live);
+            }
+            warn!(
+                "Agent override model '{}' not found in configured models; falling through",
+                choice
+            );
+        }
+
+        // 2. Frontmatter model
+        if let Some(choice) = Self::normalize_model_choice(frontmatter_model) {
+            if let Ok(live) = model_choice::live(models, model_choice::Asker::Owner, &choice) {
+                return Some(live);
+            }
+            warn!(
+                "Agent frontmatter model '{}' not found in configured models; falling through",
+                choice
+            );
+        }
+        None
+    }
+
     /// Not asked through `model_choice::resolve`: this chain is what `resolve`
     /// starts from (the standing model it falls back to), so it cannot ask it.
     ///
@@ -193,28 +231,9 @@ impl AgentManager {
         let model_ids: std::collections::HashSet<&str> =
             config.chat_models().map(|m| m.id.as_str()).collect();
 
-        // 1. Config agent override
-        if let Some(choice) =
-            Self::normalize_model_choice(Self::model_override_for_agent(config, agent_id))
-        {
-            if let Ok(live) = model_choice::live(models, model_choice::Asker::Owner, &choice) {
-                return Ok(live);
-            }
-            warn!(
-                "Agent override model '{}' not found in configured models; falling through",
-                choice
-            );
-        }
-
-        // 2. Frontmatter model
-        if let Some(choice) = Self::normalize_model_choice(frontmatter_model) {
-            if let Ok(live) = model_choice::live(models, model_choice::Asker::Owner, &choice) {
-                return Ok(live);
-            }
-            warn!(
-                "Agent frontmatter model '{}' not found in configured models; falling through",
-                choice
-            );
+        // 1 and 2: what the agent itself declares.
+        if let Some(declared) = Self::declared_model(config, models, agent_id, frontmatter_model) {
+            return Ok(declared);
         }
 
         // 3. First model in routing.default_models. Checked against the
@@ -319,6 +338,13 @@ impl AgentManager {
             agent_spec.spec.model.clone(),
             true,
         )?;
+        let declares_own_model = Self::declared_model(
+            &config,
+            &models,
+            normalized_id,
+            agent_spec.spec.model.clone(),
+        )
+        .is_some();
 
         let mut engine = AgentEngine::new(
             EngineConfig::from_app_config(&config, project_root.to_path_buf(), self.interface_mode),
@@ -327,6 +353,7 @@ impl AgentManager {
             AgentRole::Lead,
         )?;
 
+        engine.declares_own_model = declares_own_model;
         engine.set_spec(
             normalized_id.to_string(),
             agent_spec.spec,
