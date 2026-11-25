@@ -2,6 +2,7 @@
 //! made-up folders in a scratch home. No real note text, no real path.
 
 use super::paths::encode_project_path;
+use super::test_repo;
 use super::*;
 use std::fs;
 
@@ -74,6 +75,91 @@ fn the_chain_runs_nearest_first_and_stops_before_home_and_root() {
 
 fn project_chain_of(env: &Env, cwd: &Path) -> Vec<PathBuf> {
     super::paths::project_chain(env, cwd)
+}
+
+#[test]
+fn worktrees_of_one_repository_follow_the_nearest_first_chain() {
+    let (_d, env) = scratch();
+    let main = env.home().join("work/app");
+    let wts = test_repo::repo_with_worktrees(&main, &["app-wt-b", "app-wt-a"]);
+    let (b, a) = (&wts[0], &wts[1]);
+    // From a worktree's subfolder: its own chain, then the main one, then the other, by path.
+    let cwd = a.join("src");
+    fs::create_dir_all(&cwd).unwrap();
+    assert_eq!(
+        project_chain_of(&env, &cwd),
+        [cwd.clone(), a.clone(), env.home().join("work"), main.clone(), b.clone()]
+    );
+    // From the main checkout: its chain, then both linked worktrees.
+    assert_eq!(project_chain_of(&env, &main), [main.clone(), env.home().join("work"), a.clone(), b.clone()]);
+}
+
+#[test]
+fn a_folder_that_is_not_a_worktree_has_the_plain_chain() {
+    let (_d, env) = scratch();
+    // A repository with no other worktree, a folder in none, and a folder beside a repository.
+    let lone = env.home().join("work/lone");
+    test_repo::repo_with_worktrees(&lone, &[]);
+    let plain = env.home().join("work/plain/sub");
+    fs::create_dir_all(&plain).unwrap();
+    for cwd in [lone.clone(), plain.clone()] {
+        let mut want = vec![cwd.clone()];
+        want.extend(cwd.ancestors().skip(1).take_while(|d| *d != env.home()).map(Path::to_path_buf));
+        assert_eq!(project_chain_of(&env, &cwd), want);
+    }
+}
+
+#[test]
+fn a_symlinked_path_into_a_worktree_still_reaches_the_repository() {
+    let (_d, env) = scratch();
+    let main = env.home().join("work/app");
+    let wts = test_repo::repo_with_worktrees(&main, &["app-wt-a"]);
+    let link = env.home().join("shortcut");
+    std::os::unix::fs::symlink(&wts[0], &link).unwrap();
+    let chain = project_chain_of(&env, &link);
+    assert_eq!(chain[0], link);
+    assert!(chain.contains(&wts[0]) && chain.contains(&main), "{chain:?}");
+    // Memory kept for the main checkout is forwarded at the link.
+    put(&cc_memory(&env, &main).join("MEMORY.md"), &index_of(&[("Main rule", "m.md")]));
+    let got = start(&env, host(&env, "codex").as_ref(), Some(&link));
+    assert!(got.body().into_string().contains("Main rule"));
+}
+
+#[test]
+fn memory_of_one_worktree_is_forwarded_in_the_others_and_the_reverse() {
+    let (_d, env) = scratch();
+    let main = env.home().join("work/app");
+    let wts = test_repo::repo_with_worktrees(&main, &["app-wt-a", "app-wt-b"]);
+    put(&cc_memory(&env, &main).join("MEMORY.md"), &index_of(&[("Main rule", "m.md")]));
+    put(&cc_memory(&env, &wts[1]).join("MEMORY.md"), &index_of(&[("Beta rule", "b.md")]));
+    let elsewhere = env.home().join("work/other");
+    put(&cc_memory(&env, &elsewhere).join("MEMORY.md"), &index_of(&[("Other rule", "o.md")]));
+    let at = |cwd: &Path| start(&env, host(&env, "codex").as_ref(), Some(cwd)).body().into_string();
+    let in_a = at(&wts[0]);
+    assert!(in_a.contains("Main rule") && in_a.contains("Beta rule") && !in_a.contains("Other rule"), "{in_a}");
+    // The reverse: a note written in a worktree reaches the main checkout.
+    assert!(at(&main).contains("Beta rule"));
+    // The session's own folder's note comes before a sibling's.
+    let in_b = at(&wts[1]);
+    assert!(in_b.find("Beta rule").unwrap() < in_b.find("Main rule").unwrap(), "{in_b}");
+    // Another repository's worktree is not this one's.
+    assert!(!at(&elsewhere).contains("Main rule"));
+}
+
+/// Only `disk.rs` reads git's own files, and only the chain asks it for the
+/// worktrees: a second reader of `.git` would decide the same thing twice.
+#[test]
+fn only_the_chain_decides_which_worktrees_are_one_project() {
+    let all = production_files().into_iter().chain(own_memory_files());
+    for (name, text) in all {
+        let code = code_of(text);
+        if name != "disk.rs" {
+            assert!(!code.contains("\".git\""), "{name} names `.git`");
+        }
+        if name != "disk.rs" && name != "paths.rs" {
+            assert!(!code.contains("sibling_worktrees"), "{name} asks for the worktrees");
+        }
+    }
 }
 
 // ── the slice ──────────────────────────────────────────────────────────────

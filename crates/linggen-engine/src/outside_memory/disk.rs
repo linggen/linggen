@@ -10,6 +10,7 @@
 //! with a dot is never matched by a `*`.
 
 use super::decl::{wild_matches, Pattern, Segment};
+use crate::project_root::find_git_root;
 use super::readers::Located;
 use std::fs;
 use std::io::Read;
@@ -77,6 +78,64 @@ fn children(dir: &Path, wild: &str, folders: bool, distance: Option<usize>) -> V
 /// The real path of `path`, links and `..` resolved.
 pub(crate) fn canonical(path: &Path) -> Option<PathBuf> {
     path.canonicalize().ok()
+}
+
+/// A repository lists at most this many other worktrees (agents leave dozens).
+const MAX_WORKTREES: usize = 64;
+
+/// The other worktrees of the git repository one of `dirs` stands in: the
+/// main worktree first, then the linked ones by path. `dirs` is a session's
+/// folder chain, nearest first; the repository's root is the engine's one
+/// project-root walk (`project_root::find_git_root`). Empty outside a repository, in a
+/// submodule, and when nothing else is checked out.
+///
+/// Read from the `.git` files, no `git` process: a linked worktree's `.git`
+/// file names its admin folder (`gitdir: <common>/worktrees/<name>`), whose
+/// `commondir` file points to the shared `.git`; that folder's `worktrees/*/gitdir`
+/// files name every linked worktree's `.git`. Folders that are gone are left out.
+pub(crate) fn sibling_worktrees(dirs: &[PathBuf]) -> Vec<PathBuf> {
+    let Some(common) = dirs.iter().find_map(|d| find_git_root(d)).and_then(|root| common_git_dir(&root)) else {
+        return Vec::new();
+    };
+    let main = (common.file_name().is_some_and(|n| n == ".git")).then(|| common.parent()).flatten().map(Path::to_path_buf);
+    let mut linked: Vec<PathBuf> = fs::read_dir(common.join("worktrees"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|admin| linked_root(&admin.path()))
+        .collect();
+    linked.sort();
+    let mut roots: Vec<PathBuf> = main.into_iter().chain(linked).filter(|r| r.is_dir()).collect();
+    roots.truncate(MAX_WORKTREES);
+    roots
+}
+
+/// The shared `.git` folder of the worktree at `root` (which holds a `.git`).
+fn common_git_dir(root: &Path) -> Option<PathBuf> {
+    let dot_git = root.join(".git");
+    if fs::symlink_metadata(&dot_git).ok()?.is_dir() {
+        return canonical(&dot_git);
+    }
+    let admin = root.join(small_text(&dot_git)?.strip_prefix("gitdir:")?.trim());
+    // A submodule's admin folder has no `commondir`: not a worktree.
+    let common = admin.join(small_text(&admin.join("commondir"))?.trim());
+    canonical(&common)
+}
+
+/// The folder a worktree's admin folder (`<common>/worktrees/<name>`) belongs to.
+fn linked_root(admin: &Path) -> Option<PathBuf> {
+    let text = small_text(&admin.join("gitdir"))?;
+    let dot_git = admin.join(text.trim());
+    let root = dot_git.parent()?;
+    // Git writes an absolute path; keep it as written. A relative one is resolved.
+    Path::new(text.trim()).is_absolute().then(|| root.to_path_buf()).or_else(|| canonical(root))
+}
+
+/// A small plain file's text (at most 4 KB), or `None`.
+fn small_text(path: &Path) -> Option<String> {
+    let mut bytes = Vec::new();
+    fs::File::open(path).ok()?.take(4096).read_to_end(&mut bytes).ok()?;
+    String::from_utf8(bytes).ok()
 }
 
 /// The first `max` bytes of a note.
