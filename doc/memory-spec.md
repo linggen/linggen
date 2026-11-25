@@ -202,16 +202,8 @@ Claude Code and Codex write memory their own way; Linggen does not touch it.
     nearest project first, then the person, newest first); Linggen's notes get the
     other half and whatever those lines leave unused. Under v1 there are none of
     Linggen's notes.
-  - *Per turn:* titles only. The plugin's prompt hook asks `memory_notes
-    op=titles` with the prompt's words and `exclude` (the ids this session was
-    already shown, kept by the hook), and prints at most four lines
-    `相关笔记: <summary> (id)`. The match is plain words in a note's summary or
-    topic, Chinese and English, no vectors; a hit holds two independent words of the
-    prompt (one if the prompt has only one; two pieces of one
-    Chinese word count as one), and a word most titles share counts for
-    nothing. It cannot bridge languages: a Chinese prompt finds a note whose
-    summary or topic has those Chinese words, not its English twin. It counts no use. No hit, no engine, no answer in time: nothing is
-    printed. No host is reminded to write memory.
+  - *Per turn:* nothing is injected, like Claude Code and Codex. No host is reminded
+    to write memory.
 - **Bodies on demand:** `memory_agents op=read path=…`, or `op=search`.
 - **Who writes where.** An agent with memory of its own writes there, and
   Linggen reads it. It uses `memory_notes` only when the person says to let

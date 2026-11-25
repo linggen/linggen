@@ -189,10 +189,10 @@ async fn agents(w: &World, args: Value) -> Value {
 }
 
 /// The door, v2: a host's session start carries Linggen's own notes (the
-/// person's, summaries and ids, never a body or a fenced note), and a turn's
-/// words find a note's title — once; v1 carries none of it.
+/// person's, summaries and ids, never a body or a fenced note); v1 carries
+/// none of it.
 #[tokio::test]
-async fn a_hosts_session_start_and_turns_are_given_linggens_notes_as_titles() {
+async fn a_hosts_session_start_is_given_linggens_notes_without_bodies() {
     let w = World::start_with_home(Setup { config_append: BOTH_V2, ..Setup::default() }, seed).await;
     let wrote = notes(
         &w,
@@ -207,14 +207,6 @@ async fn a_hosts_session_start_and_turns_are_given_linggens_notes_as_titles() {
     assert!(block.contains("Name is Alex") && block.contains("cannot include live lessons") && block.contains(&id), "{block}");
     assert!(!block.contains("hard year") && !block.contains("SECRET BODY"), "{block}");
     assert!(start["own_notes"].as_u64().unwrap() >= 2, "{start}");
-
-    let found = notes(&w, json!({"op": "titles", "words": "what is the pricing plan for live lessons?", "exclude": []})).await.unwrap();
-    assert_eq!(found["titles"][0]["id"], id.as_str(), "{found}");
-    assert!(found["titles"][0].get("body").is_none());
-    let again = notes(&w, json!({"op": "titles", "words": "pricing plan live lessons", "exclude": [id]})).await.unwrap();
-    assert_eq!(again["titles"], json!([]));
-    let fenced = notes(&w, json!({"op": "titles", "words": "a hard year closed"})).await.unwrap();
-    assert_eq!(fenced["titles"], json!([]), "a mind note reached a coding host");
 }
 
 /// v1 on the door: the session start carries the other agents' lines only.
@@ -224,7 +216,6 @@ async fn under_v1_a_hosts_session_start_has_none_of_linggens_notes() {
     let start = agents(&w, json!({"op": "index", "cwd": w.work(), "host": "claude-code"})).await;
     assert!(!start["block"].as_str().unwrap().contains("Name is Alex"), "{start}");
     assert_eq!(start["own_notes"], 0);
-    assert!(notes(&w, json!({"op": "titles", "words": "name alex"})).await.is_err());
 }
 
 /// Yinyue, through `/api/yinyue/chat`: she writes a life moment and reads her

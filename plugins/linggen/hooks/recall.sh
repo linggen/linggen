@@ -25,7 +25,7 @@ input="$(cat)"
 prompt="$(printf '%s' "$input" | jq -r '.prompt // empty' 2>/dev/null || true)"
 cwd="$(printf '%s' "$input"   | jq -r '.cwd    // empty' 2>/dev/null || true)"
 
-[ "${#prompt}" -lt 2 ] && exit 0
+[ "${#prompt}" -lt 8 ] && exit 0
 
 topk="${LINGGEN_RECALL_TOPK:-3}"
 limit="${LINGGEN_RECALL_LIMIT:-8}"
@@ -44,16 +44,9 @@ min_score="${LINGGEN_RECALL_MIN_SCORE:-0}"
 # shellcheck source=./mcp.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/mcp.sh" 2>/dev/null || exit 0
 
-# v2: this host keeps its own memory and is forwarded Linggen's notes once, at
-# session start (autostart.sh). Per turn only the TITLES of the notes the
-# prompt's words match (titles.sh): no recall, no capture reminder.
-if [ "$(outside_agents_mode)" = v2 ]; then
-  # shellcheck source=./titles.sh
-  . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/titles.sh" 2>/dev/null || exit 0
-  titles_for_prompt
-  exit 0
-fi
-[ "${#prompt}" -lt 8 ] && exit 0
+# v2: other agents keep their own memory and get the index once, at session
+# start (autostart.sh). Nothing per turn: no recall, no capture reminder.
+[ "$(outside_agents_mode)" = v2 ] && exit 0
 
 # Scope the search to where this session stands, as its root (git root, or
 # where the session started): rows under it, rows at its parents, and rows

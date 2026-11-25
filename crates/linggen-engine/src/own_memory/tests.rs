@@ -1101,9 +1101,8 @@ mod phone_verbs {
     }
 }
 
-// ── what a coding host is forwarded, and the titles a turn matches ─────────
+// ── what a coding host is forwarded at its session start ───────────────────
 
-use super::find::titles;
 use super::forward::session_start;
 use super::index::index_for_forwarding;
 use crate::outside_memory::{Agent, BUDGET_BYTES};
@@ -1196,61 +1195,4 @@ fn a_long_project_index_cannot_push_the_persons_standing_rules_out() {
     assert!(got.text.len() <= 2048, "{} bytes", got.text.len());
     // The rule keeps its place after the projects, not before them.
     assert!(got.text.find("A project decision").unwrap() < got.text.find("in Chinese").unwrap());
-}
-
-#[test]
-fn a_prompt_naming_a_notes_topic_gets_its_title_in_chinese_and_english() {
-    let (_d, store) = scratch();
-    let en = decision(&store, Scope::Person, "pricing", "The $5 plan cannot include the live lessons", NOW);
-    let zh = decision(&store, Scope::Person, "语言", "回复要用中文，代码和提交用英文", NOW);
-    decision(&store, Scope::Person, "build", "Release builds use the fast profile", NOW);
-    let hit = |prompt: &str| -> Vec<String> {
-        titles(&store, Audience::Work, prompt, &[], 5).into_iter().map(|f| f.entry.id).collect()
-    };
-    assert_eq!(hit("what does the pricing plan include?"), [en.clone()]);
-    assert_eq!(hit("回复用中文吗"), [zh.clone()]);
-    // A prompt about nothing, one word that matches too little, and filler words match no note.
-    assert!(hit("please rename this function and run it").is_empty());
-    assert!(hit("你好，帮我看一下这个").is_empty());
-    assert!(hit("what the how").is_empty());
-    // One word of a prompt that has two is not enough; two pieces of one Chinese word are one word.
-    assert_eq!(hit("回复"), [zh.clone()]);
-    assert!(hit("回复 qwertyzzz").is_empty());
-    let (a, b, c) = ("提交".to_string(), "交代".to_string(), "pricing".to_string());
-    assert_eq!(super::find::independent_words(&[&a, &b]), 1);
-    assert_eq!(super::find::independent_words(&[&a, &c]), 2);
-    assert!(hit("   ").is_empty());
-    // The wordless titles do not count a use: the index order does not move.
-    assert!(store.uses_since(0).is_empty());
-}
-
-#[test]
-fn titles_leave_out_what_was_shown_what_is_void_and_what_the_fence_keeps_back() {
-    let (_d, store) = scratch();
-    let a = decision(&store, Scope::Person, "pricing", "Pricing: the first plan", NOW);
-    let b = decision(&store, Scope::Person, "pricing", "Pricing: the second plan", NOW - DAY);
-    let c = decision(&store, Scope::Person, "pricing", "Pricing: the voided plan", NOW - 2);
-    mind(&store, "Pricing worries kept me awake");
-    let void = Write { user_directed: true, ..w(Action::Void { id: c, reason: "wrong".into() }) };
-    write(&store, Audience::Companion, NOW, &void).unwrap();
-    let ids = |exclude: &[String]| -> Vec<String> {
-        titles(&store, Audience::Work, "pricing plan", exclude, 5).into_iter().map(|f| f.entry.id).collect()
-    };
-    assert_eq!(ids(&[]), [a.clone(), b.clone()]);
-    assert_eq!(ids(&[a.clone()]), [b.clone()]);
-    assert!(ids(&[a, b]).is_empty());
-}
-
-#[test]
-fn the_titles_op_answers_ids_and_summaries_only() {
-    let (_d, store) = scratch();
-    let id = decision(&store, Scope::Person, "pricing", "Pricing: the first plan", NOW);
-    let door = caller(Audience::Work);
-    let got = call(&store, &door, "titles", &json!({"words": "pricing plan", "exclude": []}), NOW).unwrap();
-    assert_eq!(got["titles"][0]["id"], id);
-    assert_eq!(got["titles"][0]["summary"], "Pricing: the first plan");
-    assert!(got["titles"][0].get("body").is_none());
-    let none = call(&store, &door, "titles", &json!({"words": "pricing plan", "exclude": [id]}), NOW).unwrap();
-    assert_eq!(none["titles"], json!([]));
-    assert!(call(&store, &door, "titles", &json!({}), NOW).is_err());
 }
