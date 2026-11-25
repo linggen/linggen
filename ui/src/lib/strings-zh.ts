@@ -547,9 +547,11 @@ export const ZH: Record<string, string> = {
   // ── People ──
   '{name} · Phone': '{name} · 手机',
   '{name} · Computer': '{name} · 电脑',
-  'Other skills': '其他技能',
+  'More': '更多',
+  // The Phone page still says Guest for a signed-out phone's person (the engine's word); People says this.
   'Guest': '访客',
-  'Guest · {device}': '访客 · {device}',
+  'Signed-out phone': '未登录的手机',
+  'Signed-out phone · {device}': '未登录的手机 · {device}',
   'Set in People': '在“成员”里设置',
   'Who else uses this Mac, and what each person may use. A change holds at once.': '谁还在用这台 Mac，每个人可以用什么。修改立即生效。',
   'No one else yet. A person appears here once their phone is paired.': '还没有其他人。手机配对后，这个人会出现在这里。',

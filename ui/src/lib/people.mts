@@ -8,6 +8,8 @@
  * (tests/people.test.mts holds that, and a Chinese entry for each).
  */
 
+import { appLabel, appListed } from '../apps/appLabel.mts';
+
 export type Level = 'chat' | 'read' | 'edit';
 
 /** The three levels an owner may give another person. Admin is never offered. */
@@ -63,21 +65,40 @@ export interface InstalledSkill {
 
 /** A skill as the lists offer it. */
 export interface AppChoice extends InstalledSkill {
+  /** The name the sidebar shows (`appLabel`), not the folder's. */
   label: string;
+  /** The sidebar lists it (`appListed`); an unlisted app is held and kept, never drawn. */
+  listed: boolean;
 }
 
-/** The engine's list as the page offers it, apps first and then the other skills. */
-export function appChoices(installed: readonly InstalledSkill[]): AppChoice[] {
-  const choices = installed.map((s) => ({ ...s, label: s.name }));
+/** What the page knows of a skill beyond the engine's People list: the app block its SKILL.md declares. */
+export interface SkillShown {
+  name: string;
+  app?: { title?: string; list?: boolean } | null;
+}
+
+/** The engine's list as the page offers it, apps first and then the other skills,
+ *  each with the sidebar's name and whether the sidebar lists it. */
+export function appChoices(installed: readonly InstalledSkill[], skills: readonly SkillShown[] = []): AppChoice[] {
+  const choices = installed.map((s) => {
+    const skill = skills.find((k) => k.name === s.name) ?? { name: s.name };
+    return { ...s, label: appLabel(skill), listed: appListed(skill) };
+  });
   return [...choices.filter((s) => s.app), ...choices.filter((s) => !s.app)];
 }
+
+/** What the engine calls the person behind a phone with no account (`GUEST_LABEL`,
+ *  state_fs/devices/mod.rs — tests/peoplePage.test.mts holds the two equal). The page
+ *  says "Signed-out phone" for it; the engine's word is kept where it records who did what. */
+export const ENGINE_GUEST_LABEL = 'Guest';
 
 /** What a card is titled: the person's name; a signed-out phone's person, when
  *  there are several, with the device's own name so they can be told apart. */
 export function personTitle(person: Person, all: readonly Person[]): string {
   const signedOut = (p: Person) => p.id.startsWith('device:');
-  if (!signedOut(person) || all.filter(signedOut).length < 2) return person.name;
-  return `${person.name} · ${person.devices[0]?.name ?? ''}`.trimEnd();
+  const name = signedOut(person) && person.name === ENGINE_GUEST_LABEL ? WORDS.signedOutPhone : person.name;
+  if (!signedOut(person) || all.filter(signedOut).length < 2) return name;
+  return `${name} · ${person.devices[0]?.name ?? ''}`.trimEnd();
 }
 
 /** What a PUT to a person may carry (`People::set`). */
@@ -89,9 +110,10 @@ export type PersonPatch = Partial<{
   arrival: null;
 }>;
 
-/** The apps the owner has not kept: what a person's list may hold. */
+/** The apps the owner has not kept and the sidebar lists: what "all" becomes when one is switched off.
+ *  An unlisted app is never drawn, so it is never part of a list made by the owner's clicks. */
 export function offeredApps(installed: readonly AppChoice[], mineOnly: readonly string[]): AppChoice[] {
-  return installed.filter((app) => !mineOnly.includes(app.name));
+  return installed.filter((app) => app.listed && !mineOnly.includes(app.name));
 }
 
 /** One line of a person's apps list: an app, whether it is chosen, and why it is not a choice. */
@@ -103,9 +125,11 @@ export interface AppRow extends AppChoice {
   gone: boolean;
 }
 
-/** Rows with an app page first, the other skills apart. */
+/** The rows the page draws: those the sidebar lists, apps first, the other skills apart.
+ *  An unlisted app stays in every list the engine holds; it is only not drawn. */
 export function splitApps(rows: readonly AppRow[]): { apps: AppRow[]; others: AppRow[] } {
-  return { apps: rows.filter((r) => r.app), others: rows.filter((r) => !r.app) };
+  const shown = rows.filter((r) => r.listed);
+  return { apps: shown.filter((r) => r.app), others: shown.filter((r) => !r.app) };
 }
 
 /** The apps shown for one person: every installed one, then any the list holds that is not installed. */
@@ -116,7 +140,7 @@ export function appRows(installed: readonly AppChoice[], mineOnly: readonly stri
   });
   const known = new Set(installed.map((app) => app.name));
   const gone = (apps ?? []).filter((name) => !known.has(name));
-  return [...rows, ...gone.map((name) => ({ name, label: name, app: false, on: true, kept: false, gone: true }))];
+  return [...rows, ...gone.map((name) => ({ name, label: name, listed: true, app: false, on: true, kept: false, gone: true }))];
 }
 
 /** The list a person's apps become when `name` is switched: from "all" it is every offered app but that one. */
@@ -186,7 +210,8 @@ export const WORDS = {
   allApps: 'All apps',
   keptForYou: 'kept for you',
   gone: 'not installed',
-  otherSkills: 'Other skills',
+  more: 'More',
+  signedOutPhone: 'Signed-out phone',
   models: 'Models of this Mac',
   modelsHint: 'Their turns here run only on these. Their phone still has its own.',
   noModel: 'No model of this Mac — they use their own',

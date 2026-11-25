@@ -54,7 +54,17 @@ test('the owner sets a person once, and it holds after a reload and in their own
   expect(names).toContain(KEEP);
   // A skill with no app page is in the list too, under its own label: the engine's list is what is offered.
   expect(names).toContain('quiet');
-  await expect(card.getByText('Other skills', { exact: true })).toBeVisible();
+  // Other skills are folded under More, closed until opened; the sidebar's name for an app, not its folder's.
+  const more = card.getByTestId('more-skills');
+  await expect(more.getByText('More', { exact: true })).toBeVisible();
+  await expect(card.locator('[data-app="quiet"]')).toBeHidden();
+  await expect(card.locator(`[data-app="${KEEP}"]`)).toBeVisible();
+  await expect(card.locator('[data-app="abacus"]')).toHaveText(/Abacus/);
+  // Apps whose SKILL.md says `list: false` are not offered at all.
+  expect(names).not.toContain('fixture-options');
+  expect(names).not.toContain('model-lesson');
+  await more.getByText('More', { exact: true }).click();
+  await expect(card.locator('[data-app="quiet"]')).toBeVisible();
   for (const name of names.filter((n) => n !== KEEP)) {
     await card.locator(`[data-app="${name}"]`).click();
     await expect(card.locator(`[data-app="${name}"]`)).toHaveAttribute('aria-pressed', 'false');
@@ -62,6 +72,8 @@ test('the owner sets a person once, and it holds after a reload and in their own
 
   const model = card.locator('[data-model]').first();
   const modelId = await model.getAttribute('data-model');
+  // The model is said as the Models page says it: its name and its source, not its row id.
+  await expect(model).toContainText(' · ');
   await model.click();
   await expect(model).toHaveAttribute('aria-pressed', 'true');
   await expect(card.getByText('No model of this Mac — they use their own')).toHaveCount(0);
@@ -120,4 +132,18 @@ test("the page opened from the owner's other computer says people are set at thi
   await expect(page.getByText('People are set at this Mac itself, not from here.')).toBeVisible();
   await expect(page.locator('[data-testid="person"]')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Edit', exact: true })).toHaveCount(0);
+});
+
+test('a phone with no account is one person, called a signed-out phone', async ({ page, world, request, httpRequests }) => {
+  const token = 'tok-signed-out';
+  writeFileSync(`${world.linggenHome}/paired-devices.json`, JSON.stringify([
+    { id: 'phone-nobody', name: "Ana's phone", secret: token, created_at: 0, kind: 'phone' },
+  ]));
+  await expect
+    .poll(async () => (await request.get(`${world.url}/api/pair/me`, { headers: { 'x-linggen-device': token } })).status())
+    .toBe(200);
+  await openPeople(page, world.url, httpRequests);
+  const card = page.locator('[data-testid="person"][data-person="device:phone-nobody"]');
+  await expect(card.getByRole('heading', { name: 'Signed-out phone' })).toBeVisible();
+  await expect(page.getByText('Guest', { exact: true })).toHaveCount(0);
 });
