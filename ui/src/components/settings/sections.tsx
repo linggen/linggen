@@ -15,7 +15,6 @@ import { PhoneTab } from '../PhoneTab';
 import { RoomTab } from '../RoomTab';
 import { MemoryTab } from '../memory/MemoryTab';
 import { StoragePage } from '../StoragePage';
-import { MemorySourcesTab } from '../memorySources/MemorySourcesTab';
 import { AccountSection } from './AccountSection';
 import { DesktopSection } from './DesktopSection';
 
@@ -56,7 +55,6 @@ const sections = {
   room: () => <div className="h-full overflow-y-auto p-3 md:p-5"><RoomTab /></div>,
   memory: ({ canOpenRun }) => <Scroll wide><MemoryTab canOpenRun={canOpenRun} /></Scroll>,
   storage: () => <StoragePage />,
-  notes: () => <Scroll wide><MemorySourcesTab /></Scroll>,
   account: () => <Scroll><AccountSection /></Scroll>,
   desktop: ({ requirements }) => <Scroll><DesktopSection companion={requirements.companion} /></Scroll>,
 } satisfies Record<SettingsSectionId, (props: SectionProps) => ReactNode>;

@@ -9,7 +9,7 @@ mod server;
 // (`crate::engine::…`, `crate::config::…`).
 use linggen_engine::{
     account, assets, cannot_run, config, credentials, engine, extensions, hf_fetch, hf_mirror, js_runtime, language,
-    live, logging, mcp_client, memory_host, message, mirror, notes, outside_memory, own_memory, paths, perception,
+    live, logging, mcp_client, memory_host, message, mirror, notes, paths, perception,
     provider, reach, runtime, senses, state_fs, telemetry, util,
 };
 
@@ -59,6 +59,10 @@ struct Cli {
     #[cfg(feature = "test-support")]
     #[arg(long, hide = true)]
     test_fetch_fixture: Option<std::net::SocketAddr>,
+
+    #[cfg(feature = "test-support")]
+    #[arg(long, hide = true)]
+    test_prepare_empty: bool,
 
     #[command(subcommand)]
     cmd: Option<Command>,
@@ -127,19 +131,6 @@ enum Command {
         #[command(subcommand)]
         action: AccountAction,
     },
-    /// The chronicle (memory v2): `prepare` is the monthly mission's own step,
-    /// `backfill` runs the mission now over the months still waiting.
-    Chronicle {
-        #[command(subcommand)]
-        action: ChronicleVerb,
-    },
-    /// Gate for a v1 memory mission's `prepare` step: under `[memory] linggen = "v2"`
-    /// the run is skipped; under v1 the rest of the arguments run as `ling <args>`.
-    #[command(name = "v1-only", disable_help_flag = true)]
-    V1Only {
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        args: Vec<String>,
-    },
     /// Memory's data verbs: `ling mem search …`, `ling mem add …`, `ling mem list`, …
     /// (`ling mem --help` lists them). Runs against the engine when it is up,
     /// else on the store directly.
@@ -148,14 +139,6 @@ enum Command {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
-}
-
-#[derive(Subcommand, Debug)]
-enum ChronicleVerb {
-    /// Write the input the chronicle mission reads (run by the mission itself)
-    Prepare,
-    /// Run the chronicle mission now, over the months still waiting
-    Backfill,
 }
 
 #[derive(Subcommand, Debug)]
@@ -232,6 +215,11 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
     #[cfg(feature = "test-support")]
+    if cli.test_prepare_empty {
+        println!("fixture has no work");
+        std::process::exit(linggen_engine::extensions::missions::NOTHING_TO_DO);
+    }
+    #[cfg(feature = "test-support")]
     if let Some(addr) = cli.test_fetch_fixture {
         crate::engine::web_fetch::allow_fixture_host(addr)?;
     }
@@ -270,16 +258,6 @@ async fn main() -> Result<()> {
         }
         Some(Command::Mem { args }) => {
             return cli::mem::run(args.clone()).await;
-        }
-        Some(Command::V1Only { args }) => {
-            return cli::v1_only::run(args, &config).await;
-        }
-        Some(Command::Chronicle { action }) => {
-            let action = match action {
-                ChronicleVerb::Prepare => cli::chronicle::ChronicleAction::Prepare,
-                ChronicleVerb::Backfill => cli::chronicle::ChronicleAction::Backfill,
-            };
-            return cli::chronicle::run(action, &config).await;
         }
         Some(Command::Restart { binary, wait }) => {
             return cli::restart::request(config.server.port(), binary, *wait).await;
@@ -416,8 +394,6 @@ async fn main() -> Result<()> {
             // listener binds; the engine's own memory calls reach it
             // in-process (`memory_host::post_verb`).
             memory_host::start(port).await;
-            // When the config asks for v2: once, move what the v1 store holds.
-            memory_host::upgrade_to_v2(&config.memory).await;
 
             // Install/update built-in agent specs to ~/.linggen/agents/
             if let Err(e) = cli::init::install_default_agents() {
@@ -553,8 +529,6 @@ async fn main() -> Result<()> {
         | Some(Command::Account { .. })
         | Some(Command::Claude { .. })
         | Some(Command::Mem { .. })
-        | Some(Command::Chronicle { .. })
-        | Some(Command::V1Only { .. })
         | Some(Command::Restart { .. })
         | Some(Command::EngineRestart { .. }) => unreachable!(),
     }

@@ -24,8 +24,6 @@ The tools, in list order (the catalogue is the one list; a test checks that this
 | Agents (4) | `agent_run`, `agent_status`, `agent_permit`, `agent_end` | Linggen's agents (delegate a task) |
 | Browser (3) | `browser_open`, `browser_read`, `browser_act` | the linggen-browser extension (control module) |
 | Apps (1) | `app` | what the person's apps do on this Mac |
-| Other agents' memory (1) | `memory_agents` | what Claude Code and Codex remember (read only; `outside_memory`) |
-| Linggen's own notes (1) | `memory_notes` | Linggen's own notes (Memory V2, `own_memory`); last, so every other tool keeps its place |
 
 A tool with several operations takes `op`. Every schema is strict
 (`additionalProperties: false`): an unknown field, a field of another op, a
@@ -40,32 +38,11 @@ share one door.
 
 | Caller | Sees |
 |:-------|:-----|
-| this machine (loopback) | every tool; `app`, `memory_agents` and `memory_notes` answer the owner at this Mac itself, not a tunnelled device |
+| this machine (loopback) | every tool; `app` answers the owner at this Mac itself, not a tunnelled device |
 | an approved computer (token in `x-linggen-device`) | the five memory tools only; `memory_upkeep` without `dream_run`. Delegation and browser control are this machine's alone |
 | a phone, or a caller with no token off this machine | refused (403 / 401 `PAIRING_REQUIRED`). Phones use `/api/memory/<verb>`, not MCP |
 
-**The door is the view and the mode.** The caller decides the view; the engine's
-config decides the mode (`[memory] outside_agents`: `v1` or `v2`). Together they
-are one value, the `Door` (`door_of` in `src/server/mcp/mod.rs`, the only place
-that makes it), and `tools/list`, `tools/call` and the server text all read it.
-Each catalogue entry says at which doors it is offered (`Views` in the memory
-crate's catalogue: a view and a mode). Under **v2** this machine's door does not
-offer the five v1 memory tools (`memory_search`, `memory_add`, `memory_update`,
-`memory_delete`, `memory_upkeep`, with every op of them, `dream_status` and
-`dream_run` included): they are not listed, and a call of one is refused (a tool
-error, nothing ran) with where each kind of memory goes: facts about the person
-that hold everywhere to `memory_notes op=write` with scope `person`, project
-things to the agent's own memory. Why: under v2 every agent keeps its own memory
-and Linggen only reads it, so a write through `memory_add` would land in a store
-nothing reads. Everything else is unchanged: `memory_agents`, `memory_notes`,
-the agent, browser and app tools. Under **v1** nothing changes. An approved
-computer keeps its five memory tools in either mode: its agent's memory is on its
-own machine, out of this one's reach. Linggen's own sessions and `/mem/mcp` are
-not the door and are unaffected. Locks: `under_v2_the_door_lists_no_v1_memory_tool`
-and `the_list_and_the_dispatch_are_one_table` (every door lists exactly what it can
-call).
-
-A tool or op outside the caller's door cannot be called (`unknown tool`, or
+A tool or op outside the caller's view cannot be called (`unknown tool`, or
 `op` not one of the listed). An approved computer's calls on `/mcp` are
 recorded as that machine's presence (Settings → devices shows it seen).
 
@@ -138,48 +115,6 @@ Outside agents, one switch per private app that offers an action anywhere. The
 list is the engine config's `outside_apps` (absent: none), set only through
 `PUT /api/mcp/outside-apps` at this Mac; a saved config keeps what it holds.
 
-## Other agents' memory (`memory_agents`) — memory v2, in trial
-
-Claude Code and Codex keep their own memory their own way; Linggen only
-**reads** it — never edits, moves or copies it — and forwards what each
-agent remembers to the others. One tool, this machine's owner at this Mac only:
-
-| op | does |
-|:---|:-----|
-| `mode` | `v1` or `v2`: how this Linggen serves outside hosts (`[memory] outside_agents` in the config; absent = `v1`; `v2` is opt-in). The plugin's hooks ask it. |
-| `index` | the session-start block for a project (`cwd`): under v2 Linggen's own notes by topic (the person's rules one by one), then the other agents' index lines, never the calling `host`'s own; the person's lines first, then the projects of the chain, nearest first; at most 200 lines and 16 KB in all, each group tagged with its source |
-| `read` | one note by absolute (or `~/`) path; only a note file inside a declared place, links and `..` resolved first |
-| `search` | words across the declared places, any language, best line first |
-
-- The sources are declared readers (`outside_memory::readers`): Claude Code's and
-  Codex's are embedded, and an installed skill's `memory-reader` file replaces them
-  or adds an agent (`memory-spec.md` § Readers). An unreadable or missing place is
-  skipped and reported, and so is one whose format is not known.
-- Key-shaped strings are replaced before anything leaves.
-- **v2** (the switch): the plugin's session-start hook injects the `index`
-  slice instead of core memory; the per-turn recall, the capture reminder, the
-  cwd stamp and the delegate recall do nothing; the server text drops the
-  save rules. Linggen's own agents (Ling, Yinyue, Linggen's sessions) are
-  unchanged in both modes. **v1** is today's behaviour. An approved computer
-  sees the same as before in both.
-
-## Linggen's own notes (`memory_notes`) — memory v2, in trial
-
-Linggen's own memory (`memory-spec.md`), for a host that has none
-of its own to keep: one tool, ops `index` (the notes for a project), `read`
-(a note by id, or a topic file by path), `search` (words, also across other
-agents' memory), `write` (add, update, void, no_raise by id). Served to the
-owner at this Mac when `[memory] outside_agents = "v2"`; in v1 it answers
-that it is not served. Under v2 it is where **facts about the person that hold
-everywhere** go (language, how to address them, long-standing preferences:
-`write` with scope `person`), because Claude Code has no global memory of its
-own, only per-project folders and a hand-written `~/.claude/CLAUDE.md`. A host on the door is always a coding reader: notes
-about body, mind and people, and moments, are never shown or written here.
-The tool's text and fields are one definition (`own_memory::spec`) shared with
-a Linggen session's own `memory_notes`. A host that has memory of its own
-writes its project things there (code conventions, project decisions, gotchas)
-and uses this for them only when the person asks to let every agent know.
-
 ## Browser tools
 
 - **`browser_open`** — `op: navigate` + `url` (absolute, or back / forward);
@@ -206,18 +141,6 @@ the memory rules, the watcher rule for every `agent_run`, how to answer
 solve runbook with `memory_upkeep op=dream_status`. The remote view carries the
 memory part only, and upkeep with the host's own model (no `agent_run`, browser
 or `dream_run`).
-
-Under v2 this machine's text drops the v1 save rules and upkeep (the door offers
-neither) and, in one text for every host, says three things by scope: facts
-about the person that hold everywhere go to `memory_notes op=write`, scope
-`person`; project things (code conventions, decisions with their why, gotchas) go
-to the agent's own memory; and to read another agent's memory, open its file
-directly when the host can, and use `memory_agents` only when it can't (a
-sandbox, another machine). Linggen is not a mandatory middle layer. The
-2,048-character limit holds for it too (`the_server_text_fits_and_carries_what_a_caller_acts_on`,
-`the_v2_server_text_drops_the_save_rules_and_keeps_the_rest`), the scope split is
-held word for word by `the_v2_server_text_splits_memory_by_scope`, and the text is
-fingerprinted with the tools (`the_published_surface_is_locked`).
 
 A run that cannot go on says so; the server text tells a caller what to do on a
 usage limit: read the reset time, then pick a ready model (`agent_status
@@ -425,4 +348,3 @@ tool namespace is gone with the second server.
    served by the engine from 2.3. History.
 2. **2.5: one door.** Done.
 3. **2.7: the tool `app`.** Done.
-4. **3.0: `memory_agents` and `memory_notes`.** Done.

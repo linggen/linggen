@@ -22,8 +22,6 @@ pub enum Agent {
     Yinyue,
     /// The memory keeper (agents/memory.md), which runs the memory missions.
     Memory,
-    /// The chronicle's writer (agents/chronicler.md), which runs the chronicle mission.
-    Chronicler,
 }
 
 impl Agent {
@@ -32,7 +30,6 @@ impl Agent {
             Agent::Ling => "ling",
             Agent::Yinyue => "yinyue",
             Agent::Memory => "memory",
-            Agent::Chronicler => "chronicler",
         }
     }
 
@@ -43,7 +40,6 @@ impl Agent {
             Agent::Ling => "You are Ling — Linggen itself",
             Agent::Yinyue => "You are Yinyue — 银月",
             Agent::Memory => "You are the memory keeper.",
-            Agent::Chronicler => "You are the chronicler.",
         }
     }
 }

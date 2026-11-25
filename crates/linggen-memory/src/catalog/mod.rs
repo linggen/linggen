@@ -36,68 +36,22 @@ pub enum View {
     Remote,
 }
 
-/// How this Linggen serves agents outside it (`[memory] outside_agents`):
-/// the v1 way (the host writes into Linggen's store) or the v2 way (each
-/// agent keeps its own memory and Linggen only reads it).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Mode {
-    V1,
-    V2,
-}
-
-/// Who is at the door and how this Linggen is serving them: the one value
-/// `tools/list`, `tools/call` and the server text are all read from.
-/// A caller inside Linggen (its own sessions, the memory daemon's `/mem/mcp`)
-/// passes a bare [`View`], which is the door in [`Mode::V1`]: the store's
-/// tools are theirs whichever way outside agents are served.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Door {
-    pub view: View,
-    pub mode: Mode,
-}
-
-impl From<View> for Door {
-    fn from(view: View) -> Self {
-        Door { view, mode: Mode::V1 }
-    }
-}
-
-impl Door {
-    /// The same caller as the door of the v1 way.
-    pub fn in_v1(self) -> Door {
-        Door { mode: Mode::V1, ..self }
-    }
-
-    fn bit(self) -> u8 {
-        match (self.view, self.mode) {
-            (View::Local, Mode::V1) => 1,
-            (View::Local, Mode::V2) => 2,
-            (View::Remote, Mode::V1) => 4,
-            (View::Remote, Mode::V2) => 8,
-        }
-    }
-}
-
-/// The doors a branch is visible and callable at: a set of (view, mode).
+/// The views a branch is visible and callable in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Views(u8);
 
 impl Views {
-    /// This machine, served either way.
-    pub const LOCAL: Views = Views(1 | 2);
-    /// This machine and the computers it approved, served either way.
-    pub const ALL: Views = Views(1 | 2 | 4 | 8);
-    /// This machine while outside agents are served the v1 way, and every
-    /// approved computer: the store's own memory tools. Under v2 an agent
-    /// outside Linggen keeps its own memory, so this machine's door stops
-    /// offering them (an approved computer's agent has its memory on its
-    /// own machine, out of this one's reach, so it keeps them).
-    pub const MEMORY_V1: Views = Views(1 | 4 | 8);
-    /// This machine, served the v1 way, only.
-    pub const LOCAL_V1: Views = Views(1);
+    /// This machine only.
+    pub const LOCAL: Views = Views(1);
+    /// This machine and the computers it approved.
+    pub const ALL: Views = Views(3);
 
-    pub fn has(self, door: impl Into<Door>) -> bool {
-        self.0 & door.into().bit() != 0
+    pub fn has(self, view: View) -> bool {
+        let bit = match view {
+            View::Local => 1,
+            View::Remote => 2,
+        };
+        self.0 & bit != 0
     }
 }
 
@@ -342,36 +296,27 @@ impl<D: Copy + 'static> Catalog<D> {
     }
 
     /// The branches of `name` that `view` can see and call.
-    pub fn visible(&self, door: impl Into<Door>, name: &str) -> Vec<&Branch<D>> {
-        let door = door.into();
+    pub fn visible(&self, view: View, name: &str) -> Vec<&Branch<D>> {
         self.branches_of(name)
-            .filter(|b| b.views.has(door))
+            .filter(|b| b.views.has(view))
             .collect()
-    }
-
-    /// Whether `name` is a tool this door does not offer only because of
-    /// the way outside agents are served: the v1 door would offer it.
-    pub fn withheld_by_mode(&self, door: impl Into<Door>, name: &str) -> bool {
-        let door = door.into();
-        self.visible(door, name).is_empty() && !self.visible(door.in_v1(), name).is_empty()
     }
 
     /// The tools `view` sees, as `tools/list` publishes them: a tool with no
     /// branch in the view is not listed, and a listed tool's schema and
     /// text name only the branches the view can call.
-    pub fn tools_list(&self, door: impl Into<Door>) -> Vec<Value> {
-        let door = door.into();
+    pub fn tools_list(&self, view: View) -> Vec<Value> {
         self.tools
             .iter()
-            .filter_map(|doc| schema::tool_def(self, door, doc))
+            .filter_map(|doc| schema::tool_def(self, view, doc))
             .collect()
     }
 
     /// The branch a call means and the arguments it runs with, or the
     /// refusal a caller reads. A tool or `op` the view cannot see is
     /// answered as though it did not exist.
-    pub fn resolve(&self, door: impl Into<Door>, name: &str, args: Value) -> Resolved<'_, D> {
-        check::resolve(self, door.into(), name, args)
+    pub fn resolve(&self, view: View, name: &str, args: Value) -> Resolved<'_, D> {
+        check::resolve(self, view, name, args)
     }
 
     /// The branch a call names, read the way [`resolve`](Self::resolve)
@@ -379,8 +324,8 @@ impl<D: Copy + 'static> Catalog<D> {
     /// checking its fields. `None` when the call names no branch the view
     /// has. For a client that fills fields in before the call goes out: it
     /// fills only the fields of the branch that will run.
-    pub fn branch_of(&self, door: impl Into<Door>, name: &str, args: &Value) -> Option<&Branch<D>> {
-        check::branch_of(self, door.into(), name, args)
+    pub fn branch_of(&self, view: View, name: &str, args: &Value) -> Option<&Branch<D>> {
+        check::branch_of(self, view, name, args)
     }
 }
 
@@ -521,30 +466,5 @@ mod tests {
         };
         assert_eq!(text(View::Local), "Ops: a, b. b is local.");
         assert_eq!(text(View::Remote), "Ops: a.");
-    }
-
-    /// A branch is visible at the doors its mask names: the store's tools
-    /// not to this machine under v2 and to a bare view (a caller inside
-    /// Linggen) always; `withheld_by_mode` is that difference alone.
-    #[test]
-    fn a_door_is_a_view_and_a_mode() {
-        let door = |view, mode| Door { view, mode };
-        assert!(Views::MEMORY_V1.has(door(View::Local, Mode::V1)));
-        assert!(!Views::MEMORY_V1.has(door(View::Local, Mode::V2)));
-        assert!(Views::MEMORY_V1.has(door(View::Remote, Mode::V2)));
-        assert!(Views::LOCAL.has(door(View::Local, Mode::V2)));
-        assert!(!Views::LOCAL.has(door(View::Remote, Mode::V1)));
-        assert!(Views::LOCAL_V1.has(View::Local) && !Views::LOCAL_V1.has(door(View::Local, Mode::V2)));
-        let mut old = branch("t", "a");
-        old.views = Views::MEMORY_V1;
-        let cat = Catalog::new(vec![doc("t"), doc("u")], vec![old, branch("u", "a")], vec![]).unwrap();
-        let v2 = door(View::Local, Mode::V2);
-        assert_eq!(cat.tools_list(v2).len(), 1);
-        assert_eq!(cat.tools_list(View::Local).len(), 2);
-        assert!(cat.withheld_by_mode(v2, "t"));
-        assert!(!cat.withheld_by_mode(v2, "u"));
-        assert!(!cat.withheld_by_mode(View::Local, "t"));
-        assert!(!cat.withheld_by_mode(v2, "nothing"));
-        assert!(matches!(cat.resolve(v2, "t", json!({})), Resolved::Unknown));
     }
 }

@@ -434,10 +434,6 @@ pub struct Tools {
     /// The running turn's Steer (`engine/steer.rs`), wired by the server for
     /// a person's turn: a foreground Bash moves to the background on it.
     pub(crate) steer: Option<Arc<crate::engine::steer::SteerSignal>>,
-    /// Who the `memory_notes` call is for (`own_memory::audience_of`), set
-    /// by the engine for that call (`tools_for_call`); unset is the
-    /// narrower reader.
-    pub(crate) memory_audience: Option<crate::own_memory::Audience>,
 }
 
 impl Tools {
@@ -473,7 +469,6 @@ impl Tools {
             turn_place: Default::default(),
             private_app: None,
             steer: None,
-            memory_audience: None,
         })
     }
 

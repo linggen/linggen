@@ -3,7 +3,6 @@
 # Memory is inside the engine and checked there.
 . ./common.sh
 . ./expect.env
-. ./notes.sh
 
 # The whole first-run path runs under a tccd watch.
 tcc_watch_start
@@ -53,10 +52,6 @@ engine_alone_on_its_port "$(listener_pid "$EP")"
 check "memory: the engine is the one listener on $EP" $? "$PORT_DETAIL" "$PORT_DETAIL"
 mcp_answers "$ENGINE_MEM/mcp"
 check "memory: $EP/mem/mcp initialize + tools/list" $? "$MCP_DETAIL" "$MCP_DETAIL"
-
-# Memory V2 is opt-in in 2.7: a fresh home ends on v1 with nothing moved and
-# no notes served (notes.sh).
-notes_fresh "first install: notes"
 
 # ── One chat turn on the fake model ────────────────────────────────────────
 stop_engine

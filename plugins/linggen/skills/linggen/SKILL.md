@@ -3,7 +3,7 @@ name: linggen
 description: >-
   Linggen — durable cross-host memory plus agents and browser control,
   from one local program (`ling`, the Linggen engine) over one MCP server,
-  `linggen` (memory, agents, browser, apps and notes). Memory: three-tier
+  `linggen` (memory, agents, browser and apps). Memory: three-tier
   model (core + long-term + episodic staging) of who the user is, not a
   log of what was done; one store shared by Claude Code, Codex and
   Linggen, and reachable over the LAN from a machine with only the plugin
@@ -40,16 +40,6 @@ second, separate store. There, MCP is the only path. Every command in
 this document works on both paths. One store, same semantics across
 every host that loads this skill.
 
-**When this Linggen is on memory v2** (`[memory] outside_agents = "v2"`) the
-door lists none of those five tools, and a call of one is refused with
-"memory v2". Then this skill's memory modes — search, list, add, dream, scan,
-solve, status — do not apply: say in one line "this Linggen is on memory v2,
-where each agent keeps its own memory", and do nothing else with them. Do not
-reach for the `ling mem` CLI instead: it writes the v1 store, which nothing
-reads under v2. Use `memory_agents` to read what other agents remember and
-`memory_notes` for Linggen's own notes (the server's instructions say which
-goes where). The browser, agent and app tools are the same in both.
-
 *Part of the [Linggen](https://linggen.dev) agent platform.*
 
 **Skill resources** live alongside this `SKILL.md`. When the instructions
@@ -67,7 +57,7 @@ on Claude Code, `${PLUGIN_ROOT}/skills/linggen/` on Codex.
 
 This skill has one required program: **`ling`** (Linggen, the engine). It
 hosts memory — the `ling mem` CLI every Bash-only channel shells out to —
-and serves all its tools (memory, `agent_*`, `browser_*`, `app`, `memory_agents`, `memory_notes`) on its one
+and serves all its tools (memory, `agent_*`, `browser_*`, `app`) on its one
 MCP door, `127.0.0.1:9527/mcp`. The Claude Code / Codex plugin's session-start hook
 installs and starts it automatically (the install runs in the
 background, disclosed in the session context) — unless

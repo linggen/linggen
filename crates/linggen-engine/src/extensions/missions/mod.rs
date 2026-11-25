@@ -1183,7 +1183,7 @@ mod tests {
         let scan = builtin("memory-scan", include_str!("../../../../../missions/memory-scan/mission.md"));
         assert!(!scan.enabled && scan.schedule.is_empty(), "never on a schedule");
         assert_eq!(scan.agent_id, "memory");
-        assert_eq!(scan.prepare, ["v1-only", "mem", "scan", "$DAY"]);
+        assert_eq!(scan.prepare, ["mem", "scan", "$DAY"]);
         assert!(scan.kickoff_fresh);
         assert_eq!(scan.kickoff_stop, ["DONE", "CLEAN", "FAILED"]);
         assert!(!scan.kickoff_day[0].contains("ling mem scan"), "the model runs no scan");
@@ -1194,28 +1194,6 @@ mod tests {
             grants(&scan),
             [("~/.linggen/memory/.scan-output.jsonl".to_string(), "read".to_string())]
         );
-    }
-
-    /// A mission whose agent is the v1 memory agent works the v1 store, so it
-    /// must open with the `v1-only` gate (`src/cli/v1_only.rs` decides under
-    /// v2); one that does not, such as the chronicle, must not carry it. A
-    /// new mission of the memory agent that forgets the gate fails here.
-    #[test]
-    fn every_builtin_mission_of_the_v1_memory_agent_is_gated_and_no_other_is() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../missions");
-        let mut gated = Vec::new();
-        for entry in std::fs::read_dir(&dir).unwrap().flatten() {
-            let id = entry.file_name().to_string_lossy().to_string();
-            let text = std::fs::read_to_string(entry.path().join("mission.md")).unwrap();
-            let mission = parse_mission_md(&id, &text).unwrap();
-            let is_gated = mission.prepare.first().map(String::as_str) == Some("v1-only");
-            assert_eq!(is_gated, mission.agent_id == "memory", "{id}: agent {} prepare {:?}", mission.agent_id, mission.prepare);
-            if is_gated {
-                gated.push(id);
-            }
-        }
-        gated.sort();
-        assert_eq!(gated, ["dream", "memory-scan", "memory-solve"]);
     }
 
     /// The scan's tools and grant through the real tool scope and gate: no

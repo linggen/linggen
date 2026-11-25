@@ -149,11 +149,6 @@ pub(crate) mod project_walk_tests {
                 "memory's own walk; held equal by the_memory_root_walk_agrees_with_this_one",
             ),
             (
-                "crates/linggen-engine/src/outside_memory/disk.rs",
-                1,
-                "reads the .git of a root find_git_root found, to list its worktrees; not a root walk",
-            ),
-            (
                 "src/server/mcp_agent.rs",
                 1,
                 "is this a linked worktree (a .git file), not a root walk",

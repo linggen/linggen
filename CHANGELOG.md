@@ -1,49 +1,16 @@
 # Changelog
 
-## [2.7.0] - 2026-11-25 — share your Mac with your household; you can talk to Yinyue; Linggen's own notes, to try
+## [Unreleased]
+
+- Shell memory (Memory V2, opt-in in 2.7) is withdrawn; Linggen memory stays.
+
+## [2.7.0] - 2026-11-25 — share your Mac with your household; you can talk to Yinyue
 
 Built and tested with fakes and made-up rows; not yet tried on a second
-person's Mac or phone. The move of old memory is tested on made-up rows only.
+person's Mac or phone.
 
-### Memory — notes, opt-in
-
-- **Linggen can keep its own notes; you turn them on.** Nothing changes
-  until you do: memory stays as it was. Set `[memory] linggen = "v2"` (and
-  `outside_agents = "v2"` for Claude Code and Codex) in the config to try it.
-  What Linggen keeps about you and your work is then plain Markdown under
-  `~/.linggen/memory/` — `person/`, `areas/`, `projects/`, `moments/`,
-  `chronicle/` — which you can read and edit. Ling and Yinyue start each
-  session with an index of it and a `memory_notes` tool; nothing is recalled
-  into each turn and no reminder is sent to write. Take the section out to go
-  back.
-- **Your old memory moves over once.** The first start with notes on, when no
-  note exists yet, keeps your preferences and rules, decisions, learned
-  gotchas and facts about you as notes. What was done (built, fixed, tried),
-  staged lines and anything that reads as status are left behind, with every
-  key-shaped secret. Your old store is not touched.
-- **`ling mem migrate-v2`** does the same by hand. `--dry-run` prints what it
-  would keep and drop, by reason, and writes nothing; run again, it adds
-  nothing twice. A Mac that already has notes is left alone.
-- The rules keep more than a careful read would; the dream thins them later.
-- **Only decisions, rules and gotchas are written, never status.** A note
-  that reads as "what was done" is refused with a fixed reason; a note in your
-  own words changes only after you agree; a note can be marked "don't raise"
-  and she never brings it up herself. Every change keeps its older copies.
-- **Notes about your body, mind, people and moments never reach a coding
-  agent.** Yinyue sees them; Claude Code and Codex see the rest.
-- **Claude Code and Codex are read, never written.** Linggen forwards what
-  they remember about the project at session start, and the new door tool
-  `memory_agents` lets any agent look it up. A host with no memory of its own
-  keeps its notes in `memory_notes`.
-- **Settings → Notes** shows what Linggen remembers, by source: yours (edit,
-  void, don't raise, delete) and each other agent's (read only).
-- **A month at a time, a chronicle.** On the 1st a built-in mission writes the
-  months that have ended into `chronicle/`; `ling chronicle backfill` writes
-  them now. Yinyue's day knows what happened on this day, the days that
-  recur, and what you asked her not to raise.
-- **Your phone's memory goes to the notes too.** The owner's phone adds,
-  deletes, searches and lists through the same notes, so the phone's Yinyue and
-  the Mac's share one memory.
+Shell memory was offered as an opt-in trial in this release. Its implementation
+is preserved on `shell-memory` (`shell-memory-snapshot-1125`).
 
 ### Models
 

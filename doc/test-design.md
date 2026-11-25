@@ -276,19 +276,6 @@ plugin `linggen@linggen-memory`; Codex is handed in at the plugin step):
    including those written after the upgrade; the release again stops the
    old daemon again and the marker keeps a second backup from being made.
    A baseline with no old daemon makes these a GAP.
-   Memory V2 (opt-in in 2.7, `vm/notes.sh`): an upgrade on the default (no
-   `[memory]` written as v2) stays v1 — no `.state/moved-from-v1.json`, no
-   note, `memory_notes` listed at the door and refused, no notes section in
-   Ling's or Yinyue's prompt; a baseline that already holds the record is a
-   GAP. The first install checks the same. The VM is never switched to v2: a
-   green run is kept as the next baseline. The move runs on this Mac, in the
-   gate's host phase, against scratch engines of the release's own `ling`
-   (`scripts/gate/notes-local.sh`): a fresh home and a home with v1 rows,
-   `[memory]` written as v1 and then taken out, stay v1; that home written as
-   v2 moves its rows into notes once (each seeded long-term and core row a
-   note by its own id, the staged row not; the door lists exactly the
-   catalogue's tools, in order; both prompts hold the notes section), and a
-   second start moves nothing again.
 3. Pass when: the store opens with every row (and `apply-schema --yes` keeps
    them); old sessions, config and a chat turn on the old config work;
    `install-plugin.sh` retires `linggen@linggen-memory` (the 2.2.x plugin

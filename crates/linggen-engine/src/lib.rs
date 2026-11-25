@@ -21,8 +21,6 @@ pub mod memory_host;
 pub mod message;
 pub mod mirror;
 pub mod notes;
-pub mod outside_memory;
-pub mod own_memory;
 pub mod paths;
 pub mod permission_mode;
 pub mod perception;

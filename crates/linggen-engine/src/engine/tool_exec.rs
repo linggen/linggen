@@ -1576,9 +1576,6 @@ impl AgentEngine {
     /// Carry the gate's read decision into the executor for each path it visits.
     pub(crate) fn tools_for_call(&self, exec: &ReadyExec) -> crate::engine::tool_registry::ToolRegistry {
         let mut tools = self.tools.clone();
-        if exec.canonical_tool == crate::own_memory::TOOL {
-            tools.builtins.memory_audience = Some(self.memory_audience());
-        }
         if matches!(exec.canonical_tool.as_str(), "Read" | "Glob" | "Grep") {
             let perms = self.session_permissions.clone();
             let ceiling = self.session_spec.ceiling;

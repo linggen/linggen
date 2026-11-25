@@ -43,17 +43,14 @@
 //! (`restamp_device`). See `phone-memory-spec.md`.
 
 use axum::{
-    extract::{ConnectInfo, Json, Path, State},
+    extract::{ConnectInfo, Json, Path},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
 use serde_json::{json, Value};
 use std::net::SocketAddr;
-use std::sync::Arc;
 
 use crate::memory_host::caller::{self, Caller};
-use crate::own_memory::{self, Mode};
-use crate::server::ServerState;
 use ling_mem::{Person, Who};
 
 /// `POST /api/memory/<verb>` — the verb, answered by the store this engine
@@ -65,23 +62,14 @@ use ling_mem::{Person, Who};
 /// gets memory's own 404. A phone that is another person may run only the
 /// verbs memory keeps per person (`ling_mem::Who`).
 pub async fn passthrough(
-    State(state): State<Arc<ServerState>>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Path(verb): Path<String>,
     headers: HeaderMap,
     body: Option<Json<Value>>,
 ) -> Response {
-    // Which memory Linggen's own sessions have: read here for the one case
-    // that differs, the owner's own phone (`phone_notes`).
-    let mode = state.manager.get_config_snapshot().await.memory.linggen();
-    serve(mode, peer, &verb, &headers, body.map(|Json(v)| v)).await
-}
-
-/// [`passthrough`] with the memory mode given: the handler's body.
-async fn serve(mode: Mode, peer: SocketAddr, verb: &str, headers: &HeaderMap, body: Option<Value>) -> Response {
-    let args = body.unwrap_or_else(|| json!({}));
-    let asker = asker_of(&caller::resolve(peer.ip(), headers));
-    answer(&asker, mode, verb, args).await
+    let args = body.map(|Json(v)| v).unwrap_or_else(|| json!({}));
+    let asker = asker_of(&caller::resolve(peer.ip(), &headers));
+    answer(&asker, &verb, args).await
 }
 
 /// How long the door, and the engine's own memory helpers, wait for a verb.
@@ -89,16 +77,13 @@ pub(crate) const VERB_TIMEOUT: std::time::Duration =
     crate::engine::tools::memory_http::DISPATCH_TIMEOUT;
 
 /// The door's answer to `asker` for `verb` with `args`.
-async fn answer(asker: &Asker, mode: Mode, verb: &str, mut args: Value) -> Response {
+async fn answer(asker: &Asker, verb: &str, mut args: Value) -> Response {
     if !is_safe_verb(verb) {
         return unreachable_envelope(
             StatusCode::BAD_REQUEST,
             format!("invalid memory verb: {verb}"),
             "BAD_REQUEST",
         );
-    }
-    if let Some(res) = phone_notes(asker, mode, verb, &args) {
-        return res;
     }
     let who = match fit(asker, verb, &mut args) {
         Ok(who) => who,
@@ -135,30 +120,6 @@ async fn answer(asker: &Asker, mode: Mode, verb: &str, mut args: Value) -> Respo
             unreachable_envelope(StatusCode::BAD_GATEWAY, format!("{e:#}"), "UNREACHABLE")
         }
     }
-}
-
-/// The owner's own phone under Memory V2: its verbs are answered from
-/// Linggen's own notes (`own_memory::phone`), not from the ling-mem store V2
-/// sessions never read. `None` for everyone else, which goes the old way:
-/// the notes are the owner's alone (they have no per-person partition), so
-/// a phone that is another person, a machine and a skill page stay with the
-/// store that keeps each person's rows apart.
-fn phone_notes(asker: &Asker, mode: Mode, verb: &str, args: &Value) -> Option<Response> {
-    if mode != Mode::V2 || !matches!(asker, Asker::Phone(None)) || !own_memory::phone::serves(verb) {
-        return None;
-    }
-    let Some(store) = own_memory::Store::this_machine() else {
-        return Some(unreachable_envelope(
-            StatusCode::BAD_GATEWAY,
-            "this machine has no home folder to keep notes in".to_string(),
-            "UNREACHABLE",
-        ));
-    };
-    let now = crate::util::now_ts_secs() as i64;
-    Some(match own_memory::phone::answer(&store, verb, args, now) {
-        Ok(data) => Json(json!({ "ok": true, "data": data })).into_response(),
-        Err(why) => unreachable_envelope(StatusCode::INTERNAL_SERVER_ERROR, why, "NOTES_NOT_SAVED"),
-    })
 }
 
 /// Who is asking memory, as the door tells them apart.

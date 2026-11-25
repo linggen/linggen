@@ -31,14 +31,12 @@ pub mod caller;
 mod routes;
 mod standin;
 mod takeover;
-mod upgrade;
 
 pub use call::{post_verb, post_verb_blocking, Answer, NoAnswerInTime};
 #[cfg(any(test, feature = "test-support"))]
 pub use call::{TestHost, TEST_HOST};
 pub use routes::{is_open_path, routes};
 pub use standin::{ling_mem_path, restore_previous};
-pub use upgrade::upgrade_to_v2;
 
 use ling_mem::hosted::StoreLock;
 use std::path::{Path, PathBuf};

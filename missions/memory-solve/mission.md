@@ -13,10 +13,6 @@ enabled: false
 # protocol.
 agent: memory
 cwd: ~/.linggen
-# A v1 memory job: under `[memory] linggen = "v2"` nobody reads the v1 store, so
-# the run is skipped with a plain reason — no model call, no session
-# (`ling v1-only`, `src/cli/v1_only.rs`, the one place that decides).
-prepare: [v1-only]
 kickoff-stop: [DONE]
 kickoff:
   - >-

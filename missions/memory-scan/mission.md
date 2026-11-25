@@ -10,13 +10,12 @@ enabled: false
 # "Procedure — scan one day"); this file carries the run protocol.
 agent: memory
 cwd: ~/.linggen
-# Under `[memory] linggen = "v2"` the run is skipped before the walk (`ling v1-only`,
-# `src/cli/v1_only.rs`). The engine itself runs the walk of the day's session logs before the
+# The engine itself runs the walk of the day's session logs before the
 # first turn — the running `ling`, these arguments, no shell, no model.
 # It writes ~/.linggen/memory/.scan-output.jsonl; if it fails the run ends
 # failed, unstamped, before any model call. A trigger with no day fails
 # here too.
-prepare: [v1-only, mem, scan, $DAY]
+prepare: [mem, scan, $DAY]
 # One candidate session per turn, each turn starting clean: a day's
 # transcripts run to 200 KB a session, and reading them all in one
 # context would carry every earlier one into every later call.

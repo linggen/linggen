@@ -14,7 +14,6 @@ pub(super) mod live;
 pub(super) mod marketplace;
 pub(super) mod media;
 pub(super) mod memory;
-pub(super) mod memory_sources;
 pub(super) mod missions;
 pub(super) mod notes;
 pub(super) mod outside_apps;

@@ -153,19 +153,6 @@ to `ling.prev`: every row there, the release's included, no new backup when
 that version's marker was there, and a write; rolling forward finds every
 row and takes no second backup.
 
-Memory V2 (opt-in in 2.7; `vm/notes.sh`, rehearsed on this Mac by
-`scripts/gate/notes-local.sh` and run in the gate's host phase on the
-release's own `ling`): v1 — no `[memory]` section, or one written as v1 — is
-no `.state/moved-from-v1.json`, no note, `memory_notes` listed at the door and
-refused, no notes section in Ling's or Yinyue's prompt. The VM checks that on
-a first install and on the upgrade from the previous release (a baseline that
-already holds the record is a GAP); the VM is never switched to v2, so a
-green run's saved baseline is still an un-moved v1 home. The host run also
-writes `[memory]` as v2 on a home with v1 rows: the move is recorded, each
-long-term and core row is a note by its own id, the staged row none, the door
-lists the catalogue's tools in order (`DOOR_TOOL_NAMES`), both prompts hold
-the notes section, and a second start moves nothing again.
-
 Plugins: `linggen-prev` (2.2.x) has `linggen@linggen-memory` in Claude Code,
 as the builder's own Macs do. After `install-plugin.sh`, first install and
 upgrade alike: `linggen@linggen` enabled in Claude Code and Codex, no

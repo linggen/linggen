@@ -6,7 +6,7 @@
 //! nothing is guessed — not an `op`, a date or a permission.
 
 use super::schema::form;
-use super::{Branch, Catalog, Door};
+use super::{Branch, Catalog, View};
 use serde_json::{json, Map, Value};
 
 /// What a folded call resolved to.
@@ -21,11 +21,11 @@ pub enum Resolved<'a, D: Copy + 'static> {
 
 pub(super) fn resolve<'a, D: Copy + 'static>(
     cat: &'a Catalog<D>,
-    door: Door,
+    view: View,
     name: &str,
     args: Value,
 ) -> Resolved<'a, D> {
-    let Some((implicit, visible)) = tool_of(cat, door, name) else {
+    let Some((implicit, visible)) = tool_of(cat, view, name) else {
         return Resolved::Unknown;
     };
     let mut obj = match args {
@@ -48,11 +48,11 @@ pub(super) fn resolve<'a, D: Copy + 'static>(
 /// not checked.
 pub(super) fn branch_of<'a, D: Copy + 'static>(
     cat: &'a Catalog<D>,
-    door: Door,
+    view: View,
     name: &str,
     args: &Value,
 ) -> Option<&'a Branch<D>> {
-    let (implicit, visible) = tool_of(cat, door, name)?;
+    let (implicit, visible) = tool_of(cat, view, name)?;
     let mut obj = match args {
         Value::Object(obj) => obj.clone(),
         Value::Null => Map::new(),
@@ -65,11 +65,11 @@ pub(super) fn branch_of<'a, D: Copy + 'static>(
 /// A folded tool's implicit `op` and the branches `view` has of it.
 fn tool_of<'a, D: Copy + 'static>(
     cat: &'a Catalog<D>,
-    door: Door,
+    view: View,
     name: &str,
 ) -> Option<(Option<&'static str>, Vec<&'a Branch<D>>)> {
     let doc = cat.tools().iter().find(|d| d.name == name)?;
-    let visible = cat.visible(door, name);
+    let visible = cat.visible(view, name);
     (!visible.is_empty()).then_some((doc.implicit_op, visible))
 }
 

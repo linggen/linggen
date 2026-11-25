@@ -27,7 +27,7 @@
 #    CC honors the field natively; Codex ignores unknown JSON and keeps the
 #    side effect (Linggen started). Either way the session never breaks.
 # 4. When that call comes back empty, one short tools/list tells an engine
-#    older than this plugin (no `memory_upkeep` or `memory_agents` on /mcp) from one that is
+#    older than this plugin (no `memory_upkeep` on /mcp) from one that is
 #    just not answering; the old one gets a one-line "update Linggen" note.
 #
 # Bails silently on any failure — never blocks the session.
@@ -170,46 +170,25 @@ session_root=""
 if command -v session_root >/dev/null 2>&1; then
   session_root="$(session_root "$session_cwd")"
 fi
+start_args="$(jq -nc --arg c "$session_cwd" --arg r "$session_root" '
+  {op: "session_start", cwd: $c} + (if ($r | length) > 0 then {root: $r} else {} end)
+' 2>/dev/null || printf '{"op":"session_start"}')"
+
 # A slightly longer budget than a per-turn recall: this runs once, at session
 # start, and an engine that just started may still be opening the store.
 to="${LINGGEN_CORE_TIMEOUT:-5}"
+start_out="$(mcp_call memory_upkeep "$start_args" "$to")"
 
-# v2 (`[memory] outside_agents = "v2"`, asked of the door): this host keeps its
-# own memory; it is forwarded, in one block, Linggen's own notes for this
-# project (summaries and ids) and what the OTHER agents remember
-# (`memory_agents op=index`, which leaves out its own). The engine decides the
-# order and the shares of the budget. v1: core memory and the scope index, as ever.
+# Defensive guard: a malformed payload would make the pipeline below fail
+# silently, and the session would start with no core context and no log of
+# why. Validate the parse first; on failure log to stderr (CC shows hook
+# stderr in the transcript) and inject nothing.
 core_block=""
-start_out=""
-if [ "$(outside_agents_mode)" = v2 ]; then
-  host_word=""
-  case "${PLUGIN_AGENT:-${LINGGEN_CLIENT:-}}" in
-    cc|claude-code) host_word="claude-code" ;;
-    codex)          host_word="codex" ;;
-  esac
-  index_args="$(jq -nc --arg c "$session_cwd" --arg h "$host_word" '
-    {op: "index", cwd: $c} + (if ($h | length) > 0 then {host: $h} else {} end)
-  ' 2>/dev/null || printf '{"op":"index"}')"
-  start_out="$(mcp_call memory_agents "$index_args" "$to")"
-  if [ -n "$start_out" ] && printf '%s' "$start_out" | jq -e 'type == "object"' >/dev/null 2>&1; then
+if [ -n "$start_out" ]; then
+  if printf '%s' "$start_out" | jq -e 'type == "object"' >/dev/null 2>&1; then
     core_block="$(printf '%s' "$start_out" | jq -r '.block // empty' 2>/dev/null || true)"
-  fi
-else
-  start_args="$(jq -nc --arg c "$session_cwd" --arg r "$session_root" '
-    {op: "session_start", cwd: $c} + (if ($r | length) > 0 then {root: $r} else {} end)
-  ' 2>/dev/null || printf '{"op":"session_start"}')"
-  start_out="$(mcp_call memory_upkeep "$start_args" "$to")"
-
-  # Defensive guard: a malformed payload would make the pipeline below fail
-  # silently, and the session would start with no core context and no log of
-  # why. Validate the parse first; on failure log to stderr (CC shows hook
-  # stderr in the transcript) and inject nothing.
-  if [ -n "$start_out" ]; then
-    if printf '%s' "$start_out" | jq -e 'type == "object"' >/dev/null 2>&1; then
-      core_block="$(printf '%s' "$start_out" | jq -r '.block // empty' 2>/dev/null || true)"
-    else
-      printf 'linggen autostart: memory_upkeep op=session_start returned non-JSON; skipping memory injection\n' >&2
-    fi
+  else
+    printf 'linggen autostart: memory_upkeep op=session_start returned non-JSON; skipping memory injection\n' >&2
   fi
 fi
 

@@ -65,10 +65,10 @@ async fn install_vault(w: &World) {
     .await;
 }
 
-/// This machine's door publishes fifteen tools, `memory_notes` last, and
-/// none of them a file or shell tool.
+/// This machine's door publishes thirteen tools, `app` last, and none of
+/// them a file or shell tool.
 #[tokio::test]
-async fn the_door_has_fifteen_tools_and_no_file_or_shell_tool() {
+async fn the_door_has_thirteen_tools_and_no_file_or_shell_tool() {
     let w = World::start(Setup::default()).await;
     let res = w
         .api
@@ -83,8 +83,8 @@ async fn the_door_has_fifteen_tools_and_no_file_or_shell_tool() {
         .iter()
         .map(|t| t["name"].as_str().unwrap())
         .collect();
-    assert_eq!(names.len(), 15, "{names:?}");
-    assert_eq!(names.last(), Some(&"memory_notes"), "{names:?}");
+    assert_eq!(names.len(), 13, "{names:?}");
+    assert_eq!(names.last(), Some(&"app"), "{names:?}");
     for tool in [
         "Read", "Write", "Edit", "Bash", "Glob", "Grep", "WebFetch", "Task", "Skill", "AppTool",
     ] {

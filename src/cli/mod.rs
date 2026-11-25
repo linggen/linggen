@@ -1,5 +1,4 @@
 pub mod account;
-pub mod chronicle;
 pub mod claude;
 pub mod daemon;
 pub mod engine_restart;
@@ -11,4 +10,3 @@ pub mod restart;
 pub mod self_update;
 pub mod skills_cmd;
 pub mod status;
-pub mod v1_only;

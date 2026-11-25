@@ -19,7 +19,6 @@ mod exec;
 mod fs;
 mod image;
 mod media;
-mod memory_notes;
 mod notes;
 mod pet;
 mod sense;
@@ -37,7 +36,6 @@ pub use exec::*;
 pub use fs::*;
 pub use image::*;
 pub use media::*;
-pub use memory_notes::*;
 pub use notes::*;
 pub use pet::*;
 pub use sense::*;
@@ -163,8 +161,6 @@ pub(super) fn registry() -> &'static [Arc<dyn Tool>] {
             Arc::new(SendMessageTool),
             Arc::new(TaskOutputTool),
             Arc::new(TaskStopTool),
-            // Linggen's own memory (Memory V2): withheld unless `[memory] linggen = "v2"`.
-            Arc::new(MemoryNotesTool),
             // Memory is NOT here. ling-mem is an MCP server and the model
             // uses its tools directly (`mcp__memory__memory_*`), discovered
             // at runtime rather than compiled in — so there is one memory

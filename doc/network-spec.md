@@ -11,7 +11,7 @@ status: describes what ships today; the open section is not built
 
 Two daemons on the user's machine, and everything else is a client of one of
 them. **Since 2.3 (unreleased) memory is hosted by the engine** — one
-process on one port; see `memory-spec.md` § V1 (the way back), Hosted by the engine.
+process on one port; see `memory-spec.md` § Hosted by the engine.
 The diagram and tables below still show the two-daemon edges; the rows marked
 *2.3* say what answers them now. Nothing listens on 9528 any more: a caller
 that still names it (a plugin before its move to 9527) gets no answer. Every edge below is in the shipped code; the transport on each arrow is
@@ -111,7 +111,7 @@ The phone's Ling tab needs none of it: it drives a session on the Mac, and that
 agent reaches memory on its own loopback like every local caller.
 
 Each tool is served in exactly one place: since 2.5, `/mcp` on the engine's
-port (memory, agents, browser, apps, notes — the catalogue, `mcp-spec.md`).
+port (memory, agents, browser, apps — the catalogue, `mcp-spec.md`).
 
 ## The two daemons
 

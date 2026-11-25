@@ -11,9 +11,8 @@
 # One address: where Linggen lives (host + port), and, for another machine,
 # that machine's token. Linggen's one MCP door hangs off it:
 #
-#   $LINGGEN_MCP_URL = $LINGGEN_URL/mcp   memory, agents, browser, apps and notes
-#                                         (another machine sees the five
-#                                         memory tools)
+#   $LINGGEN_MCP_URL = $LINGGEN_URL/mcp   memory, agents, browser and apps
+#                                         (another machine sees memory tools only)
 #
 # Authored in ONE file, `~/.linggen/client.json`, written by
 # `scripts/config.sh` (`/linggen:config`):
@@ -138,10 +137,9 @@ mcp_call() {
 }
 
 # Does the engine at this address publish the one door? A short tools/list:
-# prints `yes` when it lists memory_upkeep (the v1 way) or memory_agents
-# (the v2 way: the door lists no v1 memory tool), `no` when it answers
-# without either (an engine older than this plugin), nothing when it does
-# not answer (not running, not approved — other hooks and hints cover those).
+# prints `yes` when it lists memory_upkeep, `no` when it answers without it
+# (an engine older than this plugin), nothing when it does not answer (not
+# running, not approved — other hooks and hints cover those).
 mcp_door() {
     local to="${1:-2}" out
     command -v curl >/dev/null 2>&1 || return 0
@@ -152,22 +150,6 @@ mcp_door() {
         -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' "$LINGGEN_MCP_URL" 2>/dev/null)" || return 0
     printf '%s' "$out" | jq -r '
         if (.result.tools | type) == "array" then
-            (if any(.result.tools[]; .name == "memory_upkeep" or .name == "memory_agents") then "yes" else "no" end)
+            (if any(.result.tools[]; .name == "memory_upkeep") then "yes" else "no" end)
         else empty end' 2>/dev/null || true
-}
-
-# How this Linggen serves agents outside it right now: `v1` (the plugin has
-# the host save into Linggen's store and recalls from it every turn) or `v2`
-# (each agent keeps its own memory; Linggen forwards the others' index once,
-# at session start). Linggen's config decides (`[memory] outside_agents`);
-# this only asks the door, so there is one place that knows. Anything but a
-# clear `v2` — an engine that is not running, one older than this plugin, a
-# refusal — is `v1`: today's behaviour, unchanged.
-outside_agents_mode() {
-    local out
-    out="$(mcp_call memory_agents '{"op":"mode"}' "${LINGGEN_MODE_TIMEOUT:-2}")"
-    case "$(printf '%s' "$out" | jq -r '.outside_agents // empty' 2>/dev/null)" in
-        v2) printf 'v2' ;;
-        *)  printf 'v1' ;;
-    esac
 }

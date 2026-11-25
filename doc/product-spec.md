@@ -57,7 +57,7 @@ For background on why an AI app engine is needed, plus landscape and roadmap, se
 | `permission-spec.md` | Privilege model — modes, layers, deny floor, remote trust |
 | `chat-spec.md` | Chat system — events, message model, rendering, APIs |
 | `plan-spec.md` | Plan mode — research-then-execute |
-| `memory-spec.md` | Memory — Linggen's own notes, one writer, the privacy fence, other agents' memory read and forwarded; v1 as the way back |
+| `memory-spec.md` | Memory — extraction, storage, two-tier loading |
 | `models.md` | Hardware abstraction — providers, routing |
 | `webrtc-spec.md` | Transport — P2P, signaling, data channels |
 | `room-spec.md` | Sharing — rooms, shared models, token budgets |
@@ -103,7 +103,7 @@ low-level tools, the model judges), take the vendors' improvements, and do not b
 and mentor, connects what it has seen: two years after a break-up the person has thrown themselves into research and
 done well — now and then she may say it is also time to think of their own life; last Black Friday they regretted a
 1,000 spend — this Black Friday she reminds them. These are examples, not features: Yinyue gets the person's long
-record (memory and chronicle) and the date, and judges for herself when and how to speak (Hanli 2026-11-15: no tool or
+memory and the date, and judges for herself when and how to speak (Hanli 2026-11-15: no tool or
 coded condition per scenario).
 
 **The test for every design:** if models were ten times stronger, would this still matter, and would it still make

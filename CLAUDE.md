@@ -15,7 +15,7 @@ Read files under `doc/` and follow them. If you find wrong content in any doc fi
 - `doc/cli.md` — CLI reference
 - `doc/code-style.md` — architecture principles (one place decides and a lock holds it there; open what varies, close what does not) and code style — read before any non-trivial change
 - `doc/session-spec.md` — session/context: creators, effective tools, prompt assembly
-- `doc/memory-spec.md` — memory (V2): the notes store, one writer, privacy fence, other agents' memory read and forwarded, chronicle, phone, switch and move from v1; v1 as the way back
+- `doc/memory-spec.md` — Linggen memory: the shared ling-mem store, recall and capture, dream/scan/solve, and phone access
 - `doc/mission-spec.md` — cron mission system
 - `doc/plan-spec.md` — plan mode feature
 - `doc/log-spec.md` — logging levels, throttling, output targets
@@ -30,7 +30,7 @@ Read files under `doc/` and follow them. If you find wrong content in any doc fi
 - `doc/yinyue-spec.md` — Yinyue companion: avatar, voice, session + memory model
 - `doc/shared-session-spec.md` — shared sessions: several agents at one table, one thread/tools/permissions, per-agent persona + model
 - `doc/one-ling-spec.md` — one Ling + one Yinyue on every device: who answers, Mac work continues in the app's latest Mac session as the same Ling, sessions stay per device
-- `doc/plan-3.0.md` — PLAN (2026-11-15, agreed; its Progress table says what is built): 2.3 = review, build speed, ling-mem merged into ling, engine in modules, upgrades, app slimming; 2.4 = one Ling and one Yinyue (the daily session, one world state, few general tools); 2.5 = one MCP door; 3.0 = Memory V2 + Lingyu (decided 2026-11-24, §0)
+- `doc/plan-3.0.md` — PLAN (2026-11-15, agreed; its Progress table says what is built): 2.3 = review, build speed, ling-mem merged into ling, engine in modules, upgrades, app slimming; 2.4 = one Ling and one Yinyue (the daily session, one world state, few general tools); 2.5 = one MCP door; Shell memory is withdrawn; Linggen memory stays (decided 2026-11-25, §0)
 - `doc/architecture-review.md` — REVIEW (2026-11-15, read-only): the engine's layers and cycles, the target crates and split order, what the ling-mem merge touches and deletes, how a session is bound today; open questions for Hanli
 - `doc/asset-pack-spec.md` — asset packs (designed 2026-11-15; engine side built, phone/publish/packaging not): a skill lists its heavy files; missing ones are fetched after install by content hash and served at the same address; first user is 灵境 art, Mac and phone
 - `doc/dynamic-session-draft.md` — superseded by `plan-3.0.md` (2026-11-13 talk; the folding design was dropped)

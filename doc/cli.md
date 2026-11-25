@@ -317,14 +317,13 @@ yet.
 
 ```bash
 ling mem <verb> [args…]      # ling mem --help lists the verbs
-ling mem migrate-v2 [--dry-run] [--from FILE]  # Move v1 memory rows into Linggen's own notes (v2); v1 left as it is, safe to repeat
 ling mem scan [WINDOW]       # WINDOW: YYYY-MM-DD, or today|24h (default)|week|month|<n>d|<n>w|<n>m|<n>y
 ling mem scan --sessions YYYY-MM-DD  # List session metadata as NDJSON; no candidates file
 ling mem scan --extract FILE --source SOURCE [--day YYYY-MM-DD] [--max-chars N]  # Filtered text; no candidates file
 ```
 
 Memory's data verbs run against the engine when it is up, else on the store
-directly under its lock (`memory-spec.md` § V1 (the way back), Hosted by the engine).
+directly under its lock (`memory-spec.md` § Memory is hosted by the engine).
 
 `scan` touches no store: it walks this machine's session logs for the day (or
 the window back from today) — Claude Code `~/.claude/projects`, Codex
@@ -341,7 +340,7 @@ No model, no network; it works with the engine up or stopped. Exit 1 on a bad
 window (the usage line) or a missing `bash`, `jq` or `perl` (one line naming
 it). The scripts are embedded in `ling` and run from a private temporary
 folder. Judging the candidates into memory is the `memory-scan` mission's
-work (`memory-spec.md` § V1 (the way back), Scan and solve).
+work (`memory-spec.md` § Scan and solve).
 
 ---
 

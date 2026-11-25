@@ -47,19 +47,6 @@ pub(super) fn routes() -> Routes {
         // Models & skills GETs — used by SharingTab and SkillsTab Settings pages directly.
         // Session list / agents / agent-runs come via page_state only (no GET route).
         .route("/api/models", get(list_models_api))
-        // What Linggen remembers, by source: read for every source, changed for its own notes only
-        .route("/api/remembered-sources", get(api::memory_sources::sources))
-        .route("/api/remembered-sources/{source}/topics", get(api::memory_sources::topics))
-        .route("/api/remembered-sources/{source}/entries", get(api::memory_sources::entries))
-        .route("/api/remembered-sources/{source}/note", get(api::memory_sources::note))
-        .route("/api/remembered-notes/review", get(api::memory_sources::review))
-        .route(
-            "/api/remembered-notes/{id}",
-            put(api::memory_sources::edit).delete(api::memory_sources::delete),
-        )
-        .route("/api/remembered-notes/{id}/void", post(api::memory_sources::void))
-        .route("/api/remembered-notes/{id}/unvoid", post(api::memory_sources::unvoid))
-        .route("/api/remembered-notes/{id}/no-raise", post(api::memory_sources::no_raise))
         .route("/api/uses", get(api::uses::list).put(api::uses::put))
         .route("/api/providers", get(api::providers::list).post(api::providers::create))
         .route("/api/providers/edition", put(api::providers::set_edition))

@@ -9,7 +9,6 @@
 . ./expect.env
 . ./takeover.sh
 . ./inplace.sh
-. ./notes.sh
 
 LING="$(ling_bin)"; MEM="$(mem_bin)"
 
@@ -66,9 +65,6 @@ else
   MEM_KIND=none
   fail "upgrade: the baseline's memory answers" "nothing listens on $LP and $ENGINE_MEM/api/health is not ok"
 fi
-# The baseline's own record of the move to notes, if it ever ran 3.0: an old
-# user has none; a VM kept as the next baseline (--save-prev) does.
-NOTES_RECORD_BEFORE=0; [ -e "$NOTES_MOVED" ] && NOTES_RECORD_BEFORE=1
 rows_before="$("$MEM" stats 2>/dev/null | jq -r '.total // empty')"
 sessions_before="$(ls "$LG/sessions" 2>/dev/null | wc -l | tr -d ' ')"
 info "upgrade: old state" "$rows_before memory rows, $sessions_before sessions"
@@ -147,17 +143,6 @@ check "upgrade: memory answers through the engine after a restart" $? "no ok fro
 nothing_on "$LP"
 check "upgrade: nothing listens on the old port $LP" $? "$PORT_DETAIL" "$PORT_DETAIL"
 
-# Memory V2 is opt-in in 2.7: an upgrade with no `[memory]` written as v2
-# stays on v1 and moves nothing (notes.sh). The move itself, written as v2, is
-# rehearsed on the host (notes-local.sh). The VM is not switched to v2 here: a
-# green run is kept as the next baseline, which must still be an un-moved v1
-# home. A baseline that already holds the record or notes is a GAP.
-if [ "$NOTES_RECORD_BEFORE" = 1 ]; then
-  gap "upgrade: notes: an upgrade on the default stays v1, nothing moved" "the baseline already holds .state/moved-from-v1.json (it ran v2 before)"
-else
-  notes_stays_v1 "upgrade: notes (the default)"
-fi
-
 "$LING" status >"$OUT/status.txt" 2>&1
 grep -q 'fake-ling' "$OUT/status.txt" || grep -qiE 'models?[^0-9]*[1-9]' "$OUT/status.txt"
 check "upgrade: old config loads" $? "$(head -c 200 "$OUT/status.txt")"
@@ -177,11 +162,7 @@ check "upgrade: user mission kept" $? "missions/table-check gone"
 # the engine's own memory server.
 [ -n "${BUILTIN_BODIES:-}" ]
 check "upgrade: the host named the release's built-in missions" $? "BUILTIN_BODIES unset" "$(tr ',' '\n' <<<"${BUILTIN_BODIES:-}" | cut -d= -f1 | tr '\n' ' ')"
-# A mission may name a memory tool of the engine's own memory server, or one
-# the one door lists (the chronicle mission's `memory_notes`).
-mcp_answers "$ENGINE_MEM/mcp"; INTERNAL_NAMES="$MCP_NAMES"
-mcp_answers "http://127.0.0.1:$EP/mcp"
-MCP_NAMES="$INTERNAL_NAMES"$'\n'"$MCP_NAMES"
+mcp_answers "$ENGINE_MEM/mcp"
 IFS=',' read -r -a builtins <<<"${BUILTIN_BODIES:-}"
 for kv in "${builtins[@]}"; do
   name="${kv%%=*}"; want="${kv#*=}"; file="$LG/missions/$name/mission.md"

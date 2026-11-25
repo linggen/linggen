@@ -190,31 +190,6 @@ builtin_bodies() {
 DOOR_TOOL_NAMES="$(jq -r '[.tools[].name] | join(",")' "$REPO/plugins/linggen/evals-isolated/mocks/linggen/_tools.json")"
 VMENV=(MIRROR="$VM_MIRROR" MODEL="$VM_MODEL" GATE_SOURCE="$SOURCE" BUILTIN_BODIES="$(builtin_bodies)" DOOR_TOOL_NAMES="$DOOR_TOOL_NAMES")
 
-# Memory V2 on a scratch engine of the release's own binary, on this Mac
-# (notes-local.sh: fresh, explicit v1, and an old home's move). No VM; the
-# VMs run the same checks (vm/notes.sh) on a real install and upgrade.
-notes_local() {
-  local bin="$RUN/ling-under-test/ling" line status check detail rc=""
-  mkdir -p "$RUN/ling-under-test"
-  tar -xzf "$RUN/mirror/good/$ENGINE_REPO/ling-macos-aarch64.tar.gz" -C "$RUN/ling-under-test" ling \
-    || { record FAIL "host: memory v2 on a scratch engine" "cannot unpack ling from the mirror"; return; }
-  while IFS= read -r line; do
-    case "$line" in
-      RESULT$'\t'*) IFS=$'\t' read -r _ status check detail <<<"$line"; record "$status" "$check" "$detail" ;;
-      GATE_EXIT$'\t'*) rc="${rc}${line##*$'\t'}" ;;
-    esac
-  done < <(DOOR_TOOL_NAMES="$DOOR_TOOL_NAMES" "$GATE_SRC/notes-local.sh" "$bin" 2>"$RUN/notes-local.err")
-  [ -n "$rc" ] && [ "${rc//0/}" = "" ] \
-    && record PASS "host: memory v2 scratch run ran to the end" "${#rc} scenarios, each exit 0" \
-    || record FAIL "host: memory v2 scratch run ran to the end" "exit codes '${rc:-none}' — see $RUN/notes-local.err"
-}
-if [ "$SOURCE" = public ]; then
-  record INFO "host: memory v2 on a scratch engine" "not run — --public gates what is already published"
-else
-  say "Memory V2 on a scratch engine"
-  notes_local
-fi
-
 # The UI in a real browser over the tunnel (Playwright from tests/e2e).
 ui_check() { # vm label
   local e2e="$REPO/tests/e2e" out

@@ -643,7 +643,7 @@ async fn a_prepare_with_nothing_to_do_skips_without_a_session() {
     let w = World::start(Setup::default()).await;
     let dir = w.home.linggen_home().join("missions/empty-prepare");
     std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join("mission.md"), "---\nname: Empty prepare\nenabled: false\nagent: memory\ncwd: ~/.linggen\nprepare: [chronicle, prepare]\nallowed-tools: [Read]\n---\n\nDo work.\n").unwrap();
+    std::fs::write(dir.join("mission.md"), "---\nname: Empty prepare\nenabled: false\nagent: memory\ncwd: ~/.linggen\nprepare: [--test-prepare-empty]\nallowed-tools: [Read]\n---\n\nDo work.\n").unwrap();
     let sid = trigger(&w, "empty-prepare", json!({})).await;
     let start = Instant::now();
     let run = loop {
@@ -660,18 +660,6 @@ async fn a_prepare_with_nothing_to_do_skips_without_a_session() {
     assert!(w.model.calls_of(Agent::Memory).is_empty());
 }
 
-/// The v1 memory missions work a store nobody reads under v2: a run (a
-/// person's trigger, the dream tool's, or the schedule's — all go through
-/// `prepare`) is skipped with a plain reason, no model call, no session left
-/// behind. Under v1 the same missions run. The chronicle, v2's own, is
-/// covered in chronicle.rs (it runs under v2).
-const V2: Option<&str> = Some("\n[memory]\nlinggen = \"v2\"\noutside_agents = \"v1\"\n");
-const V1_MISSIONS: [(&str, &str); 3] = [
-    ("dream", "{}"),
-    ("memory-scan", r#"{"day":"2026-11-10","attended":true}"#),
-    ("memory-solve", r#"{"attended":true}"#),
-];
-
 /// A fresh world has no dream (its install marker lists it as deleted): put
 /// the engine's own file where an upgraded Mac keeps it.
 fn install_dream(home: &crate::support::home::Home) {
@@ -681,35 +669,7 @@ fn install_dream(home: &crate::support::home::Home) {
 }
 
 #[tokio::test]
-async fn under_v2_the_v1_memory_missions_are_skipped_with_no_model_call_and_no_session() {
-    let w = World::start_with_home(Setup { config_append: V2, ..Setup::default() }, install_dream).await;
-    for (mission, body) in V1_MISSIONS {
-        let body: Value = serde_json::from_str(body).unwrap();
-        let sid = trigger(&w, mission, body).await;
-        let start = Instant::now();
-        let run = loop {
-            let runs = w.api.get(&format!("/api/missions/{mission}/runs")).await;
-            let run = runs["runs"][0].clone();
-            if !run.is_null() && run["status"] != "running" {
-                break run;
-            }
-            assert!(start.elapsed() < Duration::from_secs(60), "{mission}: run never finished");
-            tokio::time::sleep(Duration::from_millis(200)).await;
-        };
-        assert_eq!((run["status"].as_str(), run["skip"].as_str()), (Some("skipped"), Some("prepare")), "{mission}: {run}");
-        assert!(
-            run["reason"].as_str().unwrap_or("").contains("Memory v2 is on"),
-            "{mission}: {run}"
-        );
-        assert!(run.get("session_id").is_none() && run.get("failure_count").is_none(), "{mission}: {run}");
-        assert!(!w.home.linggen_home().join("sessions").join(&sid).exists(), "{mission}: an empty session was left");
-    }
-    assert!(w.model.calls_of(Agent::Memory).is_empty(), "a model call for a v1 job under v2");
-}
-
-/// Under v1 (the default) the gate steps aside: the dream and the solve run.
-#[tokio::test]
-async fn under_v1_the_dream_and_the_solve_still_run() {
+async fn the_dream_and_the_solve_run() {
     let setup = Setup::default().script(Agent::Memory, vec![text("DONE"), text("DONE")]);
     let w = World::start_with_home(setup, install_dream).await;
     for mission in ["dream", "memory-solve"] {
@@ -812,7 +772,7 @@ fn the_scan_reads_a_session_the_person_spoke_in() {
 }
 
 /// Memory on the engine's port: a host reaches it at the one door `/mcp`
-/// (fifteen tools, memory's five among them, and a store's answer through
+/// (thirteen tools, memory's five among them, and a store's answer through
 /// them); an old plugin's `/mcp/memory` is told to update and runs nothing;
 /// the engine's own agents reach memory's five tools at `/mem/mcp`, where a
 /// retired name is unknown and nothing of the engine's dream, agents or
@@ -831,7 +791,7 @@ async fn hosts_reach_memory_at_the_one_door_and_the_engines_own_at_its_own() {
     let rpc = |method: &str, params: Value| json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params});
     let door = w.api.post("/mcp", rpc("tools/list", json!({}))).await;
     let door = names(&door);
-    assert_eq!(door.len(), 15, "{door:?}");
+    assert_eq!(door.len(), 13, "{door:?}");
     assert!(door.contains(&"memory_upkeep".to_string()) && door.contains(&"agent_run".to_string()));
     let call = rpc("tools/call", json!({"name": "memory_upkeep", "arguments": {"op": "days"}}));
     let days = w.api.post("/mcp", call).await;

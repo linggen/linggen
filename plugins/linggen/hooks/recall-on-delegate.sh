@@ -12,9 +12,6 @@ query="$(printf '%s' "$input" | jq -er '
 cwd="$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null)" || exit 0
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 0
 . "$here/scope.sh" 2>/dev/null || exit 0
-# v2: no per-turn recall into other agents (see recall.sh).
-. "$here/mcp.sh" 2>/dev/null || exit 0
-[ "$(outside_agents_mode)" = v2 ] && exit 0
 scope=""
 if [ -n "$cwd" ]; then
   scope="$(session_root "$cwd" 2>/dev/null)" || exit 0

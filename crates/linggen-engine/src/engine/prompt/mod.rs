@@ -39,7 +39,6 @@ pub enum PromptPurpose {
 use super::types::*;
 use crate::engine::tools;
 use crate::message::ChatMessage;
-use crate::own_memory;
 use std::collections::HashSet;
 use std::sync::OnceLock;
 
@@ -679,7 +678,10 @@ impl AgentEngine {
             // is one fragment so the two heads can't drift apart. Where the
             // session stands (its cwd, read fresh each build, so a cd reloads
             // the index) adds the scope candidates and the index.
-            stable.push_str(&self.owner_memory_section());
+            stable.push_str(&core_block::owner_block(
+                &self.prompt_store,
+                &self.tools.builtins.cwd(),
+            ));
             // The memory *protocol* is no longer engine text: the memory
             // server ships it as MCP `initialize.instructions`, injected in
             // `prepare_loop_messages` alongside every other connected
@@ -690,7 +692,10 @@ impl AgentEngine {
         if !self.prompt_profile.include_memory {
             let dir = self.prompt_profile.memory_app_dir.as_deref();
             let place = dir.and_then(crate::engine::tools::place_of);
-            if let Some(text) = self.app_memory_section(place.as_ref(), dir) {
+            if let Some(text) = core_block::load_app_start(
+                place.as_ref(),
+                self.prompt_profile.include_core,
+            ) {
                 stable.push_str("\n\n");
                 stable.push_str(&text);
             }
@@ -908,9 +913,8 @@ impl AgentEngine {
         if has_tools {
             for (server, text) in crate::mcp_client::registry().instructions() {
                 let prefix = format!("mcp__{server}__");
-                let replaced = server == crate::mcp_client::BUILTIN_MEMORY && self.has_v2_memory();
-                let advertised = !replaced
-                    && allowed_tools.is_none_or(|s| s.iter().any(|t| t.starts_with(&prefix)));
+                let advertised = allowed_tools
+                    .is_none_or(|s| s.iter().any(|t| t.starts_with(&prefix)));
                 if advertised && !text.trim().is_empty() {
                     system.push_str(&format!(
                         "\n\n# MCP server `{server}` — its own usage instructions\n\n{}",
@@ -1357,7 +1361,6 @@ impl AgentEngine {
         // A mission, and the lead of an app's own session, reach no app
         // from outside the one they stand in.
         (name == "AppTool" && (self.active_mission.is_some() || self.is_app_session()))
-            || self.memory_tool_is_withheld(name)
             || self.turn_tool_allowlist.as_ref().is_some_and(|allowed| !allowed.contains(name))
             || self
                 .withheld_tools
@@ -1432,100 +1435,11 @@ impl AgentEngine {
         if !self.prompt_profile.include_memory {
             return;
         }
-        if self.has_v2_memory() {
-            allowed.insert(own_memory::TOOL.to_string());
-            return;
-        }
         for tool in crate::mcp_client::registry().advertised() {
             if tool.server == crate::mcp_client::BUILTIN_MEMORY {
                 allowed.insert(tool.qualified);
             }
         }
-    }
-
-    // -----------------------------------------------------------------------
-    // Which memory a session has: `[memory] linggen` (own_memory::Mode)
-    // -----------------------------------------------------------------------
-    //
-    // v1 is the ling-mem store: its core block and index in the prompt, its
-    // `mcp__memory__*` tools and protocol, per-turn recall and the capture
-    // reminder (`chat::runtime::recall_into_thread`). v2 is `own_memory`: its
-    // index in the prompt and the `memory_notes` tool, and none of those.
-    // Only a person's session (`include_memory`) and an app's own (its place)
-    // change; a mission stays on v1, but for the chronicle's own run, which
-    // has the notes tool alone (`is_chronicling`). These methods and
-    // `recall_into_thread` are the only readers of the mode.
-
-    /// Who reads the notes this session writes and reads: Yinyue, outside a
-    /// coding session, is the companion; the chronicler reads all and writes
-    /// the chronicle (`own_memory::agent_audience`).
-    pub(crate) fn memory_audience(&self) -> own_memory::Audience {
-        own_memory::agent_audience(self.agent_id.as_deref(), self.is_coding_session())
-    }
-
-    /// The prompt's memory section for a person's session.
-    fn owner_memory_section(&self) -> String {
-        let cwd = self.tools.builtins.cwd();
-        let v2 = self.cfg.memory_linggen == own_memory::Mode::V2;
-        match own_memory::Store::this_machine().filter(|_| v2) {
-            Some(store) => own_memory::prompt::owner_block(
-                &store,
-                self.memory_audience(),
-                &cwd,
-                crate::util::now_ts_secs() as i64,
-            ),
-            None => core_block::owner_block(&self.prompt_store, &cwd),
-        }
-    }
-
-    /// The prompt's memory section for an app's session: what it knows of
-    /// the person (when it has core) and of its own folder.
-    fn app_memory_section(
-        &self,
-        place: Option<&tools::MemoryPlace>,
-        dir: Option<&std::path::Path>,
-    ) -> Option<String> {
-        let v2 = self.cfg.memory_linggen == own_memory::Mode::V2;
-        match own_memory::Store::this_machine().filter(|_| v2) {
-            Some(store) => own_memory::prompt::app_block(
-                &store,
-                dir,
-                self.prompt_profile.include_core,
-                crate::util::now_ts_secs() as i64,
-            )
-            .filter(|_| self.prompt_profile.include_core || place.is_some()),
-            None => core_block::load_app_start(place, self.prompt_profile.include_core),
-        }
-    }
-
-    /// Whether a person's session has v2 in place of v1's recall and capture
-    /// reminder (`recall_into_thread` asks).
-    pub(crate) fn has_v2_memory(&self) -> bool {
-        self.cfg.memory_linggen == own_memory::Mode::V2 && self.prompt_profile.include_memory
-    }
-
-    /// Whether `tool` (a name as `is_withheld` has it) belongs to the memory
-    /// this session does not have: `memory_notes` where v2 is off or the
-    /// session is not a person's; v1's memory server's tools where v2 is on.
-    fn memory_tool_is_withheld(&self, tool: &str) -> bool {
-        match tool == own_memory::TOOL {
-            true => !(self.has_v2_memory() || self.is_chronicling()),
-            false => self.v1_memory_is_replaced(tool),
-        }
-    }
-
-    /// The chronicle's own run under v2: a mission that has `memory_notes`
-    /// (when its `allowed-tools` list it) though it carries no person's
-    /// memory — to write the chronicle, the one thing the fence lets it write.
-    fn is_chronicling(&self) -> bool {
-        self.cfg.memory_linggen == own_memory::Mode::V2
-            && self.memory_audience() == own_memory::Audience::Chronicler
-    }
-
-    /// `tool` is one of v1's memory server's, and this session has v2.
-    fn v1_memory_is_replaced(&self, tool: &str) -> bool {
-        let v1_server = crate::mcp_client::qualify(crate::mcp_client::BUILTIN_MEMORY, "");
-        self.has_v2_memory() && tool.starts_with(&v1_server)
     }
 
     pub(crate) fn is_tool_allowed(&self, allowed: &HashSet<String>, requested_tool: &str) -> bool {

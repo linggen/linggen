@@ -2355,42 +2355,6 @@ mod member_tests {
         assert!(plain.withheld_tools.is_empty());
     }
 
-    /// Which memory a session has follows `[memory] linggen`: v1 offers the
-    /// memory server's tools and withholds `memory_notes`; v2 the other way
-    /// round, in a person's session. A mission stays on v1 either way.
-    #[test]
-    fn the_memory_a_session_has_follows_the_switch() {
-        use crate::own_memory::{Audience, Mode, TOOL};
-        let v1_tool = "mcp__memory__memory_add";
-        for md in [include_str!("../../../../agents/ling.md"), include_str!("../../../../agents/yinyue.md")] {
-            let mut person = spec_engine("ling", md);
-            // v1, the default: byte for byte what it was.
-            assert_eq!(person.cfg.memory_linggen, Mode::V1);
-            assert!(person.is_withheld(TOOL) && !person.is_withheld(v1_tool));
-            assert!(!person.allowed_tool_names().is_some_and(|set| set.contains(TOOL)));
-            assert!(!person.offered_tool_definitions(person.allowed_tool_names().as_ref()).iter().any(|d| d["function"]["name"] == TOOL));
-            assert!(!person.has_v2_memory());
-
-            person.cfg.memory_linggen = Mode::V2;
-            assert!(!person.is_withheld(TOOL) && person.is_withheld(v1_tool) && person.is_withheld("mcp__memory__memory_search"));
-            assert!(!person.is_withheld("mcp__other__thing"));
-            let allowed = person.allowed_tool_names();
-            assert!(allowed.as_ref().is_none_or(|set| set.contains(TOOL) && !set.contains(v1_tool)), "{allowed:?}");
-            assert!(person.offered_tool_definitions(allowed.as_ref()).iter().any(|d| d["function"]["name"] == TOOL));
-
-            // A mission (no person's memory) keeps v1: its tools, no notes.
-            person.respec(|spec| spec.memory = crate::engine::session_spec::Memory::None);
-            assert!(person.is_withheld(TOOL) && !person.is_withheld(v1_tool));
-        }
-        // The fence follows the session: Yinyue outside a coding session, no one else.
-        let mut her = yinyue_engine();
-        her.agent_id = Some("yinyue".to_string());
-        assert_eq!(her.memory_audience(), Audience::Companion);
-        let mut his = spec_engine("ling", include_str!("../../../../agents/ling.md"));
-        his.agent_id = Some("ling".to_string());
-        assert_eq!(his.memory_audience(), Audience::Work);
-    }
-
     /// And a withheld call the model makes anyway is refused, never run.
     #[tokio::test]
     async fn a_withheld_call_is_refused_at_execute_time() {
