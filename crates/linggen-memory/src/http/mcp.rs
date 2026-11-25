@@ -48,19 +48,19 @@ const INSTRUCTIONS: &str = r#"This is the user's memory, shared by Claude Code, 
 
 # Tiers
 - core — who they are, always loaded: name, role/job, location, timezone, languages, family/pets. One short fact per row.
-- semantic — durable, recalled on demand: goals, preferences ("always X / never Y" → type=preference, from=user; never core), decisions with their why, gotchas.
-- episodic — the default capture (omit tier): events, milestones, run learnings. No search first; the nightly dream promotes what lasts.
+- semantic — the user's own words (preferences "always X / never Y" → type=preference, from=user; never core; decisions with why), measured results and gotchas: each one conclusion + a file path, short (max 600 chars).
+- episodic — the default (omit tier). Progress, status, what was built / fixed / tried / released → episodic. No search first; the nightly dream promotes what lasts.
 
 # Saving
 - Before a core/semantic add, memory_search the subject. Same subject or claim in other words = conflict; when unsure, treat it as one.
 - Your own rows (from=derived): merge into one current-truth row via memory_add + replace_ids, never add then delete.
 - The user's rows (from=user): ask first, showing each row's full text and date; then replace_ids + user_directed:true. Never from your own inference.
-- What the user said is from=user. A replacement keeps the loser's tier and scope. A new status (shipped/fixed/dropped) replaces the old status row.
+- What the user said is from=user. A status row goes to episodic, even when it replaces a semantic one.
 - "remember / forget / update X", in any language: search, act, user_directed:true.
 - Anchor relative time to dates ("last month" → "2026-08"). occurred_at dates days and TTL; it never ranks.
 - A row's scope is the directory it is about (default: the host's cwd). Pass scope (one of "Memory scopes here") when it isn't where you stand; global:true when it is about the person.
 - A standing rule the user states ("always…", "以后都…") gets indexed:true and a summary (one line ≤ 80 chars) — the index loads it at session start under its scope.
-- Never save secrets or file bodies you can re-read. Project internals stay episodic.
+- Never save secrets or file bodies you can re-read.
 
 # Recall
 Search when the question may touch past preferences, decisions or gotchas. Show each fact you use: "From memory (3 months ago): …". Never pass type, from or outcome to memory_search unless asked.
@@ -587,7 +587,7 @@ mod tests {
             .collect();
         let expected: &[(&str, &str)] = &[
             ("memory_search", "3961fa2c6c739601"),
-            ("memory_add", "85c36d750751513b"),
+            ("memory_add", "c838c5498ec20588"),
             ("memory_update", "21da0a4313b7b843"),
             ("memory_delete", "bbc85f7c3b3268e1"),
             ("memory_upkeep", "f000f2d114882a39"),
@@ -602,7 +602,7 @@ mod tests {
             .collect();
         assert_eq!(actual, want, "actual:\n{}", shown.join("\n"));
         let text = fingerprint(&Value::String(INSTRUCTIONS.to_string()));
-        assert_eq!(text, "7fb7025cd50abf5f", "instructions changed: {text}");
+        assert_eq!(text, "8d8e90cfbe199ff0", "instructions changed: {text}");
     }
 
     /// `/mcp` publishes memory's five tools and nothing of the engine: no

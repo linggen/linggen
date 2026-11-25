@@ -7,7 +7,7 @@ use crate::handle::Memory;
 use crate::memory::Memory as Row;
 use crate::memory::{MemoryPatch, MemoryStore, Tier};
 use crate::ops::memory::dto::{fact_public, UpdateRequest};
-use crate::ops::memory::place::{clean_summary, scope_patch};
+use crate::ops::memory::place::{check_cap, clean_summary, scope_patch};
 use crate::ops::memory::stores_for_read;
 use crate::ops::memory::write::guard_user_voice;
 use chrono::{SubsecRound, Utc};
@@ -107,6 +107,15 @@ pub(in crate::ops) async fn update(state: &Memory, req: UpdateRequest) -> Result
     if target_tier == Tier::Core {
         patch.scope = Some(None);
         patch.indexed = Some(false);
+    }
+    // A promotion by update may reach semantic, but within the cap.
+    // Metadata-only patches leave an old long row alone.
+    if patch.content.is_some() || target_tier != existing.tier {
+        check_cap(
+            target_tier,
+            patch.origin.unwrap_or(existing.origin),
+            patch.content.as_deref().unwrap_or(&existing.content),
+        )?;
     }
     let target_is_episodic = matches!(target_tier, Tier::Episodic);
     let current_is_episodic = Arc::ptr_eq(&current_store, &state.episodic);

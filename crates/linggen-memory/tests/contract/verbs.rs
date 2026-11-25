@@ -439,18 +439,18 @@ async fn delete_answers_removed_and_a_second_delete_answers_false() {
 #[tokio::test]
 async fn forget_removes_what_the_filter_names_in_one_table() {
     let m = Mem::start().await;
-    m.add(json!({"content": "Alex tried oat milk", "type": "tried", "tier": "semantic"}))
+    m.add(json!({"content": "Alex tried oat milk", "type": "learned", "tier": "semantic"}))
         .await;
-    m.add(json!({"content": "Alex tried soy milk", "type": "tried"}))
+    m.add(json!({"content": "Alex tried soy milk", "type": "learned"}))
         .await;
     m.add(json!({"content": "Alex likes rye bread", "tier": "semantic"}))
         .await;
     assert_eq!(
-        m.ok("forget", json!({"type": "tried"})).await,
+        m.ok("forget", json!({"type": "learned"})).await,
         json!({"removed": 1})
     );
     assert_eq!(
-        m.ok("forget", json!({"type": "tried", "episodic": true}))
+        m.ok("forget", json!({"type": "learned", "episodic": true}))
             .await,
         json!({"removed": 1})
     );

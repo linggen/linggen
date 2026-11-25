@@ -346,7 +346,7 @@ async fn the_published_surface_is_locked() {
     let local = shown(View::Local);
     let expected_local: &[(&str, &str)] = &[
         ("memory_search", "3961fa2c6c739601"),
-        ("memory_add", "85c36d750751513b"),
+        ("memory_add", "c838c5498ec20588"),
         ("memory_update", "21da0a4313b7b843"),
         ("memory_delete", "bbc85f7c3b3268e1"),
         ("memory_upkeep", "641714d169511379"),
@@ -363,7 +363,7 @@ async fn the_published_surface_is_locked() {
     let remote = shown(View::Remote);
     let expected_remote: &[(&str, &str)] = &[
         ("memory_search", "3961fa2c6c739601"),
-        ("memory_add", "85c36d750751513b"),
+        ("memory_add", "c838c5498ec20588"),
         ("memory_update", "21da0a4313b7b843"),
         ("memory_delete", "bbc85f7c3b3268e1"),
         ("memory_upkeep", "e9ff93db14123772"),

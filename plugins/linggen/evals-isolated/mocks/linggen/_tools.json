@@ -87,7 +87,7 @@
     },
     {
       "name": "memory_add",
-      "description": "Save one durable row — identity, a preference, a decision with its why — not project internals or secrets. Default tier episodic, from derived; the user's own words are from=user. scope is the directory the row is about (one of the session's scope candidates), global:true when it is about the person. A standing rule gets indexed:true and a one-line summary. host, source_session, cwd and root are the host's to fill. Merge your own rows atomically with replace_ids, never add then delete; replacing a from=user row needs the user's answer and user_directed:true. occurred_at (RFC 3339) dates an imported or promoted row.",
+      "description": "Save one row, never secrets. Progress, status, what was built / fixed / tried / released → episodic (the default; built/fixed/tried are placed there whatever tier is asked). Semantic holds the user's own words (preferences, decisions with why), measured results and gotchas, each one conclusion + a file path, max 600 chars. Default from derived; the user's own words are from=user. scope is the directory the row is about (one of the session's scope candidates), global:true when it is about the person. A standing rule gets indexed:true and a one-line summary. host, source_session, cwd and root are the host's to fill. Merge your own rows atomically with replace_ids, never add then delete; replacing a from=user row needs the user's answer and user_directed:true. occurred_at (RFC 3339) dates an imported or promoted row.",
       "inputSchema": {
         "type": "object",
         "properties": {

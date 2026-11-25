@@ -111,7 +111,7 @@ fi
 # live in the session-start MCP instructions; this is only the per-turn reminder.
 cat <<'CAPTURE'
 
-Memory capture: before finishing this turn, recognize anything worth remembering and write it at the right tier per the memory protocol (core/semantic = search-first; episodic = incidental); anchor relative time to absolute dates ("last month" → "2026-06"). Nothing worth keeping? Skip silently.
+Memory capture: before finishing this turn, recognize anything worth remembering and write it at the right tier. Progress, status, what was built / fixed / tried / released → episodic. Semantic holds the user's own words (preferences, decisions with why), measured results and gotchas, each one conclusion + a file path, short (core/semantic adds are search-first); anchor relative time to absolute dates ("last month" → "2026-06"). Nothing worth keeping? Skip silently.
 CAPTURE
 # No source_session line: stamp-cwd.sh fills it on every add (host-filled,
 # never asked of the model). Codex has no stamping seam yet, so its adds go

@@ -53,6 +53,27 @@ never writes to project files.
   signal land here; once the dream pass has judged a day, its rows
   fade after about a week unless promoted.
 
+### Where a row goes
+
+One rule, in the same words in the MCP instructions, the `memory_add`
+description, the per-turn capture line, the skill and the engine's
+`core_block.rs`: **progress, status, what was built / fixed / tried /
+released → episodic. Semantic holds the user's own words (preferences,
+decisions with why), measured results and gotchas, each one conclusion
++ a file path, short.**
+
+`ops::memory::place::lock_tier` decides it, and every add path passes
+it (`add`, `add_batch`, hence MCP, REST and CLI; `update` uses its
+`check_cap`):
+
+- type `built` / `fixed` / `tried` → episodic whatever tier was asked
+  (reply carries `placed`); this includes a replacement of a semantic row.
+- a semantic or core row over 600 characters is refused: "too long for
+  semantic: one conclusion + a path; details in a file or episodic".
+- `from=user` rows are never moved or refused.
+- a dream promotion (same words already staged in episodic) may reach
+  semantic, but obeys the 600 cap.
+
 ## Features
 
 - **Capture** — the live agent saves signal in the same turn it

@@ -119,14 +119,14 @@ async fn a_persons_dedup_search_and_forget_stay_inside_the_person() {
         &m,
         owner,
         "add",
-        json!({"content": "tried oat milk", "type": "tried", "tier": "semantic"}),
+        json!({"content": "tried oat milk", "type": "learned", "tier": "semantic"}),
     )
     .await;
     let first = data(
         &m,
         &guest(),
         "add",
-        json!({"content": "tried oat milk", "type": "tried", "tier": "semantic"}),
+        json!({"content": "tried oat milk", "type": "learned", "tier": "semantic"}),
     )
     .await;
     assert_eq!(first["action"], "added", "no merge into the owner's row");
@@ -139,11 +139,11 @@ async fn a_persons_dedup_search_and_forget_stay_inside_the_person() {
         .collect();
     assert!(owners.is_empty(), "{hits}");
     assert_eq!(
-        data(&m, &guest(), "forget", json!({"type": "tried"})).await,
+        data(&m, &guest(), "forget", json!({"type": "learned"})).await,
         json!({"removed": 1})
     );
     assert_eq!(
-        data(&m, owner, "count", json!({"type": "tried"})).await["count"],
+        data(&m, owner, "count", json!({"type": "learned"})).await["count"],
         1
     );
 }

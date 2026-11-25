@@ -1,8 +1,9 @@
 //! Where a written row lands: its tier, its scope and its one-line summary
 //! (`add`, `add_batch` and `update` share these rules).
 
+use crate::error::MemError;
 use crate::memory::Memory as Row;
-use crate::memory::Tier;
+use crate::memory::{MemoryType, Origin, Tier};
 use crate::ops::memory::dto::AddRequest;
 
 /// The tier a write lands in. Asked-for wins (`episodic: true` or `tier`);
@@ -28,6 +29,46 @@ pub(super) fn resolve_tier(
         return Tier::Semantic;
     }
     Tier::Episodic
+}
+
+/// The longest content a semantic or core row may have, in characters.
+pub(super) const SEMANTIC_MAX_CHARS: usize = 600;
+
+/// The tier-lock: THE one place that decides where a write may land (see
+/// doc/memory-spec.md "Where a row goes"). Progress, status, what was built /
+/// fixed / tried → episodic whatever tier was asked; semantic and core hold
+/// one short conclusion. `from=user` rows are never moved or refused. A
+/// promotion (`promoting`: the same words already staged in episodic) may
+/// keep a built/fixed/tried row in semantic, but still obeys the cap.
+/// Returns the tier and whether the lock moved the row to episodic.
+pub(super) fn lock_tier(
+    tier: Tier,
+    ty: MemoryType,
+    from: Origin,
+    content: &str,
+    promoting: bool,
+) -> Result<(Tier, bool), MemError> {
+    if from == Origin::User || tier == Tier::Episodic {
+        return Ok((tier, false));
+    }
+    if matches!(ty, MemoryType::Built | MemoryType::Fixed | MemoryType::Tried) && !promoting {
+        return Ok((Tier::Episodic, true));
+    }
+    check_cap(tier, from, content)?;
+    Ok((tier, false))
+}
+
+/// The cap alone, for a write that is already at its tier (an update).
+pub(super) fn check_cap(tier: Tier, from: Origin, content: &str) -> Result<(), MemError> {
+    if from != Origin::User
+        && tier != Tier::Episodic
+        && content.chars().count() > SEMANTIC_MAX_CHARS
+    {
+        return Err(MemError::bad_request(
+            "too long for semantic: one conclusion + a path; details in a file or episodic",
+        ));
+    }
+    Ok(())
 }
 
 /// The scope a new row is stored with. Core rows and `global` rows have

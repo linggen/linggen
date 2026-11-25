@@ -75,7 +75,7 @@ pub const RECONCILE_FOOTER: &str = "\n\nNote: If duplicates or conflicting rows 
 /// recalled memory). Word-for-word aligned with CC/Codex `recall.sh` so the
 /// per-turn reminder reads identically across every host. Definitions /
 /// routing live in `[memory_protocol]` (session start); this only nudges.
-pub const CAPTURE_REMINDER: &str = "Memory capture: before finishing this turn, recognize anything worth remembering and write it at the right tier per the memory protocol (core/semantic = search-first; episodic = incidental); anchor relative time to absolute dates (\"last month\" → \"2026-06\"). Nothing worth keeping? Skip silently.";
+pub const CAPTURE_REMINDER: &str = "Memory capture: before finishing this turn, recognize anything worth remembering and write it at the right tier. Progress, status, what was built / fixed / tried / released → episodic. Semantic holds the user's own words (preferences, decisions with why), measured results and gotchas, each one conclusion + a file path, short (core/semantic adds are search-first); anchor relative time to absolute dates (\"last month\" → \"2026-06\"). Nothing worth keeping? Skip silently.";
 
 /// What a session loads at start, from the store this engine hosts: the
 /// core rows and, given a `place`, its scope candidates and index. One

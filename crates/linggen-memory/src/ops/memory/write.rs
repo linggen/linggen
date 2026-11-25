@@ -8,7 +8,7 @@ use crate::memory::Memory as Row;
 use crate::memory::{AccountScope, InsertOutcome, MemoryType, Tier};
 use crate::ops::memory::dto::{fact_public, AddBatchRequest, AddRequest};
 use crate::ops::memory::place::{
-    clean_summary, resolve_scope, resolve_tier, tier_rank, written_scope,
+    clean_summary, lock_tier, resolve_scope, resolve_tier, tier_rank, written_scope,
 };
 use crate::ops::memory::{pick_store, stores_for_read};
 use serde_json::{json, Value};
@@ -27,13 +27,24 @@ pub(in crate::ops) async fn add(state: &Memory, req: AddRequest) -> Result<Value
 
     let skip_dedup = req.skip_dedup;
     let replace_ids = req.replace_ids.clone();
-    let tier = resolve_tier(req.tier, req.episodic, &losers, req.indexed);
+    let asked = resolve_tier(req.tier, req.episodic, &losers, req.indexed);
+    let ty = req.r#type.unwrap_or(MemoryType::Fact);
+    let from = req.from.unwrap_or_default();
+    // A dream promotion writes words already staged in episodic.
+    let promoting = asked != Tier::Episodic
+        && state
+            .episodic
+            .find_exact_content_public(
+                &req.content,
+                ty,
+                &replace_ids,
+                &AccountScope::for_dedup(account_id.as_deref()),
+            )
+            .await?
+            .is_some();
+    let (tier, moved) = lock_tier(asked, ty, from, &req.content, promoting)?;
     let scope = resolve_scope(&req, &losers, tier);
-    let mut fact = Row::new(
-        req.content,
-        req.r#type.unwrap_or(MemoryType::Fact),
-        req.from.unwrap_or_default(),
-    );
+    let mut fact = Row::new(req.content, ty, from);
     fact.tier = tier;
     fact.outcome = req.outcome;
     fact.scope = scope;
@@ -55,7 +66,11 @@ pub(in crate::ops) async fn add(state: &Memory, req: AddRequest) -> Result<Value
         .map_err(MemError::internal)?;
     fact.vector = Some(vector);
 
-    write_row(state, fact, &replace_ids, skip_dedup).await
+    let mut data = write_row(state, fact, &replace_ids, skip_dedup).await?;
+    if moved {
+        data["placed"] = json!("episodic: progress, status and built/fixed/tried rows are staged there");
+    }
+    Ok(data)
 }
 
 /// Write an embedded row: as given (`skip_dedup`), or merged into an exact
@@ -168,7 +183,11 @@ pub(in crate::ops) async fn add_batch(state: &Memory, req: AddBatchRequest) -> R
     let mut semantic: Vec<Row> = Vec::new();
     let mut episodic: Vec<Row> = Vec::new();
     // Blanks are skipped; one doesn't abort the whole import.
-    for fact in req.facts.into_iter().filter_map(batch_row) {
+    let mut rows = Vec::new();
+    for r in req.facts {
+        rows.extend(batch_row(r)?);
+    }
+    for fact in rows {
         if fact.tier == Tier::Episodic {
             episodic.push(fact);
         } else {
@@ -206,16 +225,16 @@ pub(in crate::ops) async fn add_batch(state: &Memory, req: AddBatchRequest) -> R
 
 /// One batch-imported row, stamped with the person it was written for;
 /// `None` for blank content.
-fn batch_row(r: AddRequest) -> Option<Row> {
+fn batch_row(r: AddRequest) -> Result<Option<Row>, MemError> {
     if r.content.trim().is_empty() {
-        return None;
+        return Ok(None);
     }
-    let tier = resolve_tier(r.tier, r.episodic, &[], r.indexed);
-    let mut fact = Row::new(
-        r.content,
-        r.r#type.unwrap_or(MemoryType::Fact),
-        r.from.unwrap_or_default(),
-    );
+    let ty = r.r#type.unwrap_or(MemoryType::Fact);
+    let from = r.from.unwrap_or_default();
+    let asked = resolve_tier(r.tier, r.episodic, &[], r.indexed);
+    // An import has no staged copy to promote from.
+    let (tier, _) = lock_tier(asked, ty, from, &r.content, false)?;
+    let mut fact = Row::new(r.content, ty, from);
     fact.tier = tier;
     fact.outcome = r.outcome;
     fact.scope = written_scope(r.scope.or(r.cwd), r.global || tier == Tier::Core);
@@ -226,7 +245,7 @@ fn batch_row(r: AddRequest) -> Option<Row> {
     fact.host = r.host;
     fact.account_id = r.account_id.filter(|a| !a.trim().is_empty());
     fact.account_name = r.account_name.filter(|a| !a.trim().is_empty());
-    Some(fact)
+    Ok(Some(fact))
 }
 
 /// The merge law's floor, enforced at the store: a write that replaces
@@ -545,10 +564,79 @@ mod tests {
             {"content": "owner row", "tier": "core"},
         ]}))
         .unwrap();
-        let rows: Vec<Row> = req.facts.into_iter().filter_map(batch_row).collect();
+        let rows: Vec<Row> = req
+            .facts
+            .into_iter()
+            .filter_map(|r| batch_row(r).unwrap())
+            .collect();
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].account_id.as_deref(), Some("u-other"));
         assert_eq!(rows[0].account_name.as_deref(), Some("Sam"));
         assert_eq!(rows[1].account_id, None);
+    }
+
+    async fn call_add(state: &Arc<Memory>, verb: &str, args: Value) -> Result<Value, MemError> {
+        state.call(&crate::Who::Owner, verb, args).await?.into_result()
+    }
+
+    /// The tier-lock: built / fixed / tried never land in semantic through
+    /// `add` or `add_batch` (MCP, REST and CLI all call these verbs).
+    #[tokio::test]
+    async fn built_fixed_tried_never_land_in_semantic() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = crate::hosted::open_quiet_fake(dir.path(), String::new()).await.unwrap();
+        for ty in ["built", "fixed", "tried"] {
+            let r = call_add(&state, "add", json!({"content": format!("{ty} one"), "type": ty, "tier": "semantic", "from": "agent"}))
+                .await
+                .unwrap();
+            assert!(r["placed"].is_string(), "{ty}: {r}");
+            assert_eq!(r["fact"]["tier"], "episodic", "{ty}");
+        }
+        let r = call_add(&state, "add_batch", json!({"facts": [
+            {"content": "batch built", "type": "built", "tier": "semantic"},
+            {"content": "batch core fixed", "type": "fixed", "tier": "core"},
+        ]})).await.unwrap();
+        assert_eq!(r["count"], 2);
+        assert!(r["facts"].as_array().unwrap().iter().all(|f| f["tier"] == "episodic"));
+        assert_eq!(state.store.count().await.unwrap(), 0);
+        // A replacement of a semantic status row also stays episodic.
+        let old = call_add(&state, "add", json!({"content": "old status", "tier": "semantic"})).await.unwrap();
+        let id = old["fact"]["id"].as_str().unwrap().to_string();
+        let r = call_add(&state, "add", json!({"content": "new status", "type": "built", "replace_ids": [id]})).await.unwrap();
+        assert_eq!(r["fact"]["tier"], "episodic");
+        // The user's words keep their tier.
+        let r = call_add(&state, "add", json!({"content": "I shipped it", "type": "built", "tier": "semantic", "from": "user"})).await.unwrap();
+        assert_eq!(r["fact"]["tier"], "semantic");
+    }
+
+    /// Semantic and core refuse content over 600 characters (not the user's).
+    #[tokio::test]
+    async fn semantic_and_core_are_capped_at_600_chars() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = crate::hosted::open_quiet_fake(dir.path(), String::new()).await.unwrap();
+        let long = "x".repeat(601);
+        for tier in ["semantic", "core"] {
+            let e = call_add(&state, "add", json!({"content": long, "tier": tier})).await.unwrap_err();
+            assert!(e.message.contains("too long for semantic"), "{e:?}");
+        }
+        let e = call_add(&state, "add_batch", json!({"facts": [{"content": long, "tier": "semantic"}]})).await;
+        assert!(e.is_err());
+        assert!(call_add(&state, "add", json!({"content": "x".repeat(600), "tier": "semantic"})).await.is_ok());
+        assert!(call_add(&state, "add", json!({"content": long, "tier": "episodic"})).await.is_ok());
+        assert!(call_add(&state, "add", json!({"content": long, "tier": "semantic", "from": "user"})).await.is_ok());
+    }
+
+    /// A dream promotion (the same words already staged) may keep a
+    /// built row in semantic, but still obeys the cap.
+    #[tokio::test]
+    async fn a_promotion_may_reach_semantic_within_the_cap() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = crate::hosted::open_quiet_fake(dir.path(), String::new()).await.unwrap();
+        call_add(&state, "add", json!({"content": "staged build", "type": "built"})).await.unwrap();
+        let r = call_add(&state, "add", json!({"content": "staged build", "type": "built", "tier": "semantic"})).await.unwrap();
+        assert_eq!(r["fact"]["tier"], "semantic", "{r}");
+        let long = "y".repeat(601);
+        call_add(&state, "add", json!({"content": long, "type": "built"})).await.unwrap();
+        assert!(call_add(&state, "add", json!({"content": long, "type": "built", "tier": "semantic"})).await.is_err());
     }
 }

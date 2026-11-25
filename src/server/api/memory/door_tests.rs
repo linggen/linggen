@@ -422,7 +422,7 @@ async fn every_person_verb_stays_inside_the_persons_rows() {
     let guest = |verb: &'static str, body: Value| door(&s.base, Who::GuestsPhone, verb, body);
     let oat = owner(
         "add",
-        json!({"content": "tried oat milk", "type": "tried", "tier": "semantic"}),
+        json!({"content": "tried oat milk", "type": "learned", "tier": "semantic"}),
     )
     .await
     .1["data"]["fact"]
@@ -434,7 +434,7 @@ async fn every_person_verb_stays_inside_the_persons_rows() {
     .await;
     guest(
         "add",
-        json!({"content": "tried soy milk", "type": "tried", "tier": "semantic"}),
+        json!({"content": "tried soy milk", "type": "learned", "tier": "semantic"}),
     )
     .await;
     guest(
@@ -484,14 +484,14 @@ async fn every_person_verb_stays_inside_the_persons_rows() {
     assert_eq!(core, vec![json!("the guest lives in Porto")]);
 
     assert_eq!(
-        guest("forget", json!({"type": "tried"})).await,
+        guest("forget", json!({"type": "learned"})).await,
         (200, json!({"ok": true, "data": {"removed": 1}}))
     );
     assert_eq!(
         owner("get", json!({"id": id})).await.1["data"]["content"],
         "tried oat milk"
     );
-    let (_, env) = owner("count", json!({"type": "tried"})).await;
+    let (_, env) = owner("count", json!({"type": "learned"})).await;
     assert_eq!(env["data"]["count"], 1);
 }
 
