@@ -207,7 +207,7 @@ Claude Code and Codex write memory their own way; Linggen does not touch it.
     already shown, kept by the hook), and prints at most four lines
     `相关笔记: <summary> (id)`. The match is plain words in a note's summary or
     topic, Chinese and English, no vectors; a hit holds two independent words of the
-    prompt (one if that is all of it that any title has; two pieces of one
+    prompt (one if the prompt has only one; two pieces of one
     Chinese word count as one), and a word most titles share counts for
     nothing. It cannot bridge languages: a Chinese prompt finds a note whose
     summary or topic has those Chinese words, not its English twin. It counts no use. No hit, no engine, no answer in time: nothing is

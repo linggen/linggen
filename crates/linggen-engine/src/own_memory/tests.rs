@@ -1213,8 +1213,9 @@ fn a_prompt_naming_a_notes_topic_gets_its_title_in_chinese_and_english() {
     assert!(hit("please rename this function and run it").is_empty());
     assert!(hit("你好，帮我看一下这个").is_empty());
     assert!(hit("what the how").is_empty());
-    // Words no title holds do not raise the bar; two pieces of one Chinese word are one word.
-    assert_eq!(hit("回复 qwertyzzz"), [zh.clone()]);
+    // One word of a prompt that has two is not enough; two pieces of one Chinese word are one word.
+    assert_eq!(hit("回复"), [zh.clone()]);
+    assert!(hit("回复 qwertyzzz").is_empty());
     let (a, b, c) = ("提交".to_string(), "交代".to_string(), "pricing".to_string());
     assert_eq!(super::find::independent_words(&[&a, &b]), 1);
     assert_eq!(super::find::independent_words(&[&a, &c]), 2);

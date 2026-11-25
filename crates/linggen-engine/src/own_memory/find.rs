@@ -167,9 +167,9 @@ pub(super) fn independent_words(words: &[&String]) -> usize {
 /// The notes whose title (summary or topic) holds the words of `words` —
 /// the lookup a turn does for the prompt it was given. Plain words, no
 /// vectors, Chinese and English; it counts no use. A hit holds
-/// [`WORDS_FOR_A_HIT`] independent topic words of the prompt (fewer when the
-/// rest of the prompt matches no title at all); a word most titles share
-/// counts for nothing, so an ordinary sentence matches nothing. Void notes
+/// [`WORDS_FOR_A_HIT`] independent topic words of the prompt (one, when the
+/// prompt has only one); a word most titles share counts for nothing, so an
+/// ordinary sentence matches nothing. Void notes
 /// and `exclude`d ids are left out; best match first, then newest.
 pub fn titles(store: &Store, audience: Audience, words: &str, exclude: &[String], limit: usize) -> Vec<Found> {
     let tokens: Vec<String> = tokens_of(words).into_iter().filter(|t| is_topic_word(t)).collect();
@@ -183,10 +183,10 @@ pub fn titles(store: &Store, audience: Audience, words: &str, exclude: &[String]
         .map(|s| (format!("{}\n{}", s.entry.summary, s.topic).to_lowercase(), s))
         .collect();
     let common_from = (all.len() / COMMON_SHARE).max(COMMON_FLOOR);
-    // The prompt's words some title holds, and not nearly all of them do.
+    // The prompt's words that are not shared by most titles.
     let usable: Vec<&String> = tokens
         .iter()
-        .filter(|t| (1..=common_from).contains(&all.iter().filter(|(hay, _)| hay.contains(t.as_str())).count()))
+        .filter(|t| all.iter().filter(|(hay, _)| hay.contains(t.as_str())).count() <= common_from)
         .collect();
     let need = independent_words(&usable).min(WORDS_FOR_A_HIT);
     let mut scored: Vec<(usize, Seen)> = all
