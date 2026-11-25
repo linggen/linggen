@@ -60,7 +60,8 @@ Project path encoding: `/Users/foo/project` → `-Users-foo-project` (same conve
 │   ├── envs/{name}/                  # Named venvs: tools (yt-dlp), tts (mlx-audio), pictures (mflux)
 │   ├── mlx_voice.py, mlx_picture.py  # Sidecar/runner scripts (voice: speech out and in), rewritten from the binary at spawn
 │   ├── tts-model.stamp               # Voice model warmed into models/hf-hub (the voice lane is ready)
-│   ├── stt-model.stamp               # Hearing model (Whisper) fetched into models/hf-hub on first use
+│   ├── stt-model.stamp               # Hearing model (Whisper) fetched into models/hf-hub on first use (not on a Mac: it hears with Apple's recognition)
+│   ├── bin/ling-hear-<hash>          # A Mac's hearing helper, carried inside `ling` and put here at start (stt_apple.rs)
 │   └── pictures-model.stamp          # Picture model warmed into models/hf-hub (the lane is ready)
 ├── models/
 │   ├── hf-hub/hub/                   # The one Hugging Face cache: Qwen3-TTS, Whisper large-v3 turbo (hearing, first use), FLUX.2 klein, Kokoro-82M

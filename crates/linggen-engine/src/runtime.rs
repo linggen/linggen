@@ -459,6 +459,15 @@ pub fn voice_ready() -> bool {
     env_bin("tts", "python3").exists() && stamp_matches(&tts_model_stamp(), TTS_MODEL)
 }
 
+/// Which recognizer hears this machine: Apple's own on-device recognition on
+/// a Mac, with no choice and no download of a model of ours; Whisper in the
+/// voice lane's sidecar anywhere else. The one answer behind
+/// `stt::default_provider`, the Dictation row of Settings → Models and the
+/// local lanes (`hearing_by_apple_is_the_one_switch` holds it so).
+pub fn hearing_by_apple() -> bool {
+    cfg!(target_os = "macos")
+}
+
 /// Can the sidecar hear: the voice lane's venv and voice model (the sidecar
 /// starts with both) and the hearing model on disk.
 pub fn hearing_ready() -> bool {

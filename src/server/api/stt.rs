@@ -2,8 +2,11 @@
 //!
 //! Hearing sits behind the [`SttProvider`] trait, as her voice sits behind
 //! `TtsProvider`: the engine that turns sound into words is a swap, not a
-//! rewrite. The daemon's hearing is Whisper on MLX in the voice lane's
-//! sidecar ([`super::stt_mlx`]).
+//! rewrite. On a Mac the hearing is Apple's own on-device recognition, with
+//! no choice to make ([`super::stt_apple`]); anywhere else it is Whisper on
+//! MLX in the voice lane's sidecar ([`super::stt_mlx`]), which only an
+//! Apple-silicon Mac's gate opens. [`default_provider`] is the one place that
+//! says which.
 //!
 //! `GET /api/stt` — can she hear now? `{"hears": true}`, or `{"hears": false,
 //! "reason", "fetching", "next"}` (`next`: [`Next`], what would help), asked
@@ -79,18 +82,23 @@ pub enum Next {
     Download,
     /// A fetch or a load is under way: wait, and ask again.
     Working,
+    /// A language's model is being put on this Mac (Apple's recognition names the language
+    /// when a clip in it is heard): wait, and ask again. Like [`Next::Working`] on the wire
+    /// (`fetching` is true); its own word so a page can tell which wait it is.
+    Downloading,
     /// Nothing is missing: a clip sent now starts the load, or tries again.
     /// Nothing is downloaded.
     Retry,
 }
 
 impl Next {
-    /// The word a page reads (`"never"`, `"download"`, `"working"`, `"retry"`).
+    /// The word a page reads (`"never"`, `"download"`, `"working"`, `"downloading"`, `"retry"`).
     fn word(self) -> &'static str {
         match self {
             Next::Never => "never",
             Next::Download => "download",
             Next::Working => "working",
+            Next::Downloading => "downloading",
             Next::Retry => "retry",
         }
     }
@@ -98,10 +106,10 @@ impl Next {
 
 /// This machine cannot hear now. The reason is words for the person, not for
 /// a log: what stops it, or what is being done about it. `next` says what
-/// would help ([`Next`]); `fetching` on the wire is `next == Working` (what
-/// hearing waits on — the model's fetch, or its load — is under way, so
-/// trying again soon will do; false after a failure, where the next press
-/// tries again).
+/// would help ([`Next`]); `fetching` on the wire is `next == Working` or
+/// `Downloading` (what hearing waits on — the model's fetch, its load, or a
+/// language's download — is under way, so trying again soon will do; false
+/// after a failure, where the next press tries again).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Unavailable {
     pub reason: String,
@@ -125,12 +133,16 @@ impl Unavailable {
         Self::with(Next::Working, reason)
     }
 
+    pub fn downloading(reason: impl Into<String>) -> Self {
+        Self::with(Next::Downloading, reason)
+    }
+
     pub fn retry(reason: impl Into<String>) -> Self {
         Self::with(Next::Retry, reason)
     }
 
     pub fn is_working(&self) -> bool {
-        self.next == Next::Working
+        matches!(self.next, Next::Working | Next::Downloading)
     }
 
     /// The fields a person's page reads, in both answers that carry a no.
@@ -160,9 +172,15 @@ pub trait SttProvider: Send + Sync {
     async fn hear(&self, samples: &[i16], language: &str) -> Result<Heard, Unavailable>;
 }
 
-/// The daemon's hearing — the single switch point for the daemon's STT.
+/// The daemon's hearing — the single switch point for the daemon's STT. Which
+/// recognizer a machine has is `runtime::hearing_by_apple`; Settings →
+/// Models (`uses.rs`) and the local lanes (`providers_view.rs`) read the same
+/// answer, so the page names what this switch picks.
 pub fn default_provider(sidecar: Arc<super::mlx_sidecar::VoiceSidecar>) -> Arc<dyn SttProvider> {
-    Arc::new(super::stt_mlx::MlxSttProvider::new(sidecar))
+    match crate::runtime::hearing_by_apple() {
+        true => Arc::new(super::stt_apple::AppleSttProvider::new(super::stt_apple::Helper::from_env())),
+        false => Arc::new(super::stt_mlx::MlxSttProvider::new(sidecar)),
+    }
 }
 
 /// GET /api/stt — can she hear now, before a microphone is opened. Owner
@@ -905,7 +923,7 @@ mod tests {
         ];
         let mut seen = 0;
         for (rel, code) in crate::server::lock_scan::production_code(&["src/server/api"]) {
-            if !(rel.ends_with("api/stt.rs") || rel.ends_with("api/stt_mlx.rs")) {
+            if !(rel.ends_with("api/stt.rs") || rel.ends_with("api/stt_mlx.rs") || rel.ends_with("api/stt_apple.rs")) {
                 continue;
             }
             seen += 1;
@@ -913,7 +931,23 @@ mod tests {
                 assert!(!code.contains(word), "{rel} names `{word}`: what is heard is never kept or sent");
             }
         }
-        assert_eq!(seen, 2, "the hearing modules moved: update this lock");
+        assert_eq!(seen, 3, "the hearing modules moved: update this lock");
+    }
+
+    /// Which recognizer hears is `runtime::hearing_by_apple`, read by the switch, the Dictation row and the
+    /// local lanes: none of them asks the platform itself.
+    #[test]
+    fn hearing_by_apple_is_the_one_switch() {
+        for (name, code) in [
+            ("stt.rs", include_str!("stt.rs")),
+            ("uses.rs", include_str!("uses.rs")),
+            ("providers_view.rs", include_str!("../../../crates/linggen-engine/src/provider/models/providers_view.rs")),
+        ] {
+            assert!(code.contains("hearing_by_apple()"), "{name} does not ask `hearing_by_apple`");
+        }
+        for (name, code) in [("stt_apple.rs", include_str!("stt_apple.rs")), ("stt_mlx.rs", include_str!("stt_mlx.rs"))] {
+            assert!(!code.contains("target_os"), "{name} decides by platform: only `hearing_by_apple` does");
+        }
     }
 
     /// The provider is handed the sound and the clip's language tag, nothing else: samples, no path or URL.

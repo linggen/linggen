@@ -96,7 +96,7 @@ The easiest way to add models: open **Settings → Models** in the browser, clic
 
 ### Defaults by use
 
-Settings → Models owns the chat chain, effort, reading voice, and drawing. Dictation uses local Whisper. Apps follow the chat default unless an existing override applies, including a model declared in skill frontmatter. Lingyu offers the first declared live provider (Qwen); Gemini remains available to explicit development token requests.
+Settings → Models owns the chat chain, effort, reading voice, and drawing. Dictation is Apple's on-device speech recognition on a Mac (no choice, nothing to download but a language's model, free); anywhere else, local Whisper. Apps follow the chat default unless an existing override applies, including a model declared in skill frontmatter. Lingyu offers the first declared live provider (Qwen); Gemini remains available to explicit development token requests.
 
 The `/api/uses` snapshot supplies each option's readable `name` and `source`, and the `effective` choice used for Automatic. Repository IDs are tooltip metadata, not option labels.
 

@@ -18,7 +18,11 @@ api_key = "test-not-a-key"
     assert_eq!(w.api.put_json("/api/uses", json!({"use":"live","choice":"google"})).await.0, 400);
     assert!(before["speak"]["choice"].is_null());
     assert!(before["draw"]["choice"].is_null());
-    assert_eq!(before["hear"]["options"][0]["id"], "local-stt");
+    // A Mac hears with Apple's own recognition, one fact and no choice; anywhere else it is Whisper.
+    let hearing = if cfg!(target_os = "macos") { "apple-speech" } else { "local-stt" };
+    assert_eq!(before["hear"]["options"].as_array().unwrap().len(), 1);
+    assert_eq!(before["hear"]["options"][0]["id"], hearing);
+    assert_eq!(before["hear"]["effective"], hearing);
     for kind in ["chat", "speak", "voice", "draw", "hear"] {
         let options = before[kind]["options"].as_array().unwrap();
         assert!(!options.is_empty(), "{kind}");
@@ -39,7 +43,13 @@ api_key = "test-not-a-key"
     assert_eq!(option("draw", "chatgpt")["name"], "ChatGPT drawing");
     assert_eq!(option("speak", "qwen")["name"], "Qwen3-TTS 0.6B");
     assert_eq!(option("speak", "system")["name"], "macOS system voices");
-    assert_eq!(option("hear", "local-stt")["name"], "Whisper large-v3 turbo");
+    match cfg!(target_os = "macos") {
+        true => {
+            assert_eq!(option("hear", "apple-speech")["name"], "Apple speech recognition");
+            assert_eq!(option("hear", "apple-speech")["source"], json!({"way":"local","free":true}));
+        }
+        false => assert_eq!(option("hear", "local-stt")["name"], "Whisper large-v3 turbo"),
+    }
     let live = w.api.get("/api/live").await;
     assert_eq!(live["providers"].as_array().unwrap().len(), 1);
     assert_eq!(live["providers"][0]["id"], "alibaba");

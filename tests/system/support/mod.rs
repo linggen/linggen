@@ -190,6 +190,9 @@ impl World {
         if let Some(gb) = setup.machine_memory_gb {
             extra_env.push(("LINGGEN_MACHINE_MEMORY_GB".to_string(), gb.to_string()));
         }
+        // No world reaches Apple's recognition: its helper is nowhere, unless a test names a stand-in
+        // (`Setup::env`, set after this). A world that downloaded a language model would be a test with a side effect on the machine.
+        extra_env.push(("LINGGEN_HEARING_HELPER".to_string(), "/nonexistent/ling-hear".to_string()));
         extra_env.extend(setup.env.iter().map(|(k, v)| (k.to_string(), v.clone())));
         let host = setup.lan.then_some("0.0.0.0");
         let engine = Engine::start(&home, port, !setup.no_config, &extra_env, host, setup.fetch_fixture).await;

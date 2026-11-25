@@ -178,10 +178,11 @@ export const WORDS = {
  * What the engine says of her hearing, asked of it (`GET /api/stt`) and never guessed.
  * `next` is the engine's own word for what would help: `'never'` (this Mac cannot hear),
  * `'download'` (files are missing: a `start()` downloads them — `reason` names the size),
- * `'working'` (a fetch or load is under way), `'retry'` (nothing missing: a `start()` only
+ * `'working'` (a fetch or load is under way), `'downloading'` (a language's model is being put on
+ * this Mac: a wait like `'working'`), `'retry'` (nothing missing: a `start()` only
  * loads, or tries again); `null` when she can hear. `reason` is the engine's sentence, as it
  * said it. When the engine could not be reached: `hears` false, `next` `'retry'`, `reason` WORDS.failed, `failed` true.
- * @typedef {{ hears: boolean, next: 'never'|'download'|'working'|'retry'|null, reason: string|null, failed?: true }} HearingStatus
+ * @typedef {{ hears: boolean, next: 'never'|'download'|'working'|'downloading'|'retry'|null, reason: string|null, failed?: true }} HearingStatus
  */
 
 /** "Listening…" / "Thinking…" / nothing — told once each (the third state,
@@ -395,7 +396,7 @@ export function createHoldToTalk(deps) {
   /** What the engine's answer to a "no" says, for a page. */
   const noOf = (body) => ({
     hears: false,
-    next: ['never', 'download', 'working', 'retry'].includes(body.next) ? body.next : body.fetching === true ? 'working' : 'retry',
+    next: ['never', 'download', 'working', 'downloading', 'retry'].includes(body.next) ? body.next : body.fetching === true ? 'working' : 'retry',
     reason: reasonOf(body) ?? WORDS.cannotHear,
   });
 
@@ -422,7 +423,7 @@ export function createHoldToTalk(deps) {
       hearsUntil = deps.now() + HEARS_MS;
       return { hears: true };
     }
-    if (status.failed || status.next === 'working' || deps.knock === false) return { hears: false, reason: status.reason };
+    if (status.failed || status.next === 'working' || status.next === 'downloading' || deps.knock === false) return { hears: false, reason: status.reason };
     const knocked = await knock();
     return { hears: false, reason: (knocked?.status === 503 ? reasonOf(knocked.body) : null) ?? status.reason };
   }

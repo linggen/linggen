@@ -116,7 +116,7 @@ line — bubble, chat — and no audio is made or played, until turned back on.
 
 - **Mac:** `[pet] muted` in config. Setting it sends `pet_voice {muted}` to
   every surface so whichever is playing stops. `pet_speak` carries `voice`;
-  muted, or at the page the line shows on (companion spec § Heard or read), the
+  muted, or at the page the line shows on (§ Heard or read), the
   holder shows the bubble and fetches no `/api/tts`.
   - `/mute` and `/unmute` are caught before any model in `dispatch_turn` (every
     Mac chat, including a Ling chat relayed from the phone) and in
@@ -154,14 +154,14 @@ Spoken line, in order of preference — the first whose files are on disk, with
 
 `GET /api/tts` says whether she can speak and whether naturally, starting
 nothing; `POST /api/tts {text, voice?}` returns a WAV and fetches no model in
-front of a line. Hearing (STT) is Whisper large-v3 turbo in the same sidecar
-(companion spec § Asked aloud).
+front of a line. Hearing (STT): on a Mac, Apple's on-device speech recognition;
+elsewhere Whisper large-v3 turbo in the same sidecar (§ Heard or read).
 
 A line is spoken in short clauses (`api/tts_text.rs`): the cue carries them,
 the surface fetches each and plays the first while the next is made. The bubble
 shows the original text; only the spoken copy drops quotes and a leading
 「……」 and turns 「——」/「……」 into pauses. Whether a line is spoken at all is
-companion spec § Heard or read.
+§ Heard or read.
 
 ## Session and memory
 
@@ -243,10 +243,20 @@ text.
   next}`, asked at the press before the mic opens; starts nothing (one judgement,
   `stt::hears_now`, shared with the POST). `next` is the engine's word: `never`,
   `download` (a clip or an empty request starts it; the model is 1.6 GB, about
-  4 GB with her voice), `working`, `retry`. A page that must not download without
+  4 GB with her voice), `downloading` (a Mac: a language's model is being put
+  on it), `working`, `retry`. A page that must not download without
   a yes (`shared/hold-to-talk.js`, `knock: false`) sends the empty request only
   from the person's yes.
-- **Engine:** Whisper large-v3 turbo on MLX (`runtime::STT_MODEL`) in the voice
+- **Engine on a Mac:** Apple's own on-device speech recognition, no choice
+  (`runtime::hearing_by_apple` is the one answer; Settings shows one fact line).
+  `ling-hear` (Swift, `apple_speech/`, built by `build.rs`, carried inside
+  `ling`) runs as its own process per clip — samples on stdin, one JSON line
+  out — so a failure ends one hearing, never the engine. On the device only,
+  never Apple's servers. A language this Mac lacks answers 503 `downloading`
+  and that press starts the install (macOS 26) or names where to add it
+  (older). A clip that names no language is heard in the first ready Mac
+  language, else English. A Whisper copy already downloaded is left alone.
+- **Engine elsewhere:** Whisper large-v3 turbo on MLX (`runtime::STT_MODEL`) in the voice
   sidecar that speaks her (`mlx_sidecar.rs`, one process, one slot); same machine
   needs as her voice (Apple Silicon, 16 GB). Fetched at first use; a Mac that
   holds it loads it at start. Language told to the model is decided in one place
@@ -585,7 +595,7 @@ Conditions she may raise are noticed by perception ([perception-spec.md § 5](pe
 | Pet window, tray | `linggen-app/shell/src/pet.rs`, `menubar.rs`, `companion.rs` |
 | Renderer | `ui/` — `PetStage`, `?pet=1`, `YinyueAvatar`, `useYinyuePresenter` |
 | Surface registry, speak cue | `src/server/state.rs`, `src/server/api/yinyue.rs` |
-| Voice / hearing | `src/server/api/tts*.rs`, `stt*.rs`, `mlx_sidecar.rs`; models `runtime.rs` |
+| Voice / hearing | `src/server/api/tts*.rs`, `stt*.rs` (`stt_apple.rs` + `apple_speech/` on a Mac), `mlx_sidecar.rs`; models `runtime.rs` |
 | Her turns, rolling session | `src/server/resident/` |
 | Config | `[pet]` in `crates/linggen-engine/src/config.rs` |
 | Watch loop, herald, faults | `src/server/resident/` (`triggers.rs`, `herald.rs`, `mission_fact.rs`, `run_fault.rs`) |

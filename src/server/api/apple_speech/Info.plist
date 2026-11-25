@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Embedded in `ling-hear` (build.rs): on a Mac before macOS 26, asking for speech recognition without
+     this text ends the program, so the helper asks only when the text is here (speech.swift,
+     `allowedLegacy`). The apps' own Info.plist carries the same text for the process macOS blames. -->
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>ai.linggen.ling-hear</string>
+	<key>CFBundleName</key>
+	<string>ling-hear</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Linggen listens to what you say to Yinyue and turns it into words, on this Mac only. The sound is never sent anywhere.</string>
+</dict>
+</plist>

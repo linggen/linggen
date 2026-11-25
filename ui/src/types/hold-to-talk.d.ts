@@ -95,7 +95,7 @@ declare module '@linggen/hold-to-talk' {
   /** What the engine says of her hearing (asked, never guessed). `next` is the engine's word for what would help. */
   export interface HearingStatus {
     hears: boolean;
-    next: 'never' | 'download' | 'working' | 'retry' | null;
+    next: 'never' | 'download' | 'working' | 'downloading' | 'retry' | null;
     reason: string | null;
     failed?: true;
   }

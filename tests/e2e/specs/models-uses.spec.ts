@@ -8,7 +8,8 @@ test('default voice engine survives reload', async ({ page, world, httpRequests 
   await expectWebRtc(page, httpRequests);
   const card = page.getByTestId('default-card');
   await expect(card).not.toContainText('实时语音');
-  await expect(card.getByText('Whisper large-v3 turbo', { exact: true })).toBeVisible();
+  // A Mac hears with Apple's own recognition (one fact, no download); anywhere else, Whisper.
+  await expect(card.getByText(process.platform === 'darwin' ? '苹果系统识别' : 'Whisper large-v3 turbo', { exact: true })).toBeVisible();
   await expect(card.locator('span').filter({ hasText: /^(?:FLUX\.2 klein 4B|自动（现在用 FLUX\.2 klein 4B）)$/ })).toBeVisible();
   await expect(card.getByText('本机 · 4.3 GB · 免费', { exact: true })).toBeVisible();
   await expect(card.locator('span').filter({ hasText: /^(?:ChatGPT 画图|自动（现在用 ChatGPT 画图）)$/ })).toBeVisible();

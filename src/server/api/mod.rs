@@ -43,6 +43,9 @@ pub(crate) mod topic;
 /// her voice and her hearing.
 pub(super) mod mlx_sidecar;
 pub(super) mod stt;
+/// The Swift helper `stt_apple` runs, carried inside `ling`.
+mod apple_helper;
+pub(super) mod stt_apple;
 pub(super) mod stt_mlx;
 pub(super) mod tts;
 pub(super) mod tts_mlx;

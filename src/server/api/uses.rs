@@ -104,6 +104,18 @@ fn chat_row(models: &ModelManager, row: &ModelConfig) -> OptionRow {
     }
 }
 
+/// Dictation: one fact, no choice. A Mac hears with Apple's own on-device recognition
+/// (`runtime::hearing_by_apple`, as `stt::default_provider` decides); elsewhere Whisper.
+fn hear_use(state: &ServerState) -> Use {
+    if !runtime::hearing_by_apple() {
+        let ready = runtime::hearing_ready();
+        return Use::new(None, vec![OptionRow::local("local-stt", runtime::STT_MODEL, ready, runtime::lane_verdict(&runtime::VOICE_LANE).is_ok())], Some("local-stt"));
+    }
+    let state_word = if state.stt.can_hear().is_err_and(|no| no.next == super::stt::Next::Never) { "unavailable" } else { "ready" };
+    let apple = OptionRow::new("apple-speech", "Apple speech recognition", Source::new(Way::Local, None), state_word);
+    Use::new(None, vec![apple], Some("apple-speech"))
+}
+
 async fn table(state: &ServerState, config: &Config) -> Table {
     let models = state.manager.models.read().await.clone();
     let chain = config.routing.default_models.clone();
@@ -139,7 +151,7 @@ async fn table(state: &ServerState, config: &Config) -> Table {
         speak: Use::new(config.uses.speak.as_deref(), speak, tts::default_provider(config.uses.speak.as_deref(), speech).map(|s| s.id())),
         voice: Use::new(Some(&config.pet.voice), super::tts_mlx::SPEAKERS.iter().map(|id| OptionRow::new(id, id, Source::new(Way::Local, None), "ready")).collect(), None),
         draw: Use::new(config.uses.draw.as_deref(), drawing, drawer),
-        hear: Use::new(None, vec![OptionRow::local("local-stt", runtime::STT_MODEL, runtime::hearing_ready(), runtime::lane_verdict(&runtime::VOICE_LANE).is_ok())], Some("local-stt")),
+        hear: hear_use(state),
     }
 }
 

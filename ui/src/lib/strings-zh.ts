@@ -436,6 +436,7 @@ export const ZH: Record<string, string> = {
   'Qwen3-TTS speaker': 'Qwen3-TTS 音色',
   'System voice': '系统语音',
   'macOS system voices': 'macOS 系统声音',
+  'Apple speech recognition': '苹果系统识别',
   'Free': '免费',
   'ChatGPT drawing': 'ChatGPT 画图',
   'Automatic (now using {model})': '自动（现在用 {model}）',

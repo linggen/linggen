@@ -685,6 +685,8 @@ test('status() asks and starts nothing: one GET, no POST, the engine\'s word and
   assert.equal((await r.talk.status()).next, 'never');
   r.hearsAs.value = FETCHING;
   assert.equal((await r.talk.status()).next, 'working', 'an engine that names no `next` but is fetching');
+  r.hearsAs.value = { status: 200, body: { hears: false, reason: 'Getting ready to hear Chinese…', fetching: true, next: 'downloading' } };
+  assert.deepEqual(await r.talk.status(), { hears: false, next: 'downloading', reason: 'Getting ready to hear Chinese…' }, 'a language being downloaded is a wait');
   r.hearsAs.value = 'throw';
   assert.deepEqual(await r.talk.status(), { hears: false, next: 'retry', reason: WORDS.failed, failed: true });
   assert.equal(posts(r).length, 0);

@@ -305,7 +305,10 @@ fn local_lanes(offered: Edition) -> impl Iterator<Item = ProviderView> {
         (Kind::Speak, TTS_MODEL, VOICE_LANE, runtime::voice_ready()),
         (Kind::Hear, STT_MODEL, VOICE_LANE, runtime::hearing_ready()),
         (Kind::Draw, PICTURE_MODEL, PICTURES_LANE, runtime::pictures_ready()),
-    ].into_iter().map(move |(kind, model, lane, on_disk)| {
+    ].into_iter()
+    // A Mac hears with Apple's own recognition: no model of ours to show (`runtime::hearing_by_apple`).
+    .filter(|(kind, ..)| !(*kind == Kind::Hear && runtime::hearing_by_apple()))
+    .map(move |(kind, model, lane, on_disk)| {
         let ready = on_disk && runtime::lane_verdict(&lane).is_ok();
         let hub = HUB_MODELS.iter().find(|m| m.repo == model).expect("local model is declared");
         let mut group = ProviderView::new(&curated::current(), offered, SignIn::Key, "ollama", "");
