@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { chatAgentOf } from '../../lib/sessionMembers.mts';
-import { Sparkles, ArrowDown, Copy, FileText, Eraser, Plus, ListTree } from 'lucide-react';
+import { Sparkles, ArrowDown, Copy, FileText, Eraser, Plus, ListTree, MoreHorizontal } from 'lucide-react';
 import { RunningSpinner } from './TaskList';
 import 'highlight.js/styles/github.css';
 import { cn } from '../../lib/cn';
@@ -41,7 +41,7 @@ import { sessionApi } from '../../lib/endpoints';
 import { startNewChat } from '../../lib/newChat';
 import { sessionFolderLabel } from '../../lib/sessionRoot.mts';
 import { runLabel, withModelName } from '../../lib/runStatus.mts';
-import { askedElsewhere, askedFrom, pagePlace, placeName, stopLabel, withLivePlaces, workingIn } from '../../lib/dayFold.mts';
+import { askedElsewhere, askedFrom, pagePlace, placeName, withLivePlaces, workingIn } from '../../lib/dayFold.mts';
 import { useRunningElsewhere } from '../../hooks/useRunningElsewhere';
 import { boxSlot } from '../../lib/chatDrafts.mts';
 
@@ -51,6 +51,17 @@ import { boxSlot } from '../../lib/chatDrafts.mts';
  */
 const ChatDebugActions: React.FC<{ projectRoot?: string | null; sessionId?: string | null }> = ({ projectRoot, sessionId }) => {
   const oldClaude = useSessionStore((s) => isOldClaude(s.allSessions.find((session) => session.id === sessionId)));
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPressed = useRef(false);
+  useEffect(() => {
+    const close = (event: PointerEvent) => { if (!menuRef.current?.contains(event.target as Node)) setOpen(false); };
+    const key = (event: KeyboardEvent) => { if (event.key === 'Escape') setOpen(false); };
+    document.addEventListener('pointerdown', close);
+    document.addEventListener('keydown', key);
+    return () => { document.removeEventListener('pointerdown', close); document.removeEventListener('keydown', key); if (timer.current) clearTimeout(timer.current); };
+  }, []);
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'error'>('idle');
   const [spStatus, setSpStatus] = useState<'idle' | 'copied' | 'error'>('idle');
   const { copyChat, clearChat } = useChatActions(() => {}, {}, projectRoot);
@@ -117,25 +128,34 @@ const ChatDebugActions: React.FC<{ projectRoot?: string | null; sessionId?: stri
   }, []);
 
   return (
-    <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-      <button onClick={handleNewChat} className={btnClass(newStatus)} title="Start a new chat session here">
+    <div ref={menuRef} className="relative shrink-0 ml-auto">
+      <button type="button" aria-label="More actions" aria-haspopup="menu" aria-expanded={open}
+        className="h-6 px-1.5 rounded border border-slate-200 dark:border-white/10 bg-white dark:bg-black/30"
+        onPointerDown={() => { longPressed.current = false; timer.current = setTimeout(() => { longPressed.current = true; setOpen(true); }, 500); }}
+        onPointerUp={() => { if (timer.current) clearTimeout(timer.current); }}
+        onPointerCancel={() => { if (timer.current) clearTimeout(timer.current); }}
+        onPointerLeave={() => { if (timer.current) clearTimeout(timer.current); }}
+        onClick={(event) => { if (longPressed.current && event.detail !== 0) { longPressed.current = false; return; } longPressed.current = false; setOpen((value) => !value); }}><MoreHorizontal size={12} /></button>
+      {open && <div role="menu" className="absolute top-full right-0 mt-1 z-30 min-w-[140px] py-1 rounded-md shadow-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-800">
+      <button role="menuitem" onClick={handleNewChat} className={btnClass(newStatus)} title="Start a new chat session here">
         <Plus size={12} />
         <span>{newStatus === 'copied' ? 'New' : labelFor(newStatus, 'New chat')}</span>
       </button>
-      <button onClick={handleCopyChat} className={btnClass(copyStatus)} title="Copy chat transcript to clipboard">
+      <button role="menuitem" onClick={handleCopyChat} className={btnClass(copyStatus)} title="Copy chat transcript to clipboard">
         <Copy size={12} />
         <span>{labelFor(copyStatus, 'Chat')}</span>
       </button>
-      {!oldClaude && <button data-testid="copy-system-prompt" onClick={handleCopySystemPrompt} className={btnClass(spStatus)} title="Copy system prompt + tool schemas to clipboard">
+      {!oldClaude && <button role="menuitem" data-testid="copy-system-prompt" onClick={handleCopySystemPrompt} className={btnClass(spStatus)} title="Copy system prompt + tool schemas to clipboard">
         <FileText size={12} />
         <span>{labelFor(spStatus, 'System Prompt')}</span>
       </button>}
-      <button data-testid="clear-chat" onClick={clearChat}
+      <button role="menuitem" data-testid="clear-chat" onClick={clearChat}
         className="px-1.5 py-1 rounded text-slate-500 dark:text-slate-400 hover:bg-red-500/10 hover:text-red-500 transition-colors shrink-0 flex items-center gap-1 text-[11px] font-medium"
         title="Clear chat messages">
         <Eraser size={12} />
         <span>Clear</span>
       </button>
+      </div>}
     </div>
   );
 };
@@ -353,29 +373,28 @@ export const ChatPanel: React.FC<{
   return (
     <section className={cn('h-full flex flex-col overflow-hidden min-h-0 relative', flush ? 'bg-(--surface-panel)' : 'bg-white dark:bg-[#0f0f0f] rounded-xl border border-slate-200 dark:border-white/5')}>
       <div className="px-1.5 py-1 border-b border-slate-200 dark:border-white/5 bg-slate-50/70 dark:bg-white/[0.02] flex items-start gap-1">
-      <div className="flex-1 min-w-0 space-y-1">
+      <div className="session-bar-container flex-1 min-w-0 space-y-1">
         {sessionId && (
-          <details data-testid="session-bar" className="rounded-md border border-slate-200 dark:border-white/10 bg-white/80 dark:bg-black/20 px-2 py-1 text-[11px] text-slate-600 dark:text-slate-300">
-            <summary className="cursor-pointer flex flex-wrap items-center gap-2">
+          <div data-testid="session-bar" className="session-bar rounded-md border border-slate-200 dark:border-white/10 bg-white/80 dark:bg-black/20 px-2 py-1 text-[11px] text-slate-600 dark:text-slate-300 flex items-center gap-1 whitespace-nowrap min-w-0">
               {sessionId && (() => {
                 const sessionMeta = useSessionStore.getState().allSessions.find(s => s.id === sessionId);
                 return (
                   <>
                     <span className="font-semibold uppercase tracking-wider text-slate-500">{isOldClaude(sessionMeta) ? 'Claude session' : 'Session'}</span>
-                    <span className="font-mono truncate max-w-[160px]">{sessionId}</span>
+                    <button type="button" className="font-mono shrink-0" title={sessionId} onClick={() => { void navigator.clipboard.writeText(sessionId); }}>…{sessionId.slice(-6)}</button>
                     {/* Paths are hidden from room consumers, not from this
                         machine's own devices — a paired peer is admin. */}
                     {useUserStore.getState().userType !== 'consumer' && (sessionMeta?.project_name || sessionMeta?.cwd) && (() => {
                       const fullPath = sessionMeta?.cwd || sessionMeta?.project || '';
                       const displayName = sessionFolderLabel(sessionMeta);
                       return (
-                        <span className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-white/5 text-slate-500 text-[10px] shrink-0" title={fullPath}>
+                        <span className="session-bar-folder px-1.5 py-0.5 rounded bg-slate-100 dark:bg-white/5 text-slate-500 text-[11px] shrink-0" title={fullPath}>
                           📁 {displayName}
                         </span>
                       );
                     })()}
                     {sessionMeta?.creator && sessionMeta.creator !== 'user' && (
-                      <span className={cn('px-1.5 py-0.5 rounded text-[10px] font-medium',
+                      <span className={cn('session-bar-creator px-1.5 py-0.5 rounded text-[11px] font-medium shrink-0',
                         sessionMeta.creator === 'mission' ? 'bg-amber-100 dark:bg-amber-500/10 text-amber-600 dark:text-amber-400'
                           : 'bg-purple-100 dark:bg-purple-500/10 text-purple-600 dark:text-purple-400'
                       )}>
@@ -397,28 +416,8 @@ export const ChatPanel: React.FC<{
               <SessionFallbackToggle />
               <SessionCodingToggle />
               <SessionStats />
-            </summary>
-            <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2">
-              <div className="flex flex-wrap items-center gap-2">
-                {selectedMainRunningRunId && onCancelRun && (
-                  <button
-                    onClick={() => onCancelRun(selectedMainRunningRunId)}
-                    disabled={!!cancellingRunIds?.[selectedMainRunningRunId]}
-                    className={cn(
-                      'px-2 py-1 rounded border text-[11px] font-semibold transition-colors',
-                      cancellingRunIds?.[selectedMainRunningRunId]
-                        ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
-                        : 'bg-red-50 text-red-600 border-red-200 hover:bg-red-100'
-                    )}
-                    title={selectedMainRunningRunId}
-                  >
-                    {cancellingRunIds?.[selectedMainRunningRunId] ? 'Cancelling...' : runningAtName ? stopLabel(runningAtName) : 'Cancel Run'}
-                  </button>
-                )}
-              </div>
-              <ChatDebugActions projectRoot={projectRoot} sessionId={sessionId} />
-            </div>
-          </details>
+            <ChatDebugActions projectRoot={projectRoot} sessionId={sessionId} />
+          </div>
         )}
 
         {subagents.length > 0 && (

@@ -28,9 +28,9 @@ test('the chip appears for a model that offers effort, keeps its choice over a r
   await model.selectOption('reasoning');
   await expect(chip).toBeVisible();
   // 自动 is the leftmost stop, before the model's three levels.
-  await expect(chip.getByRole('slider')).toHaveAttribute('max', '3');
+  await expect(chip.locator('option')).toHaveCount(4);
   await expect(chip).toHaveAttribute('data-choice', 'auto');
-  await chip.getByRole('slider').press('ArrowRight');
+  await chip.selectOption('low');
   await expect(chip).toHaveAttribute('data-choice', 'low');
   await page.reload();
   await expectWebRtc(page, httpRequests);
@@ -42,9 +42,9 @@ test('the chip appears for a model that offers effort, keeps its choice over a r
   await expect(chip).toHaveCount(0);
   await model.selectOption('reasoning');
   await expect(chip).toHaveAttribute('data-choice', 'auto');
-  await chip.getByRole('slider').press('End');
+  await chip.selectOption('high');
   await expect(chip).toHaveAttribute('data-choice', 'high');
-  await chip.getByRole('slider').press('Home');
+  await chip.selectOption('auto');
   await expect(chip).toHaveAttribute('data-choice', 'auto');
 });
 
@@ -54,8 +54,8 @@ test('a ChatGPT sign-in row offers low, medium and high before catalog metadata 
   await page.getByTestId('session-model').selectOption('fake-sol');
   const chip = page.getByTestId('session-effort');
   await expect(chip).toBeVisible();
-  await expect(chip.getByRole('slider')).toHaveAttribute('max', '3');
-  await chip.getByRole('slider').press('End');
+  await expect(chip.locator('option')).toHaveCount(4);
+  await chip.selectOption('high');
   await expect(chip).toHaveAttribute('data-choice', 'high');
 });
 

@@ -14,6 +14,11 @@
   }
 }
 
+.session-bar-container { container-type: inline-size; }
+@container (max-width: 900px) { .session-bar-folder { display: none; } }
+@container (max-width: 760px) { .session-bar-creator { display: none; } }
+@container (max-width: 650px) { .session-bar-stats { display: none; } }
+
 /* Thinking spinner bounce animation */
 @keyframes thinking-bounce {
   0%, 80%, 100% {

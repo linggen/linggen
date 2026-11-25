@@ -113,8 +113,8 @@ function real(path: string): string {
 /** The session bar opened: its Clear and System Prompt buttons show. */
 async function openBar(page: Page) {
   const bar = page.getByTestId('session-bar');
-  await bar.locator('summary span').first().click();
-  await expect(bar).toHaveAttribute('open', '');
+  await bar.getByRole('button', { name: 'More actions' }).click();
+  await expect(bar.getByRole('menu')).toBeVisible();
 }
 
 /** A `!` command typed at a page, and the output it printed. The page
@@ -227,6 +227,7 @@ test.describe('a turn running from the main page', () => {
     await c.getByTestId('permission-card').getByTestId('permission-directory').last().click();
     const bash = c.locator('[data-testid="tool-call"][data-tool="Bash"]');
     await expect(bash).toHaveAttribute('data-status', 'running');
+    await openBar(main);
     await main.getByTestId('clear-chat').click();
 
     // The turn goes on: the model is asked again after the tool ends.
@@ -251,6 +252,7 @@ test.describe('a turn running from the main page', () => {
     await c.getByTestId('permission-card').getByTestId('permission-directory').last().click();
     const bash = c.locator('[data-testid="tool-call"][data-tool="Bash"]');
     await expect(bash).toHaveAttribute('data-status', 'running');
+    await openBar(page);
     await page.getByTestId('clear-chat').click();
 
     await expect(shown(page, 'Take a nap.')).toHaveCount(0);

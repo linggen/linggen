@@ -12,7 +12,10 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { suppressPermissionSync } from '../../lib/eventDispatcher';
 import { apiErrorMessage } from '../../lib/api';
 import { sessionApi } from '../../lib/endpoints';
-import { EffortSlider } from '../models/EffortSlider';
+import { EFFORT_WORD } from '../../lib/effortChip.mts';
+import { W } from '../../lib/modelsWords.mts';
+
+const control = 'h-6 shrink-0 text-[11px] border border-slate-200 dark:border-white/10 rounded px-1.5 bg-white dark:bg-black/30';
 import type { SessionInfo } from '../../types';
 import { SessionSpend } from './SessionSpend';
 import { isOldClaude } from '../../lib/oldClaude.mts';
@@ -27,7 +30,7 @@ export const SessionStats: React.FC = () => {
   const pct = limit ? Math.round((tokens / limit) * 100) : 0;
 
   return (
-    <span className="text-[10px] font-mono text-slate-400 ml-auto shrink-0" title={`Context: ${tokens} / ${limit || '?'} tokens (${pct}%)`}>
+    <span className="session-bar-stats text-[11px] font-mono text-slate-400 ml-auto shrink-0" title={`Context: ${tokens} / ${limit || '?'} tokens (${pct}%)`}>
       {tokens > 0 && <><span className={pct > 80 ? 'text-red-400' : pct > 50 ? 'text-amber-400' : ''}>{fmt(tokens)}</span>
       {limit > 0 && <span className="text-slate-300 dark:text-slate-600">/{fmt(limit)}</span>}
       {limit > 0 && <span className={pct > 80 ? 'text-red-400' : pct > 50 ? 'text-amber-400' : ''}> {pct}%</span>}</>}
@@ -87,7 +90,7 @@ export const SessionModelSelector: React.FC = () => {
       value={sessionModel ?? ''}
       onChange={handleChange}
       onClick={(e) => e.stopPropagation()}
-      className="ml-auto text-[11px] bg-white dark:bg-black/30 border border-slate-200 dark:border-white/10 rounded px-1.5 py-0.5 outline-none max-w-[14rem] truncate"
+      className={`${control} outline-none max-w-[14rem] min-w-0 truncate`}
       title="Session model override"
     >
       <option value="">Default ({defaultLabel})</option>
@@ -128,8 +131,15 @@ export const SessionEffortChip: React.FC = () => {
       useUiStore.getState().addToast({ variant: 'error', message: apiErrorMessage(error) });
     });
   };
+  const choice = session.effort ?? model.remembered_effort;
+  const selected = choice && model.effort.includes(choice) ? choice : 'auto';
   return (
-    <EffortSlider id="session-effort" name={model.name ?? model.model ?? model.id} values={model.effort} choice={session.effort ?? model.remembered_effort} onPick={change} />
+    <select data-testid="session-effort" data-choice={selected} value={selected}
+      aria-label={W.thinking} title={model.name ?? model.model ?? model.id}
+      className={`${control} outline-none`} onChange={(event) => change(event.currentTarget.value)}>
+      <option value="auto">{W.thinking} {W.automatic}</option>
+      {model.effort.map((value) => <option key={value} value={value}>{W.thinking} {EFFORT_WORD[value] ?? value}</option>)}
+    </select>
   );
 };
 
@@ -152,7 +162,7 @@ export const SessionFallbackToggle: React.FC = () => {
   return (
     <button
       type="button"
-      className={`text-[11px] border rounded px-1.5 py-0.5 font-semibold ${on
+      className={`${control} font-semibold ${on
         ? 'border-current bg-white dark:bg-black/30 text-blue-600 dark:text-blue-400'
         : 'border-slate-200 dark:border-white/10 text-slate-300 dark:text-slate-600'}`}
       onClick={(e) => { e.stopPropagation(); change(); }}
@@ -183,7 +193,7 @@ export const SessionCodingToggle: React.FC = () => {
     });
   };
   return <button type="button"
-    className={`text-[11px] border rounded px-1.5 py-0.5 font-semibold ${on
+    className={`${control} font-semibold ${on
       ? 'border-current bg-white dark:bg-black/30 text-blue-600 dark:text-blue-400'
       : 'border-slate-200 dark:border-white/10 text-slate-300 dark:text-slate-600'}`}
     onClick={(e) => { e.stopPropagation(); change(); }} aria-pressed={on}
@@ -215,7 +225,7 @@ export const SessionModeSelector: React.FC = () => {
     const current = modes.find((m) => m.value === (sessionMode || userPermission));
     return (
       <span
-        className={`text-[11px] border border-slate-200 dark:border-white/10 rounded px-1.5 py-0.5 font-semibold bg-slate-50 dark:bg-black/30 ${current?.color || 'text-slate-400'}`}
+        className={`${control} inline-flex items-center font-semibold ${current?.color || 'text-slate-400'}`}
         title={`Permission: ${userPermission}`}
       >
         {sessionMode || userPermission}
@@ -243,7 +253,7 @@ export const SessionModeSelector: React.FC = () => {
         value={effective}
         onChange={handleChange}
         onClick={(e) => e.stopPropagation()}
-        className={`text-[11px] border border-slate-200 dark:border-white/10 rounded px-1.5 py-0.5 outline-none font-semibold bg-white dark:bg-black/30 ${current?.color || ''}`}
+        className={`${control} outline-none font-semibold ${current?.color || ''}`}
         title="Permission mode for this folder"
       >
         {modes.map((m) => (
@@ -258,7 +268,7 @@ export const SessionModeSelector: React.FC = () => {
 /** Lit when the session holds a grant on every folder (`*`); its colour is that grant's mode. */
 const AllFoldersBadge: React.FC<{ mode: string | null; color?: string }> = ({ mode, color }) => (
   <span
-    className={`text-[11px] border rounded px-1.5 py-0.5 font-semibold ${mode
+    className={`${control} inline-flex items-center font-semibold ${mode
       ? `border-current bg-white dark:bg-black/30 ${color || ''}`
       : 'border-slate-200 dark:border-white/10 text-slate-300 dark:text-slate-600'}`}
     title={mode ? `All folders: ${mode}` : 'No grant on all folders'}
