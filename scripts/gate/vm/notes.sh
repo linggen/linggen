@@ -1,5 +1,5 @@
 # Release gate — Memory V2, the default since 3.0: Linggen's own notes
-# (doc/memory-spec.md § Memory V2; engine own_memory/ and memory_host/upgrade.rs).
+# (doc/memory-spec.md; engine own_memory/ and memory_host/upgrade.rs).
 # Sourced by first-install.sh and upgrade.sh in the VM, and by notes-local.sh
 # on the host against a scratch engine — the same checks, so a rehearsal here
 # is the gate's own. Needs common.sh (LG, EP, mcp_answers, mem_post, check).

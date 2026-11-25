@@ -1,5 +1,5 @@
-//! The memory scan and solve, started from the engine (doc/memory-spec.md §
-//! Scan and solve): `ling mem scan` on a fixture home's session logs, and the
+//! The memory scan and solve, started from the engine (doc/memory-spec.md § V1
+//! (the way back), Scan and solve): `ling mem scan` on a fixture home's session logs, and the
 //! `memory-scan` / `memory-solve` missions run through the trigger route.
 
 use crate::support::model::Agent;

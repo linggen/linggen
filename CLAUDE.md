@@ -15,7 +15,7 @@ Read files under `doc/` and follow them. If you find wrong content in any doc fi
 - `doc/cli.md` — CLI reference
 - `doc/code-style.md` — architecture principles (one place decides and a lock holds it there; open what varies, close what does not) and code style — read before any non-trivial change
 - `doc/session-spec.md` — session/context: creators, effective tools, prompt assembly
-- `doc/memory-spec.md` — memory system: extraction, storage, two-tier loading
+- `doc/memory-spec.md` — memory (V2): the notes store, one writer, privacy fence, other agents' memory read and forwarded, chronicle, phone, switch and move from v1; v1 as the way back
 - `doc/mission-spec.md` — cron mission system
 - `doc/plan-spec.md` — plan mode feature
 - `doc/log-spec.md` — logging levels, throttling, output targets

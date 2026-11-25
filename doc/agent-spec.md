@@ -102,7 +102,7 @@ Memory consolidation is **not** done by a separate subagent anymore. `ling`
 itself writes durable rows inline (driven by the system prompt's memory
 protocol + the per-turn auto-recall hint), matching how Claude Code and
 Codex operate. The user-triggered `dream` mission still handles bulk
-reprocessing — see [`memory-spec.md`](memory-spec.md) §2.
+reprocessing — see [`memory-spec.md`](memory-spec.md) § V1 (the way back).
 
 Ling is the universal agent. Specialized behavior comes from skills:
 - **Game-table skill** — bound to game sessions, zero tools, pure conversation

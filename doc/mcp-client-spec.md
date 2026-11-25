@@ -278,8 +278,8 @@ second machine ──LAN──► Mac ling :9527/mcp   (x-linggen-device)
 ```
 
 An approved computer sees the five memory tools only (`mcp-spec.md` § Views).
-A machine with Linggen shares memory as a replica (`memory-spec.md` § Across
-machines). *History:* before 2.3 this was ling-mem's own `:9528/mcp`; nothing
+A machine with Linggen shares memory as a replica (`memory-spec.md` § V1 (the way
+back), Across machines). *History:* before 2.3 this was ling-mem's own `:9528/mcp`; nothing
 listens on 9528 now.
 
 LAN is the scope. No relay, no VPN, no tunnel, no proxy hop.
