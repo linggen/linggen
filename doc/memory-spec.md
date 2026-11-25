@@ -36,7 +36,7 @@ never writes to project files.
 - **linggen plugin** — the same store in Claude Code and Codex:
   recall each turn, capture protocol, runbooks, and `/linggen:scan` for
   backfilling days. Third-party hosts reach the store through the engine's
-  `/mcp` door (`mcp-spec.md`): memory is five of its thirteen tools
+  `/mcp` door (`mcp-spec.md`): memory is five of its tools
   (`memory_search`, `memory_add`, `memory_update`, `memory_delete`,
   `memory_upkeep`). Any MCP-capable agent can add `http://127.0.0.1:9527/mcp`
   as an MCP server.
@@ -210,7 +210,7 @@ at start-up and serves it (`src/memory_host/`, code in `crates/linggen-memory`).
 - **One writer.** The engine holds `memory/.store.lock` (flock) for its life;
   the file names its pid and port. A second opener is refused.
 - **Doors.** `/mem/*` (memory's own routes) and `/mcp` (memory's five tools among the
-  door's thirteen; `/mcp/memory` is retired and answers 410) on the engine's
+  door's; `/mcp/memory` is retired and answers 410) on the engine's
   port — the only port; the phone's `/api/memory/<verb>`. Who reaches which
   is below. Nothing listens on the old daemon's 9528.
 - **No address to set.** The engine's own callers use the store it hosts

@@ -165,8 +165,9 @@ and store: session start; a search; a save; a delegated run that raises a
 permission request, answered; a browser read. The old plugin sees the update
 message (`/mcp/memory` answers 410 `UPGRADE_PLUGIN`); a host that shows only a
 generic disconnect, or an old hook that hides the error, is a GAP row, not a
-pass. `tools/list` is the thirteen tools, in order (`app` last), and an approved computer sees
-the five memory tools; the server text is at most 2,048 characters in every
+pass. `tools/list` is the catalogue's tools, in its order (`src/server/mcp/catalog.rs`; the gate
+reads the names from the plugin evals' `_tools.json`, which a test locks to the catalogue),
+and an approved computer sees the five memory tools; the server text is at most 2,048 characters in every
 view. The details are in `test-design.md` § The one MCP door.
 
 Asset pack: after the app's first launch, on first install and upgrade,

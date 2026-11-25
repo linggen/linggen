@@ -1,7 +1,7 @@
 {
   "name": "linggen",
   "version": "2.6.1",
-  "description": "Linggen for Claude Code — one local program, one MCP server (`linggen`, /mcp), thirteen tools: durable cross-host memory (five memory tools), agents that take delegated work, browser control in your own Chrome, and the apps on your Mac, all from the Linggen engine. Per-turn memory recall built in, and /linggen:config points this host at a Linggen on another machine. Installs Linggen (background download) on first session start.",
+  "description": "Linggen for Claude Code — one local program, one MCP server (`linggen`, /mcp): durable cross-host memory (five memory tools), agents that take delegated work, browser control in your own Chrome, and the apps on your Mac, all from the Linggen engine. Per-turn memory recall built in, and /linggen:config points this host at a Linggen on another machine. Installs Linggen (background download) on first session start.",
   "author": {
     "name": "Linggen"
   },

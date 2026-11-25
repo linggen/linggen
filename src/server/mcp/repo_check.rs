@@ -168,6 +168,62 @@ fn no_live_file_names_a_retired_tool_address_or_namespace() {
     );
 }
 
+/// No live file gives the door a total ("thirteen tools"): the catalogue is
+/// the one place that counts, and a total written elsewhere is the number
+/// that goes stale when a tool joins. A line says "tool" itself or sits beside
+/// one that does; a history section may keep the old totals.
+#[test]
+fn no_live_file_counts_the_doors_tools() {
+    let counts = [
+        "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty",
+        "thirteenth", "fourteenth", "fifteenth",
+    ];
+    let mut stale = Vec::new();
+    for path in live_files() {
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let shown = path.strip_prefix(root()).unwrap_or(&path).display().to_string();
+        let lines = lines_with_history(&path, &text);
+        for (i, (n, line, history)) in lines.iter().enumerate() {
+            if *history {
+                continue;
+            }
+            let near = &lines[i.saturating_sub(1)..(i + 2).min(lines.len())];
+            if !near.iter().any(|(_, l, _)| l.contains("tool")) {
+                continue;
+            }
+            let lower = line.to_lowercase();
+            for word in counts {
+                if names(&lower, word) {
+                    stale.push(format!("{shown}:{n}: \"{word}\" beside \"tool\""));
+                }
+            }
+        }
+        if shown.starts_with("scripts/gate") && text.contains("DOOR_TOOLS=") {
+            stale.push(format!("{shown}: DOOR_TOOLS= is a second count; the gate reads the tool names (DOOR_TOOL_NAMES)"));
+        }
+    }
+    assert!(
+        stale.is_empty(),
+        "a total of the door's tools in a live file (name the catalogue instead):\n{}",
+        stale.join("\n")
+    );
+}
+
+/// The spec's table names every tool the catalogue publishes.
+#[test]
+fn the_spec_names_every_tool_of_the_door() {
+    let spec = std::fs::read_to_string(root().join("doc/mcp-spec.md")).unwrap();
+    let missing: Vec<String> = catalog()
+        .tools_list(View::Local)
+        .iter()
+        .map(|t| t["name"].as_str().unwrap().to_string())
+        .filter(|name| !spec.contains(&format!("`{name}`")))
+        .collect();
+    assert!(missing.is_empty(), "doc/mcp-spec.md does not name {missing:?}");
+}
+
 /// The only code that defines an MCP tool (writes an `inputSchema`) is the
 /// catalogue's schema module, and the only servers that answer
 /// `tools/list` are the two built from a catalogue: this door and memory's

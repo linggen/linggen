@@ -4,7 +4,7 @@ reader: Coding agent and users
 guide: |
   Product specification — describe what the system should do and why.
   Keep it brief. Aim to guide design and implementation, not document code.
-status: 2.7 + memory v2 (in trial) — one door, fifteen tools (memory 5, agents 4, browser 3, apps 1, other agents' memory 1, Linggen's own notes 1) at /mcp; the two-server layout (24 + 17 tools) is retired
+status: 3.0 — one door at /mcp; its tools are the catalogue's (`src/server/mcp/catalog.rs`), named in the table below; the two-server layout is retired
 ---
 
 # Linggen MCP — the one door
@@ -16,14 +16,16 @@ from one catalogue (`src/server/mcp/catalog.rs`, composed with memory's
 `crates/linggen-memory/src/catalog/`). The server is named `linggen`; in Claude
 Code a tool is `mcp__plugin_linggen_linggen__<tool>`.
 
-Thirteen tools, in list order:
+The tools, in list order (the catalogue is the one list; a test checks that this table names each):
 
 | Group | Tools | Fronts |
 |:------|:------|:-------|
 | Memory (5) | `memory_search`, `memory_add`, `memory_update`, `memory_delete`, `memory_upkeep` | the store the engine hosts |
 | Agents (4) | `agent_run`, `agent_status`, `agent_permit`, `agent_end` | Linggen's agents (delegate a task) |
 | Browser (3) | `browser_open`, `browser_read`, `browser_act` | the linggen-browser extension (control module) |
-| Apps (1) | `app` | what the person's apps do on this Mac (last, so every other tool keeps its place) |
+| Apps (1) | `app` | what the person's apps do on this Mac |
+| Other agents' memory (1) | `memory_agents` | what Claude Code and Codex remember (read only; `outside_memory`) |
+| Linggen's own notes (1) | `memory_notes` | Linggen's own notes (Memory V2, `own_memory`); last, so every other tool keeps its place |
 
 A tool with several operations takes `op`. Every schema is strict
 (`additionalProperties: false`): an unknown field, a field of another op, a
@@ -38,8 +40,8 @@ share one door.
 
 | Caller | Sees |
 |:-------|:-----|
-| this machine (loopback) | all fifteen tools; `app`, `memory_agents` and `memory_notes` answer the owner at this Mac itself, not a tunnelled device |
-| an approved computer (token in `x-linggen-device`) | the five memory tools only; `memory_upkeep` without `dream_run` (twelve ops). Delegation and browser control are this machine's alone |
+| this machine (loopback) | every tool; `app`, `memory_agents` and `memory_notes` answer the owner at this Mac itself, not a tunnelled device |
+| an approved computer (token in `x-linggen-device`) | the five memory tools only; `memory_upkeep` without `dream_run`. Delegation and browser control are this machine's alone |
 | a phone, or a caller with no token off this machine | refused (403 / 401 `PAIRING_REQUIRED`). Phones use `/api/memory/<verb>`, not MCP |
 
 A tool or op outside the caller's view cannot be called (`unknown tool`, or
@@ -384,5 +386,6 @@ tool namespace is gone with the second server.
 
 1. Memory on `/mcp` (2026-07), taken out for its own server (2026-07-30),
    served by the engine from 2.3. History.
-2. **2.5: one door, twelve tools.** Done.
-3. **2.7: the thirteenth tool, `app`.** Done.
+2. **2.5: one door.** Done.
+3. **2.7: the tool `app`.** Done.
+4. **3.0: `memory_agents` and `memory_notes`.** Done.

@@ -14,7 +14,7 @@ a CLI.
 - **Typed facts.** `fact`, `preference`, `decision`, `learned`, plus trajectory-level `tried`, `fixed`, `built`. Searches and filters operate on these types.
 - **Forgetting is first-class.** Delete by id, forget by filter — refuses empty filters as a guardrail.
 - **Local-first storage.** The memory store is on disk in `~/.linggen/memory/` (LanceDB) — no cloud sync. Retrieved facts do enter your agent's prompt context on each turn, so they reach whichever LLM you've configured.
-- **One program, one address.** Linggen serves memory, agents, browser control and the person's apps at one MCP door, `http://127.0.0.1:9527/mcp` (thirteen tools; another machine sees the five memory tools). A machine with only the plugin points at another machine's Linggen (`/linggen:config`) and installs nothing.
+- **One program, one address.** Linggen serves memory, agents, browser control and the person's apps at one MCP door, `http://127.0.0.1:9527/mcp` (another machine sees the five memory tools). A machine with only the plugin points at another machine's Linggen (`/linggen:config`) and installs nothing.
 
 ## Quick start
 
