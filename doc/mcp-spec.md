@@ -44,7 +44,28 @@ share one door.
 | an approved computer (token in `x-linggen-device`) | the five memory tools only; `memory_upkeep` without `dream_run`. Delegation and browser control are this machine's alone |
 | a phone, or a caller with no token off this machine | refused (403 / 401 `PAIRING_REQUIRED`). Phones use `/api/memory/<verb>`, not MCP |
 
-A tool or op outside the caller's view cannot be called (`unknown tool`, or
+**The door is the view and the mode.** The caller decides the view; the engine's
+config decides the mode (`[memory] outside_agents`: `v1` or `v2`). Together they
+are one value, the `Door` (`door_of` in `src/server/mcp/mod.rs`, the only place
+that makes it), and `tools/list`, `tools/call` and the server text all read it.
+Each catalogue entry says at which doors it is offered (`Views` in the memory
+crate's catalogue: a view and a mode). Under **v2** this machine's door does not
+offer the five v1 memory tools (`memory_search`, `memory_add`, `memory_update`,
+`memory_delete`, `memory_upkeep`, with every op of them, `dream_status` and
+`dream_run` included): they are not listed, and a call of one is refused (a tool
+error, nothing ran) with where each kind of memory goes: facts about the person
+that hold everywhere to `memory_notes op=write` with scope `person`, project
+things to the agent's own memory. Why: under v2 every agent keeps its own memory
+and Linggen only reads it, so a write through `memory_add` would land in a store
+nothing reads. Everything else is unchanged: `memory_agents`, `memory_notes`,
+the agent, browser and app tools. Under **v1** nothing changes. An approved
+computer keeps its five memory tools in either mode: its agent's memory is on its
+own machine, out of this one's reach. Linggen's own sessions and `/mem/mcp` are
+not the door and are unaffected. Locks: `under_v2_the_door_lists_no_v1_memory_tool`
+and `the_list_and_the_dispatch_are_one_table` (every door lists exactly what it can
+call).
+
+A tool or op outside the caller's door cannot be called (`unknown tool`, or
 `op` not one of the listed). An approved computer's calls on `/mcp` are
 recorded as that machine's presence (Settings → devices shows it seen).
 
@@ -149,11 +170,15 @@ of its own to keep: one tool, ops `index` (the notes for a project), `read`
 (a note by id, or a topic file by path), `search` (words, also across other
 agents' memory), `write` (add, update, void, no_raise by id). Served to the
 owner at this Mac when `[memory] outside_agents = "v2"`; in v1 it answers
-that it is not served. A host on the door is always a coding reader: notes
+that it is not served. Under v2 it is where **facts about the person that hold
+everywhere** go (language, how to address them, long-standing preferences:
+`write` with scope `person`), because Claude Code has no global memory of its
+own, only per-project folders and a hand-written `~/.claude/CLAUDE.md`. A host on the door is always a coding reader: notes
 about body, mind and people, and moments, are never shown or written here.
 The tool's text and fields are one definition (`own_memory::spec`) shared with
 a Linggen session's own `memory_notes`. A host that has memory of its own
-writes there and uses this only when the person asks to let every agent know.
+writes its project things there (code conventions, project decisions, gotchas)
+and uses this for them only when the person asks to let every agent know.
 
 ## Browser tools
 
@@ -181,6 +206,18 @@ the memory rules, the watcher rule for every `agent_run`, how to answer
 solve runbook with `memory_upkeep op=dream_status`. The remote view carries the
 memory part only, and upkeep with the host's own model (no `agent_run`, browser
 or `dream_run`).
+
+Under v2 this machine's text drops the v1 save rules and upkeep (the door offers
+neither) and, in one text for every host, says three things by scope: facts
+about the person that hold everywhere go to `memory_notes op=write`, scope
+`person`; project things (code conventions, decisions with their why, gotchas) go
+to the agent's own memory; and to read another agent's memory, open its file
+directly when the host can, and use `memory_agents` only when it can't (a
+sandbox, another machine). Linggen is not a mandatory middle layer. The
+2,048-character limit holds for it too (`the_server_text_fits_and_carries_what_a_caller_acts_on`,
+`the_v2_server_text_drops_the_save_rules_and_keeps_the_rest`), the scope split is
+held word for word by `the_v2_server_text_splits_memory_by_scope`, and the text is
+fingerprinted with the tools (`the_published_surface_is_locked`).
 
 A run that cannot go on says so; the server text tells a caller what to do on a
 usage limit: read the reset time, then pick a ready model (`agent_status

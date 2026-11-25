@@ -170,7 +170,10 @@ MCP door (`mcp-spec.md`; the catalogue lists every tool, and no doc counts them)
 - **`memory_notes`** — Linggen's own notes, the ops above. One definition of its
   text and fields serves a session and the door. On the door it answers only the
   owner at this Mac, when `outside_agents` is v2; the host is always a Work
-  audience and is recorded as the writer.
+  audience and is recorded as the writer. What goes here from an outside host:
+  facts about the person that hold in every project (language, how to address
+  them, long-standing preferences), scope `person`. Project things (code
+  conventions, project decisions, gotchas) go to the host's own memory.
 - **`memory_agents`** — what other agents remember, read only: `mode` (v1 or v2),
   `index` (their index lines for a folder, never the calling host's own), `read`
   (one note by path, only inside a registered source) and `search`. The owner, at
@@ -286,8 +289,11 @@ outside_agents = "v2"   # Claude Code, Codex and other hosts on the door
 
 `linggen` says which memory Linggen's own sessions have, and whether the phone's
 four verbs and the chronicle use the notes. `outside_agents` says how hosts
-outside Linggen are served: v2 forwards other agents' memory at start and serves
-`memory_notes`; v1 is the plugin's old recall and capture. The two are
+outside Linggen are served: v2 forwards other agents' memory at start, serves
+`memory_notes` and **stops offering the five v1 memory tools on the door**
+(`mcp-spec.md`: the door is the view and the mode; an agent's own memory is the
+place for what it learns, and a write through `memory_add` would land in a store
+nothing reads); v1 is the plugin's old recall and capture. The two are
 independent. Writing `v1`, or taking the section out, is the way back. The
 settings are hand-edited; a saved settings page keeps what the file holds.
 

@@ -8,15 +8,15 @@
 //! is published once, its enums joined and its description naming each
 //! branch's meaning.
 
-use super::{Branch, Catalog, ToolDoc, View};
+use super::{Branch, Catalog, Door, ToolDoc};
 use serde_json::{json, Map, Value};
 
 pub(super) fn tool_def<D: Copy + 'static>(
     cat: &Catalog<D>,
-    view: View,
+    door: Door,
     doc: &ToolDoc,
 ) -> Option<Value> {
-    let visible = cat.visible(view, doc.name);
+    let visible = cat.visible(door, doc.name);
     if visible.is_empty() {
         return None;
     }
