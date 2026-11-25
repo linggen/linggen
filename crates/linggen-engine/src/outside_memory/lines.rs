@@ -12,6 +12,7 @@ use super::decl::{Each, ExpectDecl, FileText, LinesDecl, MatchBy, PartDecl, Plac
 use super::disk::{self, Projects};
 use super::paths::{encode_project_path, project_chain};
 use super::readers::{Agent, Located, Reader, Registry};
+use super::redact::one_line;
 use super::{shorten, Env, Scope};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -146,7 +147,7 @@ fn forward_place(registry: &Registry, env: &Env, reader: &Reader, place: &PlaceD
         return (Err(Skip::NoData), 0);
     }
     let Some(lines) = &place.lines else {
-        return (Err(Skip::UnknownFormat("format not known yet".into())), 0);
+        return (Err(Skip::NoData), 0);
     };
     let ctx = Ctx { env, place, lines, chain, readable };
     let mut out = Vec::new();
@@ -221,6 +222,7 @@ impl Ctx<'_> {
     fn line(&self, file: &Located, scope: LineScope, distance: Option<usize>, raw: Raw, file_changed: u64) -> Line {
         let folder = file.path().parent().map(Path::to_path_buf).unwrap_or_default();
         let (about, place, distance) = match scope {
+            LineScope::Person if self.lines.each == Each::File => (format!("the person, from {}", self.env.tilde(&folder)), folder.clone(), None),
             LineScope::Person => (format!("the person, from {}", self.env.tilde(file.path())), file.path().to_path_buf(), None),
             LineScope::Project => {
                 let dir = distance.and_then(|d| self.chain.get(d)).map(|d| self.env.tilde(d)).unwrap_or_default();
@@ -237,7 +239,7 @@ impl Ctx<'_> {
             about,
             place,
             distance,
-            text: raw.text,
+            text: shorten(&one_line(&raw.text), LINE_CHARS),
             changed,
         }
     }

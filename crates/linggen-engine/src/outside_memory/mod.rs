@@ -29,20 +29,28 @@ mod lines;
 mod paths;
 mod readers;
 mod redact;
+mod room;
 mod slice;
 #[cfg(test)]
 mod tests;
 
 pub use access::{listing, read, search, touched, AgentMemory, Hit, Note, NoteFile, Place, ReadError, Touched};
 pub use lines::{reports, SourceReport};
-pub use readers::Agent;
+pub use readers::{Agent, Problem};
 pub use redact::Clean;
 // The chronicle cleans what it quotes of the person's sessions the same way.
-pub(crate) use redact::clean;
-pub use slice::{slice, Slice, SourceNote, BUDGET_BYTES};
+pub(crate) use redact::{clean, one_line};
+pub use room::Room;
+pub use slice::{slice, Slice, SourceNote};
 // Linggen's own memory (`own_memory`) files its project notes the same way
 // Claude Code does and walks a session's folder up the same chain.
 pub(crate) use paths::{encode_project_path, project_chain};
+
+/// The readers that were refused (a skill's `memory-reader` that does not
+/// parse, breaks a rule or needs a newer Linggen), for Settings and the tool.
+pub fn refused_readers(env: &Env) -> Vec<Problem> {
+    readers::Registry::load(env).problems
+}
 
 /// The agent a calling host's name stands for (`agent_run`'s `host` words),
 /// by the readers' declared `hosts`; `None` for a host with no memory

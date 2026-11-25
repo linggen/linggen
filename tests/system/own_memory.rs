@@ -204,7 +204,9 @@ async fn a_hosts_session_start_is_given_linggens_notes_without_bodies() {
 
     let start = agents(&w, json!({"op": "index", "cwd": w.work(), "host": "claude-code"})).await;
     let block = start["block"].as_str().unwrap();
-    assert!(block.contains("Name is Alex") && block.contains("cannot include live lessons") && block.contains(&id), "{block}");
+    assert!(block.contains("Name is Alex") && block.contains("cannot include live lessons"), "{block}");
+    assert!(block.contains("memory_notes op=read path=person/pricing.md"), "a topic line says where to open it: {block}");
+    assert!(!block.contains(&id), "a decision is listed by its topic, not by id: {block}");
     assert!(!block.contains("hard year") && !block.contains("SECRET BODY"), "{block}");
     assert!(start["own_notes"].as_u64().unwrap() >= 2, "{start}");
 }

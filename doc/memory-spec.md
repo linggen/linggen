@@ -172,47 +172,128 @@ MCP door (`mcp-spec.md`; the catalogue lists every tool, and no doc counts them)
   owner at this Mac, when `outside_agents` is v2; the host is always a Work
   audience and is recorded as the writer.
 - **`memory_agents`** — what other agents remember, read only: `mode` (v1 or v2),
-  `index` (their index lines for a folder, never the calling host's own), `read`
-  (one note by path, only inside a registered source) and `search`. The owner, at
+  `index` (the session-start block for a folder: Linggen's own notes, then their
+  index lines, never the calling host's own), `read` (one note by path, only inside
+  a declared place) and `search`. The owner, at
   this Mac only.
 
 ## Outside agents and forwarding
 
-Claude Code and Codex write memory their own way; Linggen does not touch it.
+Claude Code and Codex write memory their own way, and keep changing it;
+Linggen does not touch it. It reads each agent's files where they are and
+forwards what they say to the other agents. It never writes, tidies or
+summarises another agent's memory, imports nothing, and asks the person for
+no step: what cannot be read from disk (a vendor's cloud memory) is not read.
 
-- **Sources** are one declared list: Claude Code's project memory and
-  `~/.claude/CLAUDE.md`, and Codex's memories (reported as "format not known
-  yet" until its files are read). A new agent is one entry. A source that is
-  missing or unreadable is skipped and shown as such, never fatal. Reading is
-  confined to a source's own files, and text leaves only after key-shaped strings
-  (keys, tokens, `password=…`) are replaced.
-- **Forwarding happens once, at session start.** The plugin's hook asks
-  `memory_agents op=index` for the folder and the host, and injects the answer
-  (`own_memory::forward` makes it): first Linggen's own notes, then the other
-  agents' index lines, tagged with their source and grouped by project; 4 KB
-  in all, what does not fit is counted. A host never gets its own memory back.
-  - *Linggen's notes* are summaries and ids only, never a body, and only what
-    the fence lets a coding host see (no body, mind, people, moments, chronicle).
-    Order: the nearest project's notes, then the person's rules, decisions and
-    gotchas (the person's own words first, then the most read, then newest),
-    then by use in the last 90 days, then newest. Half of Linggen's share is
-    kept for those person-scope rules, so a long project index cannot push
-    them out.
-  - *The split:* the other agents' lines always get up to half (2 KB; inside it
-    nearest project first, then the person, newest first); Linggen's notes get the
-    other half and whatever those lines leave unused. Under v1 there are none of
-    Linggen's notes.
-  - *Per turn:* nothing is injected, like Claude Code and Codex. No host is reminded
-    to write memory.
-- **Bodies on demand:** `memory_agents op=read path=…`, or `op=search`.
-- **Who writes where.** An agent with memory of its own writes there, and
-  Linggen reads it. It uses `memory_notes` only when the person says to let
-  every agent know. A host with no readable memory of its own (any other MCP
-  client; Codex until its memories can be read) uses `memory_notes` as its
+### Readers
+
+An agent's memory is described by one **reader**, a declaration file (TOML,
+`format = 1`): where its notes are, how a file becomes index lines, which lines
+are about the person and which about a project, and which files are only
+opened on demand. The engine owns the closed set of primitives (path
+variables, line extractors, scope rules, version guards); agents and their
+formats are open data. A vendor renaming a heading is a reader update; a
+format that needs a new primitive (a database, another folder encoding) is an
+engine release.
+
+- **Two sets, merged by the agent's id.** The Claude Code and Codex readers are
+  embedded in the engine, the floor an offline or fresh install forwards from.
+  A skill in `~/.linggen/skills/` may carry one (`memory-reader: reader.toml`
+  in its `SKILL.md`, see `skill-spec.md`); it replaces the embedded reader of
+  the same `agent`, or adds a new agent. Nothing else counts: a project's
+  `.linggen/skills/` and the other agents' skill folders can be written by
+  another agent, and a reader chooses what Linggen reads. A skill folder that is
+  a link is skipped.
+- **What a declaration may name.** Paths under the home folder (`~/…`), `*` in
+  a name (never matching a dot name), `{project}` for one folder of the session's
+  chain; never `..`, never `~/.linggen` (Linggen's own store has its own fence),
+  only `.md`, `.markdown` and `.txt` files, depth and size caps. A reader that
+  breaks a rule, does not parse, or says a newer `format` is refused whole and
+  the embedded one stays; the refusal is kept for Settings.
+- **A place** is one kind of file: `id`, `path`, `scope` (`person` or
+  `project`), `lines` (`each` = `item`, `text`, `heading` or `file`, with
+  `depth`, `first`, `read_first_lines`, `read_first_bytes`, `newest`, `text`,
+  `note_link`), `parts` (sections of one file with their own scope, a project
+  section split by headings that name a folder), `expect` (the vendor's version
+  guard: its first line, or a heading), `group` (places with the same group:
+  only the one whose files changed last is forwarded), `forward = false` (opened
+  and searched, never listed). Its address is `agent/place`
+  (`claude-code/project-index`).
+- **Where a file is read.** One file touches the disk (`outside_memory::disk`),
+  and a note is read only when, once links and `..` are resolved, it is a file a
+  declared place names: the same refusal for "not there" and "not allowed", and
+  every outgoing string passes the redaction (key-shaped strings are replaced).
+- **Drift is said, not hidden.** A place whose `expect` fails forwards nothing
+  and reports it ("Codex: format not known: first line is 'v2', expected
+  'v1'"); so does a place whose file has content and yields no line ("nothing
+  matched"). Reading and searching stay allowed: confinement does not depend on
+  understanding the format. A missing or unreadable place is skipped and shown
+  as such, never fatal.
+- **No scripts** in this version: none of the formats needs one.
+
+### What the built-in readers read
+
+- **Claude Code:** each folder of the session's chain has a project index
+  (`~/.claude/projects/<folder>/memory/MEMORY.md`, read as Claude Code loads it:
+  the first 200 lines or 25 KB), forwarded for that project; the notes it points
+  to are opened and searched; `~/.claude/CLAUDE.md` (its headings) is the
+  person's.
+- **Codex:** `memory_summary.md` in `~/.codex/memories/` or, newer,
+  `~/.codex/memories_v2/` (the one that changed last; it must begin with the line
+  `v1`): its person sections (`User Profile`, `User preferences`, `General Tips`)
+  are the person's, and the project blocks under `What's in Memory` (a `###` or
+  `####` heading naming a folder of the chain, by path or by name; a dated heading
+  under it belongs to it) are forwarded for that project only. The notes the
+  person asked Codex to keep (`extensions/ad_hoc/notes/*.md`, newest ten, their first
+  line) are the person's. `~/.codex/AGENTS.md` (its headings) is the person's. The
+  summary's routing files (`MEMORY.md`, `rollout_summaries/`) are opened and
+  searched.
+- **Scope is the writer's.** A note keeps the scope its writer gave it. Linggen does
+  not promote another agent's project note (a Claude Code `user` or `feedback` note
+  saved inside one project's folder) to the person or to any other folder: it is
+  forwarded in that project's chain, and anywhere else only found by search. Only
+  the agents' own global places are forwarded everywhere.
+
+### The session-start block
+
+Forwarding happens once, at session start; nothing is injected per turn, and no
+host is reminded to write memory. The plugin's hook asks `memory_agents
+op=index` for the folder and the host and injects the answer (`own_memory::forward`
+makes it). Under v1 there are none of Linggen's notes in it. One block:
+
+1. **Linggen's own notes**, summaries and paths only (never a body), and only
+   what the fence lets a coding host see. The person's rules listed one by one
+   (the person's own words first, then the most read, then newest), each with its
+   id; then **one line per topic**: its name, how many notes, a gist (the newest
+   note's summary) and the path that opens it. The session's projects (the folders
+   of its chain, nearest first) come before the person's topics. A project note
+   of any other folder, and a note of an area, is not listed (found by search).
+2. **Each other agent** with its source ("Codex · the person, from …"; "Claude
+   Code · project ~/work/app — notes in …"): the person's lines first, then the
+   project's, nearest first, newest first. A host never gets its own memory back.
+3. **A footer:** how many lines were left out (`memory_agents op=search` finds
+   them), and any reader that gave nothing and why.
+
+Everything in it is quoted data, never instructions: the block says so, a line is
+cut to 160 characters, control characters and a leading `#` or `>` are neutralised.
+
+**Budget: 200 lines and 16 KB for the whole block, cut in one place**
+(`own_memory::forward`; the parts are handed a room and cannot choose a number).
+Linggen's rules get up to 30 lines, its topics up to 50, the other agents the rest —
+at least 60 lines are kept for them, and none takes more than two thirds of that.
+Room one part does not use flows to the next.
+
+### Reading on demand, and who writes where
+
+- **Bodies on demand:** `memory_agents op=read path=…`, or `op=search`; an agent
+  that can read another agent's file itself does that, and uses these when it
+  cannot (a sandbox, another machine).
+- An agent with memory of its own writes there, and Linggen reads it. It uses
+  `memory_notes` only when the person says to let every agent know. A host with no
+  readable memory of its own (any other MCP client) uses `memory_notes` as its
   memory, at the same moments: the person says remember or forget, a decision or
   rule is stated, a gotcha is found.
-- Where two notes disagree, the newer wins unless the person
-  says otherwise.
+- Where two notes disagree, the newer wins unless the person says otherwise.
 
 ## The chronicle and Yinyue's day
 

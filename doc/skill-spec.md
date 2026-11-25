@@ -147,6 +147,7 @@ Three groups of fields. Standard fields work across tools; the others are extens
 | `activity-verbs` | The verbs it may write to the activity log under its own name, e.g. `[archive, import]`; `POST /api/activity` refuses others. Not the engine's own (`pair`, `connect`, `disconnect`, `restart`, `used`, `hold`) — see `perception-spec.md` §3 |
 | `world-line` | The small file in its folder, and the fields of it, that make the app's one line in the world block (see "World line") |
 | `session-params` | Values a session of the skill may be bound to when it is made, e.g. a save (see "Session parameters") |
+| `memory-reader` | A reader file (`reader.toml`) in the skill's folder that says where another agent keeps its memory and how to forward it; only from `~/.linggen/skills/`. Set `disable-model-invocation: true` and `user-invocable: false` so the model never sees it (see `memory-spec.md` § Readers) |
 | `requires` | External dependencies to resolve at install |
 | `renamed-from` | Slugs this skill used to be called (see "Renaming a skill") |
 

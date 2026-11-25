@@ -361,8 +361,13 @@ impl PlaceDecl {
         for path in paths {
             Pattern::parse(path, self.project.is_some())?;
         }
-        if let Some(lines) = &self.lines {
-            lines.check(&self.id)?;
+        match (&self.lines, self.forward) {
+            (Some(lines), _) => lines.check(&self.id)?,
+            (None, true) => return invalid(format!("place `{}` is forwarded but declares no `lines`", self.id)),
+            (None, false) => {}
+        }
+        if self.scope == Scope::Project && self.parts.is_empty() && self.project.is_none() && self.forward {
+            return invalid(format!("place `{}` is a project place with no `{{project}}` and no parts", self.id));
         }
         for part in &self.parts {
             if !part.under.starts_with('#') {

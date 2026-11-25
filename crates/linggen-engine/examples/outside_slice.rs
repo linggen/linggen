@@ -1,11 +1,13 @@
 //! Prints what the memory-v2 forwarding would hand a session: the index
 //! lines of the OTHER agents' memories for a folder, by the engine's own
-//! code (`outside_memory::slice`), read-only. Used by
+//! code (`own_memory::forward::session_start`, the other agents' part),
+//! read-only. Used by
 //! `scripts/memory-v2-compare.py`; writes nothing and calls no model.
 //!
 //!   cargo run -q --example outside_slice -- --cwd <folder> [--host claude-code|codex]
 
-use linggen_engine::outside_memory::{host_agent, slice, Env, BUDGET_BYTES};
+use linggen_engine::outside_memory::{host_agent, Env};
+use linggen_engine::own_memory::forward::session_start;
 use std::path::PathBuf;
 
 fn main() {
@@ -27,9 +29,9 @@ fn main() {
         std::process::exit(1);
     };
     let host = host_word.as_deref().and_then(|w| host_agent(&env, w));
-    let got = slice(&env, host.as_ref(), cwd.as_deref(), BUDGET_BYTES);
-    print!("{}", got.block());
-    for note in &got.notes {
+    let got = session_start(&env, None, host.as_ref(), cwd.as_deref(), 0);
+    print!("{}", got.block);
+    for note in &got.others.notes {
         eprintln!("skipped {}: {}", note.source, note.state);
     }
 }

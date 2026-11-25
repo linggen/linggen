@@ -60,14 +60,19 @@ fn answer(env: &Env, store: Option<&Store>, mode: OutsideAgents, op: OutsideOp, 
                 .iter()
                 .map(|n| json!({ "source": n.source, "state": n.state }))
                 .collect();
+            let refused: Vec<Value> = outside::refused_readers(env)
+                .iter()
+                .map(|p| json!({ "reader": p.reader, "why": p.why }))
+                .collect();
             Ok(json!({
                 "outside_agents": mode.word(),
                 "block": start.block,
-                "own_notes": start.own.shown,
-                "own_left_out": start.own.left_out,
+                "own_notes": start.own_shown,
+                "own_left_out": start.own_left_out,
                 "lines": lines,
                 "left_out": slice.cut,
                 "skipped": notes,
+                "refused_readers": refused,
             }))
         }
         OutsideOp::Read => {

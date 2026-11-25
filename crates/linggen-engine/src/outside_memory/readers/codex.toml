@@ -1,8 +1,67 @@
+# Codex's memory, read where Codex keeps it. Read only: Linggen never writes,
+# tidies or summarises it. Codex keeps one generation of its memory in
+# `memories/` and a newer one in `memories_v2/`; both are declared, and only
+# the one that changed last is forwarded. The same declaration, as a skill's
+# `reader.toml`, replaces this one by its `agent` id (doc/memory-spec.md).
 format = 1
 agent  = "codex"
 label  = "Codex"
 hosts  = ["codex"]
 
+# Codex's own summary: it injects this file at the start of every session
+# and begins it with the line `v1`. Its person sections are about the
+# person; the project blocks under "What's in Memory" are forwarded only for
+# the folders of the session's chain (a `###` or `####` heading naming the
+# folder by path or by its name). A block that names none is left out and
+# counted. Change the two summary places together, or neither.
 [[place]]
-id   = "memories"
-path = ["~/.codex/memories/*.md", "~/.codex/memories/*/*.md"]
+id     = "summary-v1"
+group  = "summary"
+path   = "~/.codex/memories/memory_summary.md"
+expect = { first_line = "v1" }
+lines  = { each = "text", first = 10 }
+parts  = [
+  { under = "## User Profile",     scope = "person" },
+  { under = "## User preferences", scope = "person" },
+  { under = "## General Tips",     scope = "person" },
+  { under = "## What's in Memory", scope = "project", by = ["###", "####"], match = ["path", "name"] },
+]
+
+[[place]]
+id     = "summary-v2"
+group  = "summary"
+path   = "~/.codex/memories_v2/memory_summary.md"
+expect = { first_line = "v1" }
+lines  = { each = "text", first = 10 }
+parts  = [
+  { under = "## User Profile",     scope = "person" },
+  { under = "## User preferences", scope = "person" },
+  { under = "## General Tips",     scope = "person" },
+  { under = "## What's in Memory", scope = "project", by = ["###", "####"], match = ["path", "name"] },
+]
+
+# Notes the person asked Codex to keep ("remember this", "forget that");
+# Codex folds them into the summary later. Forwarded at once, newest first.
+[[place]]
+id    = "ad-hoc-notes"
+path  = ["~/.codex/memories/extensions/ad_hoc/notes/*.md", "~/.codex/memories_v2/extensions/ad_hoc/notes/*.md"]
+scope = "person"
+lines = { each = "file", text = "{first_line}", newest = 10 }
+
+# The person's own instructions to Codex: forwarded in every folder.
+[[place]]
+id    = "instructions"
+path  = "~/.codex/AGENTS.md"
+scope = "person"
+lines = { each = "heading", first = 12 }
+
+# What the summary routes into: opened and searched, never listed.
+[[place]]
+id      = "details"
+forward = false
+path    = [
+  "~/.codex/memories/MEMORY.md",
+  "~/.codex/memories/rollout_summaries/*.md",
+  "~/.codex/memories_v2/MEMORY.md",
+  "~/.codex/memories_v2/rollout_summaries/*.md",
+]
