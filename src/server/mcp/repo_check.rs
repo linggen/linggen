@@ -8,7 +8,8 @@
 //! "History" or "Retired") may.
 
 use super::catalog::catalog;
-use ling_mem::catalog::View;
+use super::{door_of, OutsideAgents};
+use ling_mem::catalog::{Door, View};
 use std::path::{Path, PathBuf};
 
 fn root() -> PathBuf {
@@ -271,51 +272,101 @@ fn only_the_catalogue_defines_and_serves_mcp_tools() {
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
 
+/// Both views at both ways of serving outside agents.
+fn every_door() -> [Door; 4] {
+    [
+        door_of(View::Local, OutsideAgents::V1),
+        door_of(View::Local, OutsideAgents::V2),
+        door_of(View::Remote, OutsideAgents::V1),
+        door_of(View::Remote, OutsideAgents::V2),
+    ]
+}
+
 /// The catalogue is exactly fifteen tools, and the list and the dispatch are
-/// the same table: every (tool, op) a view lists resolves to exactly that
-/// branch, and every branch a view may call is listed — no branch is
+/// the same table: every (tool, op) a door lists resolves to exactly that
+/// branch, and every branch a door may call is listed — no branch is
 /// reachable that the list does not show, and none listed runs nothing.
 #[test]
 fn the_list_and_the_dispatch_are_one_table() {
     let cat = catalog();
     assert_eq!(cat.tools().len(), 15);
-    for view in [View::Local, View::Remote] {
+    for door in every_door() {
         let mut listed = Vec::new();
-        for tool in cat.tools_list(view) {
+        for tool in cat.tools_list(door) {
             let name = tool["name"].as_str().unwrap().to_string();
             match tool["inputSchema"]["properties"]["op"]["enum"].as_array() {
                 Some(ops) => listed.extend(
                     ops.iter()
                         .map(|op| (name.clone(), op.as_str().unwrap().to_string())),
                 ),
-                None => listed.push((name.clone(), cat.visible(view, &name)[0].op.to_string())),
+                None => listed.push((name.clone(), cat.visible(door, &name)[0].op.to_string())),
             }
         }
         let mut callable: Vec<(String, String)> = cat
             .branches()
             .iter()
-            .filter(|b| b.views.has(view))
+            .filter(|b| b.views.has(door))
             .map(|b| (b.tool.to_string(), b.op.to_string()))
             .collect();
         let mut sorted = listed.clone();
         sorted.sort();
         callable.sort();
-        assert_eq!(sorted, callable, "{view:?}");
+        assert_eq!(sorted, callable, "{door:?}");
         for (name, op) in &listed {
-            let args = if cat.visible(view, name).len() > 1 {
+            let args = if cat.visible(door, name).len() > 1 {
                 serde_json::json!({"op": op})
             } else {
                 serde_json::json!({})
             };
             let branch = cat
-                .branch_of(view, name, &args)
+                .branch_of(door, name, &args)
                 .unwrap_or_else(|| panic!("{name} {op}"));
             assert_eq!(
                 (branch.tool, branch.op),
                 (name.as_str(), op.as_str()),
-                "{view:?}"
+                "{door:?}"
             );
         }
+    }
+}
+
+/// Which tools each mode lists, against what the plugin's commands and
+/// skill call: the commands name only tools the v1 door has; the five a v2
+/// door withholds are exactly the memory crate's tools; and the skill
+/// they all run through says what to do when those are withheld (instead of
+/// failing, or reaching for the CLI that writes a store nothing reads).
+#[test]
+fn the_plugins_commands_name_tools_a_door_has_and_the_skill_says_what_v2_withholds() {
+    let names = |door: Door| -> Vec<String> {
+        catalog()
+            .tools_list(door)
+            .iter()
+            .map(|t| t["name"].as_str().unwrap().to_string())
+            .collect()
+    };
+    let v1 = names(door_of(View::Local, OutsideAgents::V1));
+    let v2 = names(door_of(View::Local, OutsideAgents::V2));
+    let withheld: Vec<&String> = v1.iter().filter(|n| !v2.contains(n)).collect();
+    let mut five: Vec<&str> = ling_mem::catalog::memory::catalog().tools().iter().map(|t| t.name).collect();
+    five.sort();
+    let mut gone: Vec<&str> = withheld.iter().map(|n| n.as_str()).collect();
+    gone.sort();
+    assert_eq!(gone, five, "v2 withholds exactly memory's own five tools");
+    let plugin = root().join("plugins/linggen");
+    let mut commands = Vec::new();
+    walk(&plugin.join("commands"), &mut commands);
+    assert!(commands.len() >= 6, "{commands:?}");
+    for file in commands {
+        let text = std::fs::read_to_string(&file).unwrap();
+        for word in text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')) {
+            if word.starts_with("memory_") && !word.ends_with('_') {
+                assert!(v1.iter().any(|n| n == word), "{} names {word}, which no door lists", file.display());
+            }
+        }
+    }
+    let skill = std::fs::read_to_string(plugin.join("skills/linggen/SKILL.md")).unwrap();
+    for fact in ["memory v2", "this Linggen is on memory v2", "`ling mem` CLI", "memory_agents", "memory_notes"] {
+        assert!(skill.contains(fact), "the skill misses {fact}");
     }
 }
 

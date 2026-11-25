@@ -91,6 +91,59 @@ async fn with_v1_outside_hosts_are_served_the_old_way_and_the_tool_still_reads()
     }
 }
 
+const V1_MEMORY_TOOLS: [&str; 5] = ["memory_search", "memory_add", "memory_update", "memory_delete", "memory_upkeep"];
+
+async fn listed(w: &World) -> Vec<String> {
+    let res = w.api.post("/mcp", rpc("tools/list", json!({}))).await;
+    res["result"]["tools"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{res}"))
+        .iter()
+        .map(|t| t["name"].as_str().unwrap().to_string())
+        .collect()
+}
+
+/// v1: the door lists the five memory tools and the rest; a `memory_add` is
+/// taken, not refused for the way outside agents are served.
+#[tokio::test]
+async fn with_v1_the_door_lists_the_five_memory_tools() {
+    let w = World::start(Setup { config_append: V1, ..Setup::default() }).await;
+    let names = listed(&w).await;
+    assert_eq!(names.len(), 15, "{names:?}");
+    for tool in V1_MEMORY_TOOLS {
+        assert!(names.iter().any(|n| n == tool), "v1 lacks {tool}");
+    }
+}
+
+/// v2: an outside host on this machine is offered neither `memory_add` nor
+/// the other four v1 memory tools, keeps `memory_agents`, `memory_notes` and
+/// the rest, and a call of a withheld tool is refused with where each kind
+/// of memory goes (nothing is written to the v1 store).
+#[tokio::test]
+async fn with_v2_the_door_withholds_the_v1_memory_tools() {
+    let w = World::start(Setup { config_append: V2, ..Setup::default() }).await;
+    let names = listed(&w).await;
+    assert_eq!(names.len(), 10, "{names:?}");
+    for tool in V1_MEMORY_TOOLS {
+        assert!(!names.iter().any(|n| n == tool), "v2 still lists {tool}");
+    }
+    for tool in ["memory_agents", "memory_notes", "agent_run", "browser_open", "app"] {
+        assert!(names.iter().any(|n| n == tool), "v2 lost {tool}");
+    }
+    let res = w
+        .api
+        .post(
+            "/mcp",
+            rpc("tools/call", json!({"name": "memory_add", "arguments": {"content": "remember: reply in Chinese"}})),
+        )
+        .await;
+    assert_eq!(res["result"]["isError"], json!(true), "{res}");
+    let said = res["result"]["content"][0]["text"].as_str().unwrap();
+    for fact in ["memory_add is not offered", "memory v2", "memory_notes op=write", "your own memory"] {
+        assert!(said.contains(fact), "{said}");
+    }
+}
+
 /// Nothing written in the config: the door says v1 (v2 is opt-in).
 #[tokio::test]
 async fn by_default_the_door_says_v1() {
@@ -106,7 +159,7 @@ async fn v2_is_what_the_door_says_and_a_settings_save_keeps_it() {
     let w = World::start(Setup { config_append: V2, ..Setup::default() }).await;
     assert_eq!(agents(&w, json!({"op": "mode"})).await.unwrap()["outside_agents"], "v2");
     let text = server_text(&w).await;
-    assert!(text.contains("memory_agents op=index") && !text.contains("Core is tiny"), "{text}");
+    assert!(text.contains("memory_agents (op=index") && !text.contains("Core is tiny") && !text.contains("memory_add"), "{text}");
     assert!(text.chars().count() <= 2048);
 
     let mut config = w.api.get("/api/config").await;

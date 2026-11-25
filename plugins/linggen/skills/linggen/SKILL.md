@@ -40,6 +40,16 @@ second, separate store. There, MCP is the only path. Every command in
 this document works on both paths. One store, same semantics across
 every host that loads this skill.
 
+**When this Linggen is on memory v2** (`[memory] outside_agents = "v2"`) the
+door lists none of those five tools, and a call of one is refused with
+"memory v2". Then this skill's memory modes — search, list, add, dream, scan,
+solve, status — do not apply: say in one line "this Linggen is on memory v2,
+where each agent keeps its own memory", and do nothing else with them. Do not
+reach for the `ling mem` CLI instead: it writes the v1 store, which nothing
+reads under v2. Use `memory_agents` to read what other agents remember and
+`memory_notes` for Linggen's own notes (the server's instructions say which
+goes where). The browser, agent and app tools are the same in both.
+
 *Part of the [Linggen](https://linggen.dev) agent platform.*
 
 **Skill resources** live alongside this `SKILL.md`. When the instructions

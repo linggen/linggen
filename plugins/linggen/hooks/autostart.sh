@@ -27,7 +27,7 @@
 #    CC honors the field natively; Codex ignores unknown JSON and keeps the
 #    side effect (Linggen started). Either way the session never breaks.
 # 4. When that call comes back empty, one short tools/list tells an engine
-#    older than this plugin (no `memory_upkeep` on /mcp) from one that is
+#    older than this plugin (no `memory_upkeep` or `memory_agents` on /mcp) from one that is
 #    just not answering; the old one gets a one-line "update Linggen" note.
 #
 # Bails silently on any failure — never blocks the session.

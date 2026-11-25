@@ -138,9 +138,10 @@ mcp_call() {
 }
 
 # Does the engine at this address publish the one door? A short tools/list:
-# prints `yes` when it lists memory_upkeep, `no` when it answers without it
-# (an engine older than this plugin), nothing when it does not answer (not
-# running, not approved — other hooks and hints cover those).
+# prints `yes` when it lists memory_upkeep (the v1 way) or memory_agents
+# (the v2 way: the door lists no v1 memory tool), `no` when it answers
+# without either (an engine older than this plugin), nothing when it does
+# not answer (not running, not approved — other hooks and hints cover those).
 mcp_door() {
     local to="${1:-2}" out
     command -v curl >/dev/null 2>&1 || return 0
@@ -151,7 +152,7 @@ mcp_door() {
         -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' "$LINGGEN_MCP_URL" 2>/dev/null)" || return 0
     printf '%s' "$out" | jq -r '
         if (.result.tools | type) == "array" then
-            (if any(.result.tools[]; .name == "memory_upkeep") then "yes" else "no" end)
+            (if any(.result.tools[]; .name == "memory_upkeep" or .name == "memory_agents") then "yes" else "no" end)
         else empty end' 2>/dev/null || true
 }
 

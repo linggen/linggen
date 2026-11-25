@@ -147,7 +147,7 @@ pub const BRANCHES: &[Branch<&str>] = &[
         fixed: &[],
         check: None,
         timeout_ms: CALL_TIMEOUT_MS,
-        views: Views::ALL,
+        views: Views::MEMORY_V1,
         dispatch: "search",
     },
     Branch {
@@ -180,7 +180,7 @@ pub const BRANCHES: &[Branch<&str>] = &[
         fixed: &[],
         check: Some(list_rule),
         timeout_ms: CALL_TIMEOUT_MS,
-        views: Views::ALL,
+        views: Views::MEMORY_V1,
         dispatch: "list",
     },
     Branch {
@@ -202,7 +202,7 @@ pub const BRANCHES: &[Branch<&str>] = &[
         fixed: &[],
         check: None,
         timeout_ms: CALL_TIMEOUT_MS,
-        views: Views::ALL,
+        views: Views::MEMORY_V1,
         dispatch: "session_start",
     },
     Branch {
@@ -222,7 +222,7 @@ pub const BRANCHES: &[Branch<&str>] = &[
         fixed: &[],
         check: None,
         timeout_ms: CALL_TIMEOUT_MS,
-        views: Views::ALL,
+        views: Views::MEMORY_V1,
         dispatch: "get",
     },
     Branch {
@@ -262,7 +262,7 @@ pub const BRANCHES: &[Branch<&str>] = &[
         fixed: &[],
         check: None,
         timeout_ms: CALL_TIMEOUT_MS,
-        views: Views::ALL,
+        views: Views::MEMORY_V1,
         dispatch: "add",
     },
     Branch {
@@ -282,7 +282,7 @@ pub const BRANCHES: &[Branch<&str>] = &[
         fixed: &[],
         check: None,
         timeout_ms: CALL_TIMEOUT_MS,
-        views: Views::ALL,
+        views: Views::MEMORY_V1,
         dispatch: "delete",
     },
     Branch {
@@ -312,7 +312,7 @@ pub const BRANCHES: &[Branch<&str>] = &[
         fixed: &[],
         check: None,
         timeout_ms: CALL_TIMEOUT_MS,
-        views: Views::ALL,
+        views: Views::MEMORY_V1,
         dispatch: "update",
     },
     Branch {
@@ -334,7 +334,7 @@ pub const BRANCHES: &[Branch<&str>] = &[
         fixed: &[],
         check: None,
         timeout_ms: CALL_TIMEOUT_MS,
-        views: Views::ALL,
+        views: Views::MEMORY_V1,
         dispatch: "harvest_day",
     },
     Branch {
@@ -357,7 +357,7 @@ pub const BRANCHES: &[Branch<&str>] = &[
         fixed: &[],
         check: None,
         timeout_ms: CALL_TIMEOUT_MS,
-        views: Views::ALL,
+        views: Views::MEMORY_V1,
         dispatch: "days",
     },
     Branch {
@@ -382,7 +382,7 @@ pub const BRANCHES: &[Branch<&str>] = &[
         fixed: &[],
         check: Some(counts_rule),
         timeout_ms: CALL_TIMEOUT_MS,
-        views: Views::ALL,
+        views: Views::MEMORY_V1,
         dispatch: "remember_day",
     },
     Branch {
@@ -406,7 +406,7 @@ pub const BRANCHES: &[Branch<&str>] = &[
         fixed: &[],
         check: None,
         timeout_ms: CALL_TIMEOUT_MS,
-        views: Views::ALL,
+        views: Views::MEMORY_V1,
         dispatch: "dream_lease",
     },
     Branch {
@@ -420,7 +420,7 @@ pub const BRANCHES: &[Branch<&str>] = &[
         fixed: &[],
         check: None,
         timeout_ms: CALL_TIMEOUT_MS,
-        views: Views::ALL,
+        views: Views::MEMORY_V1,
         dispatch: "role",
     },
     Branch {
@@ -441,7 +441,7 @@ pub const BRANCHES: &[Branch<&str>] = &[
         fixed: &[],
         check: None,
         timeout_ms: CALL_TIMEOUT_MS,
-        views: Views::ALL,
+        views: Views::MEMORY_V1,
         dispatch: "sweep",
     },
     Branch {
@@ -463,7 +463,7 @@ pub const BRANCHES: &[Branch<&str>] = &[
         fixed: &[],
         check: Some(page_rule),
         timeout_ms: CALL_TIMEOUT_MS,
-        views: Views::ALL,
+        views: Views::MEMORY_V1,
         dispatch: "issues",
     },
     Branch {
@@ -487,7 +487,7 @@ pub const BRANCHES: &[Branch<&str>] = &[
         fixed: &[],
         check: None,
         timeout_ms: CALL_TIMEOUT_MS,
-        views: Views::ALL,
+        views: Views::MEMORY_V1,
         dispatch: "issue_add",
     },
     Branch {
@@ -511,7 +511,7 @@ pub const BRANCHES: &[Branch<&str>] = &[
         fixed: &[],
         check: None,
         timeout_ms: CALL_TIMEOUT_MS,
-        views: Views::ALL,
+        views: Views::MEMORY_V1,
         dispatch: "issue_resolve",
     },
     Branch {
@@ -535,7 +535,7 @@ pub const BRANCHES: &[Branch<&str>] = &[
         fixed: &[],
         check: Some(page_rule),
         timeout_ms: CALL_TIMEOUT_MS,
-        views: Views::ALL,
+        views: Views::MEMORY_V1,
         dispatch: "chains",
     },
 ];

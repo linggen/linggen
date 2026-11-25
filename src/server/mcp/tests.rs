@@ -200,15 +200,18 @@ async fn the_server_text_fits_and_carries_what_a_caller_acts_on() {
 }
 
 /// The v2 server text for this machine: it fits, still carries delegation,
-/// the usage limit, the browser and the apps, says where other agents'
-/// memory is read, and no longer asks the host to save into Linggen's store
-/// or run its upkeep. An approved computer reads the same text either way.
+/// the usage limit, the browser and the apps, no longer asks the host to
+/// save into the v1 store or run its upkeep, and splits memory by scope:
+/// about the person and true everywhere into `memory_notes` (person scope),
+/// project things into the agent's own memory; another agent's memory is
+/// read from its file when the host can, through `memory_agents` when not.
+/// An approved computer reads the same text either way.
 #[test]
 fn the_v2_server_text_drops_the_save_rules_and_keeps_the_rest() {
-    let v2 = server_text(View::Local, OutsideAgents::V2);
+    let v2 = server_text(door_of(View::Local, OutsideAgents::V2));
     assert!(v2.chars().count() <= 2048, "{} characters", v2.chars().count());
     for fact in [
-        "memory_agents op=index",
+        "memory_agents (op=index",
         "never edits it",
         "new background watcher",
         "Outward requests take allow_once or deny only",
@@ -218,13 +221,91 @@ fn the_v2_server_text_drops_the_save_rules_and_keeps_the_rest() {
     ] {
         assert!(v2.contains(fact), "v2 misses {fact}");
     }
-    for gone in ["Core is tiny", "Save durable facts", "memory_add + replace_ids", "dream", "episodic"] {
+    for gone in ["Core is tiny", "Save durable facts", "memory_add", "memory_search", "memory_upkeep", "dream", "episodic"] {
         assert!(!v2.contains(gone), "v2 still says {gone}");
     }
-    assert_ne!(v2, server_text(View::Local, OutsideAgents::V1));
+    assert_ne!(v2, server_text(door_of(View::Local, OutsideAgents::V1)));
     for mode in [OutsideAgents::V1, OutsideAgents::V2] {
-        assert_eq!(server_text(View::Remote, mode), instructions(View::Remote));
+        assert_eq!(server_text(door_of(View::Remote, mode)), instructions(View::Remote));
     }
+}
+
+/// The v2 text's scope split, word for word: what is true everywhere about
+/// the person goes to `memory_notes` with person scope, project things to
+/// the agent's own memory (item 6), and another agent's memory is read from
+/// its file first, `memory_agents` only when the host cannot (item 7).
+#[test]
+fn the_v2_server_text_splits_memory_by_scope() {
+    let v2 = server_text(door_of(View::Local, OutsideAgents::V2));
+    let sentence = |start: &str| -> &str {
+        let from = v2.find(start).unwrap_or_else(|| panic!("v2 misses `{start}`"));
+        let rest = &v2[from..];
+        &rest[..rest.find(". ").map(|i| i + 1).unwrap_or(rest.len())]
+    };
+    let person = sentence("Facts about the person");
+    for fact in ["hold everywhere", "language", "how to address them", "preferences", "memory_notes op=write", "scope person"] {
+        assert!(person.contains(fact), "the person sentence misses {fact}: {person}");
+    }
+    let project = sentence("Project things");
+    for fact in ["code conventions", "decisions", "gotchas", "your own memory"] {
+        assert!(project.contains(fact), "the project sentence misses {fact}: {project}");
+    }
+    let reading = sentence("To read another agent's memory");
+    for fact in ["open its file yourself when you can", "memory_agents", "only when you can't", "sandbox", "another machine"] {
+        assert!(reading.contains(fact), "the reading sentence misses {fact}: {reading}");
+    }
+}
+
+/// Under v2 an outside host on this machine sees neither `memory_add` nor
+/// the other four v1 memory tools, keeps `memory_agents` and
+/// `memory_notes` and every non-memory tool, and a call of a v1 tool is
+/// refused with where each kind of memory goes, and runs nothing. Under v1
+/// the list is the fifteen, unchanged. An approved computer keeps its five
+/// in either mode.
+#[tokio::test]
+async fn under_v2_the_door_lists_no_v1_memory_tool() {
+    let v1_memory = ["memory_search", "memory_add", "memory_update", "memory_delete", "memory_upkeep"];
+    let names = |door: Door| -> Vec<String> {
+        catalog()
+            .tools_list(door)
+            .iter()
+            .map(|t| t["name"].as_str().unwrap().to_string())
+            .collect()
+    };
+    let v1 = names(door_of(View::Local, OutsideAgents::V1));
+    assert_eq!(v1.len(), 15, "{v1:?}");
+    let v2_door = door_of(View::Local, OutsideAgents::V2);
+    let v2 = names(v2_door);
+    for gone in v1_memory {
+        assert!(!v2.iter().any(|n| n == gone), "v2 lists {gone}");
+    }
+    let kept: Vec<String> = v1.iter().filter(|n| !v1_memory.contains(&n.as_str())).cloned().collect();
+    assert_eq!(v2, kept, "v2 is v1 less the five memory tools, in the same order");
+    for stays in ["memory_agents", "memory_notes", "agent_run", "browser_open", "app"] {
+        assert!(v2.iter().any(|n| n == stays), "v2 lost {stays}");
+    }
+    for door in [door_of(View::Remote, OutsideAgents::V1), door_of(View::Remote, OutsideAgents::V2)] {
+        assert_eq!(names(door), v1_memory, "{door:?}");
+    }
+    let hub = hub();
+    for tool in v1_memory {
+        let args = match tool {
+            "memory_add" => json!({"content": "remember: reply in Chinese"}),
+            _ => json!({"op": "dream_status"}),
+        };
+        let res = call_tool(&deps(&hub), v2_door, tool, args).await.unwrap();
+        assert_eq!(res["isError"], true, "{tool}");
+        let said = res["content"][0]["text"].as_str().unwrap();
+        for fact in [tool, "memory v2", "memory_notes op=write", "scope person", "your own memory"] {
+            assert!(said.contains(fact), "{tool}: the refusal misses {fact}: {said}");
+        }
+    }
+    // The refusal is for a withheld tool only: a tool that never existed is unknown, as before.
+    assert!(call_tool(&deps(&hub), v2_door, "memory_nothing", json!({})).await.is_err());
+    // Under v1 the same call is not refused for its mode.
+    let v1_add = call_tool(&deps(&hub), door_of(View::Local, OutsideAgents::V1), "memory_add", json!({})).await.unwrap();
+    let said = v1_add["content"][0]["text"].as_str().unwrap_or_default();
+    assert!(!said.contains("memory v2"), "{said}");
 }
 
 /// Who may read `memory.outside_agents`: the config that holds it, the
@@ -457,6 +538,18 @@ async fn the_published_surface_is_locked() {
         ),
         "server texts changed: {texts:?}"
     );
+    // This machine while outside agents are served the v2 way: the five v1
+    // memory tools are gone, and the rest is the same definitions.
+    let v2 = catalog().tools_list(door_of(View::Local, OutsideAgents::V2));
+    let v2: Vec<(String, String)> = v2
+        .iter()
+        .map(|t| (t["name"].as_str().unwrap().to_string(), fingerprint(t)))
+        .collect();
+    let v1_only = ["memory_search", "memory_add", "memory_update", "memory_delete", "memory_upkeep"];
+    let rest: Vec<(String, String)> = local.iter().filter(|(n, _)| !v1_only.contains(&n.as_str())).cloned().collect();
+    assert_eq!(v2, rest, "v2:\n{}", print(&v2));
+    let v2_text = fingerprint(&json!(server_text(door_of(View::Local, OutsideAgents::V2))));
+    assert_eq!(v2_text, "10810c5a8865bee5", "the v2 server text changed: {v2_text}");
 }
 
 /// The door's JSON-RPC shapes: `ping` answers an empty object, a tool's

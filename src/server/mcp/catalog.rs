@@ -305,7 +305,7 @@ const OWN_BRANCHES: &[Branch<Dispatch>] = &[
         fixed: &[],
         check: None,
         timeout_ms: 0,
-        views: Views::ALL,
+        views: Views::MEMORY_V1,
         dispatch: Dispatch::DreamStatus,
     },
     Branch {
@@ -324,7 +324,7 @@ const OWN_BRANCHES: &[Branch<Dispatch>] = &[
         fixed: &[],
         check: None,
         timeout_ms: 0,
-        views: Views::LOCAL,
+        views: Views::LOCAL_V1,
         dispatch: Dispatch::DreamRun,
     },
     Branch {
