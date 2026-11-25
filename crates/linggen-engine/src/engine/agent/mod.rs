@@ -390,6 +390,11 @@ impl AgentManager {
         let (tx, rx) = mpsc::unbounded_channel();
         crate::provider::models::curated::start();
         let models = Arc::new(ModelManager::new(config.models.clone()));
+        // The caps start empty; only a file that holds some sets them (a
+        // second manager, in a test, must not clear another's).
+        if !config.spend_caps.is_empty() {
+            crate::provider::models::spend_cap::use_caps(&config.spend_caps);
+        }
         let pet_muted = AtomicBool::new(config.pet.muted);
         let daily_session = AtomicBool::new(config.agent.daily_session_enabled());
         crate::language::set_setting(config.language.clone());
@@ -502,6 +507,27 @@ impl AgentManager {
             next.save_runtime(self.config_dir.as_deref())?;
             *cfg = next;
         }
+        Ok(())
+    }
+
+    /// Set (`Some`) or clear (`None`) a provider's monthly spending cap in
+    /// USD: the one writer of `Config::spend_caps`, saved with the config and
+    /// in force at once. A session at the old cap continues on its next call.
+    pub async fn set_spend_cap(&self, provider: &str, usd: Option<f64>) -> Result<()> {
+        let mut cfg = self.config.write().await;
+        let mut next = cfg.clone();
+        match usd {
+            Some(usd) if crate::provider::models::spend_cap::valid_cap(usd) => {
+                next.spend_caps.insert(provider.to_string(), usd);
+            }
+            Some(_) => anyhow::bail!("a cap is a positive amount of dollars"),
+            None => {
+                next.spend_caps.remove(provider);
+            }
+        }
+        next.save_runtime(self.config_dir.as_deref())?;
+        crate::provider::models::spend_cap::use_caps(&next.spend_caps);
+        *cfg = next;
         Ok(())
     }
 
@@ -1023,6 +1049,7 @@ impl AgentManager {
         let new_models = Arc::new(ModelManager::new(new_config.models.clone()));
         *self.models.write().await = new_models;
         crate::language::set_setting(new_config.language.clone());
+        crate::provider::models::spend_cap::use_caps(&new_config.spend_caps);
         crate::provider::set_first_event_timeout(new_config.routing.first_event_timeout_secs);
         *self.config.write().await = new_config.clone();
         self.daily_session.store(

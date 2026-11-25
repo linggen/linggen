@@ -125,6 +125,24 @@ pub(crate) async fn set_edition(State(state): State<Arc<ServerState>>, headers: 
     mutate(state, headers, Edit::Edition(body)).await
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CapEdit { usd: Option<f64> }
+
+/// The owner's monthly spending cap for a key provider (`usd: null` clears
+/// it): saved by `AgentManager::set_spend_cap`, the one writer.
+pub(crate) async fn set_cap(State(state): State<Arc<ServerState>>, headers: HeaderMap, Path(id): Path<String>, body: Bytes) -> Response {
+    if let Some(refused) = owner_refusal(&headers) { return refused; }
+    let edit = match parse::<CapEdit>(&body) { Ok(edit) => edit, Err(failure) => return failure.into_response() };
+    let _write = state.settings_write.lock().await;
+    let config = state.manager.get_config_snapshot().await;
+    let creds = Credentials::load_with(&credentials::credentials_file(), &config.models);
+    if endpoint(&state, &config, &creds, &id).await.is_err() { return MISSING.into_response(); }
+    if state.manager.set_spend_cap(&id, edit.usd).await.is_err() { return BAD.into_response(); }
+    let config = state.manager.get_config_snapshot().await;
+    answer(&state, &config, &creds).await
+}
+
 pub(crate) async fn create(State(state): State<Arc<ServerState>>, headers: HeaderMap, body: Bytes) -> Response {
     mutate(state, headers, Edit::Create(body)).await
 }

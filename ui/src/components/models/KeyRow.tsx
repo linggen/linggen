@@ -7,7 +7,7 @@
 import React, { useState } from 'react';
 import { providersApi } from '../../lib/endpoints';
 import { W, say } from '../../lib/modelsWords.mts';
-import { addedByName, liveModels, type Provider } from '../../lib/providers.mts';
+import { addedByName, capShare, liveModels, spendMeter, type Provider } from '../../lib/providers.mts';
 import { FamilyList } from './FamilyList';
 import { RowMenu, Row, Tag, ghostBtn, hintCls, inputCls, primaryBtn, sectionLabel, sectionRule } from './shell';
 import type { Run } from './useProviders';
@@ -36,6 +36,7 @@ export const KeyRow: React.FC<Props> = (props) => {
       detail={p.key?.set ? <span>{say(W.billedBy, { provider: p.label })}</span> : <span className="rounded-md border border-slate-200 bg-white px-2 py-0.5 font-semibold dark:border-white/10 dark:bg-white/5">{W.fillKey}</span>}>
       <KeyField {...props} />
       <Models {...props} />
+      <SpendCap {...props} />
       <Address {...props} />
     </Row>
   );
@@ -147,6 +148,26 @@ const CustomModels: React.FC<Props> = ({ provider: p, run, busy, makeDefault }) 
             <input className={`${inputCls} w-64 max-w-full flex-1`} placeholder={W.modelName} aria-label={W.modelName} value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void add(); }} />
             <button type="button" className={ghostBtn} disabled={busy || !name.trim()} onClick={() => void add()}>{W.add}</button>
           </div>
+    </div>
+  );
+};
+
+/** One field 「Monthly cap $」 and the meter, under the models. */
+const SpendCap: React.FC<Props> = ({ provider: p, run, busy }) => {
+  const [text, setText] = useState('');
+  if (!p.spend) return null;
+  const usd = Number(text);
+  const ok = text.trim() !== '' && Number.isFinite(usd) && usd > 0;
+  return (
+    <div data-testid="spend-cap" className={`${sectionRule} sm:pl-[4.5rem]`}>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className={hintCls}>{W.capLabel}</span>
+        <input className={`${inputCls} w-24`} inputMode="decimal" aria-label={W.capLabel} placeholder={p.spend.cap_usd === undefined ? '200' : String(p.spend.cap_usd)} value={text} onChange={(e) => setText(e.target.value)} />
+        <button type="button" className={ghostBtn} disabled={busy || !ok} onClick={() => void run(() => providersApi.setCap(p.id, usd)).then((done) => done && setText(''))}>{W.setCap}</button>
+        {p.spend.cap_usd !== undefined && <button type="button" className={ghostBtn} disabled={busy} onClick={() => void run(() => providersApi.setCap(p.id, null))}>{W.clearCap}</button>}
+      </div>
+      <div className={`${hintCls} mt-1`} data-testid="spend-meter" title={say(W.spendNote, { date: p.spend.prices_as_of })}>{spendMeter(p.spend)}</div>
+      {p.spend.cap_usd !== undefined && <div className="mt-1 h-1 w-48 overflow-hidden rounded bg-slate-200 dark:bg-white/10"><div className={`h-full ${capShare(p.spend) >= 1 ? 'bg-red-500' : capShare(p.spend) >= 0.8 ? 'bg-amber-500' : 'bg-emerald-500'}`} style={{ width: `${capShare(p.spend) * 100}%` }} /></div>}
     </div>
   );
 };

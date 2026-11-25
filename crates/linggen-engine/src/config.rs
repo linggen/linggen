@@ -110,6 +110,12 @@ pub struct Config {
     #[serde(default, skip_serializing_if = "crate::provider::models::ModelCatalog::is_unset")]
     #[cfg_attr(any(test, feature = "test-support"), ts(skip))]
     pub model_catalog: crate::provider::models::ModelCatalog,
+    /// Monthly spending caps in USD, by provider id (`providers_view::provider_id`).
+    /// Absent: none. Written only by `AgentManager::set_spend_cap`; a saved
+    /// config keeps what it holds (`api::config`).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    #[cfg_attr(any(test, feature = "test-support"), ts(skip))]
+    pub spend_caps: std::collections::BTreeMap<String, f64>,
     /// What was wrong in the file and was set right on load rather than
     /// refusing the whole config (a bad model `price` is dropped, that
     /// model alone). Runtime-only — never read from or written to the file —
@@ -1141,6 +1147,7 @@ impl Default for Config {
             family_starts: Default::default(),
             memory: MemoryConfig::default(),
             model_catalog: Default::default(),
+            spend_caps: Default::default(),
             problems: Vec::new(),
         }
     }

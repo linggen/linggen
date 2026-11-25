@@ -123,6 +123,8 @@ export const providersApi = {
   create: (preset: string) => apiPost<ProvidersAnswer>('/api/providers', { preset }),
   /** The owner's choice of edition: what is offered for new setups only. */
   setEdition: (choice: EditionChoice) => apiPut<ProvidersAnswer>('/api/providers/edition', { choice }),
+  /** The monthly spending cap in USD; null clears it. */
+  setCap: (id: string, usd: number | null) => apiPut<ProvidersAnswer>(`${provider(id)}/cap`, { usd }),
   setKey: (id: string, apiKey: string | null) => apiPut<ProvidersAnswer>(`${provider(id)}/key`, { api_key: apiKey }),
   keepModelKey: (id: string) => apiPut<ProvidersAnswer>(`${provider(id)}/key`, { action: 'keep_model_key' }),
   setAddress: (id: string, url: string) => apiPatch<ProvidersAnswer>(provider(id), { url }),

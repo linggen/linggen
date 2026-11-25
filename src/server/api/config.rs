@@ -33,6 +33,8 @@ pub(crate) async fn update_config_api(
     // (`outside_apps::set`): a saved config, from any page, keeps it.
     let current = state.manager.get_config_snapshot().await;
     new_config.outside_apps = current.outside_apps.clone();
+    // Caps are set by `providers::set_spend_cap` alone; a stale page keeps them.
+    new_config.spend_caps = current.spend_caps.clone();
     // How outside agents get memory is a hand-edited choice: a stale page keeps it.
     new_config.memory = current.memory.clone();
     // Which edition of the model list is offered is the owner's own route (`providers::set_edition`).
