@@ -184,3 +184,97 @@ async fn yinyue_keeps_a_moment_and_reads_her_mind_notes_through_the_tool() {
     assert!(file.contains("regretted the spend") && file.contains("source: yinyue"), "{file}");
     w.assert_all_scripted();
 }
+
+// ── the owner's phone ──────────────────────────────────────────────────────
+
+const OWNER_PHONE: &str = "tok-owner-phone";
+const FRIEND_PHONE: &str = "tok-friend-phone";
+
+/// The Mac signed in as `u-owner`, with two paired phones: the owner's own
+/// (verified as that account) and a friend's (another person's account).
+fn pair_phones(home: &crate::support::home::Home) {
+    seed(home);
+    std::fs::write(home.linggen_home().join("account.toml"), "api_token = 'unused'\nuser_id = 'u-owner'\n").unwrap();
+    let rows = json!([
+        {"id": "phone-owner", "name": "My phone", "secret": OWNER_PHONE, "created_at": 0, "kind": "phone",
+         "account": {"id": "u-owner", "name": "Owner"}, "verified_account": "u-owner"},
+        {"id": "phone-friend", "name": "Friend's phone", "secret": FRIEND_PHONE, "created_at": 0, "kind": "phone",
+         "account": {"id": "u-friend", "name": "Friend"}, "verified_account": "u-friend"},
+    ]);
+    std::fs::write(home.linggen_home().join("paired-devices.json"), rows.to_string()).unwrap();
+}
+
+/// A phone's `POST /api/memory/<verb>` over the LAN, as the paired device
+/// `token`: the status and the old store's envelope.
+async fn phone_verb(w: &World, token: &str, verb: &str, body: Value) -> (u16, Value) {
+    let ip = {
+        let socket = std::net::UdpSocket::bind("0.0.0.0:0").unwrap();
+        socket.connect("192.0.2.1:9").unwrap();
+        socket.local_addr().unwrap().ip()
+    };
+    let res = reqwest::Client::new()
+        .post(format!("http://{ip}:{}/api/memory/{verb}", w.engine.port))
+        .header("x-linggen-device", token)
+        .json(&body)
+        .send()
+        .await
+        .expect("LAN POST");
+    (res.status().as_u16(), res.json::<Value>().await.unwrap_or(Value::Null))
+}
+
+fn has_phone_notes(w: &World) -> bool {
+    std::fs::read_dir(w.home.linggen_home().join("memory/areas"))
+        .map(|dirs| dirs.flatten().any(|d| d.path().join("from-the-phone.md").exists()))
+        .unwrap_or(false)
+}
+
+/// v2: a note the owner's phone adds lands in Linggen's notes, signed
+/// `phone`; the pull lists it by the id the add answered with; a Yinyue
+/// session has it in her index and a Ling session (a coding host) does not;
+/// and a delete from the phone takes it away. A friend's phone, another
+/// person, is not let into the owner's notes: it writes none and reads none.
+#[tokio::test]
+async fn in_v2_the_owners_phone_keeps_its_notes_where_a_v2_session_reads_them() {
+    let w = World::start_with_home(Setup { config_append: V2, lan: true, ..Setup::default() }, pair_phones).await;
+    let note = "Prefers oat milk in the morning coffee";
+    let (status, added) = phone_verb(&w, OWNER_PHONE, "add", json!({"content": note, "episodic": true, "host": "linggen-mobile", "cwd": "~/.linggen/skills/yinyue"})).await;
+    assert_eq!((status, &added["ok"]), (200, &json!(true)), "{added}");
+    let id = added["data"]["id"].as_str().expect("the note's id").to_string();
+    let file = std::fs::read_to_string(w.home.linggen_home().join("memory/areas/mind/from-the-phone.md")).expect("a note in the store");
+    assert!(file.contains(note) && file.contains("source: phone") && file.contains(&id), "{file}");
+
+    let (_, listed) = phone_verb(&w, OWNER_PHONE, "list", json!({"tier": "semantic", "apps": ["yinyue"], "type": "fact", "limit": 1000})).await;
+    let rows = listed["data"].as_array().unwrap_or_else(|| panic!("{listed}"));
+    assert!(rows.iter().any(|r| r["id"] == id.as_str() && r["content"] == note), "{listed}");
+    let (_, core) = phone_verb(&w, OWNER_PHONE, "list", json!({"tier": "core", "limit": 200})).await;
+    assert!(core["data"].to_string().contains("Name is Alex"), "the person's notes are the phone's core: {core}");
+    assert!(!core["data"].to_string().contains("A hard year"), "{core}");
+    let (_, found) = phone_verb(&w, OWNER_PHONE, "search", json!({"query": "oat milk", "limit": 5})).await;
+    assert!(found["data"].to_string().contains(note), "{found}");
+
+    let sid = w.api.create_session(json!({"title": "Chat"})).await;
+    let hers = w.api.export(&sid, "yinyue", "").await;
+    assert!(hers["system_prompt"].as_str().unwrap().contains("Prefers oat milk"), "not in Yinyue's index");
+    let his = w.api.export(&sid, "ling", &w.work()).await;
+    assert!(!his["system_prompt"].as_str().unwrap().contains("oat milk"), "a phone note reached a coding host");
+
+    let (_, friend_list) = phone_verb(&w, FRIEND_PHONE, "list", json!({"tier": "core", "limit": 200})).await;
+    assert!(!friend_list.to_string().contains("Name is Alex"), "{friend_list}");
+    let (_, friend_add) = phone_verb(&w, FRIEND_PHONE, "add", json!({"content": "Friend likes tea", "episodic": true})).await;
+    assert!(!std::fs::read_to_string(w.home.linggen_home().join("memory/areas/mind/from-the-phone.md")).unwrap().contains("Friend likes tea"), "{friend_add}");
+
+    let (_, gone) = phone_verb(&w, OWNER_PHONE, "delete", json!({"id": id})).await;
+    assert_eq!(gone["ok"], json!(true), "{gone}");
+    assert!(!w.home.linggen_home().join("memory/areas/mind/from-the-phone.md").exists());
+}
+
+/// v1 is as it was: the owner's phone writes no notes file, v2's folders stay
+/// as seeded.
+#[tokio::test]
+async fn in_v1_the_owners_phone_writes_no_notes() {
+    let w = World::start_with_home(Setup { lan: true, ..Setup::default() }, pair_phones).await;
+    phone_verb(&w, OWNER_PHONE, "add", json!({"content": "Prefers oat milk in the morning coffee", "episodic": true, "cwd": "~/.linggen/skills/yinyue"})).await;
+    assert!(!has_phone_notes(&w), "v1's phone wrote into the notes");
+    let (_, core) = phone_verb(&w, OWNER_PHONE, "list", json!({"tier": "core", "limit": 200})).await;
+    assert!(!core.to_string().contains("Name is Alex"), "v1 read the notes: {core}");
+}

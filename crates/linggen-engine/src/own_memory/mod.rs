@@ -13,6 +13,8 @@
 //! - What a session is shown at start: [`index::index`]; what Yinyue is
 //!   told of today's date: [`companion::today`]. What Settings shows of the
 //!   notes: [`page`] (read only; its edits are [`write::write`]'s).
+//! - The owner's phone under v2, its old verbs answered from these notes:
+//!   [`phone`] (the translation only; the writer and the fence are the same).
 //! - What the chronicle reads and what it asks the model to write:
 //!   [`chronicle`] (it saves nothing itself; the writer does).
 //! - Which memory a session has, v1 or v2: [`Mode`] (`[memory] linggen`).
@@ -26,6 +28,7 @@ pub mod find;
 pub mod format;
 pub mod index;
 pub mod page;
+pub mod phone;
 pub mod prompt;
 pub mod spec;
 mod store;
