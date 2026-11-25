@@ -4,6 +4,7 @@ use crate::engine::agent::record::{AgentSpec, AgentSpecFile};
 use crate::engine::agent::registry::AgentRegistry;
 use crate::engine::mission::MissionRegistry;
 use crate::engine::model_choice;
+use crate::engine::session_spec::{preset_of, Preset, SessionSpec};
 use crate::engine::skill::SkillRegistry;
 use crate::engine::{AgentEngine, AgentRole, EngineConfig, InterfaceMode, Plan};
 use crate::provider::models::ModelManager;
@@ -639,6 +640,15 @@ impl AgentManager {
             engine.set_compaction(meta.compact_threshold, meta.compact_focus.clone());
             let creator = meta.creator.clone();
             engine.respec(|spec| spec.creator = Some(creator));
+            // An `agent_run` delegate keeps its toolset and its caller in its
+            // record, and no door restores them for a turn the engine starts
+            // (a restart's continue turn, a task's end): an engine rebuilt
+            // since the run began is given them here, once, at its birth.
+            // Every other kind of session is set by the door of each turn.
+            if preset_of(meta) == Preset::Delegate {
+                let kept = SessionSpec::of(meta);
+                engine.respec(|spec| *spec = kept);
+            }
         }
 
         let agent = Arc::new(Mutex::new(engine));

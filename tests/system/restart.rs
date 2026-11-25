@@ -52,6 +52,51 @@ async fn a_native_session_continues_after_the_restart_it_asked_for() {
     assert!(!w.home.linggen_home().join("restart/resume.json").exists(), "a plan runs once");
 }
 
+/// A delegated run (`agent_run`) that a restart interrupted continues as it
+/// was started: the same tools (no `Task` — whose child runs on the agent's
+/// default model, not the session's — and no `EnterPlanMode`) and the same
+/// model. The engine is rebuilt between the run and its continue turn, so
+/// what the turn holds is what a rebuilt engine is given for the session.
+#[tokio::test]
+async fn a_delegated_run_interrupted_by_a_restart_continues_with_its_own_tools() {
+    let mut w = World::start(Setup::default().script(
+        Agent::Ling,
+        vec![text("Done."), text("Back on the new build; checking where I was.")],
+    ))
+    .await;
+    let call = json!({
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": {"name": "agent_run", "arguments": {"prompt": "Say done.", "write_dir": w.work()}}
+    });
+    let ran = w.api.post("/mcp", call).await;
+    assert_eq!(ran["result"]["content"][0]["text"], "Done.", "{ran}");
+    let sid = crate::delegate::delegate_session(&w);
+    leave_plan(&w, json!([{"session_id": sid, "agent_id": "ling", "caller": false, "turn_interrupted": true, "tasks": []}]));
+    w.engine.restart(&w.home).await;
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while w.model.calls_of(Agent::Ling).len() < 2 {
+        assert!(Instant::now() < deadline, "the session never continued");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let calls = w.model.calls_of(Agent::Ling);
+    // The engine's own tools only: a server's tools (the memory MCP) are
+    // there once it has connected, which a fresh engine races with this turn.
+    let own = |call: &crate::support::model::Call| {
+        let mut names: Vec<String> = call.tool_names().into_iter().filter(|n| !n.starts_with("mcp__")).collect();
+        names.sort();
+        names
+    };
+    let (run, continued) = (own(&calls[0]), own(&calls[1]));
+    assert!(run.contains(&"Bash".to_string()) && !run.contains(&"Task".to_string()), "a write run: {run:?}");
+    assert_eq!(continued, run, "the continue turn keeps the run's toolset");
+    assert!(
+        !continued.iter().any(|n| n == "Task" || n == "EnterPlanMode"),
+        "no subagent, no plan mode for a delegate: {continued:?}"
+    );
+    assert_eq!(calls[1].model(), calls[0].model(), "and its model");
+    w.assert_all_scripted();
+}
+
 #[tokio::test]
 async fn legacy_queued_messages_are_preserved_without_unverified_replay() {
     let mut w = World::start(Setup::default().script(
