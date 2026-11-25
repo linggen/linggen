@@ -124,12 +124,14 @@ impl AppleSttProvider {
 
     /// Put the language on this Mac, unless that is already under way. The attempt is its own
     /// task, so a press that is dropped never abandons the download half way.
-    fn begin_install(&self, language: &str) {
+    /// Whether the last try at it failed, which the line says ([`lines::preparing_again`]).
+    fn begin_install(&self, language: &str) -> bool {
         let attempt = {
             let mut installs = self.installs.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             installs.entry(language.to_ascii_lowercase()).or_default().clone()
         };
-        let Some(run) = attempt.begin() else { return };
+        let after_a_failure = attempt.state() == crate::runtime::AttemptState::Failed;
+        let Some(run) = attempt.begin() else { return false };
         let (helper, language) = (self.helper.clone(), language.to_string());
         tokio::spawn(crate::runtime::run_attempt(
             run,
@@ -141,6 +143,7 @@ impl AppleSttProvider {
             },
             || (),
         ));
+        after_a_failure
     }
 
     /// The language whose install is running, if any.
@@ -187,8 +190,10 @@ impl SttProvider for AppleSttProvider {
         match reply.code {
             Verdict::Ready => Ok(Heard { text: reply.text, language: reply.language }),
             Verdict::NeedsDownload | Verdict::Downloading => {
-                self.begin_install(language);
-                Err(Unavailable::downloading(lines::preparing(language)))
+                match self.begin_install(language) {
+                    true => Err(Unavailable::downloading(lines::preparing_again(language))),
+                    false => Err(Unavailable::downloading(lines::preparing(language))),
+                }
             }
             Verdict::Unsupported => Err(Unavailable::never(lines::unsupported(language))),
             Verdict::NotAllowed => Err(Unavailable::retry(lines::allow_speech())),
@@ -235,6 +240,11 @@ mod lines {
     pub fn preparing(language: &str) -> String {
         let (en, zh) = names(language);
         pick(format!("Getting ready to hear {en}…"), format!("正在准备{zh}识别…"))
+    }
+
+    pub fn preparing_again(language: &str) -> String {
+        let (en, zh) = names(language);
+        pick(format!("The last try failed; getting ready to hear {en} again…"), format!("上次没成功，正在重新准备{zh}识别…"))
     }
 
     pub fn unsupported(language: &str) -> String {
@@ -327,6 +337,24 @@ install) sleep 0.3; echo '{"code":"ready"}';;"#,
         let verbs: Vec<String> = calls(dir.path()).iter().map(|c| c.split(' ').next().unwrap().to_string()).collect();
         assert_eq!(verbs.iter().filter(|v| *v == "install").count(), 1, "{verbs:?}");
         assert_eq!(verbs.iter().filter(|v| *v == "hear").count(), 2, "{verbs:?}");
+    }
+
+    /// An install that fails (no network) is said once the next press begins it again, not hidden behind the first line.
+    #[tokio::test]
+    async fn a_failed_install_is_said_to_have_failed_when_a_press_tries_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let provider = AppleSttProvider::new(helper(
+            dir.path(),
+            r#"hear) echo '{"code":"needs_download"}';;
+install) echo '{"code":"failed"}';;"#,
+        ));
+        let first = provider.hear(&[100; 8_000], "ja").await.unwrap_err();
+        settled(&provider).await;
+        assert!(provider.can_hear().is_ok(), "no one is told a download runs when it ended");
+        let second = provider.hear(&[100; 8_000], "ja").await.unwrap_err();
+        assert_eq!(second.next, Next::Downloading);
+        assert_ne!(first.reason, second.reason, "{} / {}", first.reason, second.reason);
+        assert!(second.reason.contains("failed") || second.reason.contains("没成功"), "{}", second.reason);
     }
 
     #[tokio::test]
