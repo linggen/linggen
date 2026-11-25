@@ -1189,7 +1189,7 @@ fn claude_index(store: &Store, lines: usize) {
 #[test]
 fn the_block_is_one_budget_and_the_other_agents_keep_a_floor() {
     let (_d, store) = scratch();
-    for i in 0..60 {
+    for i in 0..90 {
         rule(&store, Scope::Person, &format!("r{i}"), &format!("A standing rule number {i} with some words to fill the line"), "", NOW - i);
         decision(&store, Scope::Person, &format!("t{i}"), &format!("A decision number {i} with some words to fill the line"), NOW - i);
     }
@@ -1198,11 +1198,11 @@ fn the_block_is_one_budget_and_the_other_agents_keep_a_floor() {
     assert!(got.block.lines().count() <= LINES, "{} lines", got.block.lines().count());
     assert!(got.block.len() <= BYTES, "{} bytes", got.block.len());
     assert!(got.own_left_out > 0 && got.others.cut > 0, "both were cut");
-    // Linggen's rules at most 30, topics at most 50; the others keep at least 60 lines.
+    // Linggen's rules at most 70, topics at most 50; the others keep at least 60 lines.
     let rules = got.block.lines().filter(|l| l.contains("(rule ·")).count();
     let topics = got.block.lines().filter(|l| l.contains("memory_notes op=read path=")).count();
     let others = got.block.lines().filter(|l| l.starts_with("- [Note ")).count();
-    assert!(rules <= 30 && topics <= 50 && rules > 0 && topics > 0, "rules {rules}, topics {topics}");
+    assert!(rules <= 70 && rules >= 60 && topics <= 50 && topics > 0, "rules {rules}, topics {topics}");
     assert!(others >= 55, "the others kept {others} lines\n{}", got.block);
     assert!(got.block.contains("more lines left out; memory_agents op=search finds them"), "{}", got.block);
 }
@@ -1264,7 +1264,7 @@ fn two_other_agents_over_their_share_both_get_room_and_the_whole_stays_in_the_bu
 #[test]
 fn with_nothing_from_the_other_agents_linggens_notes_take_their_whole_share() {
     let (_d, store) = scratch();
-    for i in 0..60 {
+    for i in 0..90 {
         rule(&store, Scope::Person, &format!("r{i}"), &format!("A standing rule number {i}"), "", NOW - i);
         decision(&store, Scope::Person, &format!("t{i}"), &format!("A decision number {i}"), NOW - i);
     }
@@ -1272,5 +1272,5 @@ fn with_nothing_from_the_other_agents_linggens_notes_take_their_whole_share() {
     let rules = got.block.lines().filter(|l| l.contains("(rule ·")).count();
     let topics = got.block.lines().filter(|l| l.contains("memory_notes op=read path=")).count();
     // The header takes one line of each share.
-    assert_eq!((rules, topics), (29, 49), "{}", got.block);
+    assert_eq!((rules, topics), (69, 49), "{}", got.block);
 }

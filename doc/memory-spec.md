@@ -282,7 +282,7 @@ cut to 160 characters, control characters and a leading `#` or `>` are neutralis
 
 **Budget: 200 lines and 16 KB for the whole block, cut in one place**
 (`own_memory::forward`; the parts are handed a room and cannot choose a number).
-Linggen's rules get up to 30 lines, its topics up to 50, the other agents the rest —
+Linggen's rules (the person's, his own words first) get up to 70 lines, its topics up to 50, the other agents the rest —
 at least 60 lines are kept for them, and none takes more than two thirds of that.
 Room one part does not use flows to the next.
 

@@ -31,8 +31,10 @@ use std::path::Path;
 /// The whole block, in lines and bytes (Claude Code's index: 200 lines, 25 KB).
 pub const LINES: usize = 200;
 pub const BYTES: usize = 16 * 1024;
-/// Linggen's own parts, at most.
-const RULES_LINES: usize = 30;
+/// Linggen's own parts, at most. The person's rules get the most: they must
+/// not be left out (61 person rules once showed 29 under a cap of 30, and a
+/// core rule ranked 27th).
+const RULES_LINES: usize = 70;
 const TOPICS_LINES: usize = 50;
 /// What is always kept for the other agents' lines.
 const OTHERS_FLOOR: usize = 60;
