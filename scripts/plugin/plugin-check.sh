@@ -125,10 +125,13 @@ old="$(grep -rnIE '9528|LING_MEM_(HOST|PORT|TOKEN)|ling-mem (start|restart|statu
 [ -z "$old" ] && pass "no retired address or daemon verbs in code" \
   || fail "no retired address or daemon verbs in code" "$(printf '%s' "$old" | head -3 | tr '\n' ' ')"
 
-# The hooks' own offline tests (no Linggen needed).
+# The hooks' own offline tests (no Linggen needed). A hook asks the engine at
+# LINGGEN_HOST:PORT whether memory is v2 (and then stays silent): a Linggen
+# running on this machine must not answer, so the port is a closed one and the
+# home has no client.json.
 for t in "$CCP"/hooks/tests/*.test.sh; do
   name="hooks test: $(basename "$t" .test.sh)"
-  if out="$(bash "$t" 2>&1)"; then pass "$name"
+  if out="$(HOME=/nonexistent-home LINGGEN_HOST=127.0.0.1 LINGGEN_PORT=1 bash "$t" 2>&1)"; then pass "$name"
   else fail "$name" "$(printf '%s' "$out" | tail -3 | tr '\n' ' ')"; fi
 done
 
