@@ -191,7 +191,6 @@ pub async fn run(
             .or_else(|| meta.agents.first().map(|m| m.id.clone()))
             .unwrap_or_else(|| "ling".into());
         clear_denials(session);
-        keep_delegate_tools(state, session, &meta, &agent_id).await;
         if let Some(allowed) = model_fallback {
             state
                 .manager
@@ -500,34 +499,6 @@ async fn await_run(
     }
 }
 
-/// A continued session keeps the toolset it was started with — its grants
-/// already live in its permission.json. A cached engine still holds it; one
-/// rebuilt since (a restart) gets it back here. A busy engine is mid-turn
-/// with its toolset in place.
-async fn keep_delegate_tools(
-    state: &Arc<ServerState>,
-    session: &str,
-    meta: &crate::state_fs::sessions::SessionMeta,
-    agent_id: &str,
-) {
-    let Some(kind) = meta.params.get(TOOLS_PARAM) else {
-        return;
-    };
-    let root = PathBuf::from(meta.project.clone().unwrap_or_else(|| meta.cwd.clone()));
-    let Ok(agent) = state
-        .manager
-        .get_or_create_session_agent(session, &root, agent_id)
-        .await
-    else {
-        return;
-    };
-    let Ok(mut engine) = agent.try_lock() else {
-        return;
-    };
-    let write = kind == "write";
-    seat_delegate(&mut engine, Some(meta), write);
-}
-
 /// Make a delegated run's engine its session's: the spec its record gives
 /// (the delegate preset, its kind of work, its caller answering beyond its
 /// grants) with the toolset the run was started with. An engine is built
@@ -798,8 +769,9 @@ fn delegate_meta(
         params: Default::default(),
     };
     meta.params.insert(HOST_PARAM.into(), host.into());
-    // The delegate's toolset, so a continued session keeps it (see
-    // `keep_delegate_tools`).
+    // The delegate's toolset, so a continued session keeps it: an engine
+    // rebuilt for the session is given it at its birth
+    // (`AgentManager::get_or_create_session_agent`).
     meta.params.insert(
         TOOLS_PARAM.into(),
         crate::engine::session_spec::delegate::toolset_param(write).into(),
