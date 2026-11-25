@@ -842,7 +842,7 @@ async fn dispatch_mission_prompt(
         "mission '{}' entered (skill: {:?}, tool scope: {:?})",
         mission.id,
         mission.skill,
-        engine.cfg.mission_allowed_tools.as_ref().map(|s| s.len())
+        engine.cfg.session_toolset.allowlist().map(|s| s.len())
     );
     // Apply session policy and path-mode grants.
     //

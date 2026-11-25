@@ -3,6 +3,14 @@
 
 use std::net::SocketAddr;
 
+/// Held by a test that connects servers on the process's one registry
+/// (`registry()`): `connect_all` replaces its servers wholesale, so two such
+/// tests at once would wipe each other's. Connect nothing at the end.
+pub(crate) async fn global_registry() -> tokio::sync::MutexGuard<'static, ()> {
+    static HELD: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    HELD.lock().await
+}
+
 /// The MCP URL of a fresh memory on a temp store. Keep the dir alive.
 pub(crate) async fn mcp_url() -> (String, tempfile::TempDir) {
     let dir = tempfile::tempdir().expect("a temp store");

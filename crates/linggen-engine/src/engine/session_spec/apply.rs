@@ -33,16 +33,15 @@ impl SessionSpec {
         if let Some(kept) = kept {
             kept.restore(&mut profile);
         }
-        let tools = self.tools.allowlist();
         let (consumer_tools, consumer_skills) = self.consumer_sets();
         let changed = engine.session_spec.work != self.work
             || engine.session_spec.creator != self.creator
             || engine.prompt_profile != profile
-            || engine.cfg.mission_allowed_tools != tools
+            || engine.cfg.session_toolset != self.tools
             || engine.cfg.consumer_allowed_tools != consumer_tools
             || engine.cfg.consumer_allowed_skills != consumer_skills;
         engine.prompt_profile = profile;
-        engine.cfg.mission_allowed_tools = tools;
+        engine.cfg.session_toolset = self.tools.clone();
         engine.cfg.consumer_allowed_tools = consumer_tools;
         engine.cfg.consumer_allowed_skills = consumer_skills;
         self.write_permission_answer(&mut engine.session_permissions, self.permission);
@@ -160,7 +159,7 @@ impl AgentEngine {
     pub(crate) fn seeds_default_grant(&self) -> bool {
         self.session_permissions.interactive
             && self.cfg.consumer_allowed_tools.is_none()
-            && self.cfg.mission_allowed_tools.is_none()
+            && self.cfg.session_toolset.allowlist().is_none()
     }
 
     /// Make the loaded flags reflect who can answer in this loop.

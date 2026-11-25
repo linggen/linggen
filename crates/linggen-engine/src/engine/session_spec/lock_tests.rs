@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 /// What writes one of the spec's fields.
 const WRITES: &[&str] = &[
     "prompt_profile",
-    ".mission_allowed_tools",
+    ".session_toolset",
     ".consumer_allowed_tools",
     ".consumer_allowed_skills",
     ".skill_allowed_tools",

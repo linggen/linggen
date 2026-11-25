@@ -65,8 +65,6 @@ mod task_tests {
         };
         let error = tools.validate_delegation(&args).err().unwrap().to_string();
         assert!(error.contains("run_in_background needs a session"), "{error}");
-        let error = tools.task(args).await.unwrap_err().to_string();
-        assert!(error.contains("run_in_background needs a session"), "{error}");
     }
 }
 
@@ -124,41 +122,6 @@ impl Tools {
         }
 
         Ok((manager.clone(), caller_id))
-    }
-
-    pub(super) async fn task(&self, args: TaskArgs) -> Result<ToolResult> {
-        let (manager, caller_id) = self.validate_delegation(&args)?;
-        if args.run_in_background {
-            anyhow::bail!("run_in_background requires the session delegation dispatcher");
-        }
-        // Box::pin breaks the async-fn type cycle:
-        // Tools::execute -> Tools::task -> run_delegation -> engine.run_agent_loop
-        // -> ToolRegistry::execute -> Tools::execute. The recursion is real
-        // (delegated agents run their own tool loops) but it goes through
-        // a fresh engine, so the boxing only costs one heap allocation per
-        // delegation.
-        Box::pin(run_delegation(
-            manager,
-            self.root.clone(),
-            caller_id,
-            None,
-            args.target_agent_id,
-            args.task,
-            self.run_id.clone(),
-            self.delegation_depth,
-            self.max_delegation_depth,
-            self.ask_user_bridge.clone(),
-            self.session_id.clone(),
-            (*self.turn_place).clone(),
-            self.session_policy.clone(),
-            self.parent_allowed_tools.clone(),
-            self.parent_path_modes.clone(),
-            self.parent_interactive,
-            (self.parent_work, self.parent_ceiling, self.parent_read_origin),
-            false,
-            None,
-        ))
-        .await
     }
 
     pub(super) async fn run_app(&self, args: RunAppArgs) -> Result<ToolResult> {
@@ -368,9 +331,8 @@ pub(crate) async fn run_delegation(
     ws_root: PathBuf,
     caller_id: String,
     // The model the parent's turn runs on: a child whose agent declares none
-    // runs on it. `None`: not known here (`Tools::task`), the child runs its
-    // agent's own model.
-    parent_model: Option<String>,
+    // runs on it.
+    parent_model: String,
     target_agent_id: String,
     task: String,
     parent_run_id: Option<String>,
@@ -486,7 +448,7 @@ pub(crate) async fn run_delegation(
     // The parent's model unless the agent declares its own; under a guest's
     // policy a model the room shares.
     engine
-        .run_as_child(parent_model.as_deref(), &format!("subagent '{target_agent_id}'"))
+        .run_as_child(&parent_model, &format!("subagent '{target_agent_id}'"))
         .await;
     // A separate ceiling survives policy and skill changes in the child.
     engine.cfg.delegated_allowed_tools = parent_allowed_tools;
