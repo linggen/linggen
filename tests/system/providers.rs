@@ -289,7 +289,7 @@ model = "deepseek-v4.1-flash"
 "#;
     let w = World::start_with_home(Setup { config_append: Some(ROW), ..Setup::default() }, |home| {
         let fixture = json!({"today":"2026-11-23", "lists": {
-            "qwen-cloud": ["qwen3.8-max", "qwen-plus", "deepseek-v4-flash-0731", "kimi-k3"],
+            "qwen-cloud": ["qwen3.8-flash", "qwen3.8-max", "qwen-plus", "deepseek-v4-flash-0731", "kimi-k3"],
             "dashscope-cn": ["qwen-plus"]
         }});
         std::fs::write(home.linggen_home().join("test-families.json"), fixture.to_string()).unwrap();
@@ -297,8 +297,8 @@ model = "deepseek-v4.1-flash"
     // Before a key: the one entry the list approves, not yet usable; no candidate comes from the provider's own list.
     let before = w.api.get("/api/providers").await;
     let families = provider(&before, "Qwen Cloud")["families"]["families"].as_array().unwrap().clone();
-    assert_eq!(families.len(), 1, "{families:?}");
-    assert_eq!((families[0]["family"].as_str(), families[0]["hold"].as_str()), (Some("qwen-plus"), Some("no_key")));
+    assert_eq!(families.len(), 5, "{families:?}");
+    assert_eq!((families[0]["family"].as_str(), families[0]["hold"].as_str()), (Some("qwen3-8-flash"), Some("no_key")));
     // The endpoint already has a row, so the key is not a new connection and no starter is ticked;
     // a person's tick runs the approved id, pinned, with no price borrowed.
     let body = file_key(&w, "Qwen Cloud").await;
@@ -306,12 +306,12 @@ model = "deepseek-v4.1-flash"
     assert_eq!(qwen["families"]["rates_unavailable"], true);
     assert_eq!(qwen["families"]["families"][0]["ticked"], false);
     let qid = qwen["id"].as_str().unwrap().to_string();
-    let (status, _) = w.api.put_text(&format!("/api/providers/{qid}/families/qwen-plus"), json!({"action":"tick"})).await;
+    let (status, _) = w.api.put_text(&format!("/api/providers/{qid}/families/qwen3-8-flash"), json!({"action":"tick"})).await;
     assert_eq!(status, 200);
     let body = w.api.get("/api/providers").await;
     let qwen = provider(&body, "Qwen Cloud");
     let families = qwen["families"]["families"].as_array().unwrap();
-    assert_eq!(families.len(), 1, "{families:?}");
+    assert_eq!(families.len(), 5, "{families:?}");
     assert_eq!((families[0]["ticked"].clone(), families[0]["mode"].clone()), (true.into(), "pinned".into()));
     assert!(families[0]["current"].get("price").is_none());
     assert!(qwen["models"].as_array().unwrap().iter().any(|m| m["id"] == "my-deepseek" && m["ready"] == true));
@@ -401,7 +401,7 @@ async fn the_edition_is_chosen_by_the_owner_and_changes_only_what_is_offered() {
     assert_eq!((anthropic["retained"].clone(), anthropic["key"]["set"].clone()), (true.into(), true.into()));
     assert!(provider(&mainland, "通义千问 (DashScope)").get("retained").is_none());
     assert_eq!(provider(&mainland, "DeepSeek")["models"][0]["id"], "own-deepseek", "the row stays where it was");
-    assert!(mainland["presets"].as_array().unwrap().iter().filter(|p| p["way"] == "key").all(|p| p["unverified"] == true), "mainland entries are marked");
+    assert!(mainland["presets"].as_array().unwrap().iter().filter(|p| p["way"] == "key" && ["Qwen Cloud", "Google Gemini"].contains(&p["name"].as_str().unwrap_or(""))).all(|p| p["unverified"] == true), "foreign-dependent mainland entries are marked");
     assert_eq!(what_a_person_has(&w).await, had, "no key, row, default or starter moved");
     // The choice survives a restart and still moves nothing.
     w.engine.restart(&w.home).await;

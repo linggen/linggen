@@ -612,13 +612,13 @@ async fn an_exact_starter_with_no_facts_is_ticked_pinned_on_the_first_verified_c
     let mut w = world(TODAY);
     const QWEN: &str = "https://ap-southeast-1.maas.qwencloudapi.com/compatible-mode/v1";
     w.creds.set_endpoint_key("qwen", QWEN, Some(KEY.into()));
-    w.provider.lists("qwen-cloud", &["qwen-plus", "qwen-max"]);
+    w.provider.lists("qwen-cloud", &["qwen3.8-flash", "qwen4-max"]);
     w.families.gather(&w.settings, &w.creds, Some(("qwen", QWEN))).await;
     assert!(w.families.start_endpoint(&mut w.settings, &w.creds, ("qwen", QWEN)));
     let row = &w.settings.models[0];
-    assert_eq!((row.model.as_str(), row.url.as_str(), row.context_window, row.supports_tools), ("qwen-plus", QWEN, None, None));
+    assert_eq!((row.model.as_str(), row.url.as_str(), row.context_window, row.supports_tools), ("qwen3.8-flash", QWEN, None, None));
     assert!(!row.family_binding.as_ref().unwrap().follows());
-    assert!(w.list.facts_for("qwen-cloud", "qwen-plus").is_none(), "no price borrowed from DashScope");
+    assert!(w.list.facts_for("qwen-cloud", "qwen3.8-flash").is_none(), "no price borrowed from DashScope");
     let seen = serde_json::to_value(w.families.view(&w.settings, &w.creds, ("qwen", QWEN)).unwrap()).unwrap();
     assert_eq!(seen["rates_unavailable"], true);
 }
@@ -653,9 +653,9 @@ async fn a_mainland_first_key_ticks_no_starter_and_a_later_switch_never_replays_
     let mut w = deepseek_world(Mainland);
     w.families.gather(&w.settings, &w.creds, Some(("deepseek", DEEPSEEK))).await;
     let seen = serde_json::to_value(w.families.view(&w.settings, &w.creds, ("deepseek", DEEPSEEK)).unwrap()).unwrap();
-    assert!(seen["families"].as_array().unwrap().iter().all(|f| f["unverified"] == true && f["ticked"] == false), "{seen}");
+    assert!(seen["families"].as_array().unwrap().iter().all(|f| f.get("unverified").is_none() && f["ticked"] == false), "{seen}");
     assert!(w.families.start_endpoint(&mut w.settings, &w.creds, ("deepseek", DEEPSEEK)), "the first connection is recorded");
-    assert!(w.settings.models.is_empty(), "mainland entries are unverified: no starter");
+    assert_eq!(w.settings.models.len(), 1, "deepseek flash is the mainland starter");
     // Now the owner picks the international edition: the record stands, nothing is ticked.
     let (config, creds) = (toml::to_string(&w.settings).unwrap(), serde_json::to_string(&w.creds).unwrap());
     w.settings.model_catalog = crate::provider::models::ModelCatalog::chosen(International);

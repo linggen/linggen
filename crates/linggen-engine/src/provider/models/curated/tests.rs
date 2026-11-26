@@ -56,7 +56,10 @@ fn the_shipped_list_passes_the_same_check_and_carries_both_editions() {
     assert!(list.revision() >= 1 && list.list_revision() >= 1);
     let mainland = list.providers(Edition::Mainland);
     assert!(!mainland.is_empty());
-    assert!(mainland.iter().flat_map(|p| &p.entries).all(|e| e.unverified && !e.starter), "mainland stays unverified");
+    // Mainland services are reachable from mainland; everything else there stays unverified.
+    let reachable = ["deepseek", "dashscope-cn", "moonshot", "zhipu", "siliconflow"];
+    assert!(mainland.iter().flat_map(|p| p.entries.iter().map(move |e| (p, e))).all(|(p, e)| e.unverified != reachable.contains(&p.key.as_str())), "mainland unverified only off the mainland services");
+    assert!(mainland.iter().flat_map(|p| p.entries.iter().map(move |e| (p, e))).all(|(p, e)| e.starter == (p.key == "deepseek" && e.key == "flash")), "deepseek flash is the one mainland starter");
     let international = list.providers(Edition::International);
     assert!(international.iter().any(|p| p.key == "anthropic"));
 }
@@ -397,10 +400,11 @@ fn the_offered_edition_is_the_line_a_connection_is_read_from() {
     let flash = |edition| list.place_at_in(edition, "https://api.deepseek.com/v1").unwrap().tickable()
         .map(|(family, e)| (family.to_string(), e.starter, e.unverified)).collect::<Vec<_>>();
     assert_eq!(flash(International), [("deepseek-flash".into(), true, false), ("deepseek-pro".into(), false, false)]);
-    assert_eq!(flash(Mainland), [("deepseek-flash".into(), false, true), ("deepseek-pro".into(), false, true)]);
+    assert_eq!(flash(Mainland), [("deepseek-flash".into(), true, false), ("deepseek-pro".into(), false, false)]);
     // A place of one edition only is found from either side, with the same endpoint key.
     assert_eq!(list.place_at_in(Mainland, "https://api.anthropic.com").unwrap().endpoint_key, "anthropic");
-    assert!(list.offered(Mainland).all(|p| p.unverified() || p.provider.entries.is_empty()), "every mainland line is marked unverified");
+    assert!(list.offered(Mainland).filter(|p| ["qwen-cloud", "linggen-cloud", "chatgpt", "gemini"].contains(&p.provider.key.as_str())).all(|p| p.unverified()), "the foreign-dependent mainland lines are marked unverified");
+    assert!(list.offered(Mainland).filter(|p| p.provider.key == "deepseek").all(|p| !p.unverified()));
     assert!(list.offered(International).all(|p| !p.unverified()));
 }
 
