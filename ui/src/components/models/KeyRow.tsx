@@ -6,6 +6,7 @@
  */
 import React, { useState } from 'react';
 import { providersApi } from '../../lib/endpoints';
+import { confirmDialog } from '../../lib/confirmDialog';
 import { W, say } from '../../lib/modelsWords.mts';
 import { addedByName, capShare, liveModels, spendMeter, type Provider } from '../../lib/providers.mts';
 import { FamilyList, Price } from './FamilyList';
@@ -180,7 +181,7 @@ const Address: React.FC<Props> = ({ provider: p, run, busy }) => {
           <div className={hintCls}>{W.address}</div>
           <div className="mt-1 flex flex-wrap items-center gap-2">
             <input className={`${inputCls} w-64 max-w-full flex-1 font-mono`} aria-label={W.address} value={url} onChange={(e) => setUrl(e.target.value)} />
-            <button type="button" className={ghostBtn} disabled={busy || !url.trim() || url.trim() === p.url} onClick={() => void run(() => providersApi.setAddress(p.id, url.trim(), !p.key?.set || window.confirm(W.keepKeyAsk)))}>{W.saveAddress}</button>
+            <button type="button" className={ghostBtn} disabled={busy || !url.trim() || url.trim() === p.url} onClick={() => void run(async () => providersApi.setAddress(p.id, url.trim(), !p.key?.set || (await confirmDialog(W.keepKeyAsk))))}>{W.saveAddress}</button>
           </div>
           <div className={`${hintCls} mt-1`}>{W.addressNote}</div>
         </div>
