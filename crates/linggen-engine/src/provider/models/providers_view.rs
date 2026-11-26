@@ -298,7 +298,7 @@ fn cloud_uses(list: &Bundle, offered: Edition) -> Vec<ProviderModel> {
         let id = format!("{}:cloud:{}", kind.as_str(), entry.key);
         // Signed in without a subscription: not ready, and no reason a sign-in would fix.
         let why = (!ready && crate::account::resolve_token().is_none()).then_some(NotReady::NotSignedIn);
-        ProviderModel { id, model: entry.model.clone(), kind: kind.as_str(), ready, why, builtin: true, first: false }
+        ProviderModel { id, model: entry.model.clone(), kind: kind.as_str(), ready, why, builtin: true, first: false, price: None }
     }).collect()
 }
 
