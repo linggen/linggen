@@ -126,7 +126,7 @@ export const providersApi = {
   setCap: (id: string, usd: number | null) => apiPut<ProvidersAnswer>(`${provider(id)}/cap`, { usd }),
   setKey: (id: string, apiKey: string | null) => apiPut<ProvidersAnswer>(`${provider(id)}/key`, { api_key: apiKey }),
   keepModelKey: (id: string) => apiPut<ProvidersAnswer>(`${provider(id)}/key`, { action: 'keep_model_key' }),
-  setAddress: (id: string, url: string) => apiPatch<ProvidersAnswer>(provider(id), { url }),
+  setAddress: (id: string, url: string, keepKey: boolean) => apiPatch<ProvidersAnswer>(provider(id), { url, keep_key: keepKey }),
   /** A model typed by name; the engine makes the row's id. */
   addModel: (id: string, model: string) => apiPost<ProvidersAnswer>(`${provider(id)}/models`, { model }),
   removeModel: (id: string, modelId: string) => apiDelete<ProvidersAnswer>(`${provider(id)}/models/${encodeURIComponent(modelId)}`),

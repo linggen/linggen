@@ -162,6 +162,7 @@ export const W = {
   addedByName: 'Added by name',
   address: 'Address',
   saveAddress: 'Save address',
+  keepKeyAsk: 'Address changed. Keep using the key?',
   addressNote: 'Changing it moves the key and the models with it.',
   // ── Add a provider ──
   addProvider: 'Add provider',

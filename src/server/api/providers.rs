@@ -8,7 +8,7 @@ use serde_json::json;
 
 use crate::config::{providers::{known_names, Way}, Config, SignIn};
 use crate::provider::models::{EditionChoice, ModelCatalog};
-use crate::provider::models::providers_view::{editable_row, live_card_at, preset_named, presets, filed_endpoint, group_keys, keep_model_key, provider_id, ProviderView};
+use crate::provider::models::providers_view::{editable_row, is_listed_address, live_card_at, preset_named, presets, filed_endpoint, group_keys, keep_model_key, provider_id, ProviderView};
 use crate::credentials::{self, Credentials};
 use crate::server::{person, ServerState};
 
@@ -68,7 +68,14 @@ enum KeyAction { KeepModelKey }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct AddressEdit { url: String }
+struct AddressEdit {
+    url: String,
+    /// The person's answer to 「地址改了，密钥还用吗？」; true when not asked.
+    #[serde(default = "yes")]
+    keep_key: bool,
+}
+
+fn yes() -> bool { true }
 
 /// `"auto"`, `"international"` or `"mainland"`.
 #[derive(Deserialize)]
@@ -282,7 +289,10 @@ async fn apply(state: &Arc<ServerState>, edit: Edit) -> Result<(Config, Credenti
             state.provider_drafts.lock().await.remove(&id);
         }
         Edit::Address(id, body) => {
-            let new = address(&parse::<AddressEdit>(&body)?.url)?;
+            let AddressEdit { url: new, keep_key } = parse::<AddressEdit>(&body)?;
+            // The built-in list owns its addresses; only an added provider's moves.
+            if is_listed_address(&url) { return Err(BAD); }
+            let new = address(&new)?;
             let next_id = provider_id(SignIn::Key, &name, &new);
             if next_id != id {
                 if endpoint(state, &config, &creds, &next_id).await.is_ok() { return Err(CONFLICT); }
@@ -293,7 +303,7 @@ async fn apply(state: &Arc<ServerState>, edit: Edit) -> Result<(Config, Credenti
                 }
                 validate_config(&config)?;
                 let keys: Vec<_> = group_keys(&creds, &id).cloned().collect();
-                if !keys.is_empty() {
+                if keep_key && !keys.is_empty() {
                     // Copy first. A failed config save leaves the old keys usable.
                     for key in &keys {
                         creds.set_endpoint_key(&key.provider, &new, key.api_key.clone());

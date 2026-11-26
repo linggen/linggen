@@ -96,6 +96,8 @@ export interface Provider {
   disk_gb?: number;
   /** Named only by the other region's list: the person's own, kept as it is. */
   retained?: boolean;
+  /** The built-in list owns the address: no address field. */
+  listed?: boolean;
   families?: FamiliesView;
   /** This month's estimated spend and the monthly cap, for a key provider. */
   spend?: { month: string; used_usd: number; cap_usd?: number; prices_as_of: string };

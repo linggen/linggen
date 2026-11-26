@@ -533,6 +533,7 @@ export const ZH: Record<string, string> = {
   'Added by name': '自己添加的',
   'Address': '地址',
   'Save address': '保存地址',
+  'Address changed. Keep using the key?': '地址改了，密钥还用吗？',
   'Changing it moves the key and the models with it.': '修改后，密钥和模型会一起搬过去。',
   'Add provider': '添加服务商',
   'Pick a provider': '选一个服务商',

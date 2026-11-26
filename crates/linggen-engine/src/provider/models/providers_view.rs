@@ -19,6 +19,8 @@ pub struct ProviderView {
     pub way: &'static str,
     pub provider: String,
     pub url: String,
+    /// The built-in list owns this address: the page shows no address field.
+    listed: bool,
     connected: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     fix: Option<&'static str>,
@@ -157,6 +159,11 @@ fn provider_source_in(list: &Bundle, sign_in: SignIn, provider: &str, url: &str)
     }
 }
 
+/// Whether the built-in list owns this key address: its address is never edited.
+pub fn is_listed_address(url: &str) -> bool {
+    curated::current().place_at(url).is_some_and(|p| p.provider.sign_in == Way::Key)
+}
+
 impl ProviderView {
     /// An editable endpoint proposed by the owner, not yet filed on disk.
     pub fn draft(catalog: &ModelCatalog, provider: &str, url: &str) -> Self {
@@ -171,11 +178,12 @@ impl ProviderView {
         let (label, way) = provider_source_in(list, sign_in, provider, url);
         // A card at a listed address is filed under the list's name and address.
         let place = (way == Way::Key).then(|| list.place_at(url).filter(|p| p.provider.sign_in == Way::Key)).flatten();
+        let listed = place.is_some();
         let retained = way == Way::Key && list.kept_out_of(offered, provider, url);
         let (provider, url) = place.map_or((provider, url), |p| (p.provider.name.as_str(), p.base));
         Self {
             id: provider_id(sign_in, provider, url), label, way: way.as_str(),
-            provider: provider.into(), url: shown_url(url), connected: false, fix: None, retained,
+            provider: provider.into(), url: shown_url(url), listed, connected: false, fix: None, retained,
             key: (way == Way::Key).then_some(KeyState { set: false, conflict: false, can_keep_model_key: false }),
             models: Vec::new(), used_by: Vec::new(), disk_gb: None, families: None, spend: None,
         }
