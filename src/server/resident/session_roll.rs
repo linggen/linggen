@@ -122,7 +122,11 @@ pub(super) fn last_spoken_line(state: &Arc<ServerState>, current_sid: &str) -> O
             !m.is_observation
                 && !matches!(
                     m.author(),
-                    RowAuthor::Person | RowAuthor::System | RowAuthor::World | RowAuthor::Agent("memory")
+                    RowAuthor::Person
+                        | RowAuthor::System
+                        | RowAuthor::World
+                        | RowAuthor::MemoryStart
+                        | RowAuthor::Agent("memory")
                 )
                 && !m.content.trim().is_empty()
         });

@@ -55,6 +55,7 @@ pub(crate) fn transcript(rows: &[ChatMsg]) -> String {
     rows.iter()
         .filter(|r| !r.content.trim().is_empty())
         .filter(|r| !crate::engine::prompt::world::is_world_row(r))
+        .filter(|r| r.author() != RowAuthor::MemoryStart)
         .map(|r| {
             let who = match (r.is_observation, r.author()) {
                 (true, RowAuthor::System) => format!("tool result for {}", r.to_id),

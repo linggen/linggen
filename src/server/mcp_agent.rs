@@ -144,7 +144,10 @@ fn turn_replies(msgs: Vec<crate::state_fs::sessions::ChatMsg>, host: &str) -> Tu
             }
             RowAuthor::System if continues => {}
             RowAuthor::System => callers_turn = false,
-            RowAuthor::MemoryRecall | RowAuthor::Compaction | RowAuthor::World => {}
+            RowAuthor::MemoryRecall
+            | RowAuthor::MemoryStart
+            | RowAuthor::Compaction
+            | RowAuthor::World => {}
             RowAuthor::Agent(_) if m.content.trim().is_empty() => {}
             RowAuthor::Agent(_) if callers_turn => out.reply = Some(m.content),
             RowAuthor::Agent(_) => out.followup = Some(m.content),

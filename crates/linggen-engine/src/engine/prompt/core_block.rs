@@ -116,6 +116,32 @@ pub fn owner_block(
     head + &store.render_or_fallback(keys::CORE_MEMORY_SHARED, &[])
 }
 
+/// What the session-start block of an owner session standing in `cwd` holds,
+/// as the row the person sees (`MEMORY_START_SENDER`): a header line
+/// `[memory-start core=N index=M]`, then the block's text as the model got it
+/// (`UI: MemoryStartMessage.tsx` reads the header). `None` when memory gave
+/// no block. The same `session_start` call `owner_block` makes.
+pub fn start_note(cwd: &std::path::Path) -> Option<String> {
+    let place = crate::engine::tools::place_of(cwd);
+    let mut args = serde_json::json!({"verb": "session_start", "core": true});
+    if let Some(p) = &place {
+        args["cwd"] = serde_json::json!(p.cwd);
+        args["root"] = serde_json::json!(p.root);
+    }
+    let value = fetch(args, LOAD_CORE_TIMEOUT)?.ok()?;
+    start_note_of(&value)
+}
+
+fn start_note_of(value: &serde_json::Value) -> Option<String> {
+    let count = |k: &str| value.get(k).and_then(|v| v.as_array()).map_or(0, Vec::len);
+    let text = session_block(value)?.facts;
+    Some(format!(
+        "[memory-start core={} index={}]\n{text}",
+        count("core"),
+        count("index")
+    ))
+}
+
 /// What an app's session loads: core (when `core`) and the index of the
 /// app's own dir (given its `place`) — read-only, so without the scope line
 /// or the reconcile footer, which speak to memory tools it doesn't have.
@@ -338,6 +364,14 @@ fn parse_rows(value: &serde_json::Value) -> Option<Vec<CoreRow>> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_start_note_counts_core_and_index_and_carries_the_block() {
+        let v = serde_json::json!({"block": "- a\n- b", "core": [{}, {}], "index": [{}]});
+        let note = super::start_note_of(&v).unwrap();
+        assert!(note.starts_with("[memory-start core=2 index=1]\n- a\n- b"), "{note}");
+        assert!(super::start_note_of(&serde_json::json!({"block": ""})).is_none());
+    }
+
 
     /// An app's session takes core and its own index only: no scope line,
     /// no reconcile footer — it has no memory tools to act on them.

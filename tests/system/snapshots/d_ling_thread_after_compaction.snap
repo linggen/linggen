@@ -3,7 +3,7 @@ source: tests/system/support/mod.rs
 expression: text
 ---
 ── system
-[Context compacted — 7 messages summarized]
+[Context compacted — 8 messages summarized]
 
 SUMMARY: Alex sent filler; Ling said OK.
 ── user

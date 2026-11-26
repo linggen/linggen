@@ -66,6 +66,12 @@ who they are, how they work, decisions with their reasons, gotchas they re-hit.
 - Recall sees rows under the session root, at its parents, and about the
   person. A skill's own session sees only its rows. Home, `~/.linggen` and temp
   see the person's rows plus at most two strong matches filed under a directory.
+- The day's session (Ling and Yinyue, `sess-day-…`) recalls as if at `$HOME`:
+  every scope, top-k by relevance (`recall_scope_root`, `runtime.rs`). Project
+  sessions keep the scoping above.
+- Each session shows what it started with — core rows and index — as a folded
+  chip (`memory-start` row, never read back to the model), again only when the
+  block changes; each turn's recall is a folded `memory-recall` chip.
 - Standing rules carry `indexed` and a one-line summary; each session loads the
   summaries of its directory and parents, nearest first, within 3000 chars, and
   reads a row in full when its summary bears on the task.

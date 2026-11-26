@@ -186,7 +186,8 @@ fn is_sender(expr: &Expr) -> bool {
 
 /// The stored names `RowAuthor` decides. An agent's id ("yinyue") is an
 /// open set and not locked here.
-const AUTHOR_NAMES: [&str; 5] = ["user", "system", "compaction", "world", "memory-recall"];
+const AUTHOR_NAMES: [&str; 6] =
+    ["user", "system", "compaction", "world", "memory-recall", "memory-start"];
 
 fn is_author_literal(lit: &Lit) -> bool {
     matches!(lit, Lit::Str(s) if AUTHOR_NAMES.contains(&s.value().as_str()))

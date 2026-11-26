@@ -250,6 +250,31 @@ fn warn_recall_unreachable(why: &str) {
     }
 }
 
+/// The one place a turn's recall scope is chosen. An app's session: its own
+/// dir. The day's session (Ling and Yinyue, the person's own talk): `$HOME`,
+/// so every scope is recalled and ranked by relevance — not the project
+/// rule, which would show it the person's rows and little else. Any other
+/// session: its project root, else its cwd.
+fn recall_scope_root(
+    app_dir: Option<&std::path::Path>,
+    session_id: Option<&str>,
+    cwd: Option<&str>,
+) -> Option<String> {
+    if let Some(dir) = app_dir {
+        return Some(dir.to_string_lossy().to_string());
+    }
+    if session_id.is_some_and(crate::state_fs::day_session::is_day_session) {
+        return dirs::home_dir().map(|h| h.to_string_lossy().to_string());
+    }
+    let cwd = cwd?;
+    let p = std::path::PathBuf::from(cwd);
+    Some(
+        crate::engine::tools::memory_root(&p)
+            .map(|r| r.to_string_lossy().to_string())
+            .unwrap_or_else(|| cwd.to_string()),
+    )
+}
+
 /// Per-turn semantic recall against the active memory provider.
 ///
 /// Bails silently on any path that could block the user: short prompts,
@@ -295,25 +320,16 @@ async fn auto_recall_memory(
     // no scope (about the person) 1.0. `min_score` gates the weighted score.
     // App rows (`~/.linggen/skills/…`) never reach non-app recall. Same
     // contract as the plugin's recall.sh on Claude Code.
-    let scope_root: Option<String> = match &app_dir {
-        Some(dir) => Some(dir.to_string_lossy().to_string()),
-        None => session_id
-            .and_then(|sid| {
-                state
-                    .manager
-                    .global_sessions
-                    .get_session_meta(sid)
-                    .ok()
-                    .flatten()
-            })
+    let cwd = session_id.and_then(|sid| {
+        state
+            .manager
+            .global_sessions
+            .get_session_meta(sid)
+            .ok()
+            .flatten()
             .map(|m| m.cwd)
-            .map(|cwd| {
-                let p = std::path::PathBuf::from(&cwd);
-                crate::engine::tools::memory_root(&p)
-                    .map(|r| r.to_string_lossy().to_string())
-                    .unwrap_or(cwd)
-            }),
-    };
+    });
+    let scope_root = recall_scope_root(app_dir.as_deref(), session_id, cwd.as_deref());
 
     // `min_score` is the per-row relevance floor (Settings → General → Memory
     // Inject Score), applied by the daemon to the HYBRID score — cosine plus
@@ -589,6 +605,45 @@ pub(super) async fn push_user_turn_with_recall(
         crate::message::ChatMessage::new("user", ctx.labeled_msg()),
     );
     keep_world(ctx, engine);
+    show_memory_start(ctx, engine).await;
+}
+
+/// What memory the session started with, shown to the person once: a row of
+/// its own sender, written when the session has none yet or the block changed
+/// (a new cwd's index). The model already has it in its system prompt, so
+/// `chat::thread` never reads it back.
+async fn show_memory_start(ctx: &ChatRunCtx, engine: &crate::engine::AgentEngine) {
+    if !engine.prompt_profile.include_memory {
+        return;
+    }
+    let Some(note) = crate::engine::prompt::core_block::start_note(&engine.tools.builtins.cwd())
+    else {
+        return;
+    };
+    let sid = ctx.session_id.as_deref().unwrap_or("default");
+    let store = &ctx.manager.global_sessions;
+    let last = store.get_chat_history(sid).ok().and_then(|rows| {
+        rows.into_iter()
+            .rev()
+            .find(|r| r.author() == crate::state_fs::RowAuthor::MemoryStart)
+    });
+    if last.is_some_and(|r| r.content == note) {
+        return;
+    }
+    crate::server::chat::helpers::persist_and_emit_to_store(
+        store,
+        &ctx.state.events_tx,
+        &ctx.agent_id,
+        crate::state_fs::row_author::MEMORY_START_SENDER,
+        &ctx.agent_id,
+        &note,
+        Some(sid),
+        false,
+        None,
+        None,
+        None,
+    )
+    .await;
 }
 
 /// The world as of this turn's start, kept in the thread after its words and
@@ -725,6 +780,25 @@ pub(crate) async fn close_turn(
 mod tests {
     use super::{merge_by_score, RecallRow};
     use serde_json::json;
+
+    /// The day's session recalls from `$HOME` (every scope, by relevance),
+    /// wherever its cwd is; a project session keeps its own root; an app its dir.
+    #[test]
+    fn the_days_session_recalls_from_home_never_scoped() {
+        use super::recall_scope_root;
+        let home = dirs::home_dir().unwrap().to_string_lossy().to_string();
+        let day = "sess-day-2026-11-26";
+        assert!(crate::state_fs::day_session::is_day_session(day));
+        for cwd in [Some("/Users/x/.linggen/workspace"), Some("/Users/x/work/proj"), None] {
+            assert_eq!(recall_scope_root(None, Some(day), cwd), Some(home.clone()), "{cwd:?}");
+        }
+        assert_eq!(
+            recall_scope_root(None, Some("sess-abc"), Some("/Users/x/work/proj")),
+            Some("/Users/x/work/proj".to_string())
+        );
+        let app = std::path::Path::new("/a/skill");
+        assert_eq!(recall_scope_root(Some(app), Some(day), None), Some("/a/skill".to_string()));
+    }
 
     #[test]
     fn an_apps_typed_searches_merge_best_first() {

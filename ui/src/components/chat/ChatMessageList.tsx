@@ -15,6 +15,7 @@ import type { ChatMessage } from '../../types';
 import { getMessagePhase } from './MessagePhase';
 import { AgentMessage } from './AgentMessage';
 import { MemoryRecallMessage } from './MemoryRecallMessage';
+import { MemoryStartMessage } from './MemoryStartMessage';
 import { CompactionMessage } from './CompactionMessage';
 import { ChatImages } from './ChatImages';
 import { showsInterruptedNote } from '../../lib/interruptedRun.mts';
@@ -107,6 +108,10 @@ export const ChatMessageRow = React.memo<{
   // requires the recall text shape.
   if (msg.from === 'memory-recall' || (msg.from === 'memory' && msg.text.startsWith('From memory'))) {
     return <MemoryRecallMessage text={msg.text} />;
+  }
+  // What memory the session started with (`memory-start`, one row per change).
+  if (msg.from === 'memory-start') {
+    return <MemoryStartMessage text={msg.text} />;
   }
   // Auto-compaction notice, injected by handleContextUsage on `compressed`.
   if (msg.from === 'compaction') {

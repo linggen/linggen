@@ -13,7 +13,8 @@
 //!   pairs — a provider rejects or mishandles calls it did not make. Of
 //!   that result the reader gets what the tool declares for others
 //!   (`others_read`), else the output's head;
-//! - recall and compaction rows are system notes, for every member;
+//! - recall and compaction rows are system notes, for every member; a
+//!   session-start memory row is the person's to see, never a member's to read;
 //! - another member's hidden kickoff (`[HIDDEN] …`) is that member's alone.
 //!
 //! The thread starts at the newest compaction row: what came before it is
@@ -312,7 +313,8 @@ fn read_tool_row(
 /// A spoken row as the reader reads it; `None` for a row that isn't part
 /// of its thread.
 fn spoken(m: &ChatMsg, reader: &Reader) -> Option<ChatMessage> {
-    if m.author().is_system() {
+    // The system prompt already carries what a session-start row shows.
+    if m.author().is_system() || m.author() == RowAuthor::MemoryStart {
         return None;
     }
     // Another member's hidden kickoff is that member's turn alone.

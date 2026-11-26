@@ -25,7 +25,7 @@ export const LIVE_MESSAGE_GRACE_MS = 10_000;
 
 /** Plumbing rows — context, not a speaker: a system note, a memory recall,
  *  a compaction notice. They sit in the thread but never answer anyone. */
-export const UNSPOKEN_SENDERS = new Set(['system', 'memory', 'memory-recall', 'compaction']);
+export const UNSPOKEN_SENDERS = new Set(['system', 'memory', 'memory-recall', 'memory-start', 'compaction']);
 export const TOKEN_RATE_WINDOW_MS = 8_000;
 
 // ---------------------------------------------------------------------------

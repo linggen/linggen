@@ -3,7 +3,7 @@
 //!
 //! A row's sender is a person, the engine, one of the engine's own kinds of
 //! note (a compaction summary, a kept world block, a memory recall), or an
-//! agent by its id. The first five are a closed set: [`RowAuthor`] names
+//! agent by its id. The first six are a closed set: [`RowAuthor`] names
 //! them, and every reader asks [`RowAuthor::of`] / [`ChatMsg::author`]
 //! instead of comparing the stored text. The stored and wire form stays the
 //! plain string it has always been (`"user"`, `"system"`, …): `from_id` is
@@ -30,6 +30,10 @@ pub const WORLD_SENDER: &str = "world";
 /// memory agent's id.
 pub const MEMORY_RECALL_SENDER: &str = "memory-recall";
 
+/// The pseudo-sender of a session-start memory row: the core rows and index
+/// the system prompt was given, shown to the person, never read back to a model.
+pub const MEMORY_START_SENDER: &str = "memory-start";
+
 /// Who wrote a row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RowAuthor<'a> {
@@ -43,6 +47,8 @@ pub enum RowAuthor<'a> {
     World,
     /// A memory recall shown with the turn (`"memory-recall"`).
     MemoryRecall,
+    /// What memory the session started with (`"memory-start"`).
+    MemoryStart,
     /// An agent, or any other sender, by its id.
     Agent(&'a str),
 }
@@ -56,6 +62,7 @@ impl<'a> RowAuthor<'a> {
             COMPACTION_SENDER => Self::Compaction,
             WORLD_SENDER => Self::World,
             MEMORY_RECALL_SENDER => Self::MemoryRecall,
+            MEMORY_START_SENDER => Self::MemoryStart,
             id => Self::Agent(id),
         }
     }
@@ -68,6 +75,7 @@ impl<'a> RowAuthor<'a> {
             Self::Compaction => COMPACTION_SENDER,
             Self::World => WORLD_SENDER,
             Self::MemoryRecall => MEMORY_RECALL_SENDER,
+            Self::MemoryStart => MEMORY_START_SENDER,
             Self::Agent(id) => id,
         }
     }
@@ -112,6 +120,7 @@ mod tests {
             ("compaction", RowAuthor::Compaction),
             ("world", RowAuthor::World),
             ("memory-recall", RowAuthor::MemoryRecall),
+            ("memory-start", RowAuthor::MemoryStart),
             ("ling", RowAuthor::Agent("ling")),
             ("yinyue", RowAuthor::Agent("yinyue")),
             ("memory", RowAuthor::Agent("memory")),

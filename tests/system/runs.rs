@@ -19,7 +19,7 @@ const RUN_KINDS: &[&str] = &[
 ];
 
 /// Senders whose rows open a turn or come before its run: never a run's.
-const NOT_A_RUN: &[&str] = &["user", "memory-recall", "world"];
+const NOT_A_RUN: &[&str] = &["user", "memory-recall", "memory-start", "world"];
 
 #[tokio::test]
 async fn every_run_event_and_row_names_its_run() {
