@@ -15,7 +15,7 @@ Read files under `doc/` and follow them. If you find wrong content in any doc fi
 - `doc/cli.md` — CLI reference
 - `doc/code-style.md` — architecture principles (one place decides and a lock holds it there; open what varies, close what does not) and code style — read before any non-trivial change
 - `doc/session-spec.md` — session/context: creators, effective tools, prompt assembly
-- `doc/memory-spec.md` — Linggen memory: the shared ling-mem store, recall and capture, dream/scan/solve, and phone access
+- `doc/memory-spec.md` — Linggen memory (lean spec): tiers, write / read / fix-on-read rules, dream, episodic expiry, scan/solve, hosting
 - `doc/mission-spec.md` — cron mission system
 - `doc/plan-spec.md` — plan mode feature
 - `doc/log-spec.md` — logging levels, throttling, output targets
