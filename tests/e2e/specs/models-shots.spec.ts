@@ -1,9 +1,16 @@
 // Pictures of the real Models page for the owner to look at: both themes, in
 // Chinese, at 1280 and 420 px — the page, Anthropic open, the move notice, and
 // 添加服务商. Not a check: it runs only when MODELS_SHOTS_DIR names a folder.
+import type { Page } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { test, expect, expectWebRtc } from '../support/world';
+
+/** The own-providers section is folded until opened (or a provider has a problem). */
+async function openOwnProviders(page: Page) {
+  const toggle = page.getByTestId('own-providers-toggle');
+  if ((await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click();
+}
 
 const DIR = process.env.MODELS_SHOTS_DIR;
 const LISTS = { anthropic: ['claude-opus-5', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'] };
@@ -31,6 +38,7 @@ for (const [width, theme] of [[1280, 'light'], [420, 'light'], [1280, 'dark'], [
     const shot = (name: string) => page.screenshot({ path: path.join(DIR!, `${name}-${theme}-${width}.png`) });
     await page.goto(`${world.url}/settings/models?lang=zh`);
     await expectWebRtc(page, httpRequests);
+    await openOwnProviders(page);
     await expect(page.getByTestId('default-card').getByText('灵境插图等', { exact: true })).toBeVisible();
     await shot('page');
 
@@ -70,6 +78,7 @@ for (const [width, theme] of [[1280, 'light'], [420, 'light'], [1280, 'dark'], [
     await expect(row.getByTestId('provider-address')).toBeVisible();
     await shot('claude-open');
 
+    await openOwnProviders(page);
     await page.getByTestId('add-provider-button').click();
     await expect(page.getByTestId('add-provider')).toBeVisible();
     await shot('add-provider');

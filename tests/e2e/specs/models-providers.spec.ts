@@ -7,6 +7,12 @@
 import type { Locator, Page } from '@playwright/test';
 import { test, expect, expectWebRtc } from '../support/world';
 
+/** The own-providers section is folded until opened (or a provider has a problem). */
+async function openOwnProviders(page: Page) {
+  const toggle = page.getByTestId('own-providers-toggle');
+  if ((await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click();
+}
+
 const KEY = 'test-only-marker';
 const LISTS = { anthropic: ['claude-opus-5', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'] };
 /** A pinned Opus on the model before the family's current one. */
@@ -30,6 +36,7 @@ const family = (row: Locator, label: string) => row.getByTestId('family-row').fi
 async function openModels(page: Page, world: { url: string }, httpRequests: string[]) {
   await page.goto(`${world.url}/settings/models`);
   await expectWebRtc(page, httpRequests);
+  await openOwnProviders(page);
   await expect(page.getByTestId('models-page')).toBeVisible();
 }
 
@@ -63,6 +70,7 @@ model = "deepseek-v4.1-flash"
     expect(filed.ok()).toBe(true);
     await page.goto(`${world.url}/settings/models?lang=zh`);
     await expectWebRtc(page, httpRequests);
+    await openOwnProviders(page);
     const row = page.getByTestId('provider-row').filter({ hasText: 'Qwen Cloud' });
     await expect(row).toHaveCount(1);
     await row.getByRole('button', { name: /Qwen Cloud/ }).click();
@@ -129,6 +137,7 @@ test.describe('a followed family', () => {
     // A reload keeps the ticks, the version and the answered notice.
     await page.reload();
     await expectWebRtc(page, httpRequests);
+    await openOwnProviders(page);
     const again = provider(page, 'Anthropic');
     await again.getByRole('button', { name: /Anthropic/ }).click();
     await expect(family(again, 'Sonnet').getByRole('checkbox')).toBeChecked();
@@ -140,6 +149,7 @@ test.describe('a followed family', () => {
 
 test('a provider is added from the list with one key; a model is added by name under Advanced', async ({ page, world, httpRequests }) => {
   await openModels(page, world, httpRequests);
+  await openOwnProviders(page);
   await page.getByTestId('add-provider-button').click();
   await page.getByTestId('add-provider').getByRole('button', { name: 'Anthropic', exact: true }).click();
   // The row opens at once with its one key field, and the pick is gone from the list.
@@ -187,10 +197,12 @@ test('a default made on the page keeps the fallbacks, and a later edit elsewhere
   // Through the settings home: its tabs share one copy of the config, as a person's visit does.
   await page.goto(`${world.url}/`);
   await expectWebRtc(page, httpRequests);
+  await openOwnProviders(page);
   await page.getByTitle('Settings', { exact: true }).click();
   await page.getByRole('button', { name: 'Models', exact: true }).click();
   await expect(page.getByTestId('models-page')).toBeVisible();
   const row = provider(page, 'Anthropic');
+  await openOwnProviders(page);
   await page.getByTestId('add-provider-button').click();
   await page.getByTestId('add-provider').getByRole('button', { name: 'Anthropic', exact: true }).click();
   await row.getByTestId('key-input').fill(KEY);
@@ -223,6 +235,7 @@ for (const [label, model] of [['Google Gemini', 'gemini-3.8-live'], ['Qwen Cloud
   test(`${label} shows its declared live model without a chat row`, async ({ page, world, httpRequests }) => {
     await page.goto(`${world.url}/settings/models?lang=zh`);
     await expectWebRtc(page, httpRequests);
+    await openOwnProviders(page);
     if (label === 'Google Gemini') {
       await expect(page.getByTestId('models-page')).toBeVisible();
       await expect(page.getByText(model, { exact: true })).toHaveCount(0);
@@ -249,6 +262,7 @@ test.describe('a narrow window', () => {
 
   test('rows stack and nothing scrolls sideways', async ({ page, world, httpRequests }) => {
     await openModels(page, world, httpRequests);
+    await openOwnProviders(page);
     await page.getByTestId('add-provider-button').click();
     await page.getByTestId('add-provider').getByRole('button', { name: 'Anthropic', exact: true }).click();
     const row = provider(page, 'Anthropic');
@@ -283,6 +297,7 @@ test.describe('the region', () => {
     await expect(anthropic.getByTestId('retained')).toBeVisible();
     await expect(anthropic.getByTestId('key-set')).toBeVisible();
     // A new setup is offered the mainland list, every entry marked not verified.
+    await openOwnProviders(page);
     await page.getByTestId('add-provider-button').click();
     const offered = page.getByTestId('add-provider');
     await expect(offered.getByRole('button', { name: /DashScope/ })).toBeVisible();

@@ -152,6 +152,10 @@ export const readyToUse = (providers: Provider[]): Provider[] =>
 /** 自己的密钥: the key providers, in the order the engine lists them. */
 export const keyProviders = (providers: Provider[]): Provider[] => providers.filter((p) => p.way === 'key');
 
+/** A provider the person must look at: a key clash, a model list that failed, a key set but not working. */
+export const hasProblem = (p: Provider): boolean =>
+  p.way === 'key' && (!!p.key?.conflict || p.families?.access === 'list_failed' || (!!p.key?.set && !p.connected));
+
 /** This Mac's lanes and servers, which the page shows as one group. */
 export const localProviders = (providers: Provider[]): Provider[] => providers.filter((p) => p.way === 'local');
 

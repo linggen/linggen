@@ -58,8 +58,13 @@ const CloudRow: React.FC<Props> = ({ provider: p, changed }) => {
   };
   const right = p.fix === 'sign_in'
     ? <button type="button" className={signInBtn} disabled={waiting} onClick={() => void signIn()}><LogIn size={12} />{waiting ? W.waitingBrowser : W.signInLinggen}</button>
-    : <UsageMeter />;
-  return <Row testId="linggen-cloud" name={p.label} way={p.way} subtitle={subtitle(p, W.cloudNote)} right={right} />;
+    : undefined;
+  return (
+    <div>
+      <Row testId="linggen-cloud" name={p.label} way={p.way} subtitle={subtitle(p, W.cloudNote)} right={right} />
+      {p.fix !== 'sign_in' && <div className="mx-3 mt-1"><UsageMeter /></div>}
+    </div>
+  );
 };
 
 const ChatgptRow: React.FC<Props> = ({ provider: p, moved, changed }) => {

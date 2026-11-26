@@ -1,5 +1,5 @@
 // Settings → Models shows the engine's built-in models (ChatGPT, Linggen Cloud)
-// under "Ready to use". `GET /api/models` answers by who asks; over the
+// in the block under the default model. `GET /api/models` answers by who asks; over the
 // channel the owner's own page was taken for no one, the list came back empty
 // and the group vanished while the chat's picker (page_state) still listed
 // them. The page now draws `GET /api/providers`: the test asks the engine for
@@ -15,9 +15,8 @@ async function builtinIds(world: { url: string }, request: APIRequestContext): P
   return rows.filter((m) => m.is_builtin).map((m) => m.id);
 }
 
-/** Every built-in id is on the page, under the "Ready to use" heading. */
+/** Every built-in id is on the page, in the Linggen Cloud / ChatGPT block. */
 async function expectBuiltinGroup(page: Page, ids: string[]) {
-  await expect(page.getByRole('heading', { name: 'Ready to use', exact: true })).toBeVisible();
   const group = page.getByTestId('ready-to-use');
   await expect(group).toBeVisible();
   for (const id of ids) await expect(group.getByText(id).first()).toBeVisible();

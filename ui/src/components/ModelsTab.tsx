@@ -1,18 +1,19 @@
 /**
- * Settings → Models: 「Default model」 above 「Providers」. The page draws what
+ * Settings → Models: 「Default model」, the Linggen Cloud and ChatGPT rows, then
+ * the fold 「Your own providers」. The page draws what
  * the engine answers (`GET /api/providers`) and decides nothing: every button
  * calls its route and the list is redrawn from the answer (models/useProviders).
  * What a key provider shows, and how, is models/KeyRow; the words are
  * lib/modelsWords.mts; reading the answer is lib/providers.mts.
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Plus } from 'lucide-react';
+import { ChevronRight, Plus } from 'lucide-react';
 import type { ModelMove } from '../types';
 import type { UseEdit, Uses } from '../lib/modelUses';
 import { useServerStore } from '../stores/serverStore';
 import { modelsApi, providersApi, usesApi } from '../lib/endpoints';
-import { W } from '../lib/modelsWords.mts';
-import { keyProviders, localProviders, readyToUse, sameAddress, type Preset, type ProvidersAnswer } from '../lib/providers.mts';
+import { W, say } from '../lib/modelsWords.mts';
+import { hasProblem, keyProviders, localProviders, readyToUse, sameAddress, type Preset, type ProvidersAnswer } from '../lib/providers.mts';
 import { AddProvider } from './models/AddProvider';
 import { DefaultCard } from './models/DefaultCard';
 import { KeyRow } from './models/KeyRow';
@@ -40,6 +41,8 @@ export const ModelsTab: React.FC<{
   useEffect(() => { if (!busy) void loadUses(); }, [answer, busy, loadUses]);
   const [open, setOpen] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  // The own-providers fold: shut unless a provider has a problem, until the person decides.
+  const [ownFold, setOwnFold] = useState<boolean | null>(null);
   // A sign-in that made another model the default: one line says so.
   const [signInLine, setSignInLine] = useState<string | null>(null);
 
@@ -89,44 +92,47 @@ export const ModelsTab: React.FC<{
   const { providers } = answer;
   const addable = answer.presets.filter((p) => p.way === 'key' && !providers.some((q) => q.way === 'key' && q.provider === p.name && sameAddress(q.url, p.url)));
   const local = localProviders(providers);
+  const ownOpen = ownFold ?? providers.some(hasProblem);
+  const connected = [...keyProviders(providers), ...local].filter((p) => p.connected).length;
   return (
     <div className="space-y-6" data-testid="models-page">
       <DefaultCard view={uses} busy={busy} failed={usesFailed} retry={() => void loadUses()} pick={(edit) => void pickUse(edit)} />
-      <section className={cardCls}>
-        <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <div className="min-w-0">
-            <h2 className={headingCls}>{W.providers}</h2>
-            <p className={`${hintCls} mt-1`}>{W.providersHint}</p>
-            <RegionLine edition={answer.edition} run={run} busy={busy} />
-          </div>
-          <button type="button" data-testid="add-provider-button" className={`${linkBtn} flex items-center gap-1`} onClick={() => setAdding(!adding)}>
-            <Plus size={12} />{W.addProvider}
-          </button>
+      {problem && <p role="alert" data-testid="models-problem" className="text-xs text-red-600 dark:text-red-400">{problem}</p>}
+      {signInLine && <p data-testid="signed-in-default" className="text-xs text-green-700 dark:text-green-400">{signInLine}</p>}
+      <section className={cardCls} data-testid="ready-to-use">
+        <div className="space-y-1.5">
+          {readyToUse(providers).map((p) => <ReadyRow key={p.id} provider={p} moved={moved} changed={signedInChanged} />)}
         </div>
-        {problem && <p role="alert" data-testid="models-problem" className="mt-3 text-xs text-red-600 dark:text-red-400">{problem}</p>}
-        {signInLine && <p data-testid="signed-in-default" className="mt-3 text-xs text-green-700 dark:text-green-400">{signInLine}</p>}
-        <div className="mt-4">
-          {adding && <AddProvider presets={addable} busy={busy} onPick={(p) => void pick(p)} onClose={() => setAdding(false)} />}
-          <GroupHead title={W.readyToUse} hint={W.readyToUseHint} />
-          <div className="space-y-1.5" data-testid="ready-to-use">
-            {readyToUse(providers).map((p) => <ReadyRow key={p.id} provider={p} moved={moved} changed={signedInChanged} />)}
+      </section>
+      <section className={cardCls} data-testid="own-providers">
+        <button type="button" data-testid="own-providers-toggle" aria-expanded={ownOpen} onClick={() => setOwnFold(!ownOpen)} className="flex w-full items-center gap-2 text-left">
+          <ChevronRight aria-hidden size={12} className={`shrink-0 text-slate-400 transition-transform ${ownOpen ? 'rotate-90' : ''}`} />
+          <h2 className={headingCls}>{W.ownProviders}</h2>
+          <span className={hintCls}>{say(W.nConnected, { n: connected })}</span>
+        </button>
+        {ownOpen && (
+          <div className="mt-3">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <div className="min-w-0">
+                <p className={hintCls}>{W.providersHint}</p>
+                <RegionLine edition={answer.edition} run={run} busy={busy} />
+              </div>
+              <button type="button" data-testid="add-provider-button" className={`${linkBtn} flex items-center gap-1`} onClick={() => setAdding(!adding)}>
+                <Plus size={12} />{W.addProvider}
+              </button>
+            </div>
+            <div className="mt-4">
+              {adding && <AddProvider presets={addable} busy={busy} onPick={(p) => void pick(p)} onClose={() => setAdding(false)} />}
+              <div className="space-y-1.5">
+                {keyProviders(providers).map((p) => (
+                  <KeyRow key={p.id} provider={p} open={open === p.id} onToggle={() => setOpen(open === p.id ? null : p.id)} run={run} busy={busy} makeDefault={makeDefault} />
+                ))}
+                {local.length > 0 && <LocalRow providers={local} />}
+              </div>
+            </div>
           </div>
-          <GroupHead title={W.ownKeys} hint={W.ownKeysHint} />
-          <div className="space-y-1.5">
-            {keyProviders(providers).map((p) => (
-              <KeyRow key={p.id} provider={p} open={open === p.id} onToggle={() => setOpen(open === p.id ? null : p.id)} run={run} busy={busy} makeDefault={makeDefault} />
-            ))}
-            {local.length > 0 && <LocalRow providers={local} />}
-          </div>
-        </div>
+        )}
       </section>
     </div>
   );
 };
-
-const GroupHead: React.FC<{ title: string; hint: string }> = ({ title, hint }) => (
-  <div className="mb-2 mt-4 flex flex-wrap items-baseline gap-2 first:mt-0">
-    <h3 className="text-[11px] font-bold text-slate-500 dark:text-slate-400">{title}</h3>
-    <span className="text-[11px] text-slate-400">{hint}</span>
-  </div>
-);
