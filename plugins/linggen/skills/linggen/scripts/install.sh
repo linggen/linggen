@@ -7,16 +7,17 @@ if [ -n "${FISH_VERSION:-}" ]; then
   exit 1
 fi
 
-INSTALL_DIR_DEFAULT="/usr/local/bin"
-FALLBACK_DIR="$HOME/.local/bin"
+APP_DIR="${LINGGEN_APP_DIR:-/Applications/Linggen.app}"
+INSTALL_DIR_DEFAULT="${LINGGEN_BIN_DIR:-/usr/local/bin}"
+FALLBACK_DIR="${LINGGEN_FALLBACK_BIN_DIR:-$HOME/.local/bin}"
 
 # Which door this machine came through. Recorded in the install-source
 # marker file below and reported once by the engine's first-launch
 # telemetry. The DEFAULT is `website`, because an un-overridden run of this
 # script means someone pasted the one-liner from linggen.dev — keeping the
 # published command clean of env-var noise is the point. Chained installers
-# override it: the Claude Code / Codex plugin hook sets `plugin`, the VS Code extension sets
-# `vscode-extension`, Linggen.app writes its own `app` marker.
+# override it: the Claude Code / Codex plugin hook sets `plugin`, the VS Code
+# extension sets `vscode-extension`, Linggen.app writes its own `app` marker.
 LINGGEN_SOURCE="${LINGGEN_SOURCE:-website}"
 # The host agent, when the caller knows it (skill bootstrap, plugin hook).
 # No default: a pasted one-liner has no agent, and we never guess.
@@ -32,29 +33,43 @@ RELEASE_BASE="${RELEASE_BASE%/}"
 
 LOCAL_PATH=""
 VERSION_ARG=""
+LAUNCH=false
 
 usage() {
   cat <<EOF
-Usage: $(basename "$0") [--version <ver>] [--local-path <file://...tar.gz>]
+Usage: $(basename "$0") [--version <ver>] [--local-path <tar.gz>] [--launch]
 
 Options:
-  --version <ver>    Install a specific version. If omitted, installs latest.
-  --local-path <url> Install from a local file URL or local path. Skips network fetch.
+  --version <ver>    Install a specific release (e.g. linggen-vX.Y.Z on Mac).
+  --local-path <path> Install a local archive (path or file:// URL).
+                      Mac requires a sibling .sha256 and --version to replace an app.
+  --launch           Open Linggen.app after installing or replacing it (Mac only).
+  --no-launch        Do not open the app (default).
 
 Environment:
   LINGGEN_RELEASE_BASE  release mirror replacing GitHub (<url>/<owner>/<repo>/<asset>).
+  LINGGEN_RELEASE_REPO  override the Mac app release repository.
+  LINGGEN_APP_DIR       Mac bundle location (default /Applications/Linggen.app).
+  LINGGEN_BIN_DIR       preferred CLI directory (default /usr/local/bin).
+  LINGGEN_FALLBACK_BIN_DIR  fallback CLI directory (default \$HOME/.local/bin).
 
-Installs the 'ling' binary (Linggen, memory included), fetched from
-GitHub releases and checked against its published SHA-256.
+On Mac, install Linggen.app and link its bundled ling. If the app is already
+installed, only repair the link unless --version is given. On Linux, install ling.
 EOF
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --version)
+      [ -n "${2:-}" ] || { usage >&2; exit 1; }
       VERSION_ARG="$2"; shift 2 ;;
     --local-path)
+      [ -n "${2:-}" ] || { usage >&2; exit 1; }
       LOCAL_PATH="$2"; shift 2 ;;
+    --launch)
+      LAUNCH=true; shift ;;
+    --no-launch)
+      LAUNCH=false; shift ;;
     -h|--help)
       usage; exit 0 ;;
     *)
@@ -68,20 +83,6 @@ detect_slug() {
   os="$(uname -s | tr '[:upper:]' '[:lower:]')"
   arch="$(uname -m)"
   case "$os" in
-    darwin)
-      case "$arch" in
-        arm64|aarch64) echo "macos-aarch64" ;;
-        x86_64|amd64)
-          # No Intel macOS build is published; say so instead of a 404.
-          # --local-path still installs a binary someone built themselves.
-          if [ -z "$LOCAL_PATH" ]; then
-            echo "Linggen does not support Intel Macs yet — it needs a Mac with Apple silicon (M1 or later)." >&2
-            exit 1
-          fi
-          echo "macos-x86_64" ;;
-        *) echo "Unsupported architecture: $arch" >&2; exit 1 ;;
-      esac
-      ;;
     linux)
       case "$arch" in
         x86_64|amd64) echo "linux-x86_64" ;;
@@ -157,8 +158,8 @@ restart_engine_daemon() {
 mirror_url() {
   local url="$1"
   case "$url" in
-    https://api.github.com/repos/*/releases/latest)
-      echo "https://linggen.dev/dl/api/$(echo "$url" | sed -E 's|.*/repos/([^/]+/[^/]+)/.*|\1|')/releases/latest" ;;
+    https://api.github.com/repos/*/releases|https://api.github.com/repos/*/releases/latest)
+      echo "https://linggen.dev/dl/api/${url#https://api.github.com/repos/}" ;;
     https://github.com/*/releases/download/*)
       echo "$url" | sed -E 's|https://github.com/([^/]+/[^/]+)/releases/download/|https://linggen.dev/dl/release/\1/|' ;;
     *) echo "" ;;
@@ -195,7 +196,7 @@ download_tarball() {
 }
 
 # The sha256 a manifest.json (on stdin) lists for an asset (e.g.
-# ling-macos-aarch64). Plain text tools only — no jq on a fresh Mac.
+# ling-linux-aarch64). No jq needed.
 manifest_asset_sha256() {
   local asset="$1"
   tr -d ' \n\r\t' | tr '}' '\n' \
@@ -313,7 +314,7 @@ cleanup_legacy_install() {
 
   # Old binary names from pre-consolidation Linggen
   local old_binaries=("linggen" "linggen-server")
-  local search_dirs=("$dest_dir" "/usr/local/bin" "$HOME/.local/bin")
+  local search_dirs=("$dest_dir" "$INSTALL_DIR_DEFAULT" "$FALLBACK_DIR")
 
   for dir in "${search_dirs[@]}"; do
     for old in "${old_binaries[@]}"; do
@@ -394,7 +395,155 @@ install_bun() {
   return 0
 }
 
-main() {
+# Keep this rule in sync with app startup in linggen-app/shell/src and
+# the distribution contract in linggen/doc/release-install.md (Part 1).
+link_mac_cli() {
+  local target="$APP_DIR/Contents/MacOS/ling" dir dest entry backup
+  [ -x "$target" ] || { echo "No executable ling at $target" >&2; return 1; }
+
+  dest="$INSTALL_DIR_DEFAULT"
+  if [ ! -d "$dest" ] || [ ! -w "$dest" ]; then
+    dest="$FALLBACK_DIR"
+    mkdir -p "$dest"
+    local rc="$HOME/.zshrc" line='export PATH="$HOME/.local/bin:$PATH"'
+    if [ "$dest" != "$HOME/.local/bin" ]; then
+      line="export PATH=$(printf '%q' "$dest"):\"\$PATH\""
+    fi
+    if ! grep -Fqx -- "$line" "$rc" 2>/dev/null; then
+      printf '\n%s\n' "$line" >> "$rc"
+    fi
+  fi
+
+  # A legacy real binary may be in either directory, even if the preferred
+  # directory is writable now. Back it up rather than leaving it on PATH.
+  for dir in "$INSTALL_DIR_DEFAULT" "$FALLBACK_DIR"; do
+    entry="$dir/ling"
+    if [ -f "$entry" ] && [ ! -L "$entry" ]; then
+      backup="$HOME/.linggen/prev/ling.cli-backup"
+      if [ ! -w "$dir" ]; then
+        echo "Cannot migrate $entry without write access to $dir." >&2
+        return 1
+      fi
+      mkdir -p "${backup%/*}"
+      if [ -e "$backup" ] || [ -L "$backup" ]; then
+        # Preserve an earlier backup (including when both dirs held a CLI).
+        backup="$(mktemp "${backup}.XXXXXX")"
+      fi
+      mv -f "$entry" "$backup"
+      ln -s "$target" "$entry"
+    elif [ "$dir" = "$dest" ] || [ -L "$entry" ]; then
+      if [ -L "$entry" ] && [ "$(readlink "$entry")" = "$target" ]; then
+        continue
+      fi
+      if [ -e "$entry" ] && [ ! -L "$entry" ]; then
+        echo "Cannot link ling: $entry is not a file or symlink." >&2
+        return 1
+      fi
+      ln -sfn "$target" "$entry"
+    fi
+  done
+}
+
+resolve_app_version() {
+  local repo="$1" url metadata tag
+  if [ -n "$VERSION_ARG" ]; then
+    printf '%s\n' "${VERSION_ARG#linggen-v}"
+    return
+  fi
+  url="https://api.github.com/repos/$repo/releases"
+  if [ -n "$RELEASE_BASE" ]; then url="$RELEASE_BASE/$repo/release.json"; fi
+  metadata="$(mktemp)"
+  tag=""
+  if fetch_url "$url" "$metadata"; then
+    tag="$(grep -oE '"tag_name"[[:space:]]*:[[:space:]]*"linggen-v[^"]+"' "$metadata" \
+      | head -n1 | sed -E 's/.*"linggen-v([^"]+)"$/\1/' || true)"
+  fi
+  rm -f "$metadata"
+  if [ -z "$tag" ]; then
+    echo "Could not find a published linggen-v* release on $repo. Pass --version to pin a release." >&2
+    return 1
+  fi
+  printf '%s\n' "$tag"
+}
+
+quit_mac_app() {
+  local pattern
+  # Match this bundle's processes only (including any bundled engine).
+  pattern="$(printf '%s\n' "$APP_DIR/Contents/MacOS/" | sed 's/[][\.^$*+?(){}|\\]/\\&/g')"
+  if pgrep -f "^$pattern" >/dev/null 2>&1; then
+    echo "==> Linggen.app is running — quitting"
+    if [ "$APP_DIR" = /Applications/Linggen.app ]; then
+      osascript -e 'tell application "Linggen" to quit' 2>/dev/null || true
+      sleep 1
+    fi
+    pkill -f "^$pattern" 2>/dev/null || true
+  fi
+}
+
+# Use a subshell so extraction files are cleaned up on every exit.
+install_mac_bundle() (
+  local repo="${LINGGEN_RELEASE_REPO:-linggen/linggen-releases}"
+  local version asset url tmp tarball sha_file expected
+  case "$(uname -m)" in
+    arm64|aarch64) ;;
+    *) echo "Linggen requires an Apple silicon Mac (M1 or later)." >&2; exit 1 ;;
+  esac
+
+  if [ -n "$LOCAL_PATH" ]; then
+    url="file://${LOCAL_PATH#file://}"
+    asset="${url##*/}"
+  else
+    version="$(resolve_app_version "$repo")"
+    if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+-][[:alnum:].-]+)?$ ]]; then
+      echo "Invalid Linggen.app release version: $version" >&2
+      exit 1
+    fi
+    asset="linggen-${version}-darwin-arm64.tar.gz"
+    url="https://github.com/$repo/releases/download/linggen-v$version/$asset"
+    if [ -n "$RELEASE_BASE" ]; then url="$RELEASE_BASE/$repo/$asset"; fi
+  fi
+
+  echo "Downloading $url"
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' EXIT
+  tarball="$tmp/app.tar.gz"
+  sha_file="$tarball.sha256"
+  download_tarball "$url" "$tarball"
+  download_tarball "$url.sha256" "$sha_file"
+  expected="$(grep -oE '^[0-9a-fA-F]{64}' "$sha_file" | head -n1 || true)"
+  verify_sha256 "$tarball" "$expected" "$asset"
+  env -u TAR_OPTIONS tar -xzf "$tarball" -C "$tmp"
+  if [ ! -x "$tmp/Linggen.app/Contents/MacOS/ling" ]; then
+    echo "Archive does not contain Linggen.app with an executable ling." >&2
+    exit 1
+  fi
+
+  # Only touch the installed app after the archive is verified and extracted.
+  quit_mac_app
+  if [ -d "$APP_DIR" ] && ! rm -rf "$APP_DIR" 2>/dev/null; then
+    sudo rm -rf "$APP_DIR"
+  fi
+  if ! mv "$tmp/Linggen.app" "$APP_DIR" 2>/dev/null; then
+    sudo mv "$tmp/Linggen.app" "$APP_DIR"
+  fi
+  # Older unsigned releases may refuse to launch when quarantined.
+  xattr -dr com.apple.quarantine "$APP_DIR" 2>/dev/null || true
+  echo "Installed to $APP_DIR"
+)
+
+install_mac() {
+  if [ -d "$APP_DIR" ] && [ -z "$VERSION_ARG" ]; then
+    link_mac_cli
+    echo "Linggen.app is installed; it updates itself"
+    return
+  fi
+  install_mac_bundle
+  link_mac_cli
+  install_bun || true
+  if [ "$LAUNCH" = true ]; then open "$APP_DIR"; fi
+}
+
+install_linux() {
   local slug dest="$INSTALL_DIR_DEFAULT"
   local version="${VERSION_ARG:-latest}"
 
@@ -498,4 +647,7 @@ main() {
   echo "        touch ~/.linggen/no-telemetry"
 }
 
-main "$@"
+case "$(uname -s)" in
+  Darwin) install_mac ;;
+  *) install_linux ;;
+esac

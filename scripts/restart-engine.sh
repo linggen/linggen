@@ -8,8 +8,9 @@
 #   scripts/restart-engine.sh --status   how the last restart went
 #
 # A build error stops here with nothing touched. The restart itself is the
-# engine's (`ling restart`): it waits for other turns, swaps the build in
-# keeping ling.prev, rolls back if unhealthy, and every session it
+# engine's (`ling restart`): it waits for other turns, runs the build where
+# it lies (nothing installed is replaced), falls back to the old engine if
+# unhealthy, and every session it
 # interrupted — the calling one included — continues afterwards.
 set -euo pipefail
 

@@ -60,8 +60,11 @@ you rebuild dist).
 Inside a session the engine hosts, restart the live engine on a fresh build
 with `target/fast/ling restart --binary target/fast/ling` (after
 `cd ui && npm run build` and `cargo build --profile fast`). It waits for other
-turns, keeps `ling.prev`, rolls back if unhealthy, and this session continues
-in a new turn afterwards — do nothing else in the turn that calls it.
+turns, runs the build where it lies (the installed engine and the `ling` link
+are not touched; Linggen.app leaves a dev build running), falls back to the old
+engine if unhealthy, and this session continues in a new turn afterwards — do
+nothing else in the turn that calls it. On a Mac the installed engine is the
+one in Linggen.app (doc/release-install.md).
 `scripts/restart-engine.sh` does the builds and this in one go.
 Release builds (`cargo build --release`) are for shipping.
 
