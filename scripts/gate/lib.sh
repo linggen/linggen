@@ -14,7 +14,7 @@ WS="$(cd "$REPO/.." && pwd)"
 GATE_HOME="${LINGGEN_GATE_HOME:-$HOME/.cache/linggen-gate}"
 VANILLA_IMAGE=ghcr.io/cirruslabs/macos-tahoe-vanilla:latest
 # The VM image: GATE_IMAGE, else the local linggen-gate-base (vanilla switched
-# by hand to "App Store & Known Developers", doc/release-checklist.md), else
+# by hand to "App Store & Known Developers", doc/release-install.md), else
 # vanilla — where a quarantined Developer ID launch is a GAP.
 GATE_BASE=linggen-gate-base
 if [ -n "${GATE_IMAGE:-}" ]; then BASE_IMAGE="$GATE_IMAGE"
@@ -205,7 +205,7 @@ vm_run() { # vm script [VAR=value…]
   vm_ssh "$vm" "rm -rf ~/gate && mkdir -p ~/gate" || die "copy scripts" "ssh failed"
   vm_scp "$vm" "$VMFILES/." "~/gate/" || die "copy scripts" "scp failed"
   # Check freshness before the opt-out creates the only file in the new home.
-  if [ "$script" = first-install.sh ]; then
+  if [ "$script" = first-install.sh ] || [ "$script" = install-order.sh ]; then
     vm_ssh "$vm" 'test ! -e "$HOME/.linggen"' || die "fresh VM (no ~/.linggen)" "home already exists or SSH failed"
     record PASS "fresh VM (no ~/.linggen)"
   fi

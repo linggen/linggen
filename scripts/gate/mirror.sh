@@ -1,4 +1,4 @@
-# Release gate — build the release mirror (doc/release-checklist.md § Release
+# Release gate — build the release mirror (doc/release-install.md § Release
 # gate, doc/cli.md § Release override). Sourced by gate.sh.
 #
 #   build_mirror local                 engine/app from local builds
@@ -177,7 +177,14 @@ build_mirror() { # local | draft "<specs>"
     public) mirror_draft "$good" "" ;;
   esac
   local pub="$SITE_PUBLIC" f
-  for f in install.sh install-app.sh install-plugin.sh; do
+  local vendored=plugins/linggen/skills/linggen/scripts/install.sh
+  cmp -s "$REPO/$vendored" "$pub/install.sh" \
+    || die "mirror: plugin installer matches site" "$vendored differs from $pub/install.sh"
+  # Check the actual release bundle too, not only the local checkout.
+  tar -xOzf "$good/$ENGINE_REPO/$PLUGIN_ASSET" "./$vendored" | cmp -s - "$pub/install.sh" \
+    || die "mirror: bundled plugin installer matches site" "$PLUGIN_ASSET does not carry the site's install.sh"
+  record PASS "mirror: plugin installer matches site" "checkout and release bundle"
+  for f in install.sh install-plugin.sh; do
     [ -f "$pub/$f" ] || die "mirror: installers" "missing $pub/$f"
     cp "$pub/$f" "$good/$f"
   done

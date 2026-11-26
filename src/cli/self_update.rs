@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 
 use super::engine_restart;
 use super::memory_rollback;
-use super::prev_binary::{move_file, prev_location};
+use super::prev_binary::{in_app_bundle, move_file, prev_location};
 
 /// Env var naming a release mirror that replaces GitHub for every
 /// installer and updater (see doc/cli.md § Release override).
@@ -152,7 +152,7 @@ fn platform_slug() -> &'static str {
 }
 
 fn exe_dir() -> Result<PathBuf> {
-    let exe = std::env::current_exe().context("Failed to get current executable path")?;
+    let exe = crate::util::resolved_current_exe().context("Failed to get current executable path")?;
     Ok(exe
         .parent()
         .ok_or_else(|| anyhow::anyhow!("Failed to get executable parent directory"))?
@@ -165,6 +165,10 @@ fn exe_dir() -> Result<PathBuf> {
 /// host/port for an engine started without `--host`/`--port`.
 pub async fn run(rollback: bool, engine: (String, u16)) -> Result<()> {
     let dir = exe_dir()?;
+    if cfg!(target_os = "macos") && in_app_bundle(&dir) {
+        eprintln!("Linggen.app updates itself");
+        std::process::exit(1);
+    }
     let found = engine_restart::find(&dir.join("ling"), "ling");
     let swapped = if rollback {
         let (from, to) = rollback_binary(&dir, "ling", START_TIMEOUT)?;

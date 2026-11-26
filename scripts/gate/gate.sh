@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Release gate — a clean Mac (Tart VM) installs and upgrades the release
-# before it is published. doc/test-design.md § 4, doc/release-checklist.md.
+# before it is published. doc/test-design.md § 4, doc/release-install.md.
 #
 #   just release-gate --local                       local builds (target/release)
 #   just release-gate --draft "engine=2.3.0 app=linggen-v2.3.0"
@@ -223,6 +223,17 @@ if [ "$FIRST" = 1 ]; then
   ui_check gate-first first-install
   vm_shutdown gate-first
   [ "$KEEP" = 1 ] || { tart delete gate-first >/dev/null 2>&1; SCRATCH_VMS=("${SCRATCH_VMS[@]/gate-first}"); }
+  for order in app-script-plugin plugin-app; do
+    PHASE="$order"
+    vm="gate-$order"
+    say "Install order: $order — fresh $BASE_IMAGE"
+    vm_clone "$BASE_IMAGE" "$vm"
+    vm_boot "$vm"
+    vm_tunnels "$vm"
+    vm_run "$vm" install-order.sh "${VMENV[@]}" ORDER="$order"
+    vm_shutdown "$vm"
+    [ "$KEEP" = 1 ] || { tart delete "$vm" >/dev/null 2>&1; SCRATCH_VMS=("${SCRATCH_VMS[@]/$vm}"); }
+  done
 fi
 
 # ── Upgrade ────────────────────────────────────────────────────────────────

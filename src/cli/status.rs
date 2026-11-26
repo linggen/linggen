@@ -27,7 +27,12 @@ pub async fn run(config: &Config, config_path: Option<&Path>) -> Result<()> {
 
     // 1. Version + update check
     let current = env!("CARGO_PKG_VERSION");
-    let latest = fetch_latest_version().await;
+    let exe = crate::util::resolved_current_exe()?;
+    let latest = if super::prev_binary::in_app_bundle(exe.parent().unwrap_or(&exe)) {
+        None
+    } else {
+        fetch_latest_version().await
+    };
     match &latest {
         Some(v) if v != current => {
             println!("  Version:     v{current}  {DIM}(latest: v{v} — run `ling update`){RESET}");
@@ -65,6 +70,14 @@ pub async fn run(config: &Config, config_path: Option<&Path>) -> Result<()> {
     let listener = if listening { listener_pid(port) } else { None };
     let (icon, detail) = server_verdict(port, listening, recorded, listener);
     println!("  Agent:       {} {}", icon, detail);
+
+    let (exe, commit) = if listening {
+        fetch_running_binary(port).await
+    } else {
+        None
+    }
+    .unwrap_or_else(|| (exe.display().to_string(), env!("LINGGEN_BUILD_COMMIT").into()));
+    println!("Binary: {exe} · {commit}");
 
     // 5. Logs
     check_log_dir(config);
@@ -267,6 +280,29 @@ fn is_process_running(pid: u32) -> bool {
         .status()
         .map(|s| s.success())
         .unwrap_or(false)
+}
+
+async fn fetch_running_binary(port: u16) -> Option<(String, String)> {
+    #[derive(serde::Deserialize)]
+    struct Binary {
+        exe: String,
+        commit: String,
+    }
+    let binary: Binary = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(2))
+        .build()
+        .ok()?
+        .get(format!("http://127.0.0.1:{port}/api/health"))
+        .send()
+        .await
+        .ok()?
+        .error_for_status()
+        .ok()?
+        .json()
+        .await
+        .ok()?;
+    Some((binary.exe, binary.commit))
 }
 
 async fn is_port_listening(port: u16) -> bool {

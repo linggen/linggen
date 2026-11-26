@@ -30,13 +30,14 @@ pub(crate) fn prev_location_in(home: &Path, dir: &Path, name: &str) -> PathBuf {
     kept
 }
 
-/// A path inside some `X.app` folder.
-fn in_app_bundle(dir: &Path) -> bool {
-    dir.components().any(|c| {
-        Path::new(c.as_os_str())
-            .extension()
+/// The executable directory of a macOS app bundle.
+pub(super) fn in_app_bundle(dir: &Path) -> bool {
+    dir.ends_with("Contents/MacOS")
+        && dir
+            .parent()
+            .and_then(Path::parent)
+            .and_then(Path::extension)
             .is_some_and(|e| e.eq_ignore_ascii_case("app"))
-    })
 }
 
 /// `/Applications/Linggen.app/Contents/MacOS` → `-Applications-Linggen.app-Contents-MacOS`,

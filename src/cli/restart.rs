@@ -2,9 +2,9 @@
 //! made; afterwards its session, and every session the restart interrupted,
 //! continues (doc/background-tasks-spec.md § Engine restart). The engine does
 //! the waiting and remembers who to wake; `ling engine-restart` (hidden) is
-//! the detached helper it starts to swap the binary and bring it back up.
+//! the detached helper it starts to relaunch the engine on that build.
 
-use super::{engine_restart, self_update};
+use super::engine_restart;
 use anyhow::{Context, Result};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
@@ -62,30 +62,8 @@ fn write_status(state: &str, detail: &str) {
     let _ = std::fs::write(path, body.to_string());
 }
 
-/// Copy `binary` over `target` the way an update does: the old one kept as
-/// `<name>.prev` (outside an app bundle: `prev_binary`), the new one kept
-/// only if it answers `--version`.
-fn install(binary: &Path, target: &Path) -> Result<()> {
-    let dir = target.parent().context("binary has no folder")?;
-    let name = target
-        .file_name()
-        .and_then(|n| n.to_str())
-        .context("binary has no name")?;
-    let staged = dir.join(format!("{name}.new"));
-    std::fs::copy(binary, &staged)
-        .with_context(|| format!("Could not stage {}", staged.display()))?;
-    self_update::commit_with_probe(
-        &staged,
-        target,
-        &super::prev_binary::prev_location(dir, name),
-        name,
-        Duration::from_secs(10),
-    )
-}
-
-/// The detached helper: swap `binary` in where the engine `pid` runs from
-/// (and into the CLI install), restart it with its own arguments, roll back
-/// to `.prev` when it does not come up healthy.
+/// The detached helper: run the requested executable without changing the
+/// installed engine or the CLI link, and fall back to the old path if needed.
 pub async fn helper(binary: Option<&Path>, pid: u32, host: String, port: u16) -> Result<()> {
     let result = async {
         let engine = engine_restart::process_info(pid).context("The engine process is gone")?;
@@ -100,22 +78,8 @@ pub async fn helper(binary: Option<&Path>, pid: u32, host: String, port: u16) ->
             )
             .await;
         };
-        install(binary, &target)?;
-        let cli = PathBuf::from("/usr/local/bin/ling");
-        if cli.exists() && cli.canonicalize().ok() != target.canonicalize().ok() {
-            if let Err(error) = install(binary, &cli) {
-                println!(
-                    "[restart] the CLI copy at {} was left as it was: {error:#}",
-                    cli.display()
-                );
-            }
-        }
-        let dir = target.parent().context("binary has no folder")?;
-        let name = target
-            .file_name()
-            .and_then(|n| n.to_str())
-            .context("binary has no name")?;
-        engine_restart::restart(dir, name, &[engine], &engine_restart::Opts::new(host, port)).await
+        engine_restart::restart_on(binary, &target, &engine, &engine_restart::Opts::new(host, port))
+            .await
     }
     .await;
     match &result {

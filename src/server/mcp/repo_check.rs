@@ -66,7 +66,7 @@ fn live_files() -> Vec<PathBuf> {
         "doc/cli.md",
         "doc/permission-spec.md",
         "doc/test-design.md",
-        "doc/release-checklist.md",
+        "doc/release-install.md",
         "doc/browser-control-spec.md",
     ] {
         files.push(root.join(file));

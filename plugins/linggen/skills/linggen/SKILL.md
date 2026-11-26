@@ -81,13 +81,12 @@ labels the install's distribution channel from its own on-disk location —
 a local marker file only, nothing phones home.)
 
 **Ask the user before the first-ever install** — one line is enough:
-"Linggen needs its local engine (~100MB, SHA-verified, to
-`/usr/local/bin` or `~/.local/bin`) — install now?" Run the script only on
+"Linggen needs a SHA-verified download (the app on Mac, ~230 MB) — install now?" Run the script only on
 their yes. When `ling` is already present the script is a silent no-op —
 run it without asking. If the install fails (offline, no writable bin
 dir), tell the user and stop memory work for this session — nothing
 answers without Linggen. Start it with `ling --web` (or Linggen.app) when
-installed but not running. To update later: `ling update`.
+installed but not running. To update later: use Linggen.app on Mac or `ling update` on Linux.
 
 ## Interface — the `ling mem` CLI
 
@@ -548,7 +547,7 @@ Linggen browser extension) — one **visible** controlled tab:
   `127.0.0.1:9527`), Linggen may still be installing in the background
   (plugin channels; progress in `~/.linggen/engine-install.log`) — wait and
   retry. If the `ling` binary is genuinely absent, run the install from the
-  First-use section and tell the user (one-time, ~100MB). Memory is served
+  First-use section and tell the user (one-time, ~230 MB on Mac). Memory is served
   by the same program, so it comes back with it.
 
 ## The person's apps (via the same MCP server)

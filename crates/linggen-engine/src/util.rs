@@ -3,6 +3,13 @@
 
 use std::path::{Path, PathBuf};
 
+/// The current process's executable, with any launch symlinks resolved.
+pub fn resolved_current_exe() -> std::io::Result<PathBuf> {
+    let path = std::env::current_exe()?;
+    // An updater may have just moved or removed the running executable.
+    Ok(path.canonicalize().unwrap_or(path))
+}
+
 /// Mark a file we wrote as runnable (0755). Nothing to do off unix.
 #[cfg(unix)]
 pub fn set_executable(path: &std::path::Path) -> std::io::Result<()> {

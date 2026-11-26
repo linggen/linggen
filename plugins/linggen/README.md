@@ -26,7 +26,7 @@ No git (a fresh Mac)? `curl -fsSL https://linggen.dev/install-plugin.sh | bash`
 installs the release bundle into Claude Code and Codex instead.
 
 That's the whole install. **The plugin's session-start hook installs and
-starts Linggen** (`ling`, ~100MB — installed in the background on your first
+starts Linggen** (the app on Mac, ~230 MB — installed in the background on your first
 session with the installer this plugin ships, disclosed in the session context;
 log at `~/.linggen/engine-install.log`). Memory lives inside Linggen, so it
 comes online when Linggen does. Set `LINGGEN_NO_ENGINE_INSTALL=1` to opt out of

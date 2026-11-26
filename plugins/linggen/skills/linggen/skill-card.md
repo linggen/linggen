@@ -44,7 +44,7 @@ Use the Linggen engine's MCP agent tools for delegated coding work:
 Global <br>
 
 ## Known Risks and Mitigations: <br>
-Risk: On first use the skill installs the Linggen engine (`ling`, ~100MB) with the installer bundled in the skill (`scripts/install-engine.sh`, run by `scripts/bootstrap.sh`). SKILL.md tells the agent to ask the user before the first install; the bootstrap is a no-op when `ling` is already present or this host uses another machine's Linggen. <br>
+Risk: On first use the skill installs Linggen (the app on Mac, ~230 MB) with the installer bundled in the skill (`scripts/install.sh`, run by `scripts/bootstrap.sh`). SKILL.md tells the agent to ask the user before the first install; the bootstrap is a no-op when `ling` is already present or this host uses another machine's Linggen. <br>
 Mitigation: Read the bundled installer before installing this skill, or install `ling` yourself beforehand so the check short-circuits. The release binary is SHA-256 verified and lands in `/usr/local/bin` (or `~/.local/bin` when that is not writable). Later updates (`ling update`) are asked before they run. <br>
 Risk: The local MCP server exposes `agent_run`, which starts a Linggen engine agent. This is broader than the memory-and-browser purpose the skill's name and summary suggest. <br>
 Mitigation: Treat `agent_run` as general agent-execution authority, not a memory tool. Do not install if your environment should not grant that; where your host supports per-tool allowlisting, exclude the `agent_*` tools and keep only the five `memory_*` tools. <br>

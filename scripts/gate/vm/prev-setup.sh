@@ -11,10 +11,11 @@
 # rendered tests/fixtures/home), ~/gate/alex.json.
 . ./common.sh
 
-curl -fsSL https://linggen.dev/install.sh | bash >"$OUT/install.log" 2>&1
-check "prev: install.sh (published)" $? "$(tail -3 "$OUT/install.log")" "ling $(ver_of "$(ling_bin)"), ling-mem $(ver_of "$(mem_bin)")"
-curl -fsSL https://linggen.dev/install-app.sh | bash -s -- --no-launch >"$OUT/install-app.log" 2>&1
-check "prev: install-app.sh (published)" $? "$(tail -3 "$OUT/install-app.log")" "Linggen.app $(app_version)"
+# Use the new installer to fetch the previous *published* app, not the draft.
+# The old frozen VM with its standalone ling-mem is kept separately (--prev).
+curl -fsSL "$SITE/install.sh" | env -u LINGGEN_RELEASE_BASE bash >"$OUT/prev-install.log" 2>&1
+check "prev: install.sh (published assets)" $? "$(tail -3 "$OUT/prev-install.log")" "Linggen.app $(app_version)"
+one_ling "prev: published app"
 
 HOSTS_MEMORY=false
 "$(ling_bin)" mem --help >/dev/null 2>&1 && HOSTS_MEMORY=true

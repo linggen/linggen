@@ -336,6 +336,26 @@ pub async fn restart(
     }
 }
 
+/// Try a developer build in place. If it fails, stop that process and start
+/// the original executable without changing either file.
+pub async fn restart_on(
+    binary: &Path,
+    original: &Path,
+    engine: &ProcessInfo,
+    opts: &Opts,
+) -> Result<()> {
+    let engines = std::slice::from_ref(engine);
+    if let Err(failure) = relaunch(binary, engines, opts).await {
+        stop_all(&failure.started, opts).await;
+        memory_rollback::restore_after_rollback(original, opts.ling_mem.as_deref(), opts.probe_timeout);
+        if let Err(again) = relaunch(original, engines, opts).await {
+            anyhow::bail!("{}; original engine did not start either: {}", failure.why, again.why);
+        }
+        anyhow::bail!("{} — rolled back to the original engine", failure.why);
+    }
+    Ok(())
+}
+
 /// Relaunch one existing engine without changing any executable or backup.
 pub async fn restart_current(target: &Path, engine: &ProcessInfo, opts: &Opts) -> Result<()> {
     match relaunch(target, std::slice::from_ref(engine), opts).await {
@@ -724,6 +744,27 @@ S(("127.0.0.1", int(sys.argv[1])), h.SimpleHTTPRequestHandler).serve_forever()
                 }
             }
         }
+    }
+
+    #[tokio::test]
+    async fn a_dev_build_runs_at_its_own_path_without_replacing_the_installed_engine() {
+        if !have_python() {
+            return;
+        }
+        let rig = Rig::new();
+        let build = rig.bin.path().join("dev-ling");
+        fake(&rig.target(), "1.0.0", SERVES);
+        fake(&build, "2.0.0", &format!("printf '%s' \"$0\" > dev-path; {SERVES}"));
+        let old = rig.running().await;
+
+        restart_on(&build, &rig.target(), &old, &rig.opts)
+            .await
+            .unwrap();
+
+        let launched = std::fs::read_to_string(rig.work.path().join("dev-path")).unwrap();
+        assert_eq!(Path::new(&launched), build);
+        assert_eq!(rig.version(), "1.0.0");
+        assert!(!rig.bin.path().join("ling.prev").exists());
     }
 
     #[tokio::test]

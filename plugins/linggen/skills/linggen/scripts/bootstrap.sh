@@ -52,5 +52,5 @@ esac
 export LINGGEN_NO_REMOTE_SCRIPT=1
 
 if ! command -v ling >/dev/null 2>&1 && [ ! -x "$HOME/.local/bin/ling" ]; then
-  bash "$here/install-engine.sh"
+  bash "$here/install.sh"
 fi

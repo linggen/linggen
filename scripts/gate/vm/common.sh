@@ -54,7 +54,56 @@ wait_http() { # url seconds
 
 sha() { shasum -a 256 "$1" 2>/dev/null | awk '{print $1}'; }
 ver_of() { "$1" --version 2>/dev/null | awk '{print $2}'; }
-ling_bin() { command -v ling || echo "$HOME/.local/bin/ling"; }
+ling_bin() { [ -z "${GATE_STANDALONE:-}" ] || { printf '%s\n' "$GATE_STANDALONE"; return; }; command -v ling || echo "$HOME/.local/bin/ling"; }
+APP_BUNDLE=/Applications/Linggen.app
+APP_LING="$APP_BUNDLE/Contents/MacOS/ling"
+
+one_ling() { # phase label
+  local path found resolved count=0 real=""
+  hash -r
+  found="$(command -v ling)"
+  resolved="$(realpath "$found" 2>/dev/null)"
+  for path in /usr/local/bin/ling "$HOME/.local/bin/ling" "$APP_LING"; do
+    if [ -f "$path" ] && [ ! -L "$path" ]; then
+      count=$((count + 1)); real="$path"
+    fi
+  done
+  [ "$count" = 1 ] && [ -x "$found" ] && [ "$resolved" = "$(realpath "$real")" ]
+  check "$1: one_ling" $? "$count real files; ${found:-no command} resolves to ${resolved:-nothing}" "$found → $resolved"
+}
+
+install_app_release() { # log [installer arguments]
+  local log="$1"; shift
+  curl -fsSL "$SITE/install.sh" | env $RB bash -s -- "$@" >"$log" 2>&1
+}
+
+# Drag-to-Applications equivalent: the release tarball holds the same bundle
+# as the DMG. Use a fresh bundle, even if a script already installed it.
+copy_app_release() { # version
+  local stage
+  stage="$(mktemp -d "$OUT/app-copy.XXXXXX")" || return 1
+  curl -fsSL "$(asset_url linggen/linggen-releases "linggen-$1-darwin-arm64.tar.gz")" \
+    | tar -xzf - -C "$stage" || return 1
+  [ -x "$stage/Linggen.app/Contents/MacOS/ling" ] || return 1
+  rm -rf "$APP_BUNDLE" && mv "$stage/Linggen.app" "$APP_BUNDLE"
+}
+
+check_app_identity() {
+  local health exe commit sub rc line
+  health="$(curl -fsS -m 5 "http://127.0.0.1:$EP/api/health")"
+  exe="$(jq -r '.exe // empty' <<<"$health")"
+  commit="$(jq -r '.commit // empty' <<<"$health")"
+  [ "$exe" = "$(realpath "$APP_LING")" ] && [[ "$commit" =~ ^[0-9a-f]{7,}$ ]]
+  check "app: health identifies the bundle engine" $? "exe=${exe:-missing}, commit=${commit:-missing}" "$exe · $commit"
+  ling status >"$OUT/status-binary.log" 2>&1
+  grep -Fxq "Binary: $exe · $commit" "$OUT/status-binary.log"
+  check "app: status agrees with health" $? "$(grep '^Binary:' "$OUT/status-binary.log")"
+  for sub in install update; do
+    line="$(ling "$sub" 2>&1)"; rc=$?
+    [ "$rc" != 0 ] && [ "$line" = 'Linggen.app updates itself' ]
+    check "app: ling $sub refuses" $? "exit $rc: $line"
+  done
+}
 mem_bin() { command -v ling-mem || echo "$HOME/.local/bin/ling-mem"; }
 
 engine_health() { wait_http http://127.0.0.1:9527/api/health "${1:-60}"; }

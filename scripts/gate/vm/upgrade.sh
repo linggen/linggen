@@ -10,7 +10,14 @@
 . ./takeover.sh
 . ./inplace.sh
 
-LING="$(ling_bin)"; MEM="$(mem_bin)"
+# Exercise the standalone updater and memory rollback on a VM-local copy,
+# never on a bundle or a global link. Then separately migrate the actual install.
+BASELINE_LING="$(ling_bin)"
+MEM="$(mem_bin)"
+mkdir -p "$OUT/standalone"
+LING="$OUT/standalone/ling"
+cp -p "$BASELINE_LING" "$LING" || exit 1
+GATE_STANDALONE="$LING"
 
 # A swap restarted the engine: a new process on 9527 answering health, at the
 # version the swapped-in binary carries.
@@ -86,23 +93,25 @@ fi
 if "$LING" update --help 2>/dev/null | grep -q -- '--rollback'; then
   LINGGEN_RELEASE_BASE="$UPDATE_BASE" "$LING" update >"$OUT/ling-update.log" 2>&1
   rc=$?
-  VIA_INSTALL_SH=0
-  # Updaters before 1.10.0 gave a new binary 10 s to answer --version, and a
-  # new file's first run waits on the macOS scan (8-22 s in this VM). They
-  # restore the old binary; a user re-runs install.sh, so the gate does too.
-  if [ $rc != 0 ] && grep -q 'no answer within 10s' "$OUT/ling-update.log"; then
-    gap "ling update (from $PREV_LING)" "the old updater's 10 s start limit lost to the macOS scan — it restored $PREV_LING; upgraded by re-running install.sh"
-    curl -fsSL "$GOOD/install.sh" | LINGGEN_RELEASE_BASE="$GOOD" bash >"$OUT/install.log" 2>&1
-    check "install.sh after the old updater gave up" $? "$(tail -3 "$OUT/install.log")"
-    VIA_INSTALL_SH=1
+  if [ "$rc" != 0 ] && grep -q 'no answer within 10s' "$OUT/ling-update.log"; then
+    gap "ling update (from $PREV_LING)" "the old updater's 10 s start limit lost to the macOS scan"
+    INSTALL_STANDALONE=1
   else
-    check "ling update (from $PREV_LING)" $rc "$(tail -3 "$OUT/ling-update.log")"
+    check "ling update (from $PREV_LING)" "$rc" "$(tail -3 "$OUT/ling-update.log")"
+    INSTALL_STANDALONE=0
   fi
 else
-  gap "ling update (from $PREV_LING)" "the old binary predates LINGGEN_RELEASE_BASE — upgraded by re-running install.sh instead"
-  curl -fsSL "$GOOD/install.sh" | LINGGEN_RELEASE_BASE="$GOOD" bash >"$OUT/install.log" 2>&1
-  check "install.sh over a running install" $? "$(tail -3 "$OUT/install.log")"
-  VIA_INSTALL_SH=1
+  gap "ling update (from $PREV_LING)" "the old binary predates LINGGEN_RELEASE_BASE"
+  INSTALL_STANDALONE=1
+fi
+if [ "$INSTALL_STANDALONE" = 1 ]; then
+  # install.sh now installs the app, not a standalone engine on macOS.
+  # Stage the artifact directly so the old memory/rollback checks still run.
+  stop_engine
+  curl -fsSL "$GOOD/linggen/linggen/ling-macos-aarch64.tar.gz" \
+    | tar -xzf - -C "$(dirname "$LING")"
+  check "upgrade: stage standalone engine for legacy checks" $? "could not extract the engine artifact"
+  start_engine 90
 fi
 check_installed "upgrade: ling is the release" "$LING" "$LING_VERSION" "$LING_SHA"
 
@@ -112,7 +121,7 @@ check_installed "upgrade: ling is the release" "$LING" "$LING_VERSION" "$LING_SH
 # its --help — the release's own `ling update` is checked under § Restart.
 if [ "$(sha "$OUT/ling.old")" = "$LING_SHA" ]; then
   gap "upgrade: 9527 restarted on the new ling" "the baseline already runs these bytes (v$PREV_LING) — nothing to swap"
-elif [ "$VIA_INSTALL_SH" = 1 ] || $OLD_RESTARTS; then
+elif [ "$INSTALL_STANDALONE" = 1 ] || $OLD_RESTARTS; then
   engine_restarted "upgrade: 9527 restarted on the new ling" "$engine_pid" "$LING_VERSION"
 else
   gap "upgrade: 9527 restarted on the new ling" "ling $PREV_LING's \`ling update\` predates the engine restart — the release's own is checked under § Restart"
@@ -287,7 +296,7 @@ wait_engine_version() { # want seconds
 # installed skill's code with its bundle's and never touches the skill's state.
 # linggen-prev installs the old app with --no-launch, so 灵境 is laid down here
 # the way a 2.0.x shell did on first open — a plain copy of its bundle, no
-# marker. Then, before install-app.sh: a state file under data/, and a comment
+# marker. Then, before the pinned app install: a state file under data/, and a comment
 # appended to state.mjs, so the check proves a replace even when the old
 # bundle already carried the release's state.mjs.
 SKILL_CODE=scripts/state.mjs
@@ -349,17 +358,22 @@ app_engine_upgrade_check() {
   quit_app
 }
 
+unset GATE_STANDALONE
 if [ -n "$APP_VERSION" ]; then
   rm -rf /tmp/gate-old-app; mkdir -p /tmp/gate-old-app
   [ -d /Applications/Linggen.app ] && ditto /Applications/Linggen.app "$OLD_APP"
   skill_state_plant
-  curl -fsSL "$GOOD/install-app.sh" | LINGGEN_RELEASE_BASE="$GOOD" bash -s -- --no-launch >"$OUT/install-app.log" 2>&1
-  check "app: install-app.sh over ${PREV_APP:-nothing}" $? "$(tail -3 "$OUT/install-app.log")"
+  install_app_release "$OUT/app-upgrade.log" --version "linggen-v$APP_VERSION"
+  check "app: install.sh over ${PREV_APP:-nothing}" $? "$(tail -3 "$OUT/app-upgrade.log")"
+  one_ling "upgrade: script"
+  LING="$(ling_bin)"
   [ "$(app_version)" = "$APP_VERSION" ]; check "app: Linggen.app is the release" $? "got $(app_version)"
   launchctl setenv LINGGEN_RELEASE_BASE "$GOOD"
   t_open=$SECONDS
   open_app /Applications/Linggen.app
   engine_health 120; check "app: launches on the old home" $? "no 9527 health 120 s after open"
+  one_ling "upgrade: app"
+  [ "${APP_IN_TRAIN:-1}" != 1 ] || check_app_identity
   for _ in $(seq 20); do [ "$(jq -r '.by // empty' "$LG/skills/lingjing/.installed" 2>/dev/null)" = app ] && break; sleep 3; done
   check_assets_heal "app (upgrade)" 600 upgrade "$t_open"
   sleep 5; quit_app
@@ -399,6 +413,7 @@ if command -v claude >/dev/null; then
   clt_dialog_close
   install_plugin "$OUT/install-plugin.log"
   check_plugins "upgrade" $? "$OUT/install-plugin.log"
+  [ -z "$APP_VERSION" ] || one_ling "upgrade: plugin"
 else
   gap "claude: plugin updates" "no claude CLI in linggen-prev"
 fi

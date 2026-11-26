@@ -8,9 +8,15 @@
 tcc_watch_start
 
 # ── install.sh — the linggen.dev one-liner, pointed at the mirror ──────────
-curl -fsSL "$SITE/install.sh" | env $RB bash >"$OUT/install.log" 2>&1
-check "install.sh exits 0" $? "exit $? — $(tail -3 "$OUT/install.log")"
+[ -n "$APP_VERSION" ] || { gap "script → app" "no app in the mirror"; exit 0; }
+install_app_release "$OUT/install.log" --version "linggen-v$APP_VERSION"
+check "install.sh exits 0" $? "$(tail -3 "$OUT/install.log")"
+one_ling "script → app: script"
+[ "$(app_version)" = "$APP_VERSION" ]
+check "install.sh: Linggen.app is the release" $? "got '$(app_version)', want $APP_VERSION" "$APP_VERSION"
 check_installed "install.sh: ling is the release" "$(ling_bin)" "$LING_VERSION" "$LING_SHA"
+"$LG/bin/bun" --version >/dev/null 2>&1
+check "install.sh: bun in ~/.linggen/bin" $? "no runnable $LG/bin/bun"
 # install.sh lays down no ling-mem (the engine writes its stand-in there when
 # it starts). Anything there now was fetched.
 INSTALLED_MEM_SHA="$(sha "$HOME/.local/bin/ling-mem")"
@@ -128,37 +134,30 @@ dmg_runtime_check() {
   quit_app
 }
 
-# ── install-app.sh — Linggen.app from the mirror ───────────────────────────
-if [ -n "$APP_VERSION" ]; then
-  # install.sh above bundled bun already; taken away (the engine is stopped),
-  # so the bun check below is install-app.sh's own.
-  rm -f "$LG/bin/bun"
-  curl -fsSL "$SITE/install-app.sh" | env $RB bash -s -- --no-launch >"$OUT/install-app.log" 2>&1
-  check "install-app.sh exits 0" $? "$(tail -3 "$OUT/install-app.log")"
-  "$LG/bin/bun" --version >/dev/null 2>&1
-  check "install-app.sh: bun in ~/.linggen/bin" $? "no runnable $LG/bin/bun — $(grep -i bun "$OUT/install-app.log" | tail -2)" "bun $("$LG/bin/bun" --version 2>/dev/null)"
-  [ "$(app_version)" = "$APP_VERSION" ]
-  check "install-app.sh: Linggen.app is the release" $? "got '$(app_version)', want $APP_VERSION" "$APP_VERSION"
-  xattr -r /Applications/Linggen.app 2>/dev/null | grep -q com.apple.quarantine
-  [ $? != 0 ]; check "install-app.sh: no quarantine on the app" $? "com.apple.quarantine present"
+# ── Script → app: launch the installed bundle ──────────────────────────────
+xattr -r "$APP_BUNDLE" 2>/dev/null | grep -q com.apple.quarantine
+[ $? != 0 ]; check "install.sh: no quarantine on the app" $? "com.apple.quarantine present"
 
-  [ -n "$RB" ] && launchctl setenv LINGGEN_RELEASE_BASE "$GOOD"
-  t_open=$SECONDS
-  open_app /Applications/Linggen.app
-  engine_health 120
-  check "app: first launch brings up 9527" $? "no health 120 s after open"
-  pgrep -f '/Linggen.app/Contents/MacOS/' >/dev/null
-  check "app: still running after first launch" $? "no Linggen.app process"
-  # The slimmed bundle heals itself: 灵境's pictures are fetched, not shipped.
-  for _ in $(seq 40); do [ -f "$ASSET_DIR/assets.json" ] && break; sleep 3; done
-  check_assets_heal "app" 600 first "$t_open"
-  sleep 10
-  quit_app
-  dmg_runtime_check
-  launchctl unsetenv LINGGEN_RELEASE_BASE
-else
-  gap "install-app.sh" "no app in the mirror"
+copy_app_release "$APP_VERSION"
+check "script → app: copy bundle to Applications" $? "could not stage the release bundle"
+[ -n "$RB" ] && launchctl setenv LINGGEN_RELEASE_BASE "$GOOD"
+t_open=$SECONDS
+open_app "$APP_BUNDLE"
+engine_health 120
+check "app: first launch brings up 9527" $? "no health 120 s after open"
+pgrep -f '/Linggen.app/Contents/MacOS/linggen-shell' >/dev/null
+check "app: still running after first launch" $? "no Linggen.app shell process"
+one_ling "script → app: app"
+if [ "${APP_IN_TRAIN:-1}" = 1 ]; then
+  check_app_identity
 fi
+# The slimmed bundle heals itself: 灵境's pictures are fetched, not shipped.
+for _ in $(seq 40); do [ -f "$ASSET_DIR/assets.json" ] && break; sleep 3; done
+check_assets_heal "app" 600 first "$t_open"
+sleep 10
+quit_app
+dmg_runtime_check
+launchctl unsetenv LINGGEN_RELEASE_BASE
 
 tcc_watch_stop "first run"
 
@@ -293,6 +292,7 @@ if [ -z "$dev" ]; then
 fi
 install_plugin "$OUT/install-plugin.log"
 check_plugins "first install" $? "$OUT/install-plugin.log"
+one_ling "first install: plugin registered"
 if [ -z "$INSTALLED_MEM_SHA" ]; then
   # Nothing was installed to move aside: a ling-mem.prev means something fetched one.
   [ ! -e "$HOME/.local/bin/ling-mem.prev" ] && is_standin "$HOME/.local/bin/ling-mem"

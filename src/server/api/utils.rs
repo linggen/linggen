@@ -55,6 +55,10 @@ pub(crate) async fn health_handler(
     let mut body = crate::server::rtc::contract::numbers();
     body["ok"] = true.into();
     body["version"] = env!("CARGO_PKG_VERSION").into();
+    body["exe"] = json!(crate::util::resolved_current_exe()
+        .ok()
+        .map(|p| p.to_string_lossy().into_owned()));
+    body["commit"] = env!("LINGGEN_BUILD_COMMIT").into();
     axum::Json(body)
 }
 

@@ -7,8 +7,8 @@
 //! an older `.prev` is renamed with a timestamp, never overwritten — and a
 //! small shell script takes its place:
 //!
-//! - data verbs run as `ling mem "$@"` (the engine that wrote the script, else
-//!   `ling` on PATH — which may be an older one without `mem`);
+//! - data verbs run as `ling mem "$@"` through the stable command link when
+//!   it points at this engine, otherwise through the writing engine itself;
 //! - `--version` answers this engine's version, so the plugin's
 //!   `install-bin.sh` (which replaces only an older binary) leaves it alone;
 //! - `status` answers what the old autostart hook reads from a running
@@ -51,12 +51,40 @@ pub(super) fn install(port: u16) {
     let Some(path) = canonical_path() else {
         return;
     };
-    let engine = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("ling"));
+    let engine = crate::util::resolved_current_exe()
+        .map(|exe| engine_command(&exe, std::env::split_paths(crate::util::shell_path())))
+        .unwrap_or_else(|_| PathBuf::from("ling"));
     match install_at(&path, &engine, super::VERSION, port) {
         Ok(Some(what)) => tracing::info!("memory: {what}"),
         Ok(None) => {}
         Err(e) => tracing::warn!("memory: the ling-mem stand-in was not written: {e}"),
     }
+}
+
+/// Keep the link itself, not its target, so the stand-in survives app swaps.
+fn engine_command(exe: &Path, dirs: impl Iterator<Item = PathBuf>) -> PathBuf {
+    dirs.filter_map(|dir| std::path::absolute(dir.join("ling")).ok())
+        .find(|candidate| {
+            candidate.is_symlink()
+                && candidate.canonicalize().is_ok_and(|target| target == exe)
+        })
+        .unwrap_or_else(|| exe.to_path_buf())
+}
+
+#[cfg(all(test, unix))]
+#[test]
+fn standin_prefers_a_link_to_this_engine_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let exe = dir.path().join("engine");
+    std::fs::write(&exe, "engine").unwrap();
+    let exe = exe.canonicalize().unwrap();
+    let link = dir.path().join("ling");
+    std::os::unix::fs::symlink("missing", &link).unwrap();
+    let path = || std::iter::once(dir.path().to_path_buf());
+    assert_eq!(engine_command(&exe, path()), exe);
+    std::fs::remove_file(&link).unwrap();
+    std::os::unix::fs::symlink("engine", &link).unwrap();
+    assert_eq!(engine_command(&exe, path()), link);
 }
 
 /// What is at a `ling-mem` path.

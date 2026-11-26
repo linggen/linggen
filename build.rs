@@ -8,4 +8,23 @@ fn main() {
     println!("cargo:rerun-if-changed=agents");
     println!("cargo:rerun-if-changed=missions");
     println!("cargo:rerun-if-changed=ui/dist");
+    println!("cargo:rustc-env=LINGGEN_BUILD_COMMIT={}", build_commit());
+}
+
+fn git(args: &[&str]) -> Option<String> {
+    let output = std::process::Command::new("git").args(args).output().ok()?;
+    output.status.success().then_some(())?;
+    Some(String::from_utf8(output.stdout).ok()?.trim().to_owned())
+}
+
+fn build_commit() -> String {
+    // HEAD can point to a loose or packed ref. Resolve Git's paths rather than
+    // assuming .git is a directory (linked worktrees have a .git file).
+    let head_ref = git(&["symbolic-ref", "-q", "HEAD"]);
+    for name in ["HEAD", "packed-refs"].into_iter().chain(head_ref.as_deref()) {
+        if let Some(path) = git(&["rev-parse", "--git-path", name]) {
+            println!("cargo:rerun-if-changed={path}");
+        }
+    }
+    git(&["rev-parse", "--short", "HEAD"]).unwrap_or_else(|| "unknown".into())
 }

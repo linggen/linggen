@@ -79,7 +79,7 @@ a better shared memory approach. Lingyu remains a separate release decision.
 2. **A move and a change of behaviour never share a commit.** Splitting moves
    code; it changes nothing a user or a test can see.
 3. **Everything lands on main as it goes**, tests green; no long branch.
-4. **Each release passes the gate** (`release-checklist.md`).
+4. **Each release passes the gate** (`release-install.md`).
 5. **The phone and the Mac ship together**, as far as the case allows (Hanli,
    2026-11-18: 「每次发版本, 手机, mac要一起发, 尽量, 根据情况定」). Same version
    number; the iPhone build goes to App Review first and the Mac is published

@@ -300,10 +300,10 @@ by the script — do not bump by hand.
    `ling-linux-aarch64` onto the draft (~10 min).
 4. `./scripts/release.sh X.Y.Z --manifest-only` — `manifest.json` lists all
    three. No macos-x86_64 target.
-5. Local swap: `lsof -ti :9527 | xargs kill` (linggen-shell holds the port
-   too); `rm` + `cp` + `codesign -f -s -` into `/usr/local/bin/ling` AND
-   `/Applications/Linggen.app/Contents/MacOS/ling` (the bundle is TCC-blocked:
-   stage in /tmp, Finder-mediated copy); restart `ling --web`.
+5. Run a dev build with `ling restart --binary <build>`; the app leaves it
+   running. For a deploy to Hanli’s Mac, replace and sign only the bundled
+   `/Applications/Linggen.app/Contents/MacOS/ling`; leave the CLI link alone.
+   If TCC blocks the bundle write, stage in `/tmp` and copy through Finder.
 6. After the release gate passes:
    `gh release edit X.Y.Z --draft=false --latest --repo linggen/linggen`.
 7. Verify from outside: `curl -fsSL https://linggen.dev/install.sh | bash`

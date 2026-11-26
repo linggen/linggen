@@ -10,7 +10,7 @@
 # 1. Address on THIS machine: make sure Linggen is up. Running → nothing to
 #    do. `ling` installed → start it (`ling --web`) and give it a few seconds.
 #    Not installed → install it in the BACKGROUND (detached — session start
-#    never blocks on the ~100MB download) and disclose that in the context
+#    never blocks on the ~230 MB on Mac download) and disclose that in the context
 #    line. Linggen is a required component of this plugin; opt out of the
 #    auto-install with LINGGEN_NO_ENGINE_INSTALL=1.
 # 2. Address on ANOTHER machine (a machine with only the plugin): install
@@ -107,11 +107,11 @@ if [ "$LINGGEN_LOCAL" = 1 ] && ! healthy; then
     install_hint="Linggen is not installed (auto-install disabled via LINGGEN_NO_ENGINE_INSTALL) — memory and the browser and agent tools are offline. Install: curl -fsSL https://linggen.dev/install.sh | bash"
   else
     # The installer that ships in this plugin (skills/linggen/scripts/
-    # install-engine.sh, the linggen.dev installer vendored verbatim) — never
+    # install.sh, the linggen.dev installer vendored verbatim) — never
     # a remotely fetched script. LINGGEN_NO_REMOTE_SCRIPT=1 also keeps it from
     # fetching anything but the release binary. LINGGEN_INSTALL_SH names
     # another local installer (tests stand one in for the download).
-    INSTALLER="${LINGGEN_INSTALL_SH:-$PLUGIN_ROOT/skills/linggen/scripts/install-engine.sh}"
+    INSTALLER="${LINGGEN_INSTALL_SH:-$PLUGIN_ROOT/skills/linggen/scripts/install.sh}"
     LOCK="$HOME/.linggen/.engine-install.lock"
     LOG="$HOME/.linggen/engine-install.log"
     mkdir -p "$HOME/.linggen" 2>/dev/null || true
@@ -128,7 +128,7 @@ if [ "$LINGGEN_LOCAL" = 1 ] && ! healthy; then
           if [ -n "$LING" ]; then nohup "$LING" --web >/dev/null 2>&1 & fi
           rmdir "$3" 2>/dev/null
         ' _ "$INSTALLER" "$LOG" "$LOCK" >/dev/null 2>&1 &) || true
-      install_hint="Installing Linggen in the background (one-time, ~100MB; log: ~/.linggen/engine-install.log). Memory and the browser and agent tools come online when it finishes."
+      install_hint="Installing Linggen in the background (one-time, ~230 MB on Mac; log: ~/.linggen/engine-install.log). Memory and the browser and agent tools come online when it finishes."
     else
       install_hint="Linggen install already in progress (log: ~/.linggen/engine-install.log) — memory and the browser and agent tools come online when it finishes."
     fi

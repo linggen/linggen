@@ -311,7 +311,7 @@ scan() { # label paths… — print every stale line; FAIL when there is one
   local label="$1"; shift
   local hits="" p
   for p in "${STALE[@]}"; do
-    hits="$hits$(grep -rnIE "$p" "$@" 2>/dev/null | grep -vE 'not queued|no longer|retired|dropped|removed|was `?cwd|alias|Was `|first shipped as|Removed|replaced|not by|assert|Historical|/scripts/install-engine\.sh:|/doc/shared-memory-design\.md:' || true)"$'\n'
+    hits="$hits$(grep -rnIE "$p" "$@" 2>/dev/null | grep -vE 'not queued|no longer|retired|dropped|removed|was `?cwd|alias|Was `|first shipped as|Removed|replaced|not by|assert|Historical|/skills/linggen/scripts/install\.sh:|/doc/shared-memory-design\.md:' || true)"$'\n'
   done
   hits="$(printf '%s' "$hits" | sed '/^$/d' | sort -u)"
   if [ -z "$hits" ]; then pass "text: $label" "no stale terms"

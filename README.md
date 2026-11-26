@@ -34,20 +34,15 @@
 
 ## Install
 
-**The Mac app** — launcher with all apps below, menubar companion included:
-
-```bash
-curl -fsSL https://linggen.dev/install-app.sh | bash
-```
-
-**Engine only** — CLI + web UI, macOS and Linux (glibc 2.39+, Ubuntu 24.04 or newer):
+**One installer** — installs Linggen.app and the `ling` command on Mac, or
+`ling` with its web UI on Linux (glibc 2.39+, Ubuntu 24.04 or newer):
 
 ```bash
 curl -fsSL https://linggen.dev/install.sh | bash
 ling
 ```
 
-Opens the web UI at `http://localhost:9527`.
+`ling` opens the web UI at `http://localhost:9527`. See the [install and upgrade contract](doc/release-install.md).
 
 **Releases** — the Mac app (signed and notarized): [linggen-releases](https://github.com/linggen/linggen-releases/releases/latest) · the engine: [linggen/linggen](https://github.com/linggen/linggen/releases/latest) · what changed: [CHANGELOG.md](CHANGELOG.md)
 

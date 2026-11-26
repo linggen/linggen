@@ -23,6 +23,9 @@ cp "$root/.claude-plugin/marketplace.json" "$stage/.claude-plugin/"
 cp "$root/.agents/plugins/marketplace.json" "$stage/.agents/plugins/"
 rsync -a --exclude evals-isolated --exclude .DS_Store "$root/plugins/linggen" "$stage/plugins/"
 
+[ -f "$stage/plugins/linggen/skills/linggen/scripts/install.sh" ] \
+  || { echo "package-plugin: vendored install.sh is missing" >&2; exit 1; }
+
 # Both manifests must point inside the bundle, or a host would reach for git.
 grep -q '"source": "./plugins/linggen"' "$stage/.claude-plugin/marketplace.json" \
   || { echo "package-plugin: .claude-plugin/marketplace.json must use source ./plugins/linggen" >&2; exit 1; }

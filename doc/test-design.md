@@ -26,7 +26,7 @@ Gate VMs keep the opt-out file so engines launched by the app are covered too.
 | Draft → publish | Release gate: first install + upgrade | clean macOS VM (Tart) | fixtures home |
 | After deploy | Smoke on real data | Hanli's Mac, 9527 | real, read-only |
 
-Fit to `release-checklist.md`: each repo's `release.sh --draft` uploads the
+Fit to `release-install.md`: each repo's `release.sh --draft` uploads the
 assets; the gate tests those draft assets; only a green gate runs
 `gh release edit --draft=false --latest`. Nothing reaches users (the in-app
 updater, `install.sh`) before the gate passes.
@@ -187,7 +187,7 @@ builds) — `scripts/gate/`. Memory is inside `ling` and checked through it;
 the plugin bundle is the engine draft's asset (packed from the checkout for
 `--local`). Image: `linggen-gate-base` when it exists —
 `macos-tahoe-vanilla` switched by hand to "App Store & Known Developers"
-(`release-checklist.md`) — else `macos-tahoe-vanilla` (~27 GB, pulled once);
+(`release-install.md`) — else `macos-tahoe-vanilla` (~27 GB, pulled once);
 `GATE_IMAGE` overrides. Before any VM boots the gate runs `check.sh all` and
 `check.sh e2e` on the engine HEAD it records (red stops it;
 `--skip-host-checks` is a GAP), and for `--draft` compares HEAD to the commit
@@ -203,9 +203,11 @@ nonzero FAILs ("ran to the end"). The VM reaches the host's mirror and llmposter
 tunnels, so nothing on the host listens beyond loopback.
 
 **First install** (fresh VM, no `~/.linggen`):
-1. The real public paths: `install.sh`, `install-app.sh`,
-   the retired memory installer (says so, exits 0), the Claude Code and
-   Codex plugin installs — pointed at the draft assets. A clean Mac's git is
+1. The public paths: app drag-to-Applications (copy the same release bundle),
+   `install.sh`, and the Claude Code and Codex plugins — pointed at draft assets.
+   Fresh VMs exercise app → script → plugin, script → app, and plugin → app.
+   After each step exactly one real `ling` exists at the install locations,
+   and `command -v ling` resolves to it. A clean Mac's git is
    the Command Line Tools stub, so the plugins go through
    `install-plugin.sh`: it must see no git and install the engine release's
    `linggen-plugin.tar.gz` as `linggen@linggen` into both hosts with no CLT
@@ -213,7 +215,7 @@ tunnels, so nothing on the host listens beyond loopback.
    Codex has no unattended installer without node; the host's CLI is copied in.
    Claude Code comes from the live claude.ai/install.sh: its version is INFO,
    its failure a GAP.
-   After `install-app.sh` (bun removed first, so it is that script's own): bun
+   After `install.sh`: bun
    is in `~/.linggen/bin`. Then the DMG state, made by hand: app quit, 9527
    down, bun removed, no bun/node where `run-js.sh` looks (else a GAP) — the
    app opened must bring bun back by itself and a 灵境 Look must answer ok
@@ -224,7 +226,7 @@ tunnels, so nothing on the host listens beyond loopback.
    there is a GAP). After the upgrade the same; a baseline copy that keeps the
    files is a GAP for the fetch.
 2. Also a browser-style download of each asset — the app, `ling` (and
-   no `ling-mem`: it is not an asset) — with `com.apple.quarantine` set (curl and `install-app.sh`
+   no `ling-mem`: it is not an asset) — with `com.apple.quarantine` set (curl and `install.sh`
    leave none, so they alone hide Gatekeeper). The vanilla image ships with
    Gatekeeper off; the gate turns it on first, but only as "App Store" —
    macOS 15+ cannot switch to "App Store & Known Developers" from a shell, so
@@ -253,14 +255,11 @@ tunnels, so nothing on the host listens beyond loopback.
 **Upgrade** (old-user VM `linggen-prev`: previous release + fixtures home with
 sessions, config, saves, a memory store in the old schema, the Claude Code
 plugin `linggen@linggen-memory`; Codex is handed in at the plugin step):
-1. `ling update`, `install-app.sh`, plugin updates. A local build with the baseline's own version
-   number updates from the relabelled manifest. Releases up to engine 1.8.2 / ling-mem 1.8.2 / app 0.3.3 predate
-   `LINGGEN_RELEASE_BASE`, so from them the gate re-runs `install.sh` (a GAP
-   row) over the running install — its first run caught `install.sh` copying
-   over a live `ling` (killed on launch; fixed: fresh inode + rename). After
-   the swap 9527 must be a new process. An old `ling update` from before
-   the engine restart is a GAP; the release's own `ling update` and
-   `--rollback` are then checked over a running engine (PASS/FAIL).
+1. `install.sh --version linggen-vX.Y.Z` migrates the actual Mac install to the
+   release app; plugin updates follow. The gate tests standalone `ling update`
+   and `--rollback` on a VM-local copy so it never swaps a bundled binary.
+   A same-version build uses the relabelled manifest. Updaters that predate
+   the release override or engine restart get a GAP for that behavior.
    The in-app updater asks through a native dialog and is not driven.
 2. Takeover (2.3.0 on, `vm/takeover.sh`; the baseline is 2.2.1 + ling-mem
    1.13.0 with its daemon running): rows written through the old daemon —
@@ -396,4 +395,4 @@ Metal TTS and embedding speed, phone ↔ Mac over a real network, live sites
 3. `claude plugin eval` suite for the linggen plugin.
 4. Engine: release-URL override, rollback in `ling update`. (built)
 5. Tart release gate: first install, then upgrade; `just release-gate`. (built)
-6. Wire the gate into `release-checklist.md` between draft and publish. (done)
+6. Wire the gate into `release-install.md` between draft and publish. (done)
