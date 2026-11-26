@@ -65,9 +65,7 @@ fn the_shipped_list_passes_the_same_check_and_carries_both_editions() {
 fn no_signature_is_needed_to_read_and_the_kept_signing_code_still_verifies() {
     // Reading takes bytes only.
     assert!(decode(FIXTURE).is_ok());
-    // The kept signing code: the shipped bytes and the owner's throwaway key.
-    let shipped_signature = include_str!("model-catalog-v2.json.sig");
-    verify(include_bytes!("model-catalog-v2.json"), shipped_signature, &OWNER_PUBLIC_KEY).unwrap();
+    // The kept signing code, on the signed fixture only: the shipped list is not signed (owner's decision, 2026-11-24).
     assert!(verify(FIXTURE, FIXTURE_SIGNATURE, &fixture_key()).is_ok());
 }
 
