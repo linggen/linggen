@@ -151,7 +151,7 @@ pub(in crate::ops) async fn update(state: &Memory, req: UpdateRequest) -> Result
 
 /// The dream's heat rule: every episodic row used `heat::PROMOTE_AFTER_USES`
 /// times moves to semantic, id and counters kept — unless `lock_tier` says
-/// the row may not live there (over the 600-char cap): it stays staged.
+/// the row may not live there (over the 600-char cap, or a log row): it stays staged.
 /// Returns the ids moved (with `dry_run`, the ids that would be).
 pub(in crate::ops) async fn promote_used(
     state: &Memory,
@@ -163,8 +163,9 @@ pub(in crate::ops) async fn promote_used(
         .await?;
     let mut moved = Vec::new();
     for row in staged.into_iter().filter(crate::memory::heat::promotable) {
-        if lock_tier(Tier::Semantic, row.r#type, row.origin, &row.content, true).is_err() {
-            continue;
+        match lock_tier(Tier::Semantic, row.r#type, row.origin, &row.content) {
+            Ok((Tier::Semantic, _)) => {}
+            _ => continue,
         }
         if !dry_run {
             let mut up = row.clone();
@@ -362,6 +363,32 @@ mod tests {
         assert!(state.episodic.get(&hot.id).await.unwrap().is_none());
         assert!(state.episodic.get(&once.id).await.unwrap().is_some());
         assert!(state.episodic.get(&long.id).await.unwrap().is_some());
+    }
+
+    /// The heat rule never moves a log row (built/fixed/tried) to semantic;
+    /// a from=user one still moves.
+    #[tokio::test]
+    async fn the_sweep_never_promotes_a_log_row() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = crate::hosted::open_quiet_fake(dir.path(), String::new()).await.unwrap();
+        let mut ids = Vec::new();
+        for (i, ty) in [MemoryType::Built, MemoryType::Fixed, MemoryType::Tried].into_iter().enumerate() {
+            let mut r = Row::new(format!("log row {i}"), ty, Origin::Derived);
+            r.tier = Tier::Episodic;
+            r.used = 5;
+            state.episodic.insert(std::slice::from_ref(&r)).await.unwrap();
+            ids.push(r.id);
+        }
+        let mut u = Row::new("user fixed", MemoryType::Fixed, Origin::User);
+        u.tier = Tier::Episodic;
+        u.used = 5;
+        state.episodic.insert(std::slice::from_ref(&u)).await.unwrap();
+        call(&state, "sweep", serde_json::json!({})).await.unwrap();
+        for id in &ids {
+            assert!(state.episodic.get(id).await.unwrap().is_some());
+            assert!(state.store.get(id).await.unwrap().is_none());
+        }
+        assert!(state.store.get(&u.id).await.unwrap().is_some());
     }
 
     /// The noise cutoff: the automatic recall (`push`) skips a row pushed

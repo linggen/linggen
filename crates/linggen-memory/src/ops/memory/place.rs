@@ -36,22 +36,20 @@ pub(super) const SEMANTIC_MAX_CHARS: usize = 600;
 
 /// The tier-lock: THE one place that decides where a write may land (see
 /// doc/memory-spec.md "Where a row goes"). Progress, status, what was built /
-/// fixed / tried → episodic whatever tier was asked; semantic and core hold
-/// one short conclusion. `from=user` rows are never moved or refused. A
-/// promotion (`promoting`: the same words already staged in episodic) may
-/// keep a built/fixed/tried row in semantic, but still obeys the cap.
+/// fixed / tried → episodic whatever tier was asked, by every path (add,
+/// batch, replacement, the dream, the heat sweep); semantic and core hold one
+/// short conclusion. `from=user` rows are never moved or refused.
 /// Returns the tier and whether the lock moved the row to episodic.
 pub(super) fn lock_tier(
     tier: Tier,
     ty: MemoryType,
     from: Origin,
     content: &str,
-    promoting: bool,
 ) -> Result<(Tier, bool), MemError> {
     if from == Origin::User || tier == Tier::Episodic {
         return Ok((tier, false));
     }
-    if matches!(ty, MemoryType::Built | MemoryType::Fixed | MemoryType::Tried) && !promoting {
+    if matches!(ty, MemoryType::Built | MemoryType::Fixed | MemoryType::Tried) {
         return Ok((Tier::Episodic, true));
     }
     check_cap(tier, from, content)?;

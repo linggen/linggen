@@ -30,19 +30,7 @@ pub(in crate::ops) async fn add(state: &Memory, req: AddRequest) -> Result<Value
     let asked = resolve_tier(req.tier, req.episodic, &losers, req.indexed);
     let ty = req.r#type.unwrap_or(MemoryType::Fact);
     let from = req.from.unwrap_or_default();
-    // A dream promotion writes words already staged in episodic.
-    let promoting = asked != Tier::Episodic
-        && state
-            .episodic
-            .find_exact_content_public(
-                &req.content,
-                ty,
-                &replace_ids,
-                &AccountScope::for_dedup(account_id.as_deref()),
-            )
-            .await?
-            .is_some();
-    let (tier, moved) = lock_tier(asked, ty, from, &req.content, promoting)?;
+    let (tier, moved) = lock_tier(asked, ty, from, &req.content)?;
     let scope = resolve_scope(&req, &losers, tier);
     let mut fact = Row::new(req.content, ty, from);
     fact.tier = tier;
@@ -232,8 +220,7 @@ fn batch_row(r: AddRequest) -> Result<Option<Row>, MemError> {
     let ty = r.r#type.unwrap_or(MemoryType::Fact);
     let from = r.from.unwrap_or_default();
     let asked = resolve_tier(r.tier, r.episodic, &[], r.indexed);
-    // An import has no staged copy to promote from.
-    let (tier, _) = lock_tier(asked, ty, from, &r.content, false)?;
+    let (tier, _) = lock_tier(asked, ty, from, &r.content)?;
     let mut fact = Row::new(r.content, ty, from);
     fact.tier = tier;
     fact.outcome = r.outcome;
@@ -626,17 +613,29 @@ mod tests {
         assert!(call_add(&state, "add", json!({"content": long, "tier": "semantic", "from": "user"})).await.is_ok());
     }
 
-    /// A dream promotion (the same words already staged) may keep a
-    /// built row in semantic, but still obeys the cap.
+    /// A log row (built/fixed/tried) never reaches semantic by any path:
+    /// plain add, a replacement, a staged copy's "promotion", a batch.
+    /// A from=user fixed row still may.
     #[tokio::test]
-    async fn a_promotion_may_reach_semantic_within_the_cap() {
+    async fn a_log_row_never_reaches_semantic() {
         let dir = tempfile::tempdir().unwrap();
         let state = crate::hosted::open_quiet_fake(dir.path(), String::new()).await.unwrap();
-        call_add(&state, "add", json!({"content": "staged build", "type": "built"})).await.unwrap();
-        let r = call_add(&state, "add", json!({"content": "staged build", "type": "built", "tier": "semantic"})).await.unwrap();
+        for ty in ["built", "fixed", "tried"] {
+            for from in ["derived", "agent"] {
+                let c = format!("{ty} {from} words");
+                let r = call_add(&state, "add", json!({"content": c, "type": ty, "from": from, "tier": "semantic"})).await.unwrap();
+                assert_eq!(r["fact"]["tier"], "episodic", "{r}");
+                // The old promotion shape: same words already staged.
+                let r = call_add(&state, "add", json!({"content": c, "type": ty, "from": from, "tier": "semantic"})).await.unwrap();
+                assert_eq!(r["fact"]["tier"], "episodic", "{r}");
+                let id = r["fact"]["id"].as_str().unwrap().to_string();
+                let r = call_add(&state, "add", json!({"content": format!("{c} v2"), "type": ty, "from": from, "tier": "semantic", "replace_ids": [id]})).await.unwrap();
+                assert_eq!(r["fact"]["tier"], "episodic", "{r}");
+            }
+        }
+        let b = call_add(&state, "add_batch", json!({"facts": [{"content": "batch fixed", "type": "fixed", "tier": "semantic"}]})).await.unwrap();
+        assert!(!b.to_string().contains("\"semantic\""), "{b}");
+        let r = call_add(&state, "add", json!({"content": "user fixed", "type": "fixed", "from": "user", "tier": "semantic"})).await.unwrap();
         assert_eq!(r["fact"]["tier"], "semantic", "{r}");
-        let long = "y".repeat(601);
-        call_add(&state, "add", json!({"content": long, "type": "built"})).await.unwrap();
-        assert!(call_add(&state, "add", json!({"content": long, "type": "built", "tier": "semantic"})).await.is_err());
     }
 }

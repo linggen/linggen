@@ -121,7 +121,9 @@ request):
      the date and the commit hash — still useful in three months?
      Per-event rows ("committed X", "pushed Y", "closed the session")
      fail the test: skip them, or fold them into the state row they
-     evidence.
+     evidence. A `built` / `fixed` / `tried` row is never promoted as it
+     is (the daemon keeps it in episodic): for a lasting lesson write a
+     new short `learned` row — one conclusion + a path.
    - **Merge (your own notes only).** If your pre-promote search
      surfaced older `semantic` rows on the same subject that are agent
      notes (`from=derived` — built/fixed/tried/learned) and the new

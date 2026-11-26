@@ -71,8 +71,9 @@ it (`add`, `add_batch`, hence MCP, REST and CLI; `update` uses its
 - a semantic or core row over 600 characters is refused: "too long for
   semantic: one conclusion + a path; details in a file or episodic".
 - `from=user` rows are never moved or refused.
-- a dream promotion (same words already staged in episodic) may reach
-  semantic, but obeys the 600 cap.
+- a log row never leaves episodic, by any path (add, replacement, dream,
+  heat sweep); to keep a lasting lesson from it the dream writes a new
+  short `learned` row (one conclusion + a path).
 
 ## Features
 
