@@ -135,6 +135,10 @@ pub struct Filters {
     pub tier: Option<Tier>,
     pub since: Option<DateTime<Utc>>,
     pub until: Option<DateTime<Utc>>,
+    /// Only rows whose episodic life clock (`memory::expiry::life_clock`:
+    /// `updated_at`, else occurred/created) is before this instant — what
+    /// `list past_ttl` asks, so it agrees with the sweep.
+    pub life_before: Option<DateTime<Utc>>,
     /// Only rows written at or after this instant — `created_at`, never the
     /// back-dated `occurred_at`. A judged day's new work is exactly its rows
     /// created since the day's `remembered_at`.
@@ -181,6 +185,7 @@ impl Filters {
             && self.tier.is_none()
             && self.since.is_none()
             && self.until.is_none()
+            && self.life_before.is_none()
             && self.created_since.is_none()
             && self.source_session.is_none()
             && self.scope_root.is_none()
@@ -299,6 +304,13 @@ impl Filters {
             clauses.push(format!(
                 "COALESCE(occurred_at, created_at) < TIMESTAMP '{}'",
                 until.format("%Y-%m-%d %H:%M:%S%.6f")
+            ));
+        }
+
+        if let Some(before) = self.life_before {
+            clauses.push(format!(
+                "COALESCE(updated_at, occurred_at, created_at) < TIMESTAMP '{}'",
+                before.format("%Y-%m-%d %H:%M:%S%.6f")
             ));
         }
 
@@ -1711,26 +1723,6 @@ impl MemoryStore {
             .context("deleting memories by filter")
     }
 
-    /// Evict rows whose TTL clock has fallen before `cutoff`. Deletes every
-    /// row where `COALESCE(occurred_at, created_at) < cutoff` — the one TTL
-    /// clock, shared with `list past_ttl` and the days rollup (a row's age is
-    /// when the thing happened, not when it was last edited). Returns the
-    /// number of rows removed.
-    ///
-    /// Used against the episodic store: the consolidation pass calls this
-    /// with `cutoff = now − Settings.EPISODIC_TTL` to drop staged rows that
-    /// were never promoted into curated facts. There is no TTL column and
-    /// no TTL argument — the caller owns the TTL policy and passes only the
-    /// resolved cutoff instant.
-    pub async fn evict_expired(&self, cutoff: DateTime<Utc>) -> Result<usize> {
-        let predicate = format!(
-            "COALESCE(occurred_at, created_at) < TIMESTAMP '{}'",
-            cutoff.format("%Y-%m-%d %H:%M:%S%.6f")
-        );
-        self.delete_where(&predicate)
-            .await
-            .context("evicting expired memories")
-    }
 
     /// This table's LanceDB name (`semantic` / `episodic`) — what the
     /// maintenance walk needs to find the table's directory on disk.
@@ -2142,6 +2134,7 @@ mod tests {
             tier: Some(Tier::Core),
             since: None,
             until: None,
+            life_before: None,
             created_since: None,
             source_session: None,
             scope_root: None,
@@ -3370,46 +3363,8 @@ mod tests {
         }
     }
 
-    // ── evict_expired + core_facts tests ───────────────────────────────────
+    // ── core_facts tests ───────────────────────────────────────────────────
 
-    #[tokio::test]
-    async fn evict_expired_drops_only_rows_older_than_cutoff() {
-        let (store, _dir) = fresh_store().await;
-        let now = Utc::now();
-
-        // Old: created 10 days ago, never updated → decay clock = created_at.
-        let mut old = make_fact("stale", MemoryType::Learned);
-        old.created_at = (now - Duration::days(10)).trunc_subsecs(6);
-        let old_id = old.id.clone();
-
-        // Fresh: created just now → decay clock = created_at ≈ now.
-        let fresh = make_fact("recent", MemoryType::Learned);
-        let fresh_id = fresh.id.clone();
-
-        // Touched: created 10 days ago, edited 1 hour ago. An edit is not
-        // the thing happening again — the one TTL clock is
-        // `occurred_at ?? created_at`, so it goes too.
-        let mut touched = make_fact("edited", MemoryType::Learned);
-        touched.created_at = (now - Duration::days(10)).trunc_subsecs(6);
-        touched.updated_at = Some((now - Duration::hours(1)).trunc_subsecs(6));
-        let touched_id = touched.id.clone();
-
-        // Late-staged: written 10 days ago about something that happened
-        // an hour ago — its clock is occurred_at, which is recent.
-        let mut late = make_fact("late", MemoryType::Learned);
-        late.created_at = (now - Duration::days(10)).trunc_subsecs(6);
-        late.occurred_at = Some((now - Duration::hours(1)).trunc_subsecs(6));
-        let late_id = late.id.clone();
-
-        store.insert(&[old, fresh, touched, late]).await.unwrap();
-
-        let removed = store.evict_expired(now - Duration::days(1)).await.unwrap();
-        assert_eq!(removed, 2);
-        assert!(store.get(&old_id).await.unwrap().is_none());
-        assert!(store.get(&touched_id).await.unwrap().is_none());
-        assert!(store.get(&fresh_id).await.unwrap().is_some());
-        assert!(store.get(&late_id).await.unwrap().is_some());
-    }
 
     #[tokio::test]
     async fn core_facts_returns_only_core_tier() {

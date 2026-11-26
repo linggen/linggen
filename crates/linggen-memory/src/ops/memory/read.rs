@@ -61,6 +61,7 @@ impl FilterDTO {
             outcome: self.outcome,
             since: self.since,
             until: self.until,
+            life_before: None,
             created_since: None,
             tier: self.tier,
             source_session: self.source_session,
@@ -167,10 +168,10 @@ pub(in crate::ops) async fn list(state: &Memory, mut req: ListRequest) -> Result
     // number; the daemon owns the live value and applies it here.
     // An explicit `until`/`older_than` from the caller wins (caller knows
     // best); we only fill in when nothing is set.
+    let mut life_before = None;
     if req.filters.past_ttl && req.filters.until.is_none() {
         let cfg = crate::ops::config::load(&state.data_dir).await;
-        let cutoff = chrono::Utc::now() - chrono::Duration::days(cfg.episodic_ttl_days as i64);
-        req.filters.until = Some(cutoff);
+        life_before = Some(chrono::Utc::now() - chrono::Duration::days(cfg.episodic_ttl_days as i64));
     }
     // `past_ttl` is an episodic-TTL concept and the tool schema promises
     // "implies tier=episodic" — scope the read accordingly unless the
@@ -182,6 +183,7 @@ pub(in crate::ops) async fn list(state: &Memory, mut req: ListRequest) -> Result
     let created_since = unjudged_since(state, &req).await?;
     let mut filters = req.filters.into_filters()?;
     filters.created_since = created_since;
+    filters.life_before = life_before;
     let sort = req.sort.into();
     let mut combined = Vec::new();
     // For each in-scope store, pull `limit + offset` rows so the post-
