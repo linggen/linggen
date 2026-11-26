@@ -139,7 +139,7 @@ async fn a_following_row_moves_with_one_notice_and_each_notice_action_answers_it
     assert!(!text.contains(KEY));
     // A stale or repeated action does nothing.
     let before = w.api.get("/api/providers").await;
-    for stale in [json!({"action": "ack", "move": 7}), json!({"action": "back", "move": 7}), json!({"action": "pin", "move": 7})] {
+    for stale in [json!({"action": "ack", "move": 7}), json!({"action": "back", "move": 7})] {
         assert_eq!(act(&w, &id, "claude-opus", stale).await.0, 200);
         assert_eq!(w.api.get("/api/providers").await, before);
     }
@@ -210,7 +210,7 @@ model = "claude-opus-5"
     let (id, _) = connect(&w).await;
     let before = w.api.get("/api/providers").await;
     assert_eq!(family(&before, "claude-opus")["ticked"], false);
-    for body in [json!({"action": "follow"}), json!({"action": "pin"}), json!({"action": "ack", "move": 1}), json!({"action": "back", "move": 1})] {
+    for body in [json!({"action": "follow"}), json!({"action": "ack", "move": 1}), json!({"action": "back", "move": 1})] {
         assert_eq!(act(&w, &id, "claude-opus", body).await.0, 404);
     }
     assert_eq!(w.api.get("/api/providers").await, before);

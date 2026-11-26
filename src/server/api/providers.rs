@@ -332,6 +332,7 @@ async fn apply(state: &Arc<ServerState>, edit: Edit) -> Result<(Config, Credenti
             config.models.push(row);
             save_config(state, &config).await?;
             state.provider_drafts.lock().await.remove(&id);
+            crate::server::background::refresh_price_lookups(state.clone());
         }
         Edit::RemoveModel(id, model) => {
             let index = config.models.iter().position(|row| row.id == model && editable_row(row, &id)).ok_or(MISSING)?;

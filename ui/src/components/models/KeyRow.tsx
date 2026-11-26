@@ -8,7 +8,7 @@ import React, { useState } from 'react';
 import { providersApi } from '../../lib/endpoints';
 import { W, say } from '../../lib/modelsWords.mts';
 import { addedByName, capShare, liveModels, spendMeter, type Provider } from '../../lib/providers.mts';
-import { FamilyList } from './FamilyList';
+import { FamilyList, Price } from './FamilyList';
 import { RowMenu, Row, Tag, ghostBtn, hintCls, inputCls, primaryBtn, sectionLabel, sectionRule } from './shell';
 import type { Run } from './useProviders';
 
@@ -137,7 +137,8 @@ const CustomModels: React.FC<Props> = ({ provider: p, run, busy, makeDefault }) 
           <div className={hintCls}>{W.custom}</div>
           {addedByName(p).map((m) => (
             <div key={m.id} className="flex items-center gap-2 py-1 text-xs" data-testid="typed-model">
-              <span className="min-w-0 flex-1 truncate font-semibold" data-no-i18n>{m.model}</span>
+              <span className="min-w-0 truncate font-semibold" data-no-i18n>{m.model}</span>
+              <span className={`${hintCls} min-w-0 flex-1`} data-testid="typed-price"><Price price={m.price} none={W.noPriceNoCap} /></span>
               <RowMenu disabled={busy} items={[
                 { label: W.makeDefault, run: () => void makeDefault(m.id) },
                 { label: W.removeModel, run: () => void run(() => providersApi.removeModel(p.id, m.id)) },

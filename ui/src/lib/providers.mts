@@ -18,6 +18,8 @@ export interface ProviderModel {
   why?: string;
   builtin: boolean;
   first?: boolean;
+  /** A custom model's price, asked of linggen.dev by the engine. */
+  price?: PriceLine;
 }
 
 /** USD per million tokens, at one date. */

@@ -24,6 +24,7 @@ pub(crate) mod family_catalog;
 mod health;
 #[cfg(test)]
 mod kind_tests;
+pub mod price_lookup;
 mod pricing;
 mod providers;
 pub mod providers_view;
@@ -462,6 +463,7 @@ impl ModelManager {
                 is_builtin: false,
                 family_binding: None,
             price: None,
+            price_lookup: None,
             };
 
             self.models.insert(
@@ -746,6 +748,7 @@ mod tests {
             is_builtin: false,
             family_binding: None,
             price: None,
+            price_lookup: None,
         }
     }
 

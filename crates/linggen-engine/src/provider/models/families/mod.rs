@@ -22,6 +22,7 @@ mod view;
 pub use act::{Action, Refusal};
 pub use binding::{FamilyBinding, FamilyStarts, LastMove, Mode, MoveKind};
 pub use view::FamiliesView;
+pub(super) use view::PriceLine;
 use binding::keep_bindings;
 
 use super::curated::{self, Bundle, Edition, Place};

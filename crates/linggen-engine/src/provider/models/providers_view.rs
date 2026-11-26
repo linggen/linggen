@@ -63,6 +63,9 @@ pub struct ProviderModel {
     pub builtin: bool,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     first: bool,
+    /// What it costs per million tokens, when a price is known (a custom model's: asked of the site).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    price: Option<super::families::PriceLine>,
 }
 
 /// Settings identity only. Credential lookup still uses the filed provider name.
@@ -237,7 +240,7 @@ impl ModelManager {
             } else {
                 Some(NotReady::ProviderFailing)
             };
-            group.add(ProviderModel { id: row.id.clone(), model: row.model.clone(), kind: kind.as_str(), ready: why.is_none(), why, builtin: row.is_builtin, first: false });
+            group.add(ProviderModel { id: row.id.clone(), model: row.model.clone(), kind: kind.as_str(), ready: why.is_none(), why, builtin: row.is_builtin, first: false, price: super::price_of(row).map(super::families::PriceLine::of) });
         }
         for endpoint in &creds.endpoints {
             // A credential has no sign-in field; only the key group can use it.
@@ -258,7 +261,7 @@ impl ModelManager {
             group.mark_key(ready);
             group.add(ProviderModel {
                 id: format!("live:{}", voice.id), model: voice.model.into(), kind: Kind::LiveVoice.as_str(),
-                ready, why: (!ready).then_some(NotReady::NoKey), builtin: true, first: false,
+                ready, why: (!ready).then_some(NotReady::NoKey), builtin: true, first: false, price: None,
             });
         }
         let mut providers: Vec<_> = groups.into_values().collect();
@@ -349,7 +352,7 @@ fn local_lanes(offered: Edition) -> impl Iterator<Item = ProviderView> {
         group.label = "This Mac".into();
         group.fix = (!ready).then(|| if runtime::env_bin(hub.venv, "python3").exists() { "download" } else { "install" });
         group.disk_gb = Some(hub.need_gb);
-        group.add(ProviderModel { id: kind.as_str().into(), model: model.into(), kind: kind.as_str(), ready, why: None, builtin: true, first: false });
+        group.add(ProviderModel { id: kind.as_str().into(), model: model.into(), kind: kind.as_str(), ready, why: None, builtin: true, first: false, price: None });
         group
     })
 }

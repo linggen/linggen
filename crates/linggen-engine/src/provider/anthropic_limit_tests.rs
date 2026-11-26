@@ -75,6 +75,7 @@ async fn manager_on(host: &Host, id: &str, max_output_tokens: Option<u32>) -> Mo
         is_builtin: false,
         family_binding: None,
             price: None,
+            price_lookup: None,
     };
     ModelManager::new_with_credentials(vec![config], &crate::credentials::Credentials::default())
 }

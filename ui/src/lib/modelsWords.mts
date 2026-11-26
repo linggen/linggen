@@ -116,6 +116,7 @@ export const W = {
   wouldBe: 'Would be {name}',
   priceIn: 'input ${input} / output ${output} per million',
   noPrice: 'No price',
+  noPriceNoCap: 'No price; not counted toward the cap',
   estimate: 'estimate',
   pinned: 'Pinned',
   usedDefault: 'Default chat',

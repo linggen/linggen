@@ -228,6 +228,20 @@ pub struct ModelPrice {
     pub cache_write: Option<f64>,
 }
 
+/// The site's answer about one custom model's price, and the day it was asked.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[cfg_attr(any(test, feature = "test-support"), derive(ts_rs::TS), ts(export))]
+pub struct PriceLookup {
+    /// Local day (YYYY-MM-DD) of the last ask: not found is asked again the next day.
+    pub checked_on: String,
+    /// The price found; none when the site has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub price: Option<ModelPrice>,
+    /// The day the site says the price was true.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub as_of: Option<String>,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[cfg_attr(any(test, feature = "test-support"), derive(ts_rs::TS), ts(export))]
 pub struct ModelConfig {
@@ -274,6 +288,11 @@ pub struct ModelConfig {
     /// table. Unset and unlisted: the session shows tokens and no dollars.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub price: Option<ModelPrice>,
+    /// What linggen.dev answered when this custom model was added (or on the
+    /// daily re-check): its public price, if it has one. Never typed by the
+    /// person; `price` above wins. Written only by `provider/models/price_lookup.rs`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub price_lookup: Option<PriceLookup>,
     /// Display name of the proxy room owner providing this model.
     /// Only set for proxy models (provider = "proxy").
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1209,6 +1228,7 @@ mod tests {
             is_builtin: false,
             family_binding: None,
             price: None,
+            price_lookup: None,
         });
         cfg
     }

@@ -74,11 +74,18 @@ struct ModelLine {
 
 /// USD per million tokens at one date (pricing.rs decides both).
 #[derive(Serialize)]
-struct PriceLine {
+pub(in crate::provider::models) struct PriceLine {
     #[serde(flatten)]
     rates: Price,
     #[serde(flatten)]
     source: PriceSource,
+}
+
+impl PriceLine {
+    /// The line the page shows for a priced model.
+    pub(in crate::provider::models) fn of(p: super::super::pricing::Priced) -> Self {
+        Self { rates: p.base_rates(), source: p.source }
+    }
 }
 
 #[derive(Serialize)]
@@ -204,7 +211,7 @@ fn line(endpoint: &Endpoint, list: &Bundle, target: Target<'_>) -> ModelLine {
         model: target.id.into(),
         name: target.name().into(),
         released: target.released().map(str::to_string),
-        price: price_in(&row, list).map(|p| PriceLine { rates: p.base_rates(), source: p.source }),
+        price: price_in(&row, list).map(PriceLine::of),
     }
 }
 

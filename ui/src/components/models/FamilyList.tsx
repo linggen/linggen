@@ -49,8 +49,8 @@ export const FamilyList: React.FC<Props> = (props) => {
 };
 
 /** The estimated price, when the engine has one: input and output per million. */
-const Price: React.FC<{ price?: PriceLine; ratesUnavailable?: boolean }> = ({ price, ratesUnavailable }) => {
-  if (!price) return <span>{ratesUnavailable ? W.providerBill : W.noPrice}</span>;
+export const Price: React.FC<{ price?: PriceLine; ratesUnavailable?: boolean; none?: string }> = ({ price, ratesUnavailable, none = W.noPrice }) => {
+  if (!price) return <span>{ratesUnavailable ? W.providerBill : none}</span>;
   return (
     <>
       <span>{say(W.priceIn, { input: dollars(price.input), output: dollars(price.output) })}</span>

@@ -173,6 +173,13 @@ pub(crate) fn price_in(cfg: &ModelConfig, facts: &Bundle) -> Option<Priced> {
             source: PriceSource::Config,
         });
     }
+    if let Some((price, as_of)) = cfg.price_lookup.as_ref().and_then(|l| Some((l.price.as_ref()?, l.as_of.as_ref()?))) {
+        return Some(Priced {
+            base: Price::from(price),
+            tiers: Vec::new(),
+            source: PriceSource::Catalog(as_of.clone()),
+        });
+    }
     // Exact provider address and exact model: another host with the same
     // provider name, or a similar model name, inherits nothing.
     let cost = facts.exact(cfg)?.cost()?;
@@ -232,7 +239,7 @@ pub fn billing_of(cfg: &ModelConfig) -> Billing {
     match () {
         _ if account => Billing::Account,
         // The person said what it costs: it is metered, whatever its host.
-        _ if cfg.price.is_some() => Billing::Metered,
+        _ if cfg.price.is_some() || cfg.price_lookup.as_ref().is_some_and(|l| l.price.is_some()) => Billing::Metered,
         // Anthropic's wire is a hosted service even behind a local gateway:
         // someone bills it, so its tokens stay spend.
         _ if kind != ProviderKind::Anthropic && crate::provider::is_local_backend(&cfg.url) => {

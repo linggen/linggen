@@ -498,6 +498,7 @@ export const ZH: Record<string, string> = {
   'Would be {name}': '会是 {name}',
   'input ${input} / output ${output} per million': '输入 ${input} / 输出 ${output} 每百万',
   'No price': '没有价格',
+  'No price; not counted toward the cap': '没有价格，不计入上限',
   'estimate': '估算',
   'Pinned': '已固定',
   'Default chat': '默认聊天',

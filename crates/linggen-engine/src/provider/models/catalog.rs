@@ -72,6 +72,7 @@ pub(super) fn inject_linggen_cloud(configs: &mut Vec<ModelConfig>) {
         is_builtin: true,
         family_binding: None,
             price: None,
+            price_lookup: None,
     });
 }
 
@@ -119,5 +120,6 @@ fn chatgpt_config(id: &str, snap: &Snapshot) -> ModelConfig {
         is_builtin: true,
         family_binding: None,
             price: None,
+            price_lookup: None,
     }
 }

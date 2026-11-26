@@ -51,21 +51,28 @@ model = "deepseek-chat"
 #[tokio::test]
 async fn an_address_edit_moves_the_key_and_every_model() {
     let w = World::start(Setup::default()).await;
-    let body = w.api.post("/api/providers", json!({"preset":"DeepSeek"})).await;
-    let id = provider(&body, "DeepSeek")["id"].as_str().unwrap();
+    // An added provider (添加服务商), not a listed one: the list owns its own address.
+    let listed = w.api.post("/api/providers", json!({"preset":"DeepSeek"})).await;
+    let listed = provider(&listed, "DeepSeek");
+    assert_eq!(listed["listed"], true);
+    assert_eq!(w.api.patch_status(&format!("/api/providers/{}", listed["id"].as_str().unwrap()), json!({"url":"https://example.invalid/v1"})).await, 400);
+    let body = w.api.post("/api/providers", json!({"name":"deepseek","url":"https://gateway.example.test/v1"})).await;
+    let added = body["providers"].as_array().unwrap().iter().find(|p| p["url"] == "https://gateway.example.test/v1").unwrap();
+    assert_eq!(added["listed"], false);
+    let id = added["id"].as_str().unwrap();
     let base = format!("/api/providers/{id}");
     let (status, body) = w.api.put_json(&format!("{base}/key"), json!({"api_key":"test-only-marker"})).await;
     assert_eq!(status, 200);
-    assert_eq!(provider(&body, "DeepSeek")["key"]["set"], true);
+    assert_eq!(body["providers"].as_array().unwrap().iter().find(|p| p["id"] == id).unwrap()["key"]["set"], true);
     for id in ["first", "second"] {
         let body = w.api.post(&format!("{base}/models"), json!({"id":id,"model":"deepseek-chat"})).await;
-        assert!(provider(&body, "DeepSeek")["models"].as_array().unwrap().iter().any(|m| m["id"] == id && m["ready"] == true));
+        assert!(body["providers"].as_array().unwrap().iter().any(|p| p["models"].as_array().unwrap().iter().any(|m| m["id"] == id && m["ready"] == true)));
     }
     let before = w.api.get("/api/providers").await;
     assert_eq!(w.api.post_status(&format!("{base}/models"), json!({"id":"first","model":"another"})).await, 409);
     assert_eq!(w.api.get("/api/providers").await, before);
     let body = w.api.patch(&base, json!({"url":"https://example.invalid/v1"})).await;
-    let new = provider(&body, "DeepSeek");
+    let new = body["providers"].as_array().unwrap().iter().find(|p| p["url"] == "https://example.invalid/v1").unwrap();
     assert_ne!(new["id"], id);
     assert_eq!(new["url"], "https://example.invalid/v1");
     assert_eq!(new["key"]["set"], true);

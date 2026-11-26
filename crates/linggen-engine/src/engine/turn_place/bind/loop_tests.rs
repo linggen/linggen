@@ -39,6 +39,7 @@ fn model(id: &str, url: &str) -> crate::config::ModelConfig {
         is_builtin: false,
         family_binding: None,
             price: None,
+            price_lookup: None,
     }
 }
 

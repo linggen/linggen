@@ -954,6 +954,7 @@ mod fallback_window_tests {
             is_builtin: false,
             family_binding: None,
             price: None,
+            price_lookup: None,
         }
     }
 

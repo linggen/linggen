@@ -209,6 +209,7 @@ async fn engine_on(
         is_builtin: false,
         family_binding: None,
             price: None,
+            price_lookup: None,
     };
     let models = Arc::new(ModelManager::new_with_credentials(
         vec![model],

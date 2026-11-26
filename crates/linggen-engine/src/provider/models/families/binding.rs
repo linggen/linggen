@@ -135,6 +135,7 @@ pub(super) fn tick(config: &mut Config, place: &Place<'_>, family: &str, target:
         reasoning_effort: None,
         max_output_tokens: None,
         price: None,
+        price_lookup: None,
         provided_by: None,
         is_builtin: false,
         family_binding: Some(new_binding(place, family, target, mode)),
