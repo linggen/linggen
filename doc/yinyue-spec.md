@@ -16,9 +16,9 @@ guide: |
 > - A claim you cannot find in the code does not belong here. Stay under ~560 lines.
 
 Two docs: **this one** — who she is, where she appears, what she says and
-does; [perception-spec.md](perception-spec.md) — what she knows and when she
-may speak unprompted (presence, the world block, the activity log, quiet hours,
-the hourly ceiling).
+does, and when she speaks unprompted; [perception-spec.md](perception-spec.md) —
+what every agent (Ling and Yinyue) knows without being told (presence, the
+world block, the activity log, conditions).
 
 Yinyue is Linggen's companion: 银月, the proud fox 妖王 of Qingqiu in Linggen's
 own story 《九鼎录》 (Lingjing), one tail left, power and memory mostly gone.
@@ -522,6 +522,43 @@ Delivery is by recipient (`ServerEvent::AgentChat`, routed in `triggers.rs`):
 
 `Express` is pet-scoped: excluded from the `*` wildcard, granted only to an agent
 that lists it; workers ask Yinyue via `agent_chat` to drive the avatar.
+
+## Speaking unprompted
+
+What she perceives ([perception-spec.md](perception-spec.md)) lets her start a sentence; it does not make every observation
+worth one. Silence is the default.
+
+**What "unprompted" is.** A glance (the ambient tick), an app moment she was not
+asked for (`big` and `now` included), a woken note, and a mission fault. Never
+held by the rules below: her replies, `asked` moments, and notices of runs the
+person started (their own presence gates stand).
+
+### The ceiling and quiet hours
+
+| Guardrail | Setting (`[pet]`, Settings → Agents) | Default |
+|---|---|---|
+| Most unprompted lines in any rolling hour | `unprompted_per_hour` (0 = none) | 6 |
+| Quiet hours, local, may cross midnight | `quiet_hours` (`HH:MM-HH:MM`, empty = none) | 23:00-07:00 |
+
+- Both are checked **before** her turn, so a held line is never written (at an
+  app's table it would already be a row of its chat), and once more before her
+  voice, for two unprompted turns that ran at once. A glance is skipped (the
+  machine's conditions wait, unspent); held moments are dropped (stale by then);
+  a woken note waits until quiet hours end or the hour has room. The count is in
+  memory: a restart starts the hour afresh.
+- **The app in use.** Quiet hours do not hold an unasked moment from the app the
+  person is using — its page in front with input in the last 5 min
+  (`perception::stretch::is_using`). Such a moment still counts toward, and can
+  be held by, the hourly ceiling. Other moments wait for the morning; a wake
+  holding moments from two apps is split.
+- **A mission fault** is held by quiet hours and a screen only: it does not count
+  toward the ceiling, the ceiling never holds it, and nothing drops it.
+- **Held is recorded**: one activity record (verb `hold`, by `yinyue`), once per
+  held wake, or at most once an hour per reason for moments; `detail` gives the
+  reason, source and until when. It rings the doorbell, so it is paced.
+
+
+Conditions she may raise are noticed by perception ([perception-spec.md § 5](perception-spec.md)); config `[pet]`, gates in `src/server/resident/`.
 
 ## Open / next
 

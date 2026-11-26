@@ -15,6 +15,8 @@ Process management: agent types, lifecycle, delegation, concurrency, and schedul
 
 - `session-spec.md`: session/context model, effective tools, system prompt assembly.
 - `agentic-loop.md`: the loop each agent runs.
+- `perception-spec.md`: what every agent knows each turn without being told (world, room, activity log).
+- `yinyue-spec.md`: Yinyue — who she is, what she says and does, when she speaks unprompted.
 - `chat-spec.md`: events for agent status.
 - `product-spec.md`: mission system overview.
 

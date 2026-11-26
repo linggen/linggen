@@ -7,18 +7,18 @@ guide: |
   Avoid implementation details like function signatures, variable types, or code snippets.
 ---
 
-# Perception — what she knows, and when she may speak unprompted
+# Perception — what every agent knows without being told
 
 > **How to keep this spec**
-> - It records WHAT a resident agent perceives and the rules for speaking unprompted — no history, no code, no function signatures.
+> - It records WHAT an agent (Ling or Yinyue) perceives — no history, no code, no function signatures. When Yinyue speaks unprompted lives in yinyue-spec.md.
 > - Detail lives where it executes; point there (last section), do not copy it.
 > - A change in behaviour updates the matching line here in the same commit.
 > - A claim you cannot find in the code does not belong here. Stay under ~300 lines.
 
-What a resident agent knows about the world it lives in, without being told,
-and the rules for speaking up. Yinyue lives in a phone, Ling in a Mac; each
-should answer "what is true here", "what just changed", "who did it" — and
-speak when something is worth a word. Engine: `crates/linggen-engine/src/perception/`;
+What every agent — Ling and Yinyue — knows about the world it lives in, without
+being told: any session whose tools allow it gets the world and room blocks.
+Yinyue lives in a phone, Ling in a Mac; each should answer "what is true here",
+"what just changed", "who did it". Engine: `crates/linggen-engine/src/perception/`;
 phone: `lib/services/perception/`. What she says and does with it:
 [yinyue-spec.md](yinyue-spec.md).
 
@@ -197,43 +197,14 @@ omitted rather than guessed. The doorbell shows changes, not durations: a record
 with `detail.seconds` is read through `recent_activity` but never counted or shown
 as latest. It reads the last few days only. A turn whose kickoff hands her a
 mission fault leaves out the `latest` line when the newest record is that `fault`
-(companion spec § A mission run that went wrong).
+(yinyue-spec § A mission run that went wrong).
 
-## 5. Speaking unprompted
+## 5. Conditions — what may be worth raising
 
-Perception lets an agent start a sentence; it does not make every observation
-worth one. Silence is the default.
+Perception notices; it does not speak. Whether and when Yinyue raises a condition
+(silence by default, the hourly ceiling, quiet hours, "not now" holds) is decided
+in [yinyue-spec.md § Speaking unprompted](yinyue-spec.md#speaking-unprompted).
 
-**What "unprompted" is.** A glance (the ambient tick), an app moment she was not
-asked for (`big` and `now` included), a woken note, and a mission fault. Never
-held by the rules below: her replies, `asked` moments, and notices of runs the
-person started (their own presence gates stand).
-
-### The ceiling and quiet hours
-
-| Guardrail | Setting (`[pet]`, Settings → Agents) | Default |
-|---|---|---|
-| Most unprompted lines in any rolling hour | `unprompted_per_hour` (0 = none) | 6 |
-| Quiet hours, local, may cross midnight | `quiet_hours` (`HH:MM-HH:MM`, empty = none) | 23:00-07:00 |
-
-- Both are checked **before** her turn, so a held line is never written (at an
-  app's table it would already be a row of its chat), and once more before her
-  voice, for two unprompted turns that ran at once. A glance is skipped (the
-  machine's conditions wait, unspent); held moments are dropped (stale by then);
-  a woken note waits until quiet hours end or the hour has room. The count is in
-  memory: a restart starts the hour afresh.
-- **The app in use.** Quiet hours do not hold an unasked moment from the app the
-  person is using — its page in front with input in the last 5 min
-  (`perception::stretch::is_using`). Such a moment still counts toward, and can
-  be held by, the hourly ceiling. Other moments wait for the morning; a wake
-  holding moments from two apps is split.
-- **A mission fault** is held by quiet hours and a screen only: it does not count
-  toward the ceiling, the ceiling never holds it, and nothing drops it.
-- **Held is recorded**: one activity record (verb `hold`, by `yinyue`), once per
-  held wake, or at most once an hour per reason for moments; `detail` gives the
-  reason, source and until when. It rings the doorbell, so it is paced.
-
-### Conditions — problems she may raise
 
 A problem is a record, never a sentence. A **condition** declares what it
 watches, what crosses, its **level** (integer; higher is worse) and, required, its
@@ -373,8 +344,6 @@ info level. The mirror (§ 6) is between the person's own devices.
 | Log, stretches, verbs, query | `perception/activity.rs`, `stretch.rs`, `activity_verbs.rs`, `query.rs` |
 | Conditions, offers, told | `perception/conditions.rs`, `offer.rs`, `told.rs`, `old_plugin.rs` |
 | Publish / mirror, rotation, trends | `perception/publish.rs`, `rotation.rs`, `trend.rs` |
-| Guardrails | `[pet]` in `config.rs`; gates in `src/server/resident/` |
 
 Related: [memory-spec](memory-spec.md), [yinyue-spec](yinyue-spec.md),
-[yinyue-spec](yinyue-spec.md),
 [app-action-spec](app-action-spec.md), [network-spec](network-spec.md).
