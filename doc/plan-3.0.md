@@ -268,7 +268,7 @@ hours; a quiet moment may speak and ask, never act; privacy lines (holdings
 are never told to her). Built (2.4 branch): the ceiling and quiet hours, quiet
 hours letting through an unasked moment from the app in use, and a mission
 fault waiting through them but outside the ceiling
-(`yinyue-companion-spec.md` § Guardrails); a glance or woken note offers
+(`perception-spec.md` § 6); a glance or woken note offers
 only tools that do not act.
 
 **Scenario tests** are how it gets smarter without more code: a world state

@@ -1,4 +1,4 @@
-//! Rotation and lifecycle (`doc/perception-spec.md` §7).
+//! Rotation and lifecycle (`doc/perception-spec.md` §3).
 //!
 //! One moment, two jobs:
 //!

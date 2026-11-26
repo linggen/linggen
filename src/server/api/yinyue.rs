@@ -3,8 +3,8 @@
 //! `emit_speak` pushes a "speak" cue onto the event bus; it fans out
 //! to every connected surface (pet / menubar / web overlay) over the WebRTC
 //! data channel. Surfaces render the bubble + expression and fetch the audio
-//! from `/api/tts` — the cue is small, the blob is pulled. See the "Adaptive
-//! presentation / One event spine" section of `doc/yinyue-spec.md`.
+//! from `/api/tts` — the cue is small, the blob is pulled. See the "Surfaces
+//! / One event spine" section of `doc/yinyue-spec.md`.
 
 use std::sync::Arc;
 

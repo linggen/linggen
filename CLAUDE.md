@@ -27,7 +27,7 @@ Read files under `doc/` and follow them. If you find wrong content in any doc fi
 - `doc/mcp-client-spec.md` — ling as an MCP *client*: user-added servers, and memory as the built-in one (the engine's own `/mem/mcp`)
 - `doc/room-spec.md` — rooms: community model sharing, credits, auto-dispatch
 - `doc/permission-spec.md` — permission system: modes, layers, tool classification, remote trust
-- `doc/yinyue-spec.md` — Yinyue companion: avatar, voice, session + memory model
+- `doc/yinyue-spec.md` — who Yinyue is and where she appears: two agents, persona, surfaces (pet, menubar), voice, her session + memory
 - `doc/shared-session-spec.md` — shared sessions: several agents at one table, one thread/tools/permissions, per-agent persona + model
 - `doc/one-ling-spec.md` — one Ling + one Yinyue on every device: who answers, Mac work continues in the app's latest Mac session as the same Ling, sessions stay per device
 - `doc/plan-3.0.md` — PLAN (2026-11-15, agreed; its Progress table says what is built): 2.3 = review, build speed, ling-mem merged into ling, engine in modules, upgrades, app slimming; 2.4 = one Ling and one Yinyue (the daily session, one world state, few general tools); 2.5 = one MCP door; Shell memory is withdrawn; Linggen memory stays (decided 2026-11-25, §0)
@@ -35,8 +35,8 @@ Read files under `doc/` and follow them. If you find wrong content in any doc fi
 - `doc/asset-pack-spec.md` — asset packs (designed 2026-11-15; engine side built, phone/publish/packaging not): a skill lists its heavy files; missing ones are fetched after install by content hash and served at the same address; first user is 灵境 art, Mac and phone
 - `doc/dynamic-session-draft.md` — superseded by `plan-3.0.md` (2026-11-13 talk; the folding design was dropped)
 - `doc/merge-and-slim-draft.md` — superseded by `plan-3.0.md` (2026-11-13 talk; measured sizes)
-- `doc/yinyue-companion-spec.md` — Yinyue's proactive/interactive layer: senses, heralds, `agent_chat`, ambient life-signs
-- `doc/perception-spec.md` — what a resident agent knows without being told: world state, the activity log, and when to speak
+- `doc/yinyue-companion-spec.md` — what Yinyue says and does: herald, mission faults, loop-back, app moments, `AppTool`, notes, `agent_chat`, asked aloud
+- `doc/perception-spec.md` — what a resident agent knows without being told (presence, world state, activity log) and when she may speak unprompted (guardrails)
 - `doc/phone-push-spec.md` — Mac → closed phone: skill-declared lines, her words, sealed per phone, rung through the linggen.dev APNs relay
 - `doc/app-action-spec.md` — app actions as tools: one writer per mutation, phone tool registry, typed cross-device calls, destructive confirms
 - `doc/background-tasks-spec.md` — background tasks: never block the chat, end as a turn, one session task list in the subagent pane

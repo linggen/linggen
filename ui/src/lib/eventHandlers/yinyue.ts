@@ -1,6 +1,6 @@
 /**
  * Yinyue "speak" cue handler — the web surface's consumer of the one event
- * spine (see `doc/yinyue-spec.md` › Adaptive presentation).
+ * spine (see `doc/yinyue-spec.md` › Surfaces).
  *
  * The engine pushes a small `{ text, emotion }` cue (`ServerEvent::YinyueSpeak`)
  * over the control channel, with the line already cut into short clauses. Here

@@ -3,7 +3,7 @@
 //! Append-only JSONL, one file per day under `~/.linggen/activity/`, local and
 //! never uploaded — it carries song titles, filenames and import counts, and
 //! answers a question ("what is true on this machine") that has no meaning
-//! anywhere else. See `doc/perception-spec.md` §3 and §8.
+//! anywhere else. See `doc/perception-spec.md` §3 and §7.
 //!
 //! The record shape is the phone's, field for field, because two schemas for
 //! one idea fork on contact.

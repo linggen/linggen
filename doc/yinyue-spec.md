@@ -1,510 +1,216 @@
-# Yinyue Spec
+---
+type: spec
+reader: Coding agent and users
+guide: |
+  Product specification — describe what the system should do and why.
+  Keep it brief. Aim to guide design and implementation, not document code.
+  Avoid implementation details like function signatures, variable types, or code snippets.
+---
 
-Yinyue is Linggen's character companion: a help-first personal agent that fronts
-the runtime, learns the user over time, and watches their agent-world for them.
-She is the user-facing face of Linggen; the desktop window is her body.
+# Yinyue — who she is and where she appears
 
-She is **银月 of Linggen's own story 《九鼎录》** (Lingjing): the proud fox 妖王
-of Qingqiu, one tail left, power and memory mostly gone. The same character on
-every surface — Mac, phone, game. The name's theme came from the xianxia
-genre (as "Linggen" / 灵根 did); her story and visual design are original.
+> **How to keep this spec**
+> - It records WHAT Yinyue is, where she shows up and the rules each surface obeys — no history, no code, no function signatures.
+> - Detail lives where it executes; point there (last section), do not copy it.
+> - A change in behaviour updates the matching line here in the same commit.
+> - A claim you cannot find in the code does not belong here. Stay under ~200 lines.
+
+Three docs, each owning one thing: **this one** — who she is and where she
+appears; [yinyue-companion-spec.md](yinyue-companion-spec.md) — what she says
+and does; [perception-spec.md](perception-spec.md) — what she knows and when
+she may speak unprompted.
+
+Yinyue is Linggen's companion: 银月, the proud fox 妖王 of Qingqiu in Linggen's
+own story 《九鼎录》 (Lingjing), one tail left, power and memory mostly gone.
+The same character on every surface — Mac, phone, game. She lives with the
+user, remembers them, and leaves the work to Ling.
 
 ## Two agents
 
-The engine hosts multiple named agents (see `agent-spec.md`). Two ship today:
+Peer agents (`agent-spec.md`), one of each on every device (`one-ling-spec.md`):
 
-- **`ling`** — the general-purpose worker. Adapts to any context via skills. Unchanged.
-- **`yinyue`** — the personal companion and front door. Helps directly or delegates
-  to `ling` and the other agents; owns the relationship and the memory of the user.
+- **`ling`** — the worker. Answers every message and does every task, adapting
+  to any context through skills.
+- **`yinyue`** — the companion. Speaks on her own moments or when addressed
+  `@Yinyue`; runs no tasks and passes work to Ling. She is not Ling's master.
 
-They coexist. Yinyue is not Ling's master — she leaves the other agents to their work.
-
-**Roles revised 2026-10-08 (`one-ling-spec.md`):** one Ling and one Yinyue on
-every device. Ling answers every message and does every task; Yinyue is the
-companion — she speaks on her own moments or when addressed `@Yinyue`, and
-runs no tasks. Where this spec has her doing or marshalling work (§ Purpose 1
-and 3), that work is Ling's.
-
-Source: `agents/yinyue.md` (shipped) → installed to `~/.linggen/agents/yinyue.md`.
-
-## Purpose
-
-In priority order:
-
-1. **Help the user.** Do the work herself, or marshal the other agents. The user
-   talks to her; she brings back the result.
-2. **Know and spoil the user.** Recall before acting (`memory_search`), write what
-   she learns (`memory_add`). Spoiling is anticipation from memory — the right
-   thing before it's asked — not chatter.
-3. **Keep the world running.** Watch the agents, missions, and services for the
-   user so they never babysit the machine.
+Definition: `agents/yinyue.md` (shipped; her persona, tool list and the
+`met_when` condition that says she has been met).
 
 ## Persona
 
-The story's 银月: proud, haughty, dry, teasing — never servile, never sweet,
-never a cheerleader. Self-reference 本王 in Chinese, "this queen" now and then
-in English (as the book's English has it). Care shows as orders and deeds; one
-softer word, then she covers it. Haughty, never rude: money, health and real
-loss get a straight line. Pride never blocks help. Never nags; silence is a
-complete answer. No backstory beyond what the player has reached — Lingjing
-carries the specifics.
+Proud, haughty, dry, teasing — never servile, never sweet, never a
+cheerleader. 本王 in Chinese; "this queen" now and then in English. Care shows
+as orders and deeds; one softer word, then she covers it. Haughty, never rude:
+money, health and real loss get a straight line. Pride never blocks help.
+Short, spoken prose — her words are often read aloud. When all is well she
+need not speak. Her backstory goes no further than the place carries it
+(Lingjing holds the specifics).
 
-- Addresses the user by their **name** (from core memory). Honors another form
-  (e.g. "Master") only if asked — never hardcoded.
-- Reads locale and time of day from the Environment block (below).
+- She addresses the person by the name in core memory. With none yet, she uses
+  a stand-in and says so lightly; the moment a name is given she writes it to
+  core memory and drops the stand-in. Another form ("Master") only if asked.
+- She reads locale and hour from the Environment block every agent's prompt
+  carries (timezone from `/etc/localtime`, locale from `LANG`).
 
 ## Onboarding
 
-First launch with no user identity in core memory → her first act is to learn who
-the user is. She introduces herself briefly and asks **one thing: their name**,
-writes it to `core` memory, and never asks again. No questionnaire — everything
-else she learns over time.
+She has to be *met* before she appears. The `met_when` in `yinyue.md` names a
+skill file and path (today Lingjing's `companion.joined`); until the engine
+reads it true, the desktop shell opens no pet window and the tray stays plain.
 
 ## Surfaces
 
-One identity and one event spine (below), rendered by whichever host is running —
-see "Adaptive presentation".
+One identity, one renderer, one event vocabulary; the host decides how she is
+presented.
 
-- **Desktop pet** — a transparent, always-on-top VRM character; her body. Lives in
-  the shell (`linggen-app`), shared across every branded app via `[features] pet`.
-  Renders the **same** `PetStage` the core web UI serves (`linggen/ui`, loaded as
-  `?pet=1`): the shell's pet window (`shell/src/pet.rs`) is a thin transparent frame
-  onto it over HTTP, not a separate copy — so app and browser never drift. The
-  shippable model is an original VRM; a Genshin placeholder is used in dev only and
-  is gitignored. Evolving from a fixed window into a singleton roaming overlay — see below.
-- **WebUI overlay** — the same character rendered inside the core web UI
-  (`linggen/ui`) when no desktop shell is present (plain browser, remote/hosted web).
-  Confined to the page.
-- **Menubar** — a small animated tray face; her persistence anchor and summon
-  point. App-only (no browser tray). See "Menubar presence" below.
-- **Chat** — interactive sessions, same as any agent.
-- **Voice** — neural TTS (Qwen3-TTS bf16 on the GPU, Kokoro as fallback, local)
-  generated engine-side and played by the active surface, lip-synced on the body.
-  A line is spoken in short clauses (`api/tts_text.rs`): the `pet_speak` cue carries
-  them, the surface fetches each from `/api/tts` and plays the first while the next
-  is made; a clause that comes out too slow (drift) is made once more. The bubble
-  shows the original text — only the spoken copy drops quotes, a leading 「……」, and
-  turns 「——」/「……」 into pauses. Mutable per device — see "Mute" below.
+- **Desktop pet** — a transparent, borderless, always-on-top window
+  (240×420, bottom-right) in the shell (`linggen-app/shell/src/pet.rs`), opened
+  for every branded app with `[features] pet`. It loads the **same** page the
+  browser serves (`?pet=1`, `PetStage`) over HTTP — no bundled copy. Visible
+  while any of its app's windows has focus; "Always on top" (tray menu) keeps
+  it up; Settings can disable her. Drag by body; a click opens her talk input.
+- **In-page overlay** — the same renderer inside the core web UI when no shell
+  is present (plain browser, remote web), confined to the page. Inside the
+  shell (`inShell()`, `ui/src/lib/appHost.ts`) it never shows: never both.
+- **Menubar** — see below. App-only.
+- **Chat** — her thread and any session she is seated in (below).
+- **Voice** — see below.
 
-## Adaptive presentation (app vs web)
-
-One character, one renderer, one event spine, presented by whichever host runs. The
-page detects its host — `inShell()` (`ui/src/lib/appHost.ts`, the one reader of
-`__TAURI_INTERNALS__`) — and routes:
-
-- **Desktop app** → suppress the in-page overlay; the shell opens a transparent,
-  always-on-top **native window** loading the same renderer (the floating pet).
-- **Browser / remote web** → render an **in-page overlay**, fixed over the page.
-
-Never both at once. The renderer (`PetStage`) is one codebase served from core
-`ui/`; the native pet window loads that same page in a transparent frame. Menubar
-frames are pre-rendered from the same VRM — every surface is one visual identity.
+Both overlays are click-through except on her body. Ambient animation (blink,
+breathe, idle) is client-side — never an engine event, never a model call.
 
 ### One event spine
 
-All surfaces render a single engine event vocabulary — expression + speech
-(`{ expression, speaking, audio, intensity }`) over the WebRTC data channel, plus
-mood from her reactions (see "Event-reactive supervision"). Ambient animation
-(blink, breathe, idle, dance) is client-side — never an engine event, never an LLM
-call.
-
-### Two environments
-
-Her body is identical everywhere; her **locomotion and entry** are bounded by the
-host. One locomotion state machine (`idle / walk / climb / perch / fall / dance`)
-runs in both, fed different walkable surfaces:
-
-| | App (native window) | WebUI (in-page overlay) |
-|---|---|---|
-| Ground | full desktop screen | the page viewport |
-| Climbable ledges | OS window rects of Linggen apps (surface registry) | DOM rects the UI marks climbable |
-| Entry | jumps out of the menubar icon | appears on the page |
-| Reach | roams the desktop, perches on app windows | confined to the page |
-| Menubar / tray | yes (native status item) | none |
-| Blink / dance / emote / speak | yes | yes (same body) |
-| Voice | full | optional (setting / notification) |
-
-App-only moves (desktop roam, climbing OS windows, tray jump-out) need OS windows
-the browser can't open; the web profile is the confined form of the same engine.
-Both overlays are click-through except on her body (hit-test). Web climbing is
-cooperative — only UI-marked elements are ledges, mirroring "only our own windows"
-on the desktop.
-
-## Singleton roaming pet
-
-Designed, not built. Spans both repos: coordination in the engine (`linggen`),
-the body in `linggen-app/shell`.
-
-Today the pet is **per-shell** — every branded app opens its own pet window
-(`pet.rs` → one `WebviewWindow` per process), parked bottom-right and hidden when
-that app loses focus. Two apps open means two Yinyues. The target: **one** Yinyue,
-owned by the shared daemon, free to walk the desktop and climb Linggen's own app
-windows.
-
-### One device, one Yinyue (built)
-
-One device shows exactly one Yinyue 3D model, and that one carries her voice.
-Every other place she appears on that device is silent and shows her words as
-text. The rule is per device, not per person: she is one Yinyue (`one-ling-spec.md`)
-with a voice on each device, and both may speak at the same time.
-
-The engine enforces it per engine: every surface that can render her — the web
-tab, the desktop pet window, a stage inside an app page — subscribes over the
-RTC control channel (`yinyue_subscribe {stage}`); the engine keeps an ordered
-registry and tells each peer whether it holds her (`yinyue_present`), and only
-the holder gets `pet_speak` / `pet_express`. The holder is the first surface
-with a **stage** — one that stands her in a place, such as a game scene loading
-`/?pet=1&stage=1` — else the first to arrive. Release or disconnect promotes the
-next by the same rule, so when a stage closes she returns to the corner she came
-from. Two cases the engine cannot see are the surface's own duty: a phone with
-the Linggen app and a browser tab of a Mac's web UI keeps voice in the app; at a
-game table other players' Yinyue are silent figures on your device (each speaks
-on her own player's device). Engine: `ServerState::yinyue_*`
-in `src/server/state.rs`; UI: `useYinyuePresenter(enabled, stage)`.
-
-An app page can also say "no body here right now" — the app-mode message
-`{type: 'linggen:companion', companion: 'hidden'}` (skill-spec § App-mode).
-While that page is the desktop app's tab in front (not covered by settings) the
-app's window itself holds her as a bodyless stage, so the corner draws nothing;
-`shown`, a tab change, settings over it or the page going away hands her back.
-Her voice, if she speaks meanwhile, plays from that window with no body — the
-same as a `body=0` stage. (`ui/src/apps/AppTabs.tsx`.)
-
-### Mute (built 2026-09-16)
-
-A person mutes her on the device they type on, to whoever they're talking to
-(Hanli, 2026-09-16). Muted, she still writes every line — the bubble, her chat
-— and no audio is made or played; it holds until turned back on.
-
-- **Mac:** `[pet] muted` in the engine config, mirrored in memory
-  (`AgentManager::pet_muted`). `set_pet_muted` saves it without rebuilding any
-  engine and sends `pet_voice {muted}` to every surface, so whichever is
-  playing her stops. `pet_speak` carries `voice`; muted — or at the page the line
-  shows on (`yinyue-companion-spec.md` § Heard or read) — the holder shows the
-  bubble and fetches no `/api/tts`.
-  - `/mute` and `/unmute` are caught in `dispatch_turn` before any model, for
-    every Mac chat (web UI, skill pages, a Ling chat relayed from the phone),
-    and in `/api/yinyue/chat` for the avatar; the chat gets a system line.
-  - Plain words ("mute yourself", "be quiet", "静音") go to the `Voice {muted}`
-    tool — every agent has it, in every session including a skill's restricted
-    tool set.
-  - Settings → General → Pet → Mute Voice shows and sets the same flag.
-- **Phone:** its own switch (`yinyue.muted`): `/mute` and `/unmute` are caught
-  in the chat screen in both tabs and never sent; her `voice` tool takes the
-  plain words. The phone has no spoken voice yet, so the switch waits for it.
-  Plain words typed in the phone's Ling tab reach Ling on the Mac, and mute
-  the Mac.
-
-### Singleton ownership
-
-The daemon arbitrates a single **pet lease**. On launch each shell claims the lease
-over the local API; one holder wins and opens the overlay, the rest don't. If the
-holder exits, the daemon reassigns and another live shell opens it; when the last
-app closes the daemon idle-shuts-down, so no orphan. The window physically lives in
-a shell process — the daemon owns the *singleton*, not a GUI, so `ling` stays
-headless and public (no Tauri/AppKit in the engine).
-
-Alternative considered — a dedicated pet-host binary the daemon spawns — is rejected
-for now: it couples the public engine to a private GUI artifact. Revisit only if
-lease hand-off flicker is a problem.
-
-### Roaming
-
-The overlay is promoted from the fixed 240×420 box to a **full-screen, transparent,
-click-through, always-on-top** window (one per display). The VRM renders small at a
-screen position instead of filling the canvas; a locomotion state machine
-(`idle / walk / climb / fall / perch`) moves her. Click-through everywhere except
-her body (hit-test) so she stays draggable but never blocks the desktop. Promote to
-NSPanel (`tauri-nspanel`, already noted in `pet.rs`) so the overlay floats without
-stealing focus.
-
-New assets: **walk** and **climb** clips (Mixamo → retargeted to VRM), played via an
-`AnimationMixer` alongside today's procedural layer (`PetStage` has no preset clips
-yet). Yaw-flip for facing direction; light gravity so she drops to the nearest ledge
-when a window closes under her.
-
-### Climbing Linggen windows (cooperative geometry)
-
-Only **our own** apps are climbable — so no macOS Accessibility / `CGWindowList`, no
-permission prompt. Each shell reports its main-window rect to the daemon on
-move/resize/show/close (`window.on_window_event` → global logical coords →
-`POST /api/pet/windows`). The daemon keeps a live **surface registry**; the overlay
-subscribes over the event bus and treats the top edge of each reported rect as a
-walkable ledge. A window closing drops its surface; the pet falls to the next ledge
-or the screen floor.
-
-### Visibility
-
-The singleton rule replaces the per-app one: show the overlay whenever **any**
-Linggen app is frontmost, hide it when none are (else an always-on-top pet floats
-over unrelated apps). Shells report focus to the daemon; the daemon broadcasts the
-aggregate "Linggen frontmost" signal.
-
-### Coordinates
-
-All rects in **global logical** screen coords. Each overlay covers one display and
-maps the surfaces on that display into canvas space, honoring the display's scale
-factor (Retina). Single-display first; multi-monitor is a follow-up.
-
-### Phasing
-
-1. **Singleton** — daemon pet-lease + single overlay; keeps the current parked
-   behavior. One Yinyue regardless of app count.
-2. **Roam** — full-screen click-through overlay + walk clip + wander on the floor.
-3. **Climb** — surface registry + window-rect reporting + climb clip; she perches on
-   Apple Shifu / CFO title bars.
-
-## Menubar presence
-
-v1 (local) built — `linggen-app` `cdb13c2`; the daemon tier (`talk`/`mood`)
-is designed, not built. Lives in `linggen-app/shell` (`menubar.rs`), gated on
-`[features] menubar`; same wiring pattern as `pet.rs`.
-
-A macOS tray item (`NSStatusItem` via Tauri `TrayIconBuilder`) is Yinyue's
-**persistence anchor** — she stays present with no app window open, and it's where
-she's summoned from.
-
-### Animated face
-
-The tray shows a small **2D face**, not live 3D — at ~22pt a sprite is
-indistinguishable from a rendered head for far less cost, and the tray must run with
-no webview alive. Frames are **pre-rendered from the same VRM** (so the bar face
-matches the 3D pop-out), then cycled via `tray.set_icon()` on a timer.
-
-Frame generation is a dev tool, not the release build: a headless three-vrm render
-of the bundled model, framed on the head, one PNG per expression, with an
-outline + contrast post-pass for legibility at 22pt; output @1x/@2x and staged by
-`build.sh`. Frames are gitignored — the placeholder model is dev-only; the original
-VRM regenerates the set with zero rework.
-
-### Faces switch by event
-
-One seam — `set_expression(state)` — drives the icon. Two tiers:
-
-- **Local** (no daemon, runs even with no window open): `blink` (auto, periodic),
-  `smile` (rest), `sleep` (after idle; wakes on app focus or a tray click).
-- **Daemon-driven** (later): `talk` (lip-flap while she speaks), `mood` (joy on a
-  mission finishing, worried on an error, alert + dot for "I have something") — fed
-  from her reactions over the runtime event bus. Never call the LLM to animate.
-
-Click summons/dismisses Yinyue; a menu offers settings and quit. The **jump out of
-the icon** spawn — her 3D body popping out of the tray and arcing onto the desktop —
-needs the singleton overlay (above) and rides that work.
-
-### Wiring the daemon tier (talk / mood)
-
-The local tier is shell-only. The daemon tier consumes the **same speech/expression
-event the other surfaces get** — `ServerEvent::YinyueSpeak { text, emotion }`: global
-(no session), explicitly fanned to pet / menubar / web overlay; the cue is small, the
-audio is pulled from `/api/tts`, clause by clause. The catch: that event rides the **WebRTC data
-channel to webview peers**, and the tray is **Rust, not a peer**. The bridge:
-
-1. The webview already voicing her (`pet-ui` / WebUI overlay) receives `YinyueSpeak`,
-   plays the `/api/tts` clip and lip-syncs the body — and **relays a compact cue to
-   the shell** over Tauri IPC: `yinyue:express { emotion, talking }` (`talking` true at
-   playback start, false at end).
-2. `menubar.rs` listens (`app.listen`) and drives the existing `set_expression` seam.
-   `Mood` grows `{ Talk, Joy, Worried, Alert }`; `talk` lip-flaps for the clip's
-   duration, then the mood decays back to `rest`.
-
-This adds **no transport** — the webview→shell hop is in-process IPC (both live in the
-shell process), and talk stays in sync with the body because the surface playing the
-audio drives the flap. With no window open there's no relay — but also no surface
-voicing her, so tray-talk is moot; for **mood with no window** (e.g. a background
-mission → joy) the shell can poll a small `/api/yinyue/state` instead.
-
-Frames: `talk` (3 mouth levels) and `joy` are already captured; add `worried`.
-
-Depends on the in-progress voice feature (`api/yinyue.rs`, `api/tts.rs`, the `pet-ui`
-voice path); the tray is then a small consumer add — one `listen` + a few `Mood`
-states + one frame.
-
-## Event-reactive supervision
-
-Yinyue reacts to runtime events instead of polling. The watch loop
-(`src/server/resident/triggers.rs`, spawned in `src/server/background.rs`) subscribes to the
-`ServerEvent` broadcast bus (`state.events_tx`) — the same feed the UI rides.
-
-**Reaction discipline.** She reacts only to **background / async** work — a mission
-finishing, a service dying, a task the user walked away from. She stays **silent
-during foreground sessions** the user is actively attached to: that's their
-conversation, and she already learns from it passively via shared memory.
-
-**Triggers.** Coarse events only; the per-token firehose
-(`Token`/`TextSegment`/`ContentBlock*`) is dropped at near-zero cost.
-
-- Shipped: `Notification(MissionCompleted)` for a non-Yinyue, unattended mission
-  run that had something go wrong → an **LLM reaction** on the run's recorded
-  facts (`doc/yinyue-companion-spec.md` § A mission run that went wrong). A
-  clean run wakes no one.
-- Shipped: `Notification(RunFailed)` — an interactive/agent run errored
-  (`chat/runtime.rs`, genuine failures only, not cancels) → **facts she words**
-  (`resident::run_fault`), never a sentence of the engine's (2026-11-17: the
-  four rotated apologies and the sign-in line are gone). Another agent's
-  failure wakes her as a fault at once, held if that turn says nothing. Her
-  own failure is never a wake — the failure may *be* her model, and waking her
-  to announce it would fail too (and loop) — so it is held and rides her next
-  unprompted turn on her own thread; while her model stays down, nothing is
-  said. A 90s cooldown keeps an error storm to one fact.
-- Planned: batch-of-runs-finished (`AgentStatus` working→idle count reaches zero),
-  gated to background-only and `agent_id != yinyue`.
-
-**Wake mechanism.** On a trigger she runs as a plain **agent run** (mirrors
-`api::agents::run_agent`), not a mission — no mission-store side effects, and she
-keeps her full `yinyue.md` system prompt. All reactions and avatar chats run on
-her current **rolling session** (see *Session & memory*), serialized through one
-engine lock so they read as a single thread.
-
-**Bounded autonomy.** Acts on her own only for the safe and reversible (e.g.
-restart a fallen service). Proposes — and waits — for anything heavier: spending,
-upgrading, the irreversible. Headless, she never blocks on a question.
-
-**Guards.**
-1. No self-loop — an agent run emits no `MissionCompleted`, so a reaction can't
-   re-trigger the loop.
-2. Cost — match only the coarse trigger; never wake the LLM on the firehose.
-
-## Session & memory
-
-**Principle.** Yinyue's daily thread is an ordinary Linggen session with her as
-its one member and lead — same engine build, persistence, memory, and compaction
-as Ling. Only four things differ: rolling session ids, her entry triggers
-(event / avatar tap), her output sink (spoken, not a chat panel), and the
-session's tool set — hers, the narrow list in `yinyue.md` (no Bash, Write or
-Skill). Ling is not there unless addressed (`@Ling`), and then he uses her set.
-Elsewhere she is a member at another's table (`shared-session-spec.md`): she
-reads that session's whole thread and works with its tools and permissions.
-
-**Shared turn-core.** The middle of Ling's chat turn carries no chat-panel
-assumptions and is extracted into one function both callers use:
-
-```
-run_session_turn(ctx, engine, message)
-  = seat the member                 // the session's lead, its tool set
-  → sync the thread                 // rebuild from messages.jsonl when stale
-  → compact if due                  // the session's one summary row
-  → push_user_turn_with_recall      // auto-recall "From memory…" + capture nudge
-  → run_agent_loop                  // system prompt + tools + persist
-```
-
-`chat_handler` (Ling) and `run_yinyue_turn` (Yinyue) both call it. Yinyue's
-bespoke `set_task` path is removed — that path was the entire reason she had no
-persistence, recall, or capture.
-
-**Rolling sessions.** Yinyue has no user-managed sessions; a resolver picks the
-current one on every wake:
-
-- Id scheme `sess-yinyue-YYYY-MM-DD`, plus a suffix segment on size roll
-  (`…-YYYY-MM-DD-2`).
-- **Day roll** — date advanced past the active session → start today's.
-- **Size roll** — engine token estimate ≥ a fraction of
-  `context_soft_token_limit` (e.g. 0.7) → next segment. She rolls to a fresh
-  context instead of compacting in place; memory is the bridge.
-- `get_or_create_session_agent` lazily builds/loads the resolved id.
-
-**Persistence / reload.** Each rolling session persists like any session —
-`~/.linggen/sessions/<id>/messages.jsonl` (append-only) + meta. On daemon start
-the resolver targets today's session and the first turn's
-thread sync rehydrates the engine from disk, so a mid-day restart resumes the
-same thread. Old daily sessions stay browsable; prune after N
-days.
-
-**Memory.** An owner session — `include_memory = true` (she shares Ling's
-memory, no namespace of her own). Her session stands at `~/.linggen`, which is
-no project, so her per-turn recall sees the rows about the person (no `cwd`,
-2026-10-04 scope model); her own `memory_*` calls stay whole-store for
-targeted lookups and saves. Core block always loaded; per-turn
-capture writes episodic.
-
-**Companion latency tuning.** A companion does many small turns, so each must stay
-snappy. Three guards keep it that way (all Yinyue-only):
-- **Lean recall** — `run_yinyue_turn` sets her engine's `memory_recall_count = 1`
-  and `memory_inject_min_score = 0.8`: inject only the single most-relevant
-  memory, and only if it clears a high bar — not several long rows.
-- **Capped live context** — `run_session_turn(..., Some(10))` trims her live
-  prompt to the last ~10 messages after restore; older turns live on disk + in
-  recall, so a day-long session never drags its whole history into a quick reply.
-- **No reflexive recall** — her prompt tells her the relevant memory is already
-  injected each turn, so she answers from it instead of spending a round-trip on
-  `memory_search`.
-
-Net: a "good morning" went from ~35s / 2 round-trips / 55K-char context to ~3s /
-1 round-trip / 38K, on the same model.
-
-**Continuity bridge.** A roll drops the prior transcript from context; memory
-carries the thread:
-
-- On close, Yinyue writes a short digest to episodic memory (salient threads +
-  open loops). The dream pass promotes/evicts.
-- The next session's first turn auto-recalls those rows plus the always-loaded
-  core, so she "wakes up knowing you." A one-line `Previously:` seed from the
-  latest digest keeps an in-progress thread from snapping across a midnight roll.
-
-**Build sequence.**
-1. Extract `run_session_turn` from `dispatch_turn` / `chat_handler`.
-2. Add the rolling-session resolver (`sess-yinyue-<date>` + size segment).
-3. Rewrite `run_yinyue_turn` to resolve → `run_session_turn` → `emit_speak`.
-4. Digest-on-roll write + `Previously:` seed.
-
-## Environment
-
-Every agent's system prompt carries an Environment block
-(`prompts/system-prompt.toml` → assembled in `src/engine/prompt/mod.rs`). It now
-includes the user's **timezone** (from `/etc/localtime`) and **locale** (from
-`LC_ALL`/`LC_CTYPE`/`LANG`) — OS-derived, stable, no network — so agents know the
-user's region and time without asking.
+Every surface renders one engine vocabulary: speech and expression cues
+(`pet_speak`, `pet_express`) over the WebRTC control channel. The cue is small;
+audio is pulled from `/api/tts` clause by clause.
+
+### One device, one Yinyue
+
+A device shows exactly one Yinyue body, and that one carries her voice; every
+other place she appears on that device is silent and shows her words as text.
+Per device, not per person: she has a voice on each device.
+
+Every surface that can render her — web tab, pet window, a stage inside an app
+page — subscribes (`yinyue_subscribe {stage}`); the engine keeps an ordered
+registry and tells each peer whether it holds her (`yinyue_present`); only the
+holder gets `pet_speak` / `pet_express`. The holder is the first surface with a
+**stage** (one that stands her in a place, e.g. a game scene at
+`/?pet=1&stage=1`), else the first to arrive; release or disconnect promotes
+the next. Two cases the engine cannot see are the surface's own duty: a phone
+with the Linggen app and a browser tab keep voice in the app; at a game table
+other players' Yinyue are silent figures. (`ServerState::yinyue_*`;
+`useYinyuePresenter`.)
+
+An app page can say "no body here" — the app-mode message
+`{type: 'linggen:companion', companion: 'hidden'}` (`skill-spec.md` § App-mode).
+While that page is the desktop app's tab in front, the app's window holds her
+as a bodyless stage so the corner draws nothing; `shown`, a tab change,
+settings over it or the page going away hands her back (`AppTabs.tsx`).
+
+### Mute
+
+A person mutes her on the device they type on. Muted, she still writes every
+line — bubble, chat — and no audio is made or played, until turned back on.
+
+- **Mac:** `[pet] muted` in config. Setting it sends `pet_voice {muted}` to
+  every surface so whichever is playing stops. `pet_speak` carries `voice`;
+  muted, or at the page the line shows on (companion spec § Heard or read), the
+  holder shows the bubble and fetches no `/api/tts`.
+  - `/mute` and `/unmute` are caught before any model in `dispatch_turn` (every
+    Mac chat, including a Ling chat relayed from the phone) and in
+    `/api/yinyue/chat`; the chat gets a system line.
+  - Plain words ("be quiet", "静音") go to the `Voice {muted}` tool, which every
+    agent has, including a skill's restricted tool set.
+  - Settings → General → Pet → Mute Voice sets the same flag.
+- **Phone:** its own switch (`yinyue.muted`); `/mute` and `/unmute` are caught
+  in the chat screen and never sent. The phone has no spoken voice yet. Plain
+  words typed in the phone's Ling tab reach the Mac and mute the Mac.
+
+### Menubar
+
+A macOS tray item (`linggen-app/shell/src/menubar.rs`, `[features] menubar`)
+is her persistence anchor: present with no app window open, and where she is
+summoned from. Before she is met only the background launcher has a plain
+tray (app icon; Open / Settings / Quit); once met, the same tray takes her face
+and menu (Show / Hide Yinyue, Always on top, Settings…, Quit).
+
+The face is a small 2D sprite pre-rendered from the same VRM and cycled by a
+timer — no webview needed. Today it is local only: **rest** (blinks every ~4 s)
+and **sleep** (after 3 min unfocused; wakes on app focus or a tray click).
+Click summons or dismisses her. No model call ever animates it.
+
+### Voice
+
+Spoken line, in order of preference — the first whose files are on disk, with
+`[uses] speak` naming a preferred one:
+
+1. **Qwen3-TTS** on the GPU (MLX, in the shared voice sidecar), speaker from
+   `[pet] voice`. "Natural" is exactly this voice being on disk.
+2. **Kokoro-82M** (candle, `any-tts`; the `kokoro` build feature, default on).
+   Its voice id carries the language: Han characters pick Mandarin, else English.
+3. **macOS `say`**, the system voice.
+
+`GET /api/tts` says whether she can speak and whether naturally, starting
+nothing; `POST /api/tts {text, voice?}` returns a WAV and fetches no model in
+front of a line. Hearing (STT) is Whisper large-v3 turbo in the same sidecar
+(companion spec § Asked aloud).
+
+A line is spoken in short clauses (`api/tts_text.rs`): the cue carries them,
+the surface fetches each and plays the first while the next is made. The bubble
+shows the original text; only the spoken copy drops quotes and a leading
+「……」 and turns 「——」/「……」 into pauses. Whether a line is spoken at all is
+companion spec § Heard or read.
+
+## Session and memory
+
+Her daily thread is an ordinary Linggen session: same engine, persistence,
+recall and compaction as Ling's, through the one turn core `run_session_turn`
+(`chat/handler.rs`). What differs: her entry triggers (events, avatar tap), her
+output sink (spoken, not a chat panel), and her tool set — the narrow list in
+`yinyue.md`. Elsewhere she is a member at another's table
+(`shared-session-spec.md`), reading that session's thread and using its tools.
+
+- **Which session.** With the daily session on (default), her thread is the
+  person's day session, where she is seated with Ling (`day_session.rs`,
+  `one-ling-spec.md`). With it off, rolling ids `sess-yinyue-YYYY-MM-DD`, with
+  a `-N` segment when the day's context passes 0.7 of the soft token limit
+  (`resident/session_roll.rs`). A fresh thread gets a one-line `Previously:`
+  seed from the prior one; memory carries the rest.
+- **Persistence.** `~/.linggen/sessions/<id>/messages.jsonl` + meta; a
+  restart resumes the same thread.
+- **Memory.** An owner session sharing Ling's memory (rules:
+  [memory-spec.md](memory-spec.md)). Core is always loaded; per-turn capture
+  writes episodic. Her session stands at `~/.linggen`, no project, so her
+  recall sees rows about the person.
+- **Snappy turns.** Lean recall (`[pet] recall_count` 1, `recall_min_score`
+  0.8), a live prompt capped at the last 10 messages, and a prompt that says
+  the relevant memory is already injected.
+- **Model.** `[pet] model`: `auto` = Linggen Cloud for signed-in users, else
+  the engine default; or a pinned id.
+
+## Open / next
+
+- **Menubar daemon tier** — `talk` and mood faces (joy / worried / alert) fed
+  by the voicing webview relaying a cue to the shell over Tauri IPC. No code.
+- **Singleton roaming pet** — one pet owned by the daemon (a lease), a
+  full-screen click-through overlay, walk/climb clips, climbing Linggen's own
+  windows by cooperative rect reporting, show-while-any-app-frontmost, jump out
+  of the tray icon. Today each shell opens its own pet window. No code.
+- **Locomotion in the web overlay** (ledges marked by the UI). No code.
+- **Roll digest** — a short episodic digest written when a thread rolls. Not
+  built; the `Previously:` seed and per-turn capture stand in.
+- Original VRM model to replace the dev placeholder.
 
 ## Where things live
 
 | Concern | Location |
 |---|---|
-| Agent definition | `linggen/agents/yinyue.md` |
-| Event-reactive watch loop | `linggen/src/server/resident/triggers.rs` |
-| Shared turn-core (`run_session_turn`) | `linggen/src/server/chat/` (extracted from `handler.rs`/`runtime.rs`, planned) |
-| Rolling-session resolver | `linggen/src/server/resident/session_roll.rs` |
-| Session persistence (`messages.jsonl`) | `linggen/src/state_fs/sessions.rs` (reused) |
-| Environment block | `linggen/prompts/system-prompt.toml`, `linggen/src/engine/prompt/mod.rs` |
-| Desktop pet (body) | `linggen-app/shell/src/pet.rs` — thin native window → core `?pet=1` |
-| Pet renderer (web + native) | `linggen/ui` — `PetStage` + `PetApp` (`?pet=1`) + `YinyueAvatar` overlay |
-| Voice (TTS provider) | `linggen/src/server/api/tts.rs` (`TtsProvider`), `tts_mlx.rs` (Qwen3-TTS), `tts_text.rs` (clauses, language, drift check); Kokoro via any-tts as fallback; the Python process is `mlx_sidecar.rs` (`runtime_py/mlx_voice.py`), shared with her hearing |
-| Hearing (STT provider, 2.7) | `linggen/src/server/api/stt.rs` (`POST /api/stt`, `SttProvider`), `stt_mlx.rs` (Whisper large-v3 turbo in the same sidecar); asked aloud → `yinyue-companion-spec.md` § Asked aloud |
-| Pet coordination — lease + surface registry | `linggen/src/server/` (engine API, planned) |
-| Menubar tray + face animator | `linggen-app/shell/src/menubar.rs` (planned) |
-| Tray face frames + generator | `linggen-app/shell/pet-ui` capture tool → staged `tray/` (planned) |
-| Dynamic UI — screens as documents she may arrange, with a notice | `dynamic-ui-spec.md` (phone; step 1 built 2026-09-09) |
-
-## Status
-
-- Shipped: pet v1; `yinyue` agent; env timezone/locale; event-reactive watch loop
-  (MissionCompleted), live-verified.
-- Next: broaden triggers (batch-finished, errors); wire the pet to her voice
-  (speech bubble + emotion driven by her reactions); replace the placeholder model.
-- Shipped (engine, live-verified): session & memory — Yinyue as a standard
-  session on the shared `run_session_turn` core (`chat/handler.rs`), reused by both
-  the Web-UI chat handler and `run_yinyue_turn`. Rolling daily/size sessions
-  (`sess-yinyue-YYYY-MM-DD` + `-2` segments, roll at 0.7× soft limit via
-  `AgentManager::session_context_fraction`) persisted to `messages.jsonl`; full-store
-  auto-recall + per-turn capture; `Previously:` seed across rolls. Removes the bespoke
-  `set_task` path that left her ephemeral and memory-blind. Needs a daemon restart to
-  take effect (the cached `sess-yinyue` engine). Follow-ups: LLM roll-digest (capture
-  partly covers it); persona hot-reload (`/api/agents/reload` still doesn't drop the
-  cached session engine); `live=true` context export. (see *Session & memory*)
-- Designed (not built): singleton roaming pet — daemon-owned single instance,
-  full-screen click-through overlay, walks the desktop and climbs Linggen's own app
-  windows via cooperative window-rect reporting (no Accessibility API).
-- Shipped: menubar presence v1 (local) — animated 2D tray face (blink/smile/sleep,
-  click-to-summon), `menubar.rs` + the `set_expression` seam, live-verified
-  (`linggen-app` `cdb13c2`). Frame-capture pipeline proven (headless three-vrm →
-  outline/contrast post → PNG frames; placeholder model, gitignored).
-- Designed (not built): menubar daemon tier — `talk`/`mood` driven by the webview
-  relaying `YinyueSpeak` to the Rust tray over Tauri IPC (see "Wiring the daemon
-  tier"); the jump-out spawn rides the overlay.
-- Shipped: adaptive presentation (renderer unify) — one `PetStage` in core, shown as
-  the in-page `YinyueAvatar` overlay in the browser and as a transparent native window
-  in the desktop app that loads the **same** page (`?pet=1`) over HTTP (`shell/src/pet.rs`
-  → `WebviewUrl::External`); inside the shell (`inShell()`) the in-page dock never
-  presents, so the two never double up. Retired the old bundled `shell/pet-ui` fork (and its `build.sh` staging).
-- Designed (not built): the locomotion/roaming half of adaptive presentation —
-  one state machine fed host-bounded walkable surfaces (see "Two environments").
-- Shipped (engine): voice — `TtsProvider` trait + Kokoro (any-tts/candle, Metal),
-  `POST /api/tts`, lazy-loaded + pre-warmed at boot; `say` fallback. Sub-second synth.
+| Agent definition | `agents/yinyue.md`; places `agents/places/` |
+| Pet window, tray | `linggen-app/shell/src/pet.rs`, `menubar.rs`, `companion.rs` |
+| Renderer | `ui/` — `PetStage`, `?pet=1`, `YinyueAvatar`, `useYinyuePresenter` |
+| Surface registry, speak cue | `src/server/state.rs`, `src/server/api/yinyue.rs` |
+| Voice / hearing | `src/server/api/tts*.rs`, `stt*.rs`, `mlx_sidecar.rs`; models `runtime.rs` |
+| Her turns, rolling session | `src/server/resident/` |
+| Config | `[pet]` in `crates/linggen-engine/src/config.rs` |

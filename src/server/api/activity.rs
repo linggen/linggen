@@ -8,7 +8,7 @@
 //!
 //! Gated like every other route: loopback (local skills) passes, LAN callers
 //! need their device token. Perception is local by law
-//! (`doc/perception-spec.md` §8) — nothing written here leaves the machine.
+//! (`doc/perception-spec.md` §7) — nothing written here leaves the machine.
 
 use axum::{
     extract::{Query, State},
