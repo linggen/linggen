@@ -130,7 +130,7 @@ export const providersApi = {
   /** A model typed by name; the engine makes the row's id. */
   addModel: (id: string, model: string) => apiPost<ProvidersAnswer>(`${provider(id)}/models`, { model }),
   removeModel: (id: string, modelId: string) => apiDelete<ProvidersAnswer>(`${provider(id)}/models/${encodeURIComponent(modelId)}`),
-  /** Tick, untick, choose, pin, follow, or answer a notice (`move` is its number). */
+  /** Tick, untick, choose, follow, or answer a notice (`move` is its number). */
   family: (id: string, family: string, action: FamilyAction) =>
     apiPut<ProvidersAnswer>(`${provider(id)}/families/${encodeURIComponent(family)}`, action),
 };

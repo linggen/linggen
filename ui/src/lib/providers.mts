@@ -136,7 +136,6 @@ export type FamilyAction =
   | { action: 'untick'; model?: string }
   | { action: 'choose'; model: string }
   | { action: 'follow' }
-  | { action: 'pin'; move?: number }
   | { action: 'ack'; move: number }
   | { action: 'back'; move: number };
 

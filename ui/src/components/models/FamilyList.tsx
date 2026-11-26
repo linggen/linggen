@@ -63,9 +63,7 @@ const FamilyRow: React.FC<Props & { family: Family }> = ({ provider, family: f, 
   const act = (action: FamilyAction) => run(() => providersApi.family(provider.id, f.family, action));
   const model = familyModel(f);
   const menu = f.ticked && f.row ? [
-    ...(f.mode === 'pinned'
-      ? [{ label: W.followAgain, run: () => void act({ action: 'follow' }) }]
-      : [{ label: W.pinVersion, run: () => void act({ action: 'pin' }) }]),
+    ...(f.mode === 'pinned' ? [{ label: W.followAgain, run: () => void act({ action: 'follow' }) }] : []),
     { label: W.makeDefault, run: () => void makeDefault(f.row!) },
   ] : [];
   return (
@@ -118,7 +116,7 @@ const FamilyRow: React.FC<Props & { family: Family }> = ({ provider, family: f, 
   );
 };
 
-/** One move, until it is answered: 知道了, 换回, or 固定在这个版本. */
+/** One move, until it is answered: 知道了 or 换回. */
 const MoveNotice: React.FC<{ family: Family; act: (a: FamilyAction) => Promise<boolean>; busy: boolean }> = ({ family: f, act, busy }) => {
   const n = f.notice!;
   const move = n.move;
@@ -129,9 +127,6 @@ const MoveNotice: React.FC<{ family: Family; act: (a: FamilyAction) => Promise<b
         <button type="button" disabled={busy} className={linkBtn} onClick={() => void act({ action: 'ack', move })}>{W.gotIt}</button>
         {n.kind === 'followed' && n.can_go_back && (
           <button type="button" disabled={busy} className={linkBtn} onClick={() => void act({ action: 'back', move })}>{W.switchBack}</button>
-        )}
-        {n.kind === 'followed' && f.mode === 'follow' && (
-          <button type="button" disabled={busy} className={linkBtn} onClick={() => void act({ action: 'pin', move })}>{W.pinVersion}</button>
         )}
       </span>
     </div>

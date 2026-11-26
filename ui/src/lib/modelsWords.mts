@@ -132,7 +132,6 @@ export const W = {
   listFailed: 'Could not connect. Try again later.',
   chooseVersion: 'Choose a version',
   options: 'Options',
-  pinVersion: 'Pin to this version',
   makeDefault: 'Make default',
   followAgain: 'Follow automatically again',
   removeModel: 'Remove',

@@ -15,8 +15,6 @@ pub enum Action {
     /// Remove the family's row. Refused while the row is the first default
     /// chat model, unless `replacement` names the model that takes its place.
     Untick { replacement: Option<String> },
-    /// 固定在这个版本: stop following (the move named, if one is, must still be the latest).
-    Pin { moved: Option<u64> },
     /// 恢复自动跟上.
     Follow,
     /// Run this exact version, pinned.
@@ -102,11 +100,6 @@ pub(super) fn run(f: &Families, config: &mut Config, creds: &Credentials, (name,
             }
             f.disarm(&id);
             Ok(binding::remove(config, &id))
-        }
-        Action::Pin { moved } => {
-            let (id, _) = needs_row()?;
-            f.disarm(&id);
-            Ok(binding::pin(config, &id, moved))
         }
         Action::Follow => {
             let (id, model) = needs_row()?;

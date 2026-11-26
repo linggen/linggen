@@ -34,7 +34,6 @@ impl Request {
         match (action.as_str(), model, moved) {
             ("tick", None, None) => Ok(Action::Tick),
             ("untick", replacement, None) => Ok(Action::Untick { replacement }),
-            ("pin", None, moved) => Ok(Action::Pin { moved }),
             ("follow", None, None) => Ok(Action::Follow),
             ("choose", Some(model), None) => Ok(Action::Choose { model }),
             ("ack", None, Some(moved)) => Ok(Action::Ack { moved }),

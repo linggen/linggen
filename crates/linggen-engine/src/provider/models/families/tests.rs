@@ -180,7 +180,7 @@ async fn every_notice_action_answers_only_the_move_it_names() {
     let before = w.settings.clone();
     let same = |w: &World| toml::to_string(&w.settings).unwrap() == toml::to_string(&before).unwrap();
     // A stale number changes nothing, whatever the action.
-    for action in [Action::Ack { moved: 9 }, Action::Back { moved: 9 }, Action::Pin { moved: Some(9) }] {
+    for action in [Action::Ack { moved: 9 }, Action::Back { moved: 9 }] {
         assert_eq!(w.act("claude-opus", action), Ok(false));
         assert!(same(&w));
     }
@@ -220,10 +220,6 @@ async fn going_back_pins_the_previous_model_after_access_is_checked_again() {
     let row = w.row("claude-opus");
     assert_eq!((row.model.as_str(), row.family_binding.as_ref().unwrap().follows()), ("claude-opus-5-5", true));
     assert_eq!(row.family_binding.as_ref().unwrap().notice().unwrap().seq(), 2);
-    // 固定在这个版本: pinned where it is; naming the latest move.
-    assert_eq!(w.act("claude-opus", Action::Pin { moved: Some(1) }), Ok(false), "move 1 is not the latest");
-    assert_eq!(w.act("claude-opus", Action::Pin { moved: Some(2) }), Ok(true));
-    assert_eq!(w.act("claude-opus", Action::Pin { moved: Some(2) }), Ok(false));
 }
 
 #[tokio::test]
@@ -299,7 +295,7 @@ async fn a_row_whose_address_was_edited_away_is_an_exact_row() {
     let json = serde_json::to_value(w.families.view(&w.settings, &w.creds, ("anthropic", ANTHROPIC)).unwrap()).unwrap();
     let opus = json["families"].as_array().unwrap().iter().find(|f| f["family"] == "claude-opus").unwrap();
     assert_eq!(opus["ticked"], false);
-    assert_eq!(w.act("claude-opus", Action::Pin { moved: None }), Err(Refusal::Missing));
+    assert_eq!(w.act("claude-opus", Action::Follow), Err(Refusal::Missing));
 }
 
 #[tokio::test]

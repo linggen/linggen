@@ -510,7 +510,6 @@ export const ZH: Record<string, string> = {
   'Could not connect. Try again later.': '暂时连不上，稍后再试。',
   'Choose a version': '选择版本',
   'Options': '选项',
-  'Pin to this version': '固定在这个版本',
   'Make default': '设为默认',
   'Follow automatically again': '恢复自动跟上',
   'New generations are followed automatically, with one notice.': '出新一代时自动跟上，会告诉你一次。',

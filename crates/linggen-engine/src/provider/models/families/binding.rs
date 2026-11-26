@@ -210,18 +210,6 @@ pub(super) fn acknowledge(config: &mut Config, id: &str, seq: u64) -> bool {
     true
 }
 
-/// 固定在这个版本: stop following. A move named by `seq` must still be the
-/// latest; an unnamed pin is a plain choice.
-pub(super) fn pin(config: &mut Config, id: &str, seq: Option<u64>) -> bool {
-    let Some((row, mut binding)) = row_mut(config, id) else { return false };
-    if binding.mode == Mode::Pinned || seq.is_some_and(|n| binding.last_move.as_ref().is_none_or(|m| m.seq != n)) {
-        return false;
-    }
-    binding.mode = Mode::Pinned;
-    row.family_binding = Some(binding);
-    true
-}
-
 /// 恢复自动跟上: follow again. The caller then asks the selector; nothing
 /// moves here.
 pub(super) fn resume(config: &mut Config, id: &str) -> bool {
