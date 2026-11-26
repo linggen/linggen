@@ -3,6 +3,7 @@
 //! The pieces, each deciding one thing:
 //! - `binding` — the only writer of a row's [`FamilyBinding`] and of the
 //!   starter record; every change of a ticked row goes through it.
+//! - `cloud` — Linggen Cloud's starter and retired ids, settled when the config is read.
 //! - `evidence` — which model ids a provider lists for this endpoint and key.
 //! - `follow` — which following rows move, and the go-back of a refused move.
 //! - `act` — what a person's tick, untick, pin, follow, choose, acknowledge
@@ -15,11 +16,13 @@
 
 mod act;
 mod binding;
+mod cloud;
 mod evidence;
 mod follow;
 mod view;
 
 pub use act::{Action, Refusal};
+pub(crate) use cloud::settle as settle_cloud;
 pub use binding::{FamilyBinding, FamilyStarts, LastMove, Mode, MoveKind};
 pub use view::FamiliesView;
 pub(super) use view::PriceLine;
@@ -102,7 +105,8 @@ impl Families {
         let filed = creds.endpoints.iter().filter_map(|e| Endpoint::of(&list, offered, &e.provider, &e.url, creds));
         for e in named.into_iter().chain(rows.chain(filed).filter(|_| endpoint.is_none())) {
             let address = e.place.base;
-            if let Some(key) = e.key.filter(|_| !asks.iter().any(|(p, _)| p.endpoint_key == e.place.endpoint_key && p.is_at(address))) {
+            // The account has no provider list to ask: the relay serves what the list names.
+            if let Some(key) = e.key.filter(|_| !e.place.is_account()).filter(|_| !asks.iter().any(|(p, _)| p.endpoint_key == e.place.endpoint_key && p.is_at(address))) {
                 asks.push((e.place, key));
             }
         }
@@ -213,6 +217,7 @@ impl<'a> Endpoint<'a> {
             usable: &l.usable,
         });
         let access = match (&self.key, evidence.as_ref()) {
+            _ if self.place.is_account() => Access::Account,
             (_, Some(evidence)) => Access::Listed(evidence),
             (Some(_), None) => Access::Unchecked,
             (None, None) => Access::NoKey,

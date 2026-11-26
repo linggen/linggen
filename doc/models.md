@@ -36,9 +36,11 @@ All cloud providers (except ChatGPT) use the OpenAI-compatible chat completions 
 
 ### Default: Linggen Cloud
 
-New installs default to `deepseek-flash` (DeepSeek V4.1 Flash) via Linggen Cloud (the built-in
-proxy model, metered against the linggen.dev account). No API key needed —
-just sign in:
+New installs default to `qwen3.8-flash` via Linggen Cloud, the list's starter, ticked once when the
+config is first read. Linggen Cloud's five chat models (`qwen3.8-flash`, `qwen4-max`, `deepseek-v4.1-flash`,
+`glm-5.3-prime`, `kimi-k3.1-pro`) are ticked in Settings → Models like any provider's; only ticked ones reach a
+session's picker. They run through the linggen.dev relay on the account, usage shown as a percentage. A saved
+`deepseek-flash` or `deepseek-v4-flash` becomes the ticked `deepseek-v4.1-flash`. No API key needed — just sign in:
 
 ```bash
 ling account login  # Opens browser → sign in to linggen.dev

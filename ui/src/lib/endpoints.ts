@@ -58,12 +58,18 @@ export interface UsageState {
   allowance: number;
   warn: boolean;
   over: boolean;
+  /** 0–100, the larger of the day's and the month's share of Linggen Cloud's dollar limit (the site's `usage.percent`). */
+  percent?: number;
+  /** ISO time the limit that binds resets (`usage.resets_at`). */
+  resets_at?: string;
 }
 
 /** A trial's token budget. */
 export interface TrialState {
   tokens: number;
   budget: number;
+  /** 0–100 of the dollar trial. */
+  percent?: number;
   started_at: number | null;
   expires_at: number | null;
   active: boolean;

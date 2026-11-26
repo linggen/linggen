@@ -1,8 +1,10 @@
 /**
- * The families of one key provider: a checkbox each, what it runs now and its
+ * The families of one provider: a checkbox each, what it runs now and its
  * dated estimated price, the move notice, and ⋯. Everything shown is the
  * engine's answer (`Provider.families`); a click calls the family route and
- * the list is redrawn from what it returns.
+ * the list is redrawn from what it returns. Linggen Cloud's models are ticked
+ * here too (one tick list); a provider paid by the account shows no price and
+ * no default control — 首选/备选 stay on the 聊天 card.
  */
 import React, { useState } from 'react';
 import { providersApi } from '../../lib/endpoints';
@@ -43,7 +45,7 @@ export const FamilyList: React.FC<Props> = (props) => {
           {matches.length > DRAWN && <p className={hintCls}>{W.searchToSee}</p>}
         </details>
       )}
-      <p className={`${hintCls} mt-2`}>{W.followNote}</p>
+      {provider.way !== 'account' && <p className={`${hintCls} mt-2`}>{W.followNote}</p>}
     </div>
   );
 };
@@ -62,7 +64,8 @@ export const Price: React.FC<{ price?: PriceLine; ratesUnavailable?: boolean; no
 const FamilyRow: React.FC<Props & { family: Family }> = ({ provider, family: f, run, busy, makeDefault }) => {
   const act = (action: FamilyAction) => run(() => providersApi.family(provider.id, f.family, action));
   const model = familyModel(f);
-  const menu = f.ticked && f.row ? [
+  const paidByAccount = provider.way === 'account';
+  const menu = f.ticked && f.row && !paidByAccount ? [
     ...(f.mode === 'pinned' ? [{ label: W.followAgain, run: () => void act({ action: 'follow' }) }] : []),
     { label: W.makeDefault, run: () => void makeDefault(f.row!) },
   ] : [];
@@ -80,7 +83,7 @@ const FamilyRow: React.FC<Props & { family: Family }> = ({ provider, family: f, 
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-1.5 text-xs font-semibold">
             <span data-no-i18n>{f.label}</span>
-            {f.mode === 'pinned' && <Tag tone="blue">{W.pinned}</Tag>}
+            {f.mode === 'pinned' && !paidByAccount && <Tag tone="blue">{W.pinned}</Tag>}
             {f.unverified && <Tag>{W.unverified}</Tag>}
             {f.references.map((r) => {
               const used = usedWords(r);
@@ -88,14 +91,14 @@ const FamilyRow: React.FC<Props & { family: Family }> = ({ provider, family: f, 
             })}
           </div>
           <div className="mt-0.5 flex flex-wrap gap-x-1.5 text-[11px] text-slate-500 dark:text-slate-400">
-            {model ? (
+            {model && paidByAccount ? null : model ? (
               <>
                 <span>{say(f.ticked ? W.now : W.wouldBe, { name: model.name })}</span>
                 <span aria-hidden>·</span>
                 <span><Price price={model.price} ratesUnavailable={provider.families?.rates_unavailable} /></span>
               </>
             ) : (
-              !['checking', 'list_failed', 'no_access', 'no_key'].includes(f.hold ?? '') && <span>{W.holdChoose}</span>
+              !paidByAccount && !['checking', 'list_failed', 'no_access', 'no_key'].includes(f.hold ?? '') && <span>{W.holdChoose}</span>
             )}
             {f.hold === 'checking' && <span>{W.checkingKey}</span>}
             {f.hold === 'list_failed' && <span>{W.listFailed}</span>}

@@ -106,12 +106,12 @@ async fn a_key_ticks_the_starter_family_once_and_never_again() {
     assert!(!body.to_string().contains(KEY), "the key is in no answer");
     let row = sonnet["row"].as_str().unwrap().to_string();
     assert!(row.starts_with("fam-") && !row.contains("sonnet"), "{row}");
-    assert_eq!(w.api.get("/api/config").await["family_starts"], json!(["anthropic"]));
+    assert_eq!(w.api.get("/api/config").await["family_starts"], json!(["linggen-cloud", "anthropic"]), "Linggen Cloud's starter was ticked when the config was read");
     // Unticked, and the key saved again: it does not come back, now or after a restart.
     let (status, body) = act(&w, &id, "claude-sonnet", json!({"action": "untick"})).await;
     assert_eq!(status, 200, "{body}");
     w.engine.restart(&w.home).await;
-    assert_eq!(w.api.get("/api/config").await["family_starts"], json!(["anthropic"]), "the record survives a restart");
+    assert_eq!(w.api.get("/api/config").await["family_starts"], json!(["linggen-cloud", "anthropic"]), "the record survives a restart");
     let (_, body) = w.api.put_json(&format!("/api/providers/{id}/key"), json!({"api_key": "another-test-marker"})).await;
     assert_eq!(family(&body, "claude-sonnet")["ticked"], false);
     assert_eq!(anthropic(&body)["models"], json!([]));
@@ -299,7 +299,7 @@ async fn a_provider_without_a_list_gives_a_choice_not_a_tick() {
     let (id, body) = connect(&w).await;
     // The list could not be read: no starter is ticked and no tick is made on a guess.
     assert_eq!(anthropic(&body)["models"], json!([]));
-    assert_eq!(w.api.get("/api/config").await.get("family_starts"), None, "a key not proven records nothing");
+    assert_eq!(w.api.get("/api/config").await["family_starts"], json!(["linggen-cloud"]), "a key not proven records nothing (only the account's starter is there)");
     assert_eq!(act(&w, &id, "claude-opus", json!({"action": "tick"})).await, (409, "needs_choice".into()));
     assert_eq!(family(&w.api.get("/api/providers").await, "claude-opus")["hold"], "list_failed");
 }

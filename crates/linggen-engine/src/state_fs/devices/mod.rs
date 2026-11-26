@@ -256,7 +256,24 @@ fn connect_allowed_ids() -> Vec<String> {
 
 /// A phone's allow-list follows the ChatGPT catalog in force.
 fn migrate_retired_models(settings: &mut serde_json::Map<String, serde_json::Value>) -> bool {
-    follow_catalog(settings, &crate::provider::models::chatgpt_catalog::current())
+    let cloud = retire_cloud_ids(settings);
+    follow_catalog(settings, &crate::provider::models::chatgpt_catalog::current()) | cloud
+}
+
+/// A retired Linggen Cloud id in a phone's allow-list becomes the model it
+/// became (deduped); the Mac ticks that model (`families::settle_cloud`).
+fn retire_cloud_ids(settings: &mut serde_json::Map<String, serde_json::Value>) -> bool {
+    use crate::provider::models::{LINGGEN_CLOUD_RETIRED_MODEL_IDS as RETIRED, LINGGEN_CLOUD_RETIRED_SUCCESSOR as NOW};
+    let Some(list) = settings.get_mut("models").and_then(|v| v.as_array_mut()) else { return false };
+    if !list.iter().any(|x| x.as_str().is_some_and(|id| RETIRED.contains(&id))) {
+        return false;
+    }
+    let mut seen = std::collections::HashSet::new();
+    *list = std::mem::take(list).into_iter()
+        .map(|x| if x.as_str().is_some_and(|id| RETIRED.contains(&id)) { serde_json::Value::from(NOW) } else { x })
+        .filter(|x| seen.insert(x.to_string()))
+        .collect();
+    true
 }
 
 /// Move each older ChatGPT id in a phone's allow-list to its family's model
@@ -680,7 +697,7 @@ mod tests {
         assert_eq!(
             s["models"],
             serde_json::json!([
-                "deepseek-flash",
+                "deepseek-v4.1-flash",
                 "gpt-6.1-terra",
                 "gpt-6-luna",
                 "gpt-6.2-sol"

@@ -59,7 +59,7 @@ fn the_shipped_list_passes_the_same_check_and_carries_both_editions() {
     // Mainland services are reachable from mainland; everything else there stays unverified.
     let reachable = ["deepseek", "dashscope-cn", "moonshot", "zhipu", "siliconflow"];
     assert!(mainland.iter().flat_map(|p| p.entries.iter().map(move |e| (p, e))).all(|(p, e)| e.unverified != reachable.contains(&p.key.as_str())), "mainland unverified only off the mainland services");
-    assert!(mainland.iter().flat_map(|p| p.entries.iter().map(move |e| (p, e))).all(|(p, e)| e.starter == (p.key == "deepseek" && e.key == "flash")), "deepseek flash is the one mainland starter");
+    assert!(mainland.iter().flat_map(|p| p.entries.iter().map(move |e| (p, e))).all(|(p, e)| e.starter == ((p.key == "deepseek" && e.key == "flash") || (p.key == "linggen-cloud" && e.key == "qwen3-8-flash"))), "deepseek flash and Linggen Cloud's Qwen3.8 Flash are the mainland starters");
     let international = list.providers(Edition::International);
     assert!(international.iter().any(|p| p.key == "anthropic"));
 }
@@ -82,8 +82,8 @@ fn the_list_agrees_with_the_engine_on_what_it_runs() {
             providers.iter().filter(|p| p.key == key).flat_map(|p| &p.entries).map(|e| e.model.as_str()).collect()
         };
         assert_eq!(models("chatgpt"), Snapshot::seed().builtin_ids().iter().map(String::as_str).collect::<Vec<_>>(), "chatgpt built-ins");
-        // Linggen Cloud lists exactly three uses: chat, live voice, read-aloud.
-        assert_eq!(models("linggen-cloud"), [LINGGEN_CLOUD_MODEL_ID, "qwen-audio-3.1-realtime-flash", "qwen3-tts-flash"]);
+        // Linggen Cloud lists its five chat models, then live voice and read-aloud; the starter is first.
+        assert_eq!(models("linggen-cloud"), [LINGGEN_CLOUD_MODEL_ID, "qwen4-max", "deepseek-v4.1-flash", "glm-5.3-prime", "kimi-k3.1-pro", "qwen-audio-3.1-realtime-flash", "qwen3-tts-flash"]);
         let live: Vec<_> = providers.iter().flat_map(|p| &p.entries).filter(|e| e.live.is_some()).collect();
         assert_eq!(live.len(), 2, "Qwen Audio Realtime only (on its own card and through Linggen Cloud); Gemini Live is development-only");
         for entry in &live {

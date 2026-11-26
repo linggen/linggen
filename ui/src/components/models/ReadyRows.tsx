@@ -1,7 +1,8 @@
 /**
  * 开箱即用: the Linggen Cloud account and the ChatGPT subscription. A sign-in
- * button and the usage the engine already reports; no key field. The built-in
- * models of each are listed under its name, as the engine's answer has them.
+ * button and the usage the engine already reports; no key field. ChatGPT lists
+ * its built-in models under its name; Linggen Cloud opens to the same tick
+ * list a key provider has (`FamilyList`), then its voice uses as words.
  */
 import React, { useState } from 'react';
 import { LogIn, LogOut } from 'lucide-react';
@@ -10,8 +11,10 @@ import { W } from '../../lib/modelsWords.mts';
 import type { ModelMove } from '../../types';
 import type { Provider } from '../../lib/providers.mts';
 import { CodexUsage } from '../CodexUsage';
-import { UsageMeter } from '../UsageMeter';
-import { Row } from './shell';
+import { UsageLink, useCloudUsage, usageToneCls } from '../UsageMeter';
+import { FamilyList } from './FamilyList';
+import { Row, hintCls, sectionLabel, sectionRule } from './shell';
+import type { Run } from './useProviders';
 
 const CODEX = { login: '/api/auth/codex/login', logout: '/api/auth/codex/logout', status: '/api/auth/codex/status' };
 const signInBtn = 'flex items-center gap-1.5 rounded-full bg-blue-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-blue-700 disabled:opacity-50';
@@ -22,12 +25,18 @@ type Props = {
   moved: Record<string, ModelMove | undefined>;
   /** Read the page again after a sign-in, sign-out or stay. */
   changed: () => Promise<void>;
+  /** What the opened Linggen Cloud row needs to tick a model (as a key row has it). */
+  run: Run;
+  busy: boolean;
+  makeDefault: (modelId: string) => Promise<void>;
+  open: boolean;
+  onToggle: () => void;
 };
 
-/** Linggen Cloud's voice uses, as words (it lists all three uses: chat, live voice, read-aloud). */
+/** Linggen Cloud's voice uses, as words: live voice and read-aloud are uses, not models to tick. */
 const cloudUseWords = (p: Provider) => p.models.filter((m) => m.builtin && (m.kind === 'live_voice' || m.kind === 'speak')).map((m) => (m.kind === 'live_voice' ? W.liveVoice : W.readAloud));
 
-/** Built-in model ids, then where its sign-in stands. */
+/** Where ChatGPT's sign-in stands, then its built-in model ids. */
 const subtitle = (p: Provider, note: string) => (
   <>
     <span>{p.fix === 'sign_in' ? W.notSignedIn : W.signedIn}</span>
@@ -35,7 +44,6 @@ const subtitle = (p: Provider, note: string) => (
     <span>{note}</span>
     <span aria-hidden> · </span>
     <span data-no-i18n>{p.models.filter((m) => m.builtin && m.kind === 'chat').map((m) => m.id).join(' · ')}</span>
-    {cloudUseWords(p).map((word) => <React.Fragment key={word}><span aria-hidden> · </span><span>{word}</span></React.Fragment>)}
   </>
 );
 
@@ -46,8 +54,10 @@ export const ReadyRow: React.FC<Props> = (props) => {
   return <Row testId={p.provider} name={p.label} way={p.way} subtitle={subtitle(p, '')} />;
 };
 
-const CloudRow: React.FC<Props> = ({ provider: p, changed }) => {
+const CloudRow: React.FC<Props> = ({ provider: p, changed, run, busy, makeDefault, open, onToggle }) => {
   const [waiting, setWaiting] = useState(false);
+  const signedIn = p.fix !== 'sign_in';
+  const usage = useCloudUsage(signedIn);
   const signIn = async () => {
     setWaiting(true);
     try {
@@ -56,14 +66,27 @@ const CloudRow: React.FC<Props> = ({ provider: p, changed }) => {
       setWaiting(false);
     }
   };
-  const right = p.fix === 'sign_in'
-    ? <button type="button" className={signInBtn} disabled={waiting} onClick={() => void signIn()}><LogIn size={12} />{waiting ? W.waitingBrowser : W.signInLinggen}</button>
-    : undefined;
+  const right = signedIn ? undefined
+    : <button type="button" className={signInBtn} disabled={waiting} onClick={() => void signIn()}><LogIn size={12} />{waiting ? W.waitingBrowser : W.signInLinggen}</button>;
+  // Collapsed: whether the account is signed in, and how much of the allowance is used.
+  const line = (
+    <>
+      <span>{signedIn ? W.signedIn : W.notSignedIn}</span>
+      {usage && <><span aria-hidden> · </span><span data-testid="cloud-usage" className={usageToneCls(usage.tone)}>{usage.text}</span></>}
+    </>
+  );
+  const uses = cloudUseWords(p);
   return (
-    <div>
-      <Row testId="linggen-cloud" name={p.label} way={p.way} subtitle={subtitle(p, W.cloudNote)} right={right} />
-      {p.fix !== 'sign_in' && <div className="mx-3 mt-1"><UsageMeter /></div>}
-    </div>
+    <Row testId="linggen-cloud" name={p.label} way={p.way} subtitle={line} right={right} open={open} onToggle={onToggle}>
+      <div className={`${sectionRule} grid gap-2 sm:grid-cols-[4rem_minmax(0,1fr)]`}>
+        <span className={sectionLabel}>{W.models}</span>
+        <div className="min-w-0 flex-1">
+          <FamilyList provider={p} run={run} busy={busy} makeDefault={makeDefault} />
+          {uses.length > 0 && <p data-testid="cloud-uses" className={`${hintCls} mt-1`}>{uses.join(' · ')}</p>}
+          {usage?.metered && <p className="mt-1"><UsageLink usage={usage} /></p>}
+        </div>
+      </div>
+    </Row>
   );
 };
 

@@ -60,7 +60,7 @@ provided_by?: string | null,
 /**
  * True for models injected by the engine (Linggen Cloud, ChatGPT)
  * rather than configured by the user. Never persisted by the user —
- * only set at runtime by inject_linggen_cloud/inject_chatgpt_builtin —
+ * only set at runtime by inject_chatgpt_builtin —
  * so Settings can render them as read-only built-in cards instead of
  * editable entries, regardless of what's in the user's config file.
  */

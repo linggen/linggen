@@ -8,7 +8,7 @@ use serde_json::json;
 
 use crate::config::{providers::{known_names, Way}, Config, SignIn};
 use crate::provider::models::{EditionChoice, ModelCatalog};
-use crate::provider::models::providers_view::{editable_row, is_listed_address, live_card_at, preset_named, presets, filed_endpoint, group_keys, keep_model_key, provider_id, ProviderView};
+use crate::provider::models::providers_view::{editable_row, is_listed_address, linggen_cloud_card_at, live_card_at, preset_named, presets, filed_endpoint, group_keys, keep_model_key, provider_id, ProviderView};
 use crate::credentials::{self, Credentials};
 use crate::server::{person, ServerState};
 
@@ -39,7 +39,8 @@ pub(super) async fn answer(state: &ServerState, config: &Config, creds: &Credent
             providers.push(ProviderView::draft(&config.model_catalog, name, url));
         }
     }
-    for provider in providers.iter_mut().filter(|p| p.way == Way::Key.as_str()) {
+    // Linggen Cloud's models are ticked like a key provider's (the account is its key).
+    for provider in providers.iter_mut().filter(|p| p.way == Way::Key.as_str() || p.way == Way::Account.as_str()) {
         let filed = filed_endpoint(config, creds, &provider.id).unwrap_or((&provider.provider, &provider.url));
         provider.families = state.manager.families.view(config, creds, filed);
     }
@@ -219,7 +220,8 @@ async fn mutate(state: Arc<ServerState>, headers: HeaderMap, edit: Edit) -> Resp
 }
 
 pub(super) async fn endpoint(state: &ServerState, config: &Config, creds: &Credentials, id: &str) -> Result<(String, String), Failure> {
-    let filed = filed_endpoint(config, creds, id).map(|(name, url)| (name.to_owned(), url.to_owned()));
+    let filed = filed_endpoint(config, creds, id).map(|(name, url)| (name.to_owned(), url.to_owned()))
+        .or_else(|| linggen_cloud_card_at(id));
     let pair = match filed {
         Some(pair) => pair,
         None => {

@@ -131,7 +131,7 @@ pub(super) fn of(f: &Families, config: &Config, creds: &Credentials, (name, url)
     let listing = result.as_ref().and_then(|entry| entry.as_deref());
     // No facts at this address: no rate is shown and none is borrowed from another.
     let rates_unavailable = list.facts_at(endpoint.place.endpoint_key).next().is_none();
-    let access = if rates_unavailable && endpoint.key.is_some() {
+    let access = if rates_unavailable && endpoint.key.is_some() && !endpoint.place.is_account() {
         match &result { None => Some("checking"), Some(None) => Some("list_failed"), _ => None }
     } else { None };
     let mut families = Vec::new();

@@ -299,7 +299,7 @@ pub struct ModelConfig {
     pub provided_by: Option<String>,
     /// True for models injected by the engine (Linggen Cloud, ChatGPT)
     /// rather than configured by the user. Never persisted by the user —
-    /// only set at runtime by inject_linggen_cloud/inject_chatgpt_builtin —
+    /// only set at runtime by inject_chatgpt_builtin —
     /// so Settings can render them as read-only built-in cards instead of
     /// editable entries, regardless of what's in the user's config file.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -611,11 +611,20 @@ impl Config {
                 let config = Config::from_toml(&content)
                     .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
                 crate::provider::set_first_event_timeout(config.routing.first_event_timeout_secs);
-                return Ok((config, Some(path)));
+                return Ok((config.with_cloud_settled(), Some(path)));
             }
         }
 
-        Ok((Config::default(), None))
+        Ok((Config::default().with_cloud_settled(), None))
+    }
+
+    /// The config as the engine starts on it (`load_with_path`, the one startup read;
+    /// `from_toml` also reads files that are only being checked): Linggen Cloud's starter ticked
+    /// once, and a retired Linggen Cloud id moved to the model it became
+    /// (`families::settle_cloud`).
+    fn with_cloud_settled(mut self) -> Self {
+        crate::provider::models::families::settle_cloud(&mut self);
+        self
     }
 
     /// Keep the model fallback switch when a different settings page saves.
@@ -632,7 +641,6 @@ impl Config {
         let mut config: Config = toml::from_str(content)?;
         config.server.migrated_legacy_addr = config.server.migrate_legacy_fields();
         config.migrate_retired_chatgpt_builtins();
-        config.migrate_retired_cloud_ids();
         config.migrate_retired_claude_default();
         if let (Some(model), Some(value)) = (config.routing.default_models.first(), config.uses.legacy_chat_effort.take()) {
             config.uses.model_effort.entry(model.clone()).or_insert(value);
@@ -810,28 +818,6 @@ impl Config {
         }
     }
 
-    /// Re-point persisted references to a retired Linggen Cloud id (routing
-    /// defaults, the pet's pin) at the current one. A user-defined model that
-    /// happens to reuse the retired id is theirs and is left alone.
-    fn migrate_retired_cloud_ids(&mut self) {
-        use crate::provider::models::{LINGGEN_CLOUD_MODEL_ID, LINGGEN_CLOUD_RETIRED_MODEL_IDS};
-        let retired = |id: &str| {
-            LINGGEN_CLOUD_RETIRED_MODEL_IDS.contains(&id) && !self.models.iter().any(|m| m.id == id)
-        };
-        let mut defaults = std::mem::take(&mut self.routing.default_models);
-        for dm in &mut defaults {
-            if retired(dm) {
-                *dm = LINGGEN_CLOUD_MODEL_ID.to_string();
-            }
-        }
-        let mut seen = std::collections::HashSet::new();
-        defaults.retain(|id| seen.insert(id.clone()));
-        self.routing.default_models = defaults;
-        if retired(&self.pet.model) {
-            self.pet.model = LINGGEN_CLOUD_MODEL_ID.to_string();
-        }
-    }
-
     /// What `ling status` says about the config files themselves: one that
     /// exists but cannot be loaded (the engine then runs on defaults), and
     /// copies of earlier unloadable files set aside beside them
@@ -970,8 +956,7 @@ impl Config {
         // Warn (log) if default_models references non-existent model IDs.
         // Built-in models (injected at ModelManager build) are valid defaults.
         for dm in &self.routing.default_models {
-            if dm == crate::provider::models::LINGGEN_CLOUD_MODEL_ID
-                || crate::provider::models::chatgpt_catalog::is_builtin(dm)
+            if crate::provider::models::chatgpt_catalog::is_builtin(dm)
             {
                 continue;
             }
@@ -1031,10 +1016,10 @@ fn set_aside_if_unloadable(path: &Path) -> Result<()> {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            // No hardcoded models — the built-in Linggen Cloud (deepseek-flash)
-            // and ChatGPT (chatgpt_catalog) models are always injected by ModelManager
-            // at runtime (see inject_linggen_cloud / inject_chatgpt_builtin in
-            // provider/models.rs), so a fresh install needs nothing here.
+            // No hardcoded models — the ChatGPT (chatgpt_catalog) models are
+            // injected by ModelManager at runtime (inject_chatgpt_builtin), and
+            // Linggen Cloud's starter is ticked when the config is read
+            // (`Config::with_cloud_settled`), so a fresh install needs nothing here.
             models: Vec::new(),
             server: ServerConfig {
                 url: Some(format!("{}:{DEFAULT_PORT}", default_server_host())),
@@ -1815,28 +1800,25 @@ mod tests {
         assert_eq!(cfg.routing.default_models, vec!["gpt-7-sol".to_string()]);
     }
 
-    /// A retired Linggen Cloud id persisted as a default or a pet pin follows
-    /// the rename; a user's own model under that id is theirs and stays.
+    /// A retired Linggen Cloud id persisted as a default or a pet pin becomes the
+    /// model it became, and that model is ticked: the person keeps working.
     #[test]
-    fn retired_cloud_ids_follow_the_rename() {
+    fn retired_cloud_ids_become_the_model_they_became_and_it_is_ticked() {
         let mut cfg = Config::default();
         cfg.routing.default_models = vec!["deepseek-v4-flash".into(), "deepseek-flash".into()];
-        cfg.pet.model = "deepseek-v4-flash".into();
-        cfg.migrate_retired_cloud_ids();
-        assert_eq!(
-            cfg.routing.default_models,
-            vec!["deepseek-flash".to_string()]
-        );
-        assert_eq!(cfg.pet.model, "deepseek-flash");
+        cfg.pet.model = "deepseek-flash".into();
+        assert!(crate::provider::models::families::settle_cloud(&mut cfg));
+        assert_eq!(cfg.routing.default_models, vec!["deepseek-v4.1-flash".to_string()]);
+        assert_eq!(cfg.pet.model, "deepseek-v4.1-flash");
+        let ticked: Vec<_> = cfg.models.iter().map(|m| (m.id.as_str(), m.model.as_str(), m.sign_in())).collect();
+        assert!(ticked.contains(&("deepseek-v4.1-flash", "deepseek-v4.1-flash", SignIn::LinggenAccount)), "{ticked:?}");
+        assert!(!crate::provider::models::families::settle_cloud(&mut cfg), "settled once");
 
         let mut own = valid_config();
         own.models[0].id = "deepseek-v4-flash".into();
         own.routing.default_models = vec!["deepseek-v4-flash".into()];
-        own.migrate_retired_cloud_ids();
-        assert_eq!(
-            own.routing.default_models,
-            vec!["deepseek-v4-flash".to_string()]
-        );
+        crate::provider::models::families::settle_cloud(&mut own);
+        assert_eq!(own.routing.default_models, vec!["deepseek-v4-flash".to_string()]);
     }
 
     /// `url` is authored, so it wins outright — a stale legacy pair left in the

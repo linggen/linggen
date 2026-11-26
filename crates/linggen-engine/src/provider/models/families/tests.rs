@@ -685,3 +685,78 @@ async fn a_ticked_row_follows_the_same_target_in_either_edition() {
     }
     assert_eq!(moved[0], moved[1], "the edition does not change what a family follows");
 }
+
+// ── Linggen Cloud: ticked like any provider, the account for a key ──
+
+const CLOUD: (&str, &str) = ("openai", "https://linggen.dev/api/llm");
+
+impl World {
+    fn cloud_act(&mut self, family: &str, action: Action) -> Result<bool, Refusal> {
+        self.families.act(&mut self.settings, &self.creds, CLOUD, family, action)
+    }
+}
+
+#[test]
+fn a_cloud_model_is_ticked_with_no_key_and_no_provider_list_and_runs_on_the_account() {
+    let mut w = world(TODAY);
+    w.creds = Credentials::default();
+    assert_eq!(w.cloud_act("qwen4-max", Action::Tick), Ok(true));
+    let row = w.settings.models.iter().find(|m| m.model == "qwen4-max").expect("ticked");
+    assert_eq!(row.id, "qwen4-max", "named by its wire model");
+    assert_eq!(row.sign_in(), crate::config::SignIn::LinggenAccount);
+    assert!(row.api_key.is_none() && row.supports_tools == Some(true) && !row.is_builtin);
+    assert_eq!(w.cloud_act("qwen4-max", Action::Tick), Ok(false), "a second tick changes nothing");
+    assert_eq!(w.cloud_act("live-voice", Action::Tick), Err(Refusal::Missing), "a use is not a model to tick");
+    assert_eq!(w.cloud_act("qwen4-max", Action::Untick { replacement: None }), Ok(true));
+    assert!(w.settings.models.is_empty());
+}
+
+#[test]
+fn the_cloud_view_lists_the_five_chat_models_and_ticks_show_in_it() {
+    let mut w = world(TODAY);
+    w.cloud_act("glm-5-3-prime", Action::Tick).unwrap();
+    let view = w.families.view(&w.settings, &w.creds, CLOUD).expect("the account has a view");
+    let view = serde_json::to_value(view).unwrap();
+    let rows: Vec<_> = view["families"].as_array().unwrap().iter().map(|f| (f["family"].as_str().unwrap(), f["ticked"].as_bool().unwrap())).collect();
+    assert_eq!(rows, [("qwen3-8-flash", false), ("qwen4-max", false), ("deepseek-v4-1-flash", false), ("glm-5-3-prime", true), ("kimi-k3-1-pro", false)]);
+    assert!(view.get("access").is_none(), "no key to check, no list to wait for");
+}
+
+#[test]
+fn the_starter_is_ticked_once_when_the_config_is_read() {
+    let mut cfg = Config::default();
+    assert!(settle_cloud(&mut cfg));
+    assert_eq!(cfg.models.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["qwen3.8-flash"]);
+    assert!(!settle_cloud(&mut cfg), "once");
+    // A person who unticked it is not given it back.
+    cfg.models.clear();
+    assert!(!settle_cloud(&mut cfg) && cfg.models.is_empty());
+}
+
+/// 4: a person whose saved default or fallback is `deepseek-flash` keeps working.
+#[test]
+fn a_saved_deepseek_flash_default_and_fallback_become_the_ticked_v4_1_row() {
+    let mut cfg = Config::default();
+    cfg.routing.default_models = vec!["deepseek-flash".into(), "gpt-6.2-sol".into()];
+    cfg.family_starts = Default::default();
+    assert!(settle_cloud(&mut cfg));
+    assert_eq!(cfg.routing.default_models, ["deepseek-v4.1-flash", "gpt-6.2-sol"]);
+    let row = cfg.models.iter().find(|m| m.id == "deepseek-v4.1-flash").expect("ticked");
+    assert_eq!((row.model.as_str(), row.sign_in()), ("deepseek-v4.1-flash", crate::config::SignIn::LinggenAccount));
+    let manager = crate::provider::models::ModelManager::new_with_credentials(cfg.models.clone(), &Credentials::default());
+    assert!(manager.has_model("deepseek-v4.1-flash"));
+    assert_eq!(manager.resolve_id("deepseek-flash").as_deref(), Some("deepseek-v4.1-flash"), "an old pin still lands on it");
+}
+
+/// 5: only ticked Linggen Cloud models are in the picker (`list_models`).
+#[test]
+fn only_ticked_cloud_models_are_offered_and_they_are_the_same_rows_as_any_provider() {
+    let mut w = world(TODAY);
+    w.cloud_act("kimi-k3-1-pro", Action::Tick).unwrap();
+    let manager = crate::provider::models::ModelManager::new_with_credentials(w.settings.models.clone(), &Credentials::default());
+    let cloud: Vec<String> = manager.list_models().into_iter().filter(|m| m.sign_in() == crate::config::SignIn::LinggenAccount).map(|m| m.id.clone()).collect();
+    assert_eq!(cloud, ["kimi-k3.1-pro"], "the unticked four are not offered");
+    // A ticked one can be the default and a fallback, as any ticked model can.
+    w.settings.make_default("kimi-k3.1-pro");
+    assert_eq!(w.settings.routing.default_models.first().map(String::as_str), Some("kimi-k3.1-pro"));
+}

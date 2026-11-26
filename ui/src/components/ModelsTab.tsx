@@ -101,7 +101,7 @@ export const ModelsTab: React.FC<{
       {signInLine && <p data-testid="signed-in-default" className="text-xs text-green-700 dark:text-green-400">{signInLine}</p>}
       <section className={cardCls} data-testid="ready-to-use">
         <div className="space-y-1.5">
-          {readyToUse(providers).map((p) => <ReadyRow key={p.id} provider={p} moved={moved} changed={signedInChanged} />)}
+          {readyToUse(providers).map((p) => <ReadyRow key={p.id} provider={p} moved={moved} changed={signedInChanged} run={run} busy={busy} makeDefault={makeDefault} open={open === p.id} onToggle={() => setOpen(open === p.id ? null : p.id)} />)}
         </div>
       </section>
       <section className={cardCls} data-testid="own-providers">

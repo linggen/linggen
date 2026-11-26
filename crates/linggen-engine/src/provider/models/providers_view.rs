@@ -335,6 +335,12 @@ pub fn live_card_at(id: &str) -> Option<(String, String)> {
         .then(|| (place.provider.name.clone(), place.base.to_string()))
 }
 
+/// Linggen Cloud's card has no row or key to find it by: its id is the account's.
+pub fn linggen_cloud_card_at(id: &str) -> Option<(String, String)> {
+    let (name, url) = (super::catalog::LINGGEN_CLOUD_PROVIDER, super::catalog::linggen_cloud_url());
+    (provider_id(SignIn::LinggenAccount, name, &url) == id).then(|| (name.to_string(), url))
+}
+
 fn local_lanes(offered: Edition) -> impl Iterator<Item = ProviderView> {
     use runtime::{HUB_MODELS, PICTURES_LANE, PICTURE_MODEL, STT_MODEL, TTS_MODEL, VOICE_LANE};
     [

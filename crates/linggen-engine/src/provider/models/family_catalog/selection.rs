@@ -27,6 +27,9 @@ pub(crate) struct AccessEvidence<'a> {
 }
 
 pub(crate) enum Access<'a> {
+    /// The Linggen account: the relay serves every model the list names, so
+    /// there is no key and no provider list to check against.
+    Account,
     NoKey,
     Unchecked,
     Failed,
@@ -105,6 +108,7 @@ pub(crate) fn family_current<'a>(
         return FamilyCurrent::Unavailable;
     };
     let next = Target { id: &entry.model, facts: list.facts_for(place.endpoint_key, &entry.model) };
+    let account = matches!(access, Access::Account);
     let usable = match access {
         Access::Listed(e) if e.connection.credential_revision == connection.credential_revision
             && list.place_of(e.connection.endpoint).is_some_and(|p| p.endpoint_key == place.endpoint_key && p.is_at(&place.base)) => Some(e.usable),
@@ -117,12 +121,15 @@ pub(crate) fn family_current<'a>(
     if !next.is_chat() {
         return choose(Hold::NoChatLane);
     }
+    if account {
+        return FamilyCurrent::Current { current, next };
+    }
     if usable.is_some_and(|ids| !ids.contains(next.id)) {
         return choose(Hold::NoAccess);
     }
     if usable.is_none() {
         return match access {
-            Access::NoKey => FamilyCurrent::NoKey,
+            Access::NoKey | Access::Account => FamilyCurrent::NoKey,
             Access::Failed => FamilyCurrent::ListFailed,
             Access::Unchecked | Access::Listed(_) => FamilyCurrent::Checking { next },
         };

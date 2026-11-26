@@ -173,7 +173,8 @@ mod tests {
     fn a_person_who_is_not_the_owner_is_held_to_their_own_ceiling() {
         let people = household();
         let friend = policy_for(Some("u-friend"), &people);
-        assert_eq!(friend.allowed_models, Some(vec!["deepseek-flash".to_string()]));
+        // A share of a retired Linggen Cloud id also shares the model it became.
+        assert_eq!(friend.allowed_models, Some(vec!["deepseek-flash".to_string(), "deepseek-v4.1-flash".to_string()]));
         let skills = friend.allowed_skills.clone().expect("apps are held");
         assert_eq!(skills.len(), 1, "{skills:?}");
         assert!(skills.contains("music"), "game is the owner's alone, cfo is not theirs");

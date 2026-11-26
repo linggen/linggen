@@ -200,7 +200,6 @@ impl ModelManager {
         catalog: &chatgpt_catalog::Snapshot,
     ) -> Self {
         let mut configs = configs;
-        inject_linggen_cloud(&mut configs);
         let hidden = inject_chatgpt_builtin(&mut configs, catalog).into_iter().collect();
         let mut models = HashMap::new();
 
@@ -818,10 +817,16 @@ mod tests {
             m.resolve_id("gpt-5.5"),
             Some(chatgpt_catalog::primary_id())
         );
-        assert_eq!(
-            m.resolve_id("deepseek-v4-flash").as_deref(),
-            Some(LINGGEN_CLOUD_MODEL_ID)
-        );
+        // An old Linggen Cloud id lands on the model it became, once that is ticked.
+        let mut file = toml::Value::try_from(crate::config::Config::default()).unwrap();
+        file["routing"]["default_models"] = toml::Value::try_from(["deepseek-flash"]).unwrap();
+        let mut cfg = crate::config::Config::from_toml(&toml::to_string(&file).unwrap()).unwrap();
+        assert!(families::settle_cloud(&mut cfg));
+        assert_eq!(cfg.routing.default_models, ["deepseek-v4.1-flash"]);
+        let m = ModelManager::new_with_credentials(cfg.models, &Credentials::default());
+        for old in ["deepseek-v4-flash", "deepseek-flash"] {
+            assert_eq!(m.resolve_id(old).as_deref(), Some("deepseek-v4.1-flash"), "{old}");
+        }
         assert_eq!(m.resolve_id("gpt-6.2-sol").as_deref(), Some("gpt-6.2-sol"));
         assert!(m.resolve_id("no-such-model").is_none());
     }
@@ -835,8 +840,8 @@ mod tests {
         let m = ModelManager::new_with_catalog(vec![], &Credentials::default(), &snap);
         let mut offered: Vec<String> = m.list_models().iter().map(|c| c.id.clone()).collect();
         offered.sort();
+        // Linggen Cloud's models are ticked rows: none is built in.
         let mut want = snap.builtin_ids();
-        want.push(LINGGEN_CLOUD_MODEL_ID.to_string());
         want.sort();
         assert_eq!(offered, want);
         let mut ids = m.model_ids();

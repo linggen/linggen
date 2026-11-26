@@ -385,14 +385,15 @@ async fn a_message_handed_between_agents_cannot_read_a_secret_file() {
 
 /// A hand-off whose default model cannot run (Linggen Cloud, no linggen.dev
 /// sign-in — the fresh install's) says why and the one next step, naming a
-/// model that is ready — the one `agent_status op=models` marks ready.
+/// model that is ready — the one `agent_status op=models` marks ready. The saved
+/// default is the retired id `deepseek-flash`: it reads as the model it became.
 #[tokio::test]
 async fn a_hand_off_whose_default_cannot_run_names_a_ready_model() {
     let w = World::start(Setup { default_model: Some("deepseek-flash"), ..Setup::default() }).await;
     let ran = w.api.post("/mcp", agent_run(json!({"prompt": "Say done."}))).await;
     let said = ran["result"]["content"][0]["text"].as_str().unwrap_or_default().to_string();
     assert_eq!(ran["result"]["isError"], true, "{ran}");
-    assert!(said.contains("Not signed in to linggen.dev for model 'deepseek-flash'"), "{said}");
+    assert!(said.contains("Not signed in to linggen.dev for model 'deepseek-v4.1-flash'"), "{said}");
     let models = json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
         "params": {"name": "agent_status", "arguments": {"op": "models"}}});
     let models = w.api.post("/mcp", models).await;

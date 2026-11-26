@@ -766,15 +766,16 @@ async fn pair_me_lists_the_persons_models() {
     pair_friends_phone_with(&w, json!({"settings": {"models": ["gpt-6.2-sol"]}}));
     set_people(
         &w,
-        json!({"people": {"u-friend": {"models": ["deepseek-flash"]}}}),
+        json!({"people": {"u-friend": {"models": ["qwen3.8-flash", "qwen4-max"]}}}),
     )
     .await;
     let lan = Lan::new(&w);
     wait_for_the_phone(&lan).await;
     let body = lan.get("/api/pair/me").await;
+    // Only the ticked Linggen Cloud model (the starter) is theirs to use; the unticked one is not offered.
     assert_eq!(
         body["models"],
-        json!([{"id": "deepseek-flash", "kind": "cloud"}])
+        json!([{"id": "qwen3.8-flash", "kind": "cloud"}])
     );
     assert_eq!(body["settings"]["models"], json!(["gpt-6.2-sol"]));
 

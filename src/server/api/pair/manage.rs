@@ -91,10 +91,10 @@ pub(super) fn resolve_model_catalog(
             if crate::provider::models::chatgpt_catalog::is_builtin(id) {
                 return serde_json::json!({ "id": id, "kind": "oauth" });
             }
-            if id == crate::provider::models::LINGGEN_CLOUD_MODEL_ID {
-                return serde_json::json!({ "id": id, "kind": "cloud" });
-            }
             match config.chat_models().find(|m| &m.id == id) {
+                Some(m) if m.sign_in() == crate::config::SignIn::LinggenAccount => {
+                    serde_json::json!({ "id": id, "kind": "cloud" })
+                }
                 Some(m) if m.provider_kind() == crate::config::ProviderKind::Ollama => {
                     serde_json::json!({ "id": id, "kind": "local" })
                 }
@@ -401,7 +401,9 @@ mod tests {
         let mut cfg = crate::config::Config::default();
         let mut byok = configured("my-claude", "anthropic", "claude-next", None);
         byok.api_key = Some("sk-THE-MACS-KEY".into());
-        cfg.models = vec![byok, configured("my-sol", "chatgpt", "gpt-9-sol", Some("chatgpt_oauth"))];
+        // Linggen Cloud's model is a ticked row, signed in by the account.
+        let cloud = configured(crate::provider::models::LINGGEN_CLOUD_MODEL_ID, "openai", "qwen3.8-flash", Some("linggen_account"));
+        cfg.models = vec![byok, configured("my-sol", "chatgpt", "gpt-9-sol", Some("chatgpt_oauth")), cloud];
         let mut d = crate::state_fs::devices::PairedDevice::default();
         d.settings.insert(
             "models".into(),

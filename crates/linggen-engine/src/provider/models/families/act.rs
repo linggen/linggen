@@ -80,9 +80,15 @@ pub(super) fn run(f: &Families, config: &mut Config, creds: &Credentials, (name,
             if row.is_some() {
                 return Ok(false);
             }
-            endpoint.key.as_ref().ok_or(Refusal::NoKey)?;
-            let listing = listing.ok_or(Refusal::NeedsChoice)?;
-            match endpoint.ask(&list, family, None, Some(&listing), today) {
+            // The account is its own key, and no provider list says what it serves.
+            let listing = match place.is_account() {
+                true => None,
+                false => {
+                    endpoint.key.as_ref().ok_or(Refusal::NoKey)?;
+                    Some(listing.ok_or(Refusal::NeedsChoice)?)
+                }
+            };
+            match endpoint.ask(&list, family, None, listing.as_deref(), today) {
                 FamilyCurrent::Current { next, .. } => {
                     // An exact entry is a pin from the start; a family follows.
                     let mode = if entry.kind == EntryType::Exact { binding::Mode::Pinned } else { binding::Mode::Follow };

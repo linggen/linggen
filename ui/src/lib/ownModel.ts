@@ -18,9 +18,6 @@ import { stillOn } from './sessionLoad.mts';
 import type { ChatMessage } from '../types';
 import type { SettingsTab } from './settingsSections.mts';
 
-/** The Linggen Cloud model (provider/models/catalog.rs LINGGEN_CLOUD_MODEL_ID). */
-export const CLOUD_MODEL_ID = 'deepseek-flash';
-
 /** A host that can open its settings on a tab: the main shell sets it on its
  *  window (same origin, so a chat framed in an app's tab reaches it). */
 type SettingsHost = (tab: SettingsTab) => void;
@@ -50,12 +47,13 @@ export function openModelsSettings(): void {
   window.open('/settings?tab=models', '_blank', 'noopener');
 }
 
-interface ModelRow { id: string; auth_ok?: boolean }
+/** A row of GET /api/models; a Linggen Cloud model is the one signed in by the account. */
+interface ModelRow { id: string; auth_ok?: boolean; auth_mode?: string | null }
 
-/** The models that can answer now, the cloud one aside. */
+/** The models that can answer now, Linggen Cloud's aside. */
 export async function ownModels(): Promise<string[]> {
   const rows = await apiGet<ModelRow[]>('/api/models').catch(() => [] as ModelRow[]);
-  return (Array.isArray(rows) ? rows : []).filter((m) => m.auth_ok && m.id !== CLOUD_MODEL_ID).map((m) => m.id);
+  return (Array.isArray(rows) ? rows : []).filter((m) => m.auth_ok && m.auth_mode !== 'linggen_account').map((m) => m.id);
 }
 
 /** The first own model added after `before` was read, or null once `signal`

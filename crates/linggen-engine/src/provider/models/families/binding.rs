@@ -120,27 +120,38 @@ fn new_binding(place: &Place<'_>, family: &str, target: Target<'_>, mode: Mode) 
 /// File a family as a new row running `target`. The caller has checked that
 /// the family is not ticked at this endpoint.
 pub(super) fn tick(config: &mut Config, place: &Place<'_>, family: &str, target: Target<'_>, mode: Mode) -> String {
-    let id = config.fresh_model_id("fam");
+    // A Linggen Cloud row is named by its wire model (as the built-in once
+    // was), so an old pin to a retired id lands on it (`canonical_model_id`).
+    let account = place.is_account();
+    let id = match account && !config.models.iter().any(|row| row.id == target.id) {
+        true => target.id.to_string(),
+        false => config.fresh_model_id("fam"),
+    };
     let mut row = ModelConfig {
         id: id.clone(),
         provider: place.provider.name.clone(),
-        url: place.base.into(),
+        url: if account { super::super::catalog::linggen_cloud_url() } else { place.base.into() },
         model: String::new(),
         api_key: None,
         keep_alive: None,
         context_window: None,
         tags: Vec::new(),
         supports_tools: None,
-        auth_mode: None,
+        auth_mode: account.then_some(crate::config::AuthMode::LinggenAccount),
         reasoning_effort: None,
         max_output_tokens: None,
         price: None,
         price_lookup: None,
-        provided_by: None,
+        provided_by: account.then(|| place.provider.label.clone()),
         is_builtin: false,
         family_binding: Some(new_binding(place, family, target, mode)),
     };
     run_on(&mut row, target);
+    if account {
+        // The relay serves tools on every model it lists; no facts are joined to it.
+        row.supports_tools = Some(true);
+        row.context_window = Some(super::cloud::CONTEXT_WINDOW);
+    }
     config.models.push(row);
     id
 }

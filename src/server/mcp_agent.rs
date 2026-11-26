@@ -1983,7 +1983,8 @@ mod tests {
             manager.provider_name(&builtin).unwrap()
         );
         assert_eq!(rows.iter().filter(|m| m["default"] == true).count(), 1);
-        assert!(rows.iter().any(|m| m["id"] == "deepseek-flash"));
+        // Linggen Cloud's models are ticked rows: none is offered until ticked.
+        assert!(!rows.iter().any(|m| m["id"] == "qwen3.8-flash"));
         assert!(rows.iter().all(|m| m["ready"].is_boolean()), "{result}");
     }
     #[test]

@@ -228,6 +228,9 @@ impl Bundle {
     /// [`place_of`](Self::place_of), the line of `offered` first: the one a
     /// page offers or ticks starters from (`unverified`, `starter`).
     pub(crate) fn place_of_in(&self, offered: Edition, row: &ModelConfig) -> Option<Place<'_>> {
+        if row.sign_in() == SignIn::LinggenAccount {
+            return offered.first().into_iter().find_map(|edition| self.account_place(edition));
+        }
         if row.sign_in() != SignIn::Key || !matches!(row.provider_kind(), ProviderKind::Anthropic | ProviderKind::OpenAiCompatible) {
             return None;
         }
@@ -242,6 +245,14 @@ impl Bundle {
         offered.first().into_iter()
             .flat_map(|edition| self.offered(edition))
             .find(|place| place.provider.sign_in == Way::Key && (place.provider.adapter == Adapter::Anthropic) == native && at(place))
+    }
+
+    /// Linggen Cloud's connection in one edition. It is not among `offered`
+    /// (those are addresses a key is filed under), so a card, a live voice or
+    /// a preset never lands on it by address.
+    pub(crate) fn account_place(&self, edition: Edition) -> Option<Place<'_>> {
+        let provider = self.providers(edition).iter().find(|p| p.adapter == Adapter::LinggenCloud)?;
+        Some(Place { provider, endpoint_key: &provider.default_endpoint, base: ACCOUNT_PLACE_BASE })
     }
 
     /// Whether a key connection a person has (a row or a key at `name`, `url`)
@@ -321,9 +332,13 @@ impl Bundle {
 }
 
 /// A row standing for "a key at this name and address", with no model: how a
-/// key that has no row is looked up in the list (`place_of`).
+/// key that has no row is looked up in the list (`place_of`). At the relay's
+/// own address it stands for the Linggen account instead.
 pub(crate) fn probe_row(name: &str, url: &str) -> Option<ModelConfig> {
-    serde_json::from_value(serde_json::json!({"id": "endpoint-probe", "provider": name, "url": url, "model": "-"})).ok()
+    let account = same_endpoint("", url, "", &super::super::catalog::linggen_cloud_url());
+    let mut row: ModelConfig = serde_json::from_value(serde_json::json!({"id": "endpoint-probe", "provider": name, "url": url, "model": "-"})).ok()?;
+    row.auth_mode = account.then_some(crate::config::AuthMode::LinggenAccount);
+    Some(row)
 }
 
 /// The one entry for a bundle's bytes: size, shape, rules. A bundle that
@@ -358,6 +373,11 @@ pub(super) fn accept(bytes: &[u8], floors: &[&Bundle], today: NaiveDate) -> Resu
     Ok(next)
 }
 
+/// What an account place calls its address: the relay on the default site. An
+/// identity for the list only — never called, never given a key. A row's own
+/// address is `catalog::linggen_cloud_url` (the site may be overridden).
+const ACCOUNT_PLACE_BASE: &str = "https://linggen.dev/api/llm";
+
 /// The facts older than this no longer move an existing row by themselves.
 /// The list is a weekly artifact, so three missed weeks is the point.
 pub(crate) const AUTOMATIC_MOVE_TRUST_DAYS: u64 = 21;
@@ -380,6 +400,10 @@ pub(crate) struct Place<'a> {
 impl<'a> Place<'a> {
     pub(crate) fn is_at(&self, url: &str) -> bool { same_endpoint("", self.base, "", url) }
 
+    /// Linggen Cloud's connection: the account is the key, the relay serves
+    /// every model the list names, and there is no provider list to ask.
+    pub(crate) fn is_account(&self) -> bool { self.provider.sign_in == Way::Account }
+
     /// Whether Anthropic's own wire is spoken here (a list is asked differently).
     pub(crate) fn native_anthropic(&self) -> bool { self.provider.adapter == Adapter::Anthropic }
 
@@ -389,9 +413,10 @@ impl<'a> Place<'a> {
     }
 
     /// The entries a person can tick: families and exact versions with a key
-    /// to follow them under. A provider the engine runs by sign-in has none.
+    /// to follow them under, or the account's own models (Linggen Cloud). A
+    /// provider run by another sign-in (ChatGPT) has none.
     pub(crate) fn tickable(&self) -> impl Iterator<Item = (&'a str, &'a Entry)> + '_ {
-        let keyed = self.provider.sign_in == Way::Key;
+        let keyed = matches!(self.provider.sign_in, Way::Key | Way::Account);
         self.entries().filter(move |_| keyed).filter_map(|e| Some((e.family_key()?, e)))
     }
 

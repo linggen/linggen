@@ -81,8 +81,9 @@ export const W = {
   // ── The two groups ──
   ownProviders: 'Your own providers',
   nConnected: '{n} connected',
-  usageMonth: 'Used this month: {used} / {cap}',
-  usageTrial: 'Trial used: {used} / {cap}',
+  usageMonth: 'Used this month: {percent}%',
+  usageTrial: 'Trial used: {percent}%',
+  usageDeveloper: 'Developer account, not metered',
   managePlan: 'Manage plan',
   subscribe: 'Subscribe',
   kindAccount: 'Account',
