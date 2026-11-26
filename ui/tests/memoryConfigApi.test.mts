@@ -44,8 +44,8 @@ test('an answer that is not an envelope is an error with the status', async () =
 
 test('typed values become settings, or one line saying what is wrong', () => {
   assert.deepEqual(parseDraft({ days: ' 30 ', score: '0.55' }), { settings: { episodic_ttl_days: 30, recall_min_score: 0.55 } });
-  assert.deepEqual(parseDraft({ days: '3650', score: '0' }), { settings: { episodic_ttl_days: 3650, recall_min_score: 0 } });
-  for (const days of ['', '0', '3651', '7.5', '-1', 'abc']) {
+  assert.deepEqual(parseDraft({ days: '365', score: '0' }), { settings: { episodic_ttl_days: 365, recall_min_score: 0 } });
+  for (const days of ['', '0', '366', '7.5', '-1', 'abc']) {
     assert.match((parseDraft({ days, score: '0.7' }) as { error: string }).error, /Days/, days);
   }
   for (const score of ['', '1.1', '-0.1', 'high']) {
