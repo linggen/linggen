@@ -1,4 +1,79 @@
-# Release checklist
+# Release and install
+
+How Linggen is published and how it lands on a machine are one contract: a
+change to an asset changes its installers, its upgrade path and the gate
+together. Part 1 is that contract — change it first. Part 2 is the release
+train that produces it.
+
+# Part 1 — Distribution: what ships, how it installs, how it upgrades
+
+## The rule
+
+**One engine per machine.** On a Mac the engine is the `ling` inside
+`/Applications/Linggen.app/Contents/MacOS/`; Linggen on a Mac exists only as
+the app. On Linux it is the real file `install.sh` puts down. Every other
+`ling` is a link to it. The rule is applied in two places that point at each
+other — `install.sh` (linggen.dev, and the plugin's copy) and the app's
+startup (`linggen-app/shell`) — and the release gate locks it (below).
+
+## Forms
+
+| | Mac | Linux |
+|---|---|---|
+| Linggen is | `Linggen.app` | the `ling` file |
+| The engine | `/Applications/Linggen.app/Contents/MacOS/ling` | `/usr/local/bin/ling`, else `~/.local/bin/ling` |
+| The `ling` command | a link to the engine: `/usr/local/bin/ling` when writable, else `~/.local/bin/ling` plus one PATH line in `~/.zshrc`; never a password prompt | the file itself |
+| Upgrades by | the app's in-app updater only; `ling update`/`ling install` refuse inside an app bundle and say so | `ling update` |
+| Rollback | out of scope for now (the updater keeps the previous bundle in `~/Library/Caches/com.linggen.app/updates/previous/`) | `ling update --rollback` |
+
+A real `ling` file found where the link belongs (an older CLI install) is
+moved to `~/.linggen/prev/ling.cli-backup` and replaced by the link.
+
+## Release assets
+
+| Asset | Repo / tag | Who uses it |
+|---|---|---|
+| `Linggen_X.Y.Z_aarch64.dmg` | `linggen/linggen-releases`, `linggen-vX.Y.Z` | people (linggen.dev "Download for Mac") |
+| `linggen-X.Y.Z-darwin-arm64.tar.gz` + `.sha256` | same | the in-app updater; `install.sh` on a Mac |
+| `ling-linux-x86_64.tar.gz`, `ling-linux-aarch64.tar.gz` | `linggen/linggen`, `X.Y.Z` | `install.sh` on Linux; `ling update` on Linux |
+| `ling-macos-aarch64.tar.gz` | same | **build input only**: the app build vendors it (`linggen-app/scripts/download-ling.sh`). No installer or updater uses it. |
+| `linggen-plugin.tar.gz` + `.sha256` | same | `install-plugin.sh` when there is no git (a stock Mac has none) and the linggen.dev mirror |
+| `manifest.json` | same | sha256 of the engine assets, read by `install.sh` |
+
+Both DMG and app tarball hold the same signed, notarized bundle: a DMG for
+people, an archive for machines.
+
+## Installers
+
+| Entry | What it does |
+|---|---|
+| DMG, dragged to Applications | the app; on first launch it makes the `ling` link |
+| `curl -fsSL https://linggen.dev/install.sh \| bash` | Mac: installs the app from the tarball (sha-checked) and makes the link — **if the app is already there it only makes the link**, it never re-downloads or quits it (`--version` asks for a specific release, for the gate). Linux: installs the engine. |
+| The Claude Code / Codex plugin (`hooks/autostart.sh`) | finds `ling` on PATH; if missing, runs its own byte-identical copy of `install.sh` (`plugins/linggen/skills/linggen/scripts/install.sh`) in the background — never a fetched script; then starts `ling --web`. `/Applications` not writable → a hint only. |
+| `install-plugin.sh` | installs the plugin (git, else the bundle), then the plugin's hook above |
+| `install-cfo.sh`, `install-apple-shifu.sh`, `install-mac-shifu.sh`, `install-sys-doctor.sh` | forward to `install.sh` |
+
+There is no `install-app.sh`. The site's `public/install.sh` is the source;
+the plugin's copy follows it.
+
+## The engine the app runs
+
+The app starts its own engine when 9527 is free. When 9527 already holds a
+`ling`, the app replaces it when it is older than the bundle's, or when its
+binary is an install copy other than the bundle (the updater's
+`updates/previous/` bundle, `~/.linggen/prev/ling.cli-backup`, another
+`Linggen.app`). Any other binary — a developer's own build started with
+`ling restart --binary <path>` — is left running.
+
+## Locks
+
+- `ling status` and `/api/health` report the running binary's path and commit.
+- Release gate, after each install order (app → script → plugin;
+  script → app; plugin → app): exactly one real `ling` file on the machine,
+  and `command -v ling` resolves to it.
+- Release gate: the plugin's `install.sh` is byte-identical to the site's.
+
+# Part 2 — Release train
 
 One train, in order: engine → Mac app. Memory runs inside `ling`, and the
 Claude Code / Codex plugin bundle is an asset of the engine release: there is
