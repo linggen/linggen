@@ -1,8 +1,7 @@
 //! What a model row may be filed under, and how a person gets in.
 //!
-//! The list of providers a page offers is NOT here: it is the curated model
-//! list (`provider::models::curated`), so adding a provider or a model to that
-//! list needs no code. What stays in code is the closed set of provider
+//! The providers a page offers are NOT here: they are the presets table
+//! (`provider::models::presets`), and a person may type any other. What stays in code is the closed set of provider
 //! *names* a stored row may carry. A new name is a stored name the released
 //! binary refuses to save, so a name is added only with a release that knows
 //! it, and the list may use only names written here.
@@ -34,7 +33,7 @@ impl Way {
 }
 
 /// The provider names the 2.6.1 binary accepts, fixed: what `Config::validate`
-/// checks and the curated list may use. Not derived from what a page offers.
+/// checks and the presets may use. Not derived from what a page offers.
 const KNOWN_NAMES: [&str; 13] = [
     "ollama", "chatgpt", "anthropic", "openai", "gemini", "groq", "deepseek", "openrouter",
     "github", "qwen", "moonshot", "zhipu", "siliconflow",

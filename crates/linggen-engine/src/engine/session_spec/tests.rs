@@ -19,10 +19,7 @@ fn engine() -> AgentEngine {
         [("test-openai", "openai"), ("test-claude", "anthropic"), ("test-deepseek", "deepseek")].into_iter().map(|(id, provider)| crate::config::ModelConfig {
             id: id.into(), provider: provider.into(), url: "http://localhost:1".into(), model: id.into(),
             api_key: None, keep_alive: None, context_window: None, tags: vec![], supports_tools: Some(true),
-            auth_mode: None, reasoning_effort: None, max_output_tokens: None, provided_by: None, is_builtin: false, family_binding: None,
-            price: None,
-            price_lookup: None,
-        }).collect(),
+            auth_mode: None, reasoning_effort: None, max_output_tokens: None, provided_by: None, is_builtin: false,        }).collect(),
         &crate::credentials::Credentials::default(),
     ));
     AgentEngine::new(cfg, models, "m".to_string(), AgentRole::Lead).unwrap()

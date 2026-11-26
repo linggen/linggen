@@ -1,7 +1,6 @@
 //! What a session spent (`doc/models.md` § What a session cost): a model call
 //! on Anthropic's wire reports its tokens, the engine keeps them per session
-//! and model, and a price turns them into an estimate only where one is
-//! known. The host here is a stand-in that answers every Messages request
+//! and model, as tokens: no price is looked up or kept. The host here is a stand-in that answers every Messages request
 //! with one scripted usage block — no real model, no real key.
 
 use crate::support::{Setup, World};
@@ -22,9 +21,6 @@ const INPUT: u64 = 1_200;
 const CACHE_WRITE: u64 = 3_000;
 const CACHE_READ: u64 = 5_000;
 const OUTPUT: u64 = 400;
-/// One scripted call at 2 / 10 / 0.10 / 2.50 USD per million tokens:
-/// 1,200 × 2 + 3,000 × 2.5 + 5,000 × 0.1 + 400 × 10, over 1,000,000.
-const CALL_COST: f64 = 0.0144;
 
 fn script() -> String {
     let start = json!({"type": "message_start", "message": {"id": "m1", "type": "message", "role": "assistant",
@@ -145,11 +141,12 @@ async fn page_state(w: &World, session: &str) -> Value {
         .await
 }
 
-/// A priced model: what each call reported lands in the session's ledger
-/// per model, the estimate is hand arithmetic, and `agent_status` and the
+/// A key model's calls: what each call reported lands in the session's
+/// ledger per model, as tokens; no dollar figure, even with a `price` left
+/// in the config from before (it is ignored), and `agent_status` and the
 /// page's session state tell the same facts.
 #[tokio::test]
-async fn a_priced_models_calls_are_kept_and_cost_what_its_price_says() {
+async fn a_key_models_calls_are_kept_as_tokens_and_never_priced() {
     let (url, seen) = host().await;
     let w = world(&url).await;
     let sid = run_on(&w, "stub-priced").await;
@@ -167,16 +164,7 @@ async fn a_priced_models_calls_are_kept_and_cost_what_its_price_says() {
     assert_eq!(m["cache_write"], calls * CACHE_WRITE);
     assert_eq!(m["cache_read"], calls * CACHE_READ);
     assert_eq!(m["output"], calls * OUTPUT);
-    let expected = calls as f64 * CALL_COST;
-    assert!(
-        (usage["cost_usd"].as_f64().unwrap() - expected).abs() < 1e-9,
-        "{usage}"
-    );
-    assert!(
-        (m["cost_usd"].as_f64().unwrap() - expected).abs() < 1e-9,
-        "{usage}"
-    );
-    assert_eq!(m["source"], "config", "{usage}");
+    assert!(m.get("cost_usd").is_none() && usage.get("cost_usd").is_none(), "{usage}");
     assert_eq!(usage["tokens"]["input"], calls * INPUT);
 
     // The page asks for the same facts, from the same place.
@@ -185,24 +173,6 @@ async fn a_priced_models_calls_are_kept_and_cost_what_its_price_says() {
         page["usage"], *usage,
         "the top bar and agent_status tell one story"
     );
-}
-
-/// The same model name with no price known (a gateway): tokens, no dollars.
-#[tokio::test]
-async fn a_model_with_no_known_price_shows_tokens_and_no_dollars() {
-    let (url, seen) = host().await;
-    let w = world(&url).await;
-    let sid = run_on(&w, "stub-gateway").await;
-    let calls = seen.load(Ordering::SeqCst) as u64;
-
-    let usage = status(&w, &sid).await["usage"].clone();
-    let m = &usage["models"][0];
-    assert_eq!(m["input"], calls * INPUT, "{usage}");
-    assert_eq!(m["output"], calls * OUTPUT, "{usage}");
-    assert!(m.get("cost_usd").is_none(), "no price, no amount: {usage}");
-    assert!(usage.get("cost_usd").is_none(), "{usage}");
-    assert_eq!(usage["unpriced"], json!(["stub-gateway"]));
-    assert_eq!(page_state(&w, &sid).await["usage"], usage);
 }
 
 /// Finding 2: the `/compact` button is a model call like any other. A
@@ -287,11 +257,10 @@ async fn a_local_models_calls_are_listed_but_are_no_spend() {
     assert!(usage.get("unpriced").is_none(), "{usage}");
 }
 
-/// One bad price must not cost the person their config: the engine starts
-/// on the file as written, that model without its price, every other model
-/// and setting as they were.
+/// A config from before prices were dropped: its `price` is ignored, every
+/// model and setting is the person's own.
 #[tokio::test]
-async fn a_bad_price_in_the_file_leaves_the_rest_of_the_config_in_force() {
+async fn an_old_price_in_the_file_is_ignored_and_the_rest_is_in_force() {
     let extra = r#"
 [[models]]
 id = "bad-price"
@@ -314,32 +283,11 @@ price = { input = -1.0, output = 2.0 }
         "the person's models are still there: {ids:?}"
     );
     let bad = models.iter().find(|m| m["id"] == "bad-price").unwrap();
-    assert!(
-        bad.get("price").is_none(),
-        "the bad price is dropped: {bad}"
-    );
+    assert!(bad.get("price").is_none(), "the price is not kept: {bad}");
     assert_eq!(
         config["routing"]["default_models"],
         json!(["fake-ling"]),
         "routing is the person's own"
-    );
-}
-
-/// The other half: a config being saved with a bad price is refused and
-/// nothing is written.
-#[tokio::test]
-async fn saving_a_bad_price_is_refused_and_names_it() {
-    let w = World::start(Setup::default()).await;
-    let before = std::fs::read(w.home.config_path()).unwrap();
-    let mut config = w.api.get("/api/config").await;
-    config["models"][0]["price"] = json!({"input": -3.0, "output": 1.0});
-    let (status, _) = w.api.post_with_status("/api/config", config).await;
-    // (The refusal's words — the model and the field — are the config unit test's.)
-    assert_eq!(status, 400);
-    assert_eq!(
-        std::fs::read(w.home.config_path()).unwrap(),
-        before,
-        "nothing was written"
     );
 }
 

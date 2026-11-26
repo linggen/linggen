@@ -2,7 +2,7 @@ use crate::config::{ModelConfig, ProviderKind, SignIn};
 use crate::credentials::{self, Credentials};
 use crate::message::ChatMessage;
 use crate::provider::anthropic::AnthropicClient;
-use crate::provider::kinds::{kind_in, Kind};
+use crate::provider::kinds::{kind_of, Kind};
 use crate::provider::codex_auth;
 use crate::provider::ollama::OllamaClient;
 use crate::provider::openai::OpenAiClient;
@@ -15,21 +15,20 @@ use tokio::sync::Semaphore;
 
 mod catalog;
 pub mod chatgpt_catalog;
+pub mod cloud_models;
+pub mod cloud_tick;
+pub use cloud_tick::settle as settle_cloud;
 mod effort;
 pub use effort::{Effort, EffortAsk, Resolved};
-pub mod families;
-pub(crate) mod curated;
-pub use curated::{EditionChoice, ModelCatalog};
-pub(crate) mod family_catalog;
 mod health;
 #[cfg(test)]
 mod kind_tests;
-pub mod price_lookup;
+pub mod presets;
 mod pricing;
 mod providers;
 pub mod providers_view;
 mod readiness;
-pub mod spend_cap;
+pub mod suggest;
 mod usage;
 
 pub use catalog::*;
@@ -206,16 +205,13 @@ impl ModelManager {
         // The one chokepoint of kinds (`provider::kinds`): only a chat row
         // gets a client and a place in any list. A live-voice row is kept
         // apart, read by `live_rows` alone; a row the engine has no lane for
-        // stays in the config and goes nowhere. One catalog capture decides
-        // every row.
+        // apart, read by `live_rows` alone.
         let all_configs = configs.clone();
-        let facts = curated::current();
         let (mut chat, mut live_rows) = (Vec::new(), Vec::new());
         for c in configs {
-            match kind_in(&c, &facts) {
+            match kind_of(&c) {
                 Kind::Chat => chat.push(c),
                 Kind::LiveVoice => live_rows.push(c),
-                Kind::NoLane => {}
                 Kind::Speak | Kind::Hear | Kind::Draw => unreachable!("not configured rows"),
             }
         }
@@ -280,18 +276,6 @@ impl ModelManager {
         &self.live_rows
     }
 
-    /// The one asker of the monthly spending cap (`spend_cap::check`): a call
-    /// to a capped provider is refused before it is made, the session kept.
-    fn spend_refusal(&self, cfg: &ModelConfig) -> Result<()> {
-        spend_cap::check(cfg).map_err(anyhow::Error::from)
-    }
-
-    /// Whether `model_id`'s provider is under its cap this month — the
-    /// fallback chain asks it of each candidate.
-    pub fn under_spend_cap(&self, model_id: &str) -> bool {
-        self.config_of(model_id).is_none_or(|cfg| self.spend_refusal(cfg).is_ok())
-    }
-
     pub async fn chat_text_stream(
         &self,
         model_id: &str,
@@ -327,7 +311,6 @@ impl ModelManager {
             .ok_or_else(|| anyhow::anyhow!("Model {} not found", model_id))?;
 
         Self::check_provider_auth(&instance.config)?;
-        self.spend_refusal(&instance.config)?;
 
         // Note: permit is held for the duration of the stream
         let _permit = instance.semaphore.clone().acquire_owned().await?;
@@ -336,19 +319,15 @@ impl ModelManager {
             .max_output_tokens(&instance.config, &instance.output_cap, false)
             .await;
 
-        let stream = instance
-            .client
-            .text_stream(
-                &instance.config,
-                messages,
-                TurnOptions {
-                    keep_alive,
-                    effort: effort::resolve(&instance.config, &effort).effort,
-                    app,
-                    max_output,
-                },
-            )
-            .await?;
+        let sent = effort::resolve(&instance.config, &effort).effort;
+        let options = |effort| TurnOptions { keep_alive: keep_alive.clone(), effort, app, max_output };
+        let stream = match instance.client.text_stream(&instance.config, messages, options(sent.clone())).await {
+            // The provider refused the effort field: once more without it.
+            Err(e) if effort::refused(&instance.config, &sent, &e) => {
+                instance.client.text_stream(&instance.config, messages, options(Effort::default())).await?
+            }
+            other => other?,
+        };
         Ok(hold_permit(stream, _permit))
     }
 
@@ -368,7 +347,6 @@ impl ModelManager {
             .ok_or_else(|| anyhow::anyhow!("Model {} not found", model_id))?;
 
         Self::check_provider_auth(&instance.config)?;
-        self.spend_refusal(&instance.config)?;
 
         let _permit = instance.semaphore.clone().acquire_owned().await?;
         let max_output = instance
@@ -376,20 +354,15 @@ impl ModelManager {
             .max_output_tokens(&instance.config, &instance.output_cap, true)
             .await;
 
-        let stream = instance
-            .client
-            .tool_stream(
-                &instance.config,
-                messages,
-                tools,
-                TurnOptions {
-                    keep_alive: instance.config.keep_alive.clone(),
-                    effort: effort::resolve(&instance.config, &effort).effort,
-                    app,
-                    max_output,
-                },
-            )
-            .await?;
+        let sent = effort::resolve(&instance.config, &effort).effort;
+        let options = |effort| TurnOptions { keep_alive: instance.config.keep_alive.clone(), effort, app, max_output };
+        let stream = match instance.client.tool_stream(&instance.config, messages, tools.clone(), options(sent.clone())).await {
+            // The provider refused the effort field: once more without it.
+            Err(e) if effort::refused(&instance.config, &sent, &e) => {
+                instance.client.tool_stream(&instance.config, messages, tools, options(Effort::default())).await?
+            }
+            other => other?,
+        };
         Ok(hold_permit(stream, _permit))
     }
 
@@ -407,7 +380,7 @@ impl ModelManager {
         match kind {
             Kind::Chat => self.list_models(),
             Kind::LiveVoice => self.live_rows.iter().collect(),
-            Kind::Speak | Kind::Hear | Kind::Draw | Kind::NoLane => Vec::new(),
+            Kind::Speak | Kind::Hear | Kind::Draw => Vec::new(),
         }
     }
 
@@ -460,9 +433,6 @@ impl ModelManager {
                 max_output_tokens: None,
                 provided_by: owner_name.clone(),
                 is_builtin: false,
-                family_binding: None,
-            price: None,
-            price_lookup: None,
             };
 
             self.models.insert(
@@ -745,9 +715,6 @@ mod tests {
             max_output_tokens: None,
             provided_by: None,
             is_builtin: false,
-            family_binding: None,
-            price: None,
-            price_lookup: None,
         }
     }
 
@@ -821,7 +788,7 @@ mod tests {
         let mut file = toml::Value::try_from(crate::config::Config::default()).unwrap();
         file["routing"]["default_models"] = toml::Value::try_from(["deepseek-flash"]).unwrap();
         let mut cfg = crate::config::Config::from_toml(&toml::to_string(&file).unwrap()).unwrap();
-        assert!(families::settle_cloud(&mut cfg));
+        assert!(settle_cloud(&mut cfg));
         assert_eq!(cfg.routing.default_models, ["deepseek-v4.1-flash"]);
         let m = ModelManager::new_with_credentials(cfg.models, &Credentials::default());
         for old in ["deepseek-v4-flash", "deepseek-flash"] {

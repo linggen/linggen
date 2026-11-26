@@ -261,7 +261,7 @@ fn migrate_retired_models(settings: &mut serde_json::Map<String, serde_json::Val
 }
 
 /// A retired Linggen Cloud id in a phone's allow-list becomes the model it
-/// became (deduped); the Mac ticks that model (`families::settle_cloud`).
+/// became (deduped); the Mac ticks that model (`cloud_tick::settle`).
 fn retire_cloud_ids(settings: &mut serde_json::Map<String, serde_json::Value>) -> bool {
     use crate::provider::models::{LINGGEN_CLOUD_RETIRED_MODEL_IDS as RETIRED, LINGGEN_CLOUD_RETIRED_SUCCESSOR as NOW};
     let Some(list) = settings.get_mut("models").and_then(|v| v.as_array_mut()) else { return false };

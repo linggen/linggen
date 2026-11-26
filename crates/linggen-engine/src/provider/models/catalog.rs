@@ -6,8 +6,8 @@ use crate::config::ModelConfig;
 use crate::provider::codex_auth;
 
 /// The Linggen Cloud model a person gets first: the list's starter, ticked on
-/// a new install (`families::cloud`) and what a fresh config defaults to. A
-/// Linggen Cloud model is an ordinary ticked row (`families`), routed through
+/// a first run with no list read yet (`cloud_tick`, `cloud_models`) and what a fresh config defaults to. A
+/// Linggen Cloud model is an ordinary ticked row (`cloud_tick`), routed through
 /// the linggen.dev/api/llm relay with the account token resolved fresh per
 /// request (sign-in needs no restart); its id is its wire model.
 pub const LINGGEN_CLOUD_MODEL_ID: &str = "qwen3.8-flash";
@@ -20,7 +20,7 @@ pub const LINGGEN_CLOUD_MODEL_ID: &str = "qwen3.8-flash";
 /// here — a session, a skill's `model:` pin or a `pet.model` written against
 /// an old id resolves to [`LINGGEN_CLOUD_RETIRED_SUCCESSOR`] instead of
 /// failing silently into the default. Config::load rewrites persisted
-/// defaults and pins to it, and ticks it (`families::cloud`).
+/// defaults and pins to it, and ticks it (`cloud_tick`).
 pub const LINGGEN_CLOUD_RETIRED_MODEL_IDS: &[&str] = &["deepseek-v4-flash", "deepseek-flash"];
 
 /// The model a retired Linggen Cloud id became.
@@ -50,11 +50,11 @@ pub fn follow_model_id(id: &str) -> String {
     chatgpt_catalog::successor(id).unwrap_or_else(|| id.to_string())
 }
 
-pub(super) fn linggen_cloud_url() -> String {
+pub(crate) fn linggen_cloud_url() -> String {
     format!("{}/api/llm", crate::account::site_url())
 }
 
-pub(super) const LINGGEN_CLOUD_PROVIDER: &str = "openai";
+pub(crate) const LINGGEN_CLOUD_PROVIDER: &str = "openai";
 
 /// The ChatGPT built-ins, one per family, as the catalog has them now
 /// ([`chatgpt_catalog`](super::chatgpt_catalog) owns which models those
@@ -98,8 +98,5 @@ fn chatgpt_config(id: &str, snap: &Snapshot) -> ModelConfig {
         max_output_tokens: None,
         provided_by: Some("ChatGPT".to_string()),
         is_builtin: true,
-        family_binding: None,
-            price: None,
-            price_lookup: None,
     }
 }

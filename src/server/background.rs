@@ -26,8 +26,7 @@ pub(super) fn spawn_background_tasks(
     prewarm_voice(state, pet_enabled);
     connect_mcp_servers(state);
     spawn_chatgpt_catalog(state);
-    spawn_price_lookups(state);
-    super::api::provider_families::spawn(state);
+    spawn_cloud_models(state);
     // Memory lives in this process, and other tools on the machine use it
     // whether or not a Linggen window is open — so the engine stays up. App
     // shells before 2.3 still pass the flag; it is accepted and ignored.
@@ -139,54 +138,22 @@ fn spawn_chatgpt_catalog(state: &Arc<ServerState>) {
     });
 }
 
-/// Custom models' prices (`provider/models/price_lookup.rs`): checked about
-/// once a day for a model with no price yet, never on a turn's path.
-fn spawn_price_lookups(state: &Arc<ServerState>) {
-    let state = state.clone();
+/// Linggen Cloud's chat models (`provider/models/cloud_models.rs`): asked of
+/// the site after start and then hourly; the last good answer is kept.
+fn spawn_cloud_models(_state: &Arc<ServerState>) {
     tokio::spawn(async move {
+        // Tests and sandboxes never reach the site.
+        if std::env::var_os("LINGGEN_TEST_SKIPPED").is_some() {
+            return;
+        }
         tokio::time::sleep(std::time::Duration::from_secs(CATALOG_FIRST_SECS)).await;
         loop {
-            lookup_prices(&state).await;
+            if crate::provider::models::cloud_models::refresh().await {
+                info!("Linggen Cloud's model list changed");
+            }
             tokio::time::sleep(std::time::Duration::from_secs(CATALOG_TICK_SECS)).await;
         }
     });
-}
-
-/// Ask now, in the background — what adding a custom model asks for.
-pub(crate) fn refresh_price_lookups(state: Arc<ServerState>) {
-    tokio::spawn(async move { lookup_prices(&state).await });
-}
-
-async fn lookup_prices(state: &Arc<ServerState>) {
-    use crate::provider::models::price_lookup;
-    // Tests and sandboxes never reach the site.
-    if std::env::var_os("LINGGEN_TEST_SKIPPED").is_some() {
-        return;
-    }
-    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-    let due = price_lookup::due_rows(&state.manager.get_config_snapshot().await.models, &today);
-    let mut answers = Vec::new();
-    for (id, address, model) in due {
-        match price_lookup::ask_site(&address, &model, &today).await {
-            Ok(lookup) => answers.push((id, model, lookup)),
-            Err(e) => tracing::debug!("price lookup for {model}: {e}"),
-        }
-    }
-    if answers.is_empty() {
-        return;
-    }
-    // Read-modify-apply of the whole config: one writer at a time.
-    let _write = state.settings_write.lock().await;
-    let mut config = state.manager.get_config_snapshot().await;
-    let mut changed = false;
-    for (id, model, lookup) in answers {
-        changed |= price_lookup::keep(&mut config.models, &id, &model, lookup);
-    }
-    if changed {
-        if let Err(e) = state.manager.apply_config(config).await {
-            tracing::warn!("price lookup: could not save: {e}");
-        }
-    }
 }
 
 /// One refresh now, in the background — what a fresh sign-in asks for.

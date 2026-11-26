@@ -610,12 +610,8 @@ impl AgentEngine {
                         );
                     }
                     crate::provider::models::note_healthy(&model_id);
-                    if let Some(manager) = self.tools.get_manager() {
-                        manager.families.model_answered(&model_id);
-                    }
                     self.remember_call(&model_id, attempt_messages, tools.as_ref(), &result);
                     self.note_call(&model_id, &spent);
-                    self.warn_near_cap(&model_id).await;
                     self.note_run_model(&model_id);
                     crate::engine::cloud_meter::after_call(self, result.token_usage.as_ref());
                     if model_id != preferred {
@@ -642,20 +638,10 @@ impl AgentEngine {
                         stalled.push(model_id.clone());
                         continue;
                     }
-                    // A provider at its cap is not failing: it is not benched,
-                    // and the call is the person's to continue once the cap is
-                    // raised. Another model answers only when switching is on.
-                    let capped = e.downcast_ref::<crate::provider::models::spend_cap::Capped>().is_some();
-                    if !capped {
-                        crate::provider::models::note_unavailable(&model_id, &e);
-                    }
-                    self.report_model_refusal(&model_id, &e).await;
+                    crate::provider::models::note_unavailable(&model_id, &e);
                     tried.push(model_id.clone());
                     self.note_run_model(&model_id);
-                    let worthy = capped || crate::provider::models::is_fallback_worthy_error(&e);
-                    if capped && !may_switch {
-                        return Err(e);
-                    }
+                    let worthy = crate::provider::models::is_fallback_worthy_error(&e);
                     if !may_switch || !worthy {
                         // The refusal another model would have answered: with
                         // the session's switch off, say which model failed and
@@ -679,16 +665,6 @@ impl AgentEngine {
                     model_id = next;
                 }
             }
-        }
-    }
-
-    /// A followed family's row that just moved is refused its first call: the
-    /// refusal is queued for the go-back, which the server answers under the
-    /// settings write lock (`families::Families::model_refused`).
-    async fn report_model_refusal(&self, model_id: &str, err: &anyhow::Error) {
-        let Some(manager) = self.tools.get_manager() else { return };
-        if manager.families.is_armed(model_id) {
-            manager.families.model_refused(&manager.get_config_snapshot().await, model_id, err);
         }
     }
 
@@ -952,9 +928,6 @@ mod fallback_window_tests {
             max_output_tokens: None,
             provided_by: None,
             is_builtin: false,
-            family_binding: None,
-            price: None,
-            price_lookup: None,
         }
     }
 

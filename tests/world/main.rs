@@ -15,13 +15,11 @@
 //! `{"noConfig": true}` starts a true first install instead: no fixture, no
 //! config at all (`Setup::no_config`).
 //!
-//! Three more fields start a provider page on what the family tests use
-//! (tests/system/families.rs): `"configAppend"` is TOML appended to the
-//! config (a followed row, say), `"defaultModel"` the one model the default
-//! chain starts as, and `"families"` the day and the providers' model lists,
-//! written as `test-families.json` in the home (the engine reads it in a
-//! `test-support` build only — which is how this target is built, see
-//! tests/e2e/support/global-setup.ts — so no provider is ever called).
+//! Three more fields start a provider page: `"configAppend"` is TOML
+//! appended to the config (a provider's rows, say), `"defaultModel"` the one
+//! model the default chain starts as, and `"cloudModels"` Linggen Cloud's
+//! model list as the site answers it, written as the kept answer
+//! (`cache/cloud-models.json`), so the site is never called.
 //!
 //! Once up it prints one JSON line — `{"url", "root", "work", "linggen_home"}`
 //! — and then reads commands on stdin, one per line:
@@ -49,7 +47,7 @@ fn main() {
         .enable_all()
         .build()
         .expect("tokio runtime");
-    rt.block_on(serve(setup(&scenario), scenario["families"].clone()));
+    rt.block_on(serve(setup(&scenario), scenario["cloudModels"].clone()));
 }
 
 fn setup(scenario: &Value) -> Setup {
@@ -87,10 +85,12 @@ fn leak(s: &str) -> &'static str {
     Box::leak(s.to_string().into_boxed_str())
 }
 
-async fn serve(setup: Setup, families: Value) {
+async fn serve(setup: Setup, cloud_models: Value) {
     let w = World::start_with_home(setup, |home| {
-        if !families.is_null() {
-            std::fs::write(home.linggen_home().join("test-families.json"), families.to_string()).expect("families fixture");
+        if !cloud_models.is_null() {
+            let dir = home.linggen_home().join("cache");
+            std::fs::create_dir_all(&dir).expect("cache dir");
+            std::fs::write(dir.join("cloud-models.json"), cloud_models.to_string()).expect("cloud models");
         }
     })
     .await;

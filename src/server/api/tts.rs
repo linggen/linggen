@@ -109,18 +109,14 @@ impl Source {
         let system = std::env::var_os("PATH").is_some_and(|path| {
             std::env::split_paths(&path).any(|dir| dir.join("say").is_file())
         });
-        // Linggen Cloud's voice is offered only where the curated list names it.
-        let cloud = owner
-            && crate::provider::models::providers_view::cloud_speech_listed()
-            && crate::account::cloud_voice::speech_usable();
+        let cloud = owner && crate::account::cloud_voice::speech_usable();
         [cloud, crate::runtime::voice_ready(), kokoro, system]
     }
 
     pub(super) fn exists(self) -> bool {
         match self {
             Self::Kokoro => cfg!(feature = "kokoro"),
-            Self::Cloud => crate::provider::models::providers_view::cloud_speech_listed(),
-            Self::Qwen | Self::System => true,
+            Self::Cloud | Self::Qwen | Self::System => true,
         }
     }
 }

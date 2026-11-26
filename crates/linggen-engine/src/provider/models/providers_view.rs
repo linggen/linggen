@@ -1,9 +1,7 @@
 //! Settings' provider groups: a projection of the existing rows and endpoint keys.
 
-use super::{ModelManager, NotReady};
+use super::{presets, ModelManager, NotReady};
 use crate::config::providers::Way;
-use super::curated::{self, Bundle, Edition};
-use super::ModelCatalog;
 use crate::config::{Config, ModelConfig, SignIn};
 use crate::credentials::{self, Credentials};
 use crate::provider::kinds::{kind_of, Kind};
@@ -19,28 +17,33 @@ pub struct ProviderView {
     pub way: &'static str,
     pub provider: String,
     pub url: String,
-    /// The built-in list owns this address: the page shows no address field.
+    /// A preset owns this address: the page shows no address field.
     listed: bool,
+    /// The API style a key provider speaks (`presets::ApiStyle`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    style: Option<&'static str>,
     connected: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     fix: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     key: Option<KeyState>,
-    /// A connection the list names only in the other edition: the person's own,
-    /// kept as it is and not offered to anyone new.
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    retained: bool,
     pub models: Vec<ProviderModel>,
     used_by: Vec<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     disk_gb: Option<u64>,
-    /// The catalog's families at this endpoint (`families::Families::view`),
-    /// filled by the route that has them; absent where there are none.
+    /// Linggen Cloud's chat models to tick (`cloud_models`); absent elsewhere.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub families: Option<super::families::FamiliesView>,
-    /// This month's estimated spend and the cap, for a key provider.
+    cloud: Option<Vec<CloudLine>>,
+}
+
+/// One Linggen Cloud model as its row shows it: a checkbox.
+#[derive(Serialize)]
+struct CloudLine {
+    model: String,
+    label: String,
+    /// The row that runs it, when ticked.
     #[serde(skip_serializing_if = "Option::is_none")]
-    spend: Option<super::spend_cap::SpendView>,
+    row: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -61,11 +64,10 @@ pub struct ProviderModel {
     #[serde(skip_serializing_if = "Option::is_none")]
     why: Option<NotReady>,
     pub builtin: bool,
+    /// The name a page shows: Linggen Cloud's label, else the id.
+    name: String,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     first: bool,
-    /// What it costs per million tokens, when a price is known (a custom model's: asked of the site).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    price: Option<super::families::PriceLine>,
 }
 
 /// Settings identity only. Credential lookup still uses the filed provider name.
@@ -147,48 +149,47 @@ fn shown_url(url: &str) -> String {
 
 /// Source shown for a configured model, shared by provider cards and `/api/uses`.
 pub fn provider_source(sign_in: SignIn, provider: &str, url: &str) -> (String, Way) {
-    provider_source_in(&curated::current(), sign_in, provider, url)
-}
-
-fn provider_source_in(list: &Bundle, sign_in: SignIn, provider: &str, url: &str) -> (String, Way) {
     match sign_in {
         SignIn::LinggenAccount => ("Linggen Cloud".into(), Way::Account),
         SignIn::ChatGpt => ("ChatGPT 订阅".into(), Way::Subscription),
         SignIn::Claude => ("Claude 订阅".into(), Way::Subscription),
         SignIn::Key | SignIn::Unknown => {
             let way = if provider.eq_ignore_ascii_case("ollama") { Way::Local } else { Way::Key };
-            (list.label_for(provider, url), way)
+            (presets::label_for(provider, url), way)
         }
     }
 }
 
-/// Whether the built-in list owns this key address: its address is never edited.
+/// Whether a preset owns this key address: its address is never edited.
 pub fn is_listed_address(url: &str) -> bool {
-    curated::current().place_at(url).is_some_and(|p| p.provider.sign_in == Way::Key)
+    presets::at(url).is_some()
 }
 
 impl ProviderView {
     /// An editable endpoint proposed by the owner, not yet filed on disk.
-    pub fn draft(catalog: &ModelCatalog, provider: &str, url: &str) -> Self {
-        let mut group = Self::new(&curated::current(), catalog.offered(), SignIn::Key, provider, url);
+    pub fn draft(provider: &str, url: &str) -> Self {
+        let mut group = Self::new(SignIn::Key, provider, url);
         if group.key.is_some() {
             group.fix = Some("add_key");
         }
         group
     }
 
-    fn new(list: &Bundle, offered: Edition, sign_in: SignIn, provider: &str, url: &str) -> Self {
-        let (label, way) = provider_source_in(list, sign_in, provider, url);
-        // A card at a listed address is filed under the list's name and address.
-        let place = (way == Way::Key).then(|| list.place_at(url).filter(|p| p.provider.sign_in == Way::Key)).flatten();
-        let listed = place.is_some();
-        let retained = way == Way::Key && list.kept_out_of(offered, provider, url);
-        let (provider, url) = place.map_or((provider, url), |p| (p.provider.name.as_str(), p.base));
+    fn new(sign_in: SignIn, provider: &str, url: &str) -> Self {
+        let (label, way) = provider_source(sign_in, provider, url);
+        // A card at a preset's address is filed under the preset's name and address.
+        let preset = (way == Way::Key).then(|| presets::at(url)).flatten();
+        let listed = preset.is_some();
+        let (provider, url) = preset.map_or((provider, url), |p| (p.name, p.url));
+        let style = (way == Way::Key).then(|| {
+            let claude = provider.trim().eq_ignore_ascii_case("anthropic");
+            if claude { presets::ApiStyle::Claude } else { presets::ApiStyle::OpenAiCompatible }.as_str()
+        });
         Self {
             id: provider_id(sign_in, provider, url), label, way: way.as_str(),
-            provider: provider.into(), url: shown_url(url), listed, connected: false, fix: None, retained,
+            provider: provider.into(), url: shown_url(url), listed, style, connected: false, fix: None,
             key: (way == Way::Key).then_some(KeyState { set: false, conflict: false, can_keep_model_key: false }),
-            models: Vec::new(), used_by: Vec::new(), disk_gb: None, families: None, spend: None,
+            models: Vec::new(), used_by: Vec::new(), disk_gb: None, cloud: None,
         }
     }
 
@@ -209,18 +210,17 @@ impl ProviderView {
 
 impl ModelManager {
     pub fn providers_view(&self, config: &Config, creds: &Credentials) -> Vec<ProviderView> {
-        let list = curated::current();
-        let offered = config.model_catalog.offered();
         let mut groups = BTreeMap::new();
         // A user row may shadow the cloud model without removing the sign-in.
         let cloud_url = super::catalog::linggen_cloud_url();
-        let mut cloud = ProviderView::new(&list, offered, SignIn::LinggenAccount, super::catalog::LINGGEN_CLOUD_PROVIDER, &cloud_url);
+        let mut cloud = ProviderView::new(SignIn::LinggenAccount, super::catalog::LINGGEN_CLOUD_PROVIDER, &cloud_url);
         cloud.connected = crate::account::resolve_token()
             .is_some_and(|(token, _)| !crate::account::token_rejected(&token));
         cloud.fix = (!cloud.connected).then_some("sign_in");
-        for use_ in cloud_uses(&list, offered) {
+        for use_ in cloud_uses() {
             cloud.add(use_);
         }
+        cloud.cloud = Some(cloud_lines(config));
         groups.insert(cloud.id.clone(), cloud);
         let rows = self.list_models();
         for row in rows.iter().copied().filter(|row| row.is_builtin).chain(config.chat_models()) {
@@ -230,7 +230,7 @@ impl ModelManager {
             }
             let sign_in = row.sign_in();
             let id = provider_id(sign_in, row.provider_name(), &row.url);
-            let group = groups.entry(id).or_insert_with(|| ProviderView::new(&list, offered, sign_in, row.provider_name(), &row.url));
+            let group = groups.entry(id).or_insert_with(|| ProviderView::new(sign_in, row.provider_name(), &row.url));
             if group.models.iter().any(|m| m.id == row.id) {
                 continue;
             }
@@ -240,28 +240,27 @@ impl ModelManager {
             } else {
                 Some(NotReady::ProviderFailing)
             };
-            group.add(ProviderModel { id: row.id.clone(), model: row.model.clone(), kind: kind.as_str(), ready: why.is_none(), why, builtin: row.is_builtin, first: false, price: super::price_of(row).map(super::families::PriceLine::of) });
+            group.add(ProviderModel { id: row.id.clone(), model: row.model.clone(), kind: kind.as_str(), ready: why.is_none(), why, builtin: row.is_builtin, name: self.display_name(row), first: false });
         }
         for endpoint in &creds.endpoints {
             // A credential has no sign-in field; only the key group can use it.
             let id = provider_id(SignIn::Key, &endpoint.provider, &endpoint.url);
-            let group = groups.entry(id).or_insert_with(|| ProviderView::new(&list, offered, SignIn::Key, &endpoint.provider, &endpoint.url));
+            let group = groups.entry(id).or_insert_with(|| ProviderView::new(SignIn::Key, &endpoint.provider, &endpoint.url));
             let set = creds.endpoint_key(&endpoint.provider, &endpoint.url).is_some();
             group.mark_key(set);
             group.connected |= set && group.models.is_empty();
         }
         for voice in live::offered_to_pages().into_iter() {
             let ready = live::key_ready(voice, &config.models, creds);
-            // The line is shown where the list names the voice; a voice it does not name has none.
-            let Some((place, _)) = list.live_place(voice.id) else { continue };
-            let (name, base) = (place.provider.name.as_str(), place.base);
-            let id = provider_id(SignIn::Key, name, base);
-            let group = groups.entry(id).or_insert_with(|| ProviderView::new(&list, offered, SignIn::Key, name, base));
-            // A legacy live row can supply its key, but only the listed provider owns the line.
+            // The line is shown on the preset at the voice's host; a host with no preset has none.
+            let Some(preset) = live_preset(voice) else { continue };
+            let id = provider_id(SignIn::Key, preset.name, preset.url);
+            let group = groups.entry(id).or_insert_with(|| ProviderView::new(SignIn::Key, preset.name, preset.url));
+            // A legacy live row can supply its key, but only the preset owns the line.
             group.mark_key(ready);
             group.add(ProviderModel {
                 id: format!("live:{}", voice.id), model: voice.model.into(), kind: Kind::LiveVoice.as_str(),
-                ready, why: (!ready).then_some(NotReady::NoKey), builtin: true, first: false, price: None,
+                ready, why: (!ready).then_some(NotReady::NoKey), builtin: true, name: voice.model.into(), first: false,
             });
         }
         let mut providers: Vec<_> = groups.into_values().collect();
@@ -271,7 +270,6 @@ impl ModelManager {
                 key.conflict = keys.next().is_some_and(|first| keys.any(|k| k != first));
                 key.can_keep_model_key = key.conflict && keep_model_key(config, creds, &group.id).is_some();
             }
-            group.spend = (group.way == "key").then(|| super::spend_cap::view(&group.id));
             group.models.sort_by(|a, b| a.id.cmp(&b.id));
             group.used_by.sort_unstable();
             group.fix = match group.way {
@@ -280,59 +278,52 @@ impl ModelManager {
                 _ => None,
             };
         }
-        providers.extend(local_lanes(offered));
+        providers.extend(local_lanes());
         providers.sort_by(|a, b| a.label.cmp(&b.label).then_with(|| a.id.cmp(&b.id)));
         providers
     }
 }
 
-/// Linggen Cloud's voice uses the list names — live voice and read-aloud — as
-/// lines on its card, ready when a subscription is known (no network). Only a
-/// use the list names AND the engine has a wire for is here (`curated`).
-fn cloud_uses(list: &Bundle, offered: Edition) -> Vec<ProviderModel> {
-    list.cloud_uses(offered).map(|entry| {
-        let (kind, ready) = match entry.kind {
-            curated::EntryType::Speech => (Kind::Speak, crate::account::cloud_voice::speech_usable()),
-            _ => (Kind::LiveVoice, crate::account::cloud_voice::live_usable()),
-        };
-        let id = format!("{}:cloud:{}", kind.as_str(), entry.key);
+/// Linggen Cloud's voice uses — live voice and read-aloud — as lines on its
+/// card, ready when a subscription is known (no network). The engine's own
+/// wires decide them (`live`, `account::cloud_voice`), not a list.
+fn cloud_uses() -> Vec<ProviderModel> {
+    let live = crate::live::PROVIDERS.iter().find(|p| p.via_cloud())
+        .map(|p| (Kind::LiveVoice, p.model, crate::account::cloud_voice::live_usable()));
+    let speak = Some((Kind::Speak, crate::account::cloud_voice::SPEECH_MODEL, crate::account::cloud_voice::speech_usable()));
+    live.into_iter().chain(speak).map(|(kind, model, ready)| {
+        let id = format!("{}:cloud:{model}", kind.as_str());
         // Signed in without a subscription: not ready, and no reason a sign-in would fix.
         let why = (!ready && crate::account::resolve_token().is_none()).then_some(NotReady::NotSignedIn);
-        ProviderModel { id, model: entry.model.clone(), kind: kind.as_str(), ready, why, builtin: true, first: false, price: None }
+        ProviderModel { id, model: model.into(), kind: kind.as_str(), ready, why, builtin: true, name: model.into(), first: false }
     }).collect()
 }
 
-/// Whether the list names read-aloud under Linggen Cloud: the picker shows
-/// "Linggen Cloud · Serena" only then (`api/uses`, `tts::Source`).
-pub fn cloud_speech_listed() -> bool {
-    curated::current().lists_cloud_speech()
+/// Linggen Cloud's chat models, each with the row that runs it when ticked.
+fn cloud_lines(config: &Config) -> Vec<CloudLine> {
+    super::cloud_models::current().models.into_iter().map(|m| CloudLine {
+        row: super::cloud_tick::ticked(config, &m.id).map(|r| r.id.clone()),
+        model: m.id,
+        label: m.label,
+    }).collect()
 }
 
-/// What the page offers to add, as the curated list names it, in its order:
-/// a provider or a model added to the list shows here with no code change.
-pub fn presets(catalog: &ModelCatalog) -> Vec<serde_json::Value> {
-    let list = curated::current();
-    list.offered(catalog.offered()).map(|p| serde_json::json!({
-        "name": p.provider.name, "label": p.provider.label, "url": p.base, "way": p.provider.sign_in.as_str(),
-        "live": p.offered_live_models(), "unverified": p.unverified(),
+/// The preset a live voice's key is filed at: the one at its host.
+fn live_preset(voice: &crate::live::Provider) -> Option<&'static presets::Preset> {
+    presets::PRESETS.iter().find(|p| p.way == Way::Key && crate::credentials::url_host(p.url).is_some_and(|h| h.eq_ignore_ascii_case(voice.key_host())))
+}
+
+/// What the page offers to add, in the table's order (`presets::PRESETS`).
+pub fn presets() -> Vec<serde_json::Value> {
+    presets::PRESETS.iter().map(|p| serde_json::json!({
+        "name": p.name, "label": p.label, "url": p.url, "way": p.way.as_str(), "style": p.style.as_str(),
     })).collect()
 }
 
-/// The provider name and address a person's pick (a label, an address or a name) stands for.
-pub fn preset_named(catalog: &ModelCatalog, selector: &str) -> Option<(String, String, Way)> {
-    let list = curated::current();
-    let offered = catalog.offered();
-    let place = list.offered(offered).find(|p| p.provider.label == selector || p.base == selector)
-        .or_else(|| list.offered(offered).find(|p| p.provider.name == selector))?;
-    Some((place.provider.name.clone(), place.base.to_string(), place.provider.sign_in))
-}
-
-/// Where a live voice's card sits when it has no row or key yet: the list names it.
+/// Where a live voice's card sits when it has no row or key yet: the preset at its host.
 pub fn live_card_at(id: &str) -> Option<(String, String)> {
-    let list = curated::current();
-    let (place, _) = live::offered_to_pages().and_then(|voice| list.live_place(voice.id))?;
-    (provider_id(SignIn::Key, &place.provider.name, place.base) == id)
-        .then(|| (place.provider.name.clone(), place.base.to_string()))
+    let preset = live::offered_to_pages().and_then(live_preset)?;
+    (provider_id(SignIn::Key, preset.name, preset.url) == id).then(|| (preset.name.to_string(), preset.url.to_string()))
 }
 
 /// Linggen Cloud's card has no row or key to find it by: its id is the account's.
@@ -341,7 +332,7 @@ pub fn linggen_cloud_card_at(id: &str) -> Option<(String, String)> {
     (provider_id(SignIn::LinggenAccount, name, &url) == id).then(|| (name.to_string(), url))
 }
 
-fn local_lanes(offered: Edition) -> impl Iterator<Item = ProviderView> {
+fn local_lanes() -> impl Iterator<Item = ProviderView> {
     use runtime::{HUB_MODELS, PICTURES_LANE, PICTURE_MODEL, STT_MODEL, TTS_MODEL, VOICE_LANE};
     [
         (Kind::Speak, TTS_MODEL, VOICE_LANE, runtime::voice_ready()),
@@ -350,15 +341,15 @@ fn local_lanes(offered: Edition) -> impl Iterator<Item = ProviderView> {
     ].into_iter()
     // A Mac hears with Apple's own recognition: no model of ours to show (`runtime::hearing_by_apple`).
     .filter(|(kind, ..)| !(*kind == Kind::Hear && runtime::hearing_by_apple()))
-    .map(move |(kind, model, lane, on_disk)| {
+    .map(|(kind, model, lane, on_disk)| {
         let ready = on_disk && runtime::lane_verdict(&lane).is_ok();
         let hub = HUB_MODELS.iter().find(|m| m.repo == model).expect("local model is declared");
-        let mut group = ProviderView::new(&curated::current(), offered, SignIn::Key, "ollama", "");
+        let mut group = ProviderView::new(SignIn::Key, "ollama", "");
         group.id = provider_id(SignIn::Key, "ollama", kind.as_str());
         group.label = "This Mac".into();
         group.fix = (!ready).then(|| if runtime::env_bin(hub.venv, "python3").exists() { "download" } else { "install" });
         group.disk_gb = Some(hub.need_gb);
-        group.add(ProviderModel { id: kind.as_str().into(), model: model.into(), kind: kind.as_str(), ready, why: None, builtin: true, first: false, price: None });
+        group.add(ProviderModel { id: kind.as_str().into(), model: model.into(), kind: kind.as_str(), ready, why: None, builtin: true, name: model.into(), first: false });
         group
     })
 }

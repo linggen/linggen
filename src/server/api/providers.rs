@@ -7,8 +7,9 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::config::{providers::{known_names, Way}, Config, SignIn};
-use crate::provider::models::{EditionChoice, ModelCatalog};
-use crate::provider::models::providers_view::{editable_row, is_listed_address, linggen_cloud_card_at, live_card_at, preset_named, presets, filed_endpoint, group_keys, keep_model_key, provider_id, ProviderView};
+use crate::provider::models::presets::{self as preset_table, ApiStyle};
+use crate::provider::models::providers_view::{editable_row, is_listed_address, linggen_cloud_card_at, live_card_at, presets, filed_endpoint, group_keys, keep_model_key, provider_id, ProviderView};
+use crate::provider::models::{cloud_tick, suggest};
 use crate::credentials::{self, Credentials};
 use crate::server::{person, ServerState};
 
@@ -16,15 +17,10 @@ pub(crate) async fn list(State(state): State<Arc<ServerState>>, headers: HeaderM
     if let Some(refused) = owner_refusal(&headers) {
         return refused;
     }
-    let (config, creds, response) = {
-        let _write = state.settings_write.lock().await;
-        let config = state.manager.get_config_snapshot().await;
-        let creds = Credentials::load_with(&credentials::credentials_file(), &config.models);
-        let response = answer(&state, &config, &creds).await;
-        (config, creds, response)
-    };
-    tokio::spawn(async move { state.manager.families.gather(&config, &creds, None).await });
-    response
+    let _write = state.settings_write.lock().await;
+    let config = state.manager.get_config_snapshot().await;
+    let creds = Credentials::load_with(&credentials::credentials_file(), &config.models);
+    answer(&state, &config, &creds).await
 }
 
 pub(super) fn owner_refusal(headers: &HeaderMap) -> Option<Response> {
@@ -36,24 +32,20 @@ pub(super) async fn answer(state: &ServerState, config: &Config, creds: &Credent
     let drafts = state.provider_drafts.lock().await;
     for (id, (name, url)) in drafts.iter() {
         if !providers.iter().any(|p| &p.id == id) {
-            providers.push(ProviderView::draft(&config.model_catalog, name, url));
+            providers.push(ProviderView::draft(name, url));
         }
     }
-    // Linggen Cloud's models are ticked like a key provider's (the account is its key).
-    for provider in providers.iter_mut().filter(|p| p.way == Way::Key.as_str() || p.way == Way::Account.as_str()) {
-        let filed = filed_endpoint(config, creds, &provider.id).unwrap_or((&provider.provider, &provider.url));
-        provider.families = state.manager.families.view(config, creds, filed);
-    }
-    let presets = presets(&config.model_catalog);
-    Json(json!({"presets": presets, "providers": providers, "edition": config.model_catalog.shown()})).into_response()
+    Json(json!({"presets": presets(), "providers": providers})).into_response()
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct NewProvider {
     preset: Option<String>,
+    /// 其他…: the person's own name for it (a label), its address and API style.
     name: Option<String>,
     url: Option<String>,
+    style: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -78,10 +70,6 @@ struct AddressEdit {
 
 fn yes() -> bool { true }
 
-/// `"auto"`, `"international"` or `"mainland"`.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct EditionEdit { choice: String }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -112,45 +100,21 @@ fn address(input: &str) -> Result<String, Failure> {
     Ok(input.trim().into())
 }
 
-fn new_endpoint(catalog: &ModelCatalog, input: NewProvider) -> Result<(String, String), Failure> {
-    match (input.preset, input.name, input.url) {
-        (Some(selector), None, None) => {
-            let (name, url, way) = preset_named(catalog, &selector).ok_or(BAD)?;
-            if !matches!(way, Way::Key | Way::Local) { return Err(BAD); }
-            Ok((name, url))
+fn new_endpoint(input: NewProvider) -> Result<(String, String), Failure> {
+    match (input.preset, input.name, input.url, input.style) {
+        (Some(selector), None, None, None) => {
+            let preset = preset_table::named(&selector).ok_or(BAD)?;
+            if !matches!(preset.way, Way::Key | Way::Local) { return Err(BAD); }
+            Ok((preset.name.to_string(), preset.url.to_string()))
         }
-        (None, Some(name), Some(url)) if known_names().contains(&name.as_str()) && name != "chatgpt" => {
-            Ok((name, address(&url)?))
+        // A provider the person types: filed under the name its API style speaks.
+        (None, Some(name), Some(url), Some(style)) if !name.trim().is_empty() => {
+            let style = ApiStyle::parse(&style).ok_or(BAD)?;
+            Ok((preset_table::name_for_style(style).to_string(), address(&url)?))
         }
         _ => Err(BAD),
     }
 }
-
-/// The owner's choice of edition: what is offered for a new setup. Nothing a
-/// person already has changes (no key, row, default or starter record), so
-/// the same call is safe to make again.
-pub(crate) async fn set_edition(State(state): State<Arc<ServerState>>, headers: HeaderMap, body: Bytes) -> Response {
-    mutate(state, headers, Edit::Edition(body)).await
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CapEdit { usd: Option<f64> }
-
-/// The owner's monthly spending cap for a key provider (`usd: null` clears
-/// it): saved by `AgentManager::set_spend_cap`, the one writer.
-pub(crate) async fn set_cap(State(state): State<Arc<ServerState>>, headers: HeaderMap, Path(id): Path<String>, body: Bytes) -> Response {
-    if let Some(refused) = owner_refusal(&headers) { return refused; }
-    let edit = match parse::<CapEdit>(&body) { Ok(edit) => edit, Err(failure) => return failure.into_response() };
-    let _write = state.settings_write.lock().await;
-    let config = state.manager.get_config_snapshot().await;
-    let creds = Credentials::load_with(&credentials::credentials_file(), &config.models);
-    if endpoint(&state, &config, &creds, &id).await.is_err() { return MISSING.into_response(); }
-    if state.manager.set_spend_cap(&id, edit.usd).await.is_err() { return BAD.into_response(); }
-    let config = state.manager.get_config_snapshot().await;
-    answer(&state, &config, &creds).await
-}
-
 pub(crate) async fn create(State(state): State<Arc<ServerState>>, headers: HeaderMap, body: Bytes) -> Response {
     mutate(state, headers, Edit::Create(body)).await
 }
@@ -165,36 +129,54 @@ pub(crate) async fn edit(State(state): State<Arc<ServerState>>, headers: HeaderM
     mutate(state, headers, edit).await
 }
 
-/// File an endpoint's key; then, outside the write lock, ask its provider for
-/// the models it lists; then, once per endpoint, tick the preset's starter
-/// families (`families::Families::start_endpoint`). A key the provider does
-/// not accept ticks nothing and records nothing.
+/// File, replace or clean an endpoint's key. Nothing is ticked for it: the
+/// person adds the models they want.
 async fn put_key(state: Arc<ServerState>, headers: HeaderMap, id: String, body: Bytes) -> Response {
-    if let Some(refused) = owner_refusal(&headers) { return refused; }
-    let edit = match parse::<KeyEdit>(&body) {
-        Ok(edit) => edit,
-        Err(failure) => return failure.into_response(),
-    };
-    let adding = matches!(&edit, KeyEdit::Set { api_key } if api_key.is_string());
-    let (config, creds) = {
-        let _write = state.settings_write.lock().await;
-        match apply(&state, Edit::Key(id.clone(), edit)).await {
-            Ok(filed) if !adding => return answer(&state, &filed.0, &filed.1).await,
-            Ok(filed) => filed,
-            Err(failure) => return failure.into_response(),
-        }
-    };
-    let Ok((name, url)) = endpoint(&state, &config, &creds, &id).await else {
-        return answer(&state, &config, &creds).await;
-    };
-    state.manager.families.gather(&config, &creds, Some((&name, &url))).await;
-    let _write = state.settings_write.lock().await;
-    let mut config = state.manager.get_config_snapshot().await;
-    let creds = Credentials::load_with(&credentials::credentials_file(), &config.models);
-    if state.manager.families.start_endpoint(&mut config, &creds, (&name, &url)) {
-        if let Err(failure) = save_config(&state, &config).await { return failure.into_response(); }
+    match parse::<KeyEdit>(&body) {
+        Ok(edit) => mutate(state, headers, Edit::Key(id, edit)).await,
+        Err(failure) => failure.into_response(),
     }
-    answer(&state, &config, &creds).await
+}
+
+/// `GET /api/providers/{id}/suggestions`: the ids this provider lists for its
+/// key, to suggest under the model input. Asked outside the write lock; a
+/// list that cannot be read answers `{"models": null}` and the person types.
+pub(crate) async fn suggestions(State(state): State<Arc<ServerState>>, headers: HeaderMap, Path(id): Path<String>) -> Response {
+    if let Some(refused) = owner_refusal(&headers) { return refused; }
+    let config = state.manager.get_config_snapshot().await;
+    let creds = Credentials::load_with(&credentials::credentials_file(), &config.models);
+    let Ok((name, url)) = endpoint(&state, &config, &creds, &id).await else { return MISSING.into_response() };
+    let probe: crate::config::ModelConfig = match serde_json::from_value(json!({"id": "-", "provider": name, "url": url, "model": "-"})) {
+        Ok(row) => row,
+        Err(_) => return BAD.into_response(),
+    };
+    let wire = match probe.provider_kind() {
+        crate::config::ProviderKind::Anthropic => suggest::Wire::Anthropic,
+        crate::config::ProviderKind::Ollama => suggest::Wire::Ollama,
+        _ => suggest::Wire::OpenAi,
+    };
+    let key = credentials::resolve_api_key(&probe, &creds);
+    let base = if url.trim().is_empty() && wire == suggest::Wire::Anthropic { crate::provider::claude_auth::ANTHROPIC_API_BASE.to_string() } else { url };
+    Json(json!({"models": suggest::list(wire, &base, key.as_deref()).await})).into_response()
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CloudTick { model: String, ticked: bool, #[serde(default)] replacement: Option<String> }
+
+/// `PUT /api/providers/cloud`: tick or untick one of Linggen Cloud's models.
+/// Unticking the first default needs the model that takes its place.
+pub(crate) async fn tick_cloud(State(state): State<Arc<ServerState>>, headers: HeaderMap, body: Bytes) -> Response {
+    match parse::<CloudTick>(&body) {
+        Ok(tick) => mutate(state, headers, Edit::Cloud(tick)).await,
+        Err(failure) => failure.into_response(),
+    }
+}
+
+/// `DELETE /api/providers/{id}`: the provider, its key and every model row
+/// filed under it. The page confirms first, naming any default it holds.
+pub(crate) async fn remove(State(state): State<Arc<ServerState>>, headers: HeaderMap, Path(id): Path<String>) -> Response {
+    mutate(state, headers, Edit::Remove(id)).await
 }
 
 pub(crate) async fn remove_model(State(state): State<Arc<ServerState>>, headers: HeaderMap, Path((id, model)): Path<(String, String)>) -> Response {
@@ -202,8 +184,9 @@ pub(crate) async fn remove_model(State(state): State<Arc<ServerState>>, headers:
 }
 
 enum Edit {
-    Edition(Bytes),
     Create(Bytes),
+    Cloud(CloudTick),
+    Remove(String),
     Key(String, KeyEdit),
     Address(String, Bytes),
     AddModel(String, Bytes),
@@ -238,19 +221,22 @@ pub(super) async fn endpoint(state: &ServerState, config: &Config, creds: &Crede
 async fn apply(state: &Arc<ServerState>, edit: Edit) -> Result<(Config, Credentials), Failure> {
     let mut config = state.manager.get_config_snapshot().await;
     let path = credentials::credentials_file();
-    if let Edit::Edition(body) = edit {
+    if let Edit::Cloud(CloudTick { model, ticked, replacement }) = edit {
         let creds = Credentials::load_with(&path, &config.models);
-        let choice = EditionChoice::parse(&parse::<EditionEdit>(&body)?.choice).ok_or(BAD)?;
-        // Compared whole: choosing Auto when none was chosen is still a choice to write.
-        if config.model_catalog != ModelCatalog::chosen(choice) {
-            config.model_catalog = ModelCatalog::chosen(choice);
-            save_config(state, &config).await?;
-        }
+        if !crate::provider::models::cloud_models::current().models.iter().any(|m| m.id == model) { return Err(MISSING); }
+        let changed = if ticked {
+            cloud_tick::tick(&mut config, &model)
+        } else {
+            let Some(id) = cloud_tick::ticked(&config, &model).map(|r| r.id.clone()) else { return Ok((config, creds)) };
+            unfile_rows(&mut config, &[id], replacement)?;
+            true
+        };
+        if changed { save_config(state, &config).await?; }
         return Ok((config, creds));
     }
     if let Edit::Create(body) = edit {
         let creds = Credentials::load_with(&path, &config.models);
-        let (name, url) = new_endpoint(&config.model_catalog, parse(&body)?)?;
+        let (name, url) = new_endpoint(parse(&body)?)?;
         let mut drafts = state.provider_drafts.lock().await;
         if drafts.len() >= 64 { return Err(CONFLICT); }
         drafts.insert(provider_id(SignIn::Key, &name, &url), (name, url));
@@ -258,8 +244,8 @@ async fn apply(state: &Arc<ServerState>, edit: Edit) -> Result<(Config, Credenti
     }
     let mut creds = Credentials::load_with(&path, &config.models);
     let id = match &edit {
-        Edit::Key(id, _) | Edit::Address(id, _) | Edit::AddModel(id, _) | Edit::RemoveModel(id, _) => id,
-        Edit::Create(_) | Edit::Edition(_) => unreachable!(),
+        Edit::Key(id, _) | Edit::Address(id, _) | Edit::AddModel(id, _) | Edit::RemoveModel(id, _) | Edit::Remove(id) => id,
+        Edit::Create(_) | Edit::Cloud(_) => unreachable!(),
     };
     let (name, url) = endpoint(state, &config, &creds, id).await?;
     match edit {
@@ -334,15 +320,9 @@ async fn apply(state: &Arc<ServerState>, edit: Edit) -> Result<(Config, Credenti
             config.models.push(row);
             save_config(state, &config).await?;
             state.provider_drafts.lock().await.remove(&id);
-            crate::server::background::refresh_price_lookups(state.clone());
         }
         Edit::RemoveModel(id, model) => {
             let index = config.models.iter().position(|row| row.id == model && editable_row(row, &id)).ok_or(MISSING)?;
-            // A family's row is removed by unticking, which names a replacement
-            // when the row is the first default chat model.
-            if config.models[index].family_binding.is_some() && config.routing.default_models.first() == Some(&model) {
-                return Err((StatusCode::CONFLICT, "first_default"));
-            }
             let row = config.models.remove(index);
             validate_config(&config)?;
             let (name, url) = (&row.provider, &row.url);
@@ -360,9 +340,37 @@ async fn apply(state: &Arc<ServerState>, edit: Edit) -> Result<(Config, Credenti
                 creds.save(&path).map_err(|_| SAVE)?;
             }
         }
-        Edit::Create(_) | Edit::Edition(_) => unreachable!(),
+        Edit::Remove(id) => {
+            let rows: Vec<String> = config.models.iter().filter(|r| editable_row(r, &id)).map(|r| r.id.clone()).collect();
+            // The page named the defaults it holds and the person confirmed:
+            // the chain goes on without them.
+            config.models.retain(|row| !rows.contains(&row.id));
+            config.routing.default_models.retain(|m| !rows.contains(m));
+            save_config(state, &config).await?;
+            for (other, at) in group_keys(&creds, &id).map(|e| (e.provider.clone(), e.url.clone())).collect::<Vec<_>>() {
+                creds.set_endpoint_key(&other, &at, None);
+            }
+            creds.prune_overrides(&config.models);
+            creds.save(&path).map_err(|_| SAVE)?;
+            super::config::reload_models(state).await;
+            state.provider_drafts.lock().await.remove(&id);
+        }
+        Edit::Create(_) | Edit::Cloud(_) => unreachable!(),
     }
     Ok((config, creds))
+}
+
+/// Untick rows. The first default chat model may go only with a
+/// `replacement` to take its place; a pin naming a row that went simply
+/// finds it unavailable.
+fn unfile_rows(config: &mut Config, ids: &[String], replacement: Option<String>) -> Result<(), Failure> {
+    if config.routing.default_models.first().is_some_and(|first| ids.contains(first)) {
+        let replacement = replacement.filter(|r| !r.is_empty() && !ids.contains(r)).ok_or((StatusCode::CONFLICT, "first_default"))?;
+        config.make_default(&replacement);
+    }
+    config.models.retain(|row| !ids.contains(&row.id));
+    config.routing.default_models.retain(|m| !ids.contains(m));
+    Ok(())
 }
 
 fn validate_config(config: &Config) -> Result<(), Failure> {

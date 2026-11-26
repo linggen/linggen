@@ -113,8 +113,8 @@ impl Provider {
         self.via_cloud
     }
 
-    /// The host this provider's account is at: the one the curated list's
-    /// address for its live entry must be at.
+    /// The host this provider's account is at: its line sits on the preset
+    /// at this host (`providers_view`).
     pub fn key_host(&self) -> &'static str {
         self.key_host
     }

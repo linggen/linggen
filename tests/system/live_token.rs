@@ -474,7 +474,6 @@ model = "deepseek-v4.1-flash"
     assert_eq!(groups.len(), 1);
     assert_eq!(groups[0]["key"], json!({"set":true,"conflict":true,"can_keep_model_key":true}));
     assert_eq!(groups[0]["models"].as_array().unwrap().len(), 2);
-    assert!(groups[0]["families"].is_object());
     let id = groups[0]["id"].as_str().unwrap();
     let key_route = format!("/api/providers/{id}/key");
     let action = json!({"action":"keep_model_key"});

@@ -44,9 +44,6 @@ async fn engine_without_native_tools() -> (AgentEngine, tempfile::TempDir) {
         reasoning_effort: None,
         provided_by: None,
         is_builtin: false,
-        family_binding: None,
-        price: None,
-        price_lookup: None,
     };
     let models = Arc::new(ModelManager::new_with_credentials(
         vec![model],

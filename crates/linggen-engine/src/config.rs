@@ -30,6 +30,18 @@ pub struct Uses {
     _retired_apps: (),
 }
 
+/// `cloud_started` as written now (a bool), or the `family_starts` list an
+/// earlier build wrote: started when it names Linggen Cloud's connection.
+fn started_once<'de, D: serde::Deserializer<'de>>(value: D) -> Result<bool, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Started { Now(bool), Before(Vec<String>) }
+    Ok(match Started::deserialize(value)? {
+        Started::Now(done) => done,
+        Started::Before(keys) => keys.iter().any(|k| k == "linggen-cloud"),
+    })
+}
+
 fn ignore_preference<'de, D: serde::Deserializer<'de>>(value: D) -> Result<(), D::Error> {
     serde::de::IgnoredAny::deserialize(value).map(|_| ())
 }
@@ -91,28 +103,13 @@ pub struct Config {
     /// Mac; a saved config keeps what it holds (`api::config`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub outside_apps: Vec<String>,
-    /// Which endpoints have had their starter families ticked, once
-    /// (`families::Families::start_endpoint`). Absent: none. Written only
-    /// by `families::binding`; a saved config keeps what it holds.
-    #[serde(default, skip_serializing_if = "crate::provider::models::families::FamilyStarts::is_empty")]
+    /// Whether Linggen Cloud's starter was ticked once (`cloud_tick::settle`).
+    /// Read also from the `family_starts` list an earlier build wrote.
+    #[serde(default, alias = "family_starts", deserialize_with = "started_once", skip_serializing_if = "std::ops::Not::not")]
     #[cfg_attr(any(test, feature = "test-support"), ts(skip))]
-    pub family_starts: crate::provider::models::families::FamilyStarts,
-    /// Which edition of the curated model list is offered (`[model_catalog]`):
-    /// only what is offered for a new setup, never what a person already has.
-    /// Absent: Auto. Written only by the owner's route (`PUT /api/providers/edition`);
-    /// a saved config keeps what it holds.
-    #[serde(default, skip_serializing_if = "crate::provider::models::ModelCatalog::is_unset")]
-    #[cfg_attr(any(test, feature = "test-support"), ts(skip))]
-    pub model_catalog: crate::provider::models::ModelCatalog,
-    /// Monthly spending caps in USD, by provider id (`providers_view::provider_id`).
-    /// Absent: none. Written only by `AgentManager::set_spend_cap`; a saved
-    /// config keeps what it holds (`api::config`).
-    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
-    #[cfg_attr(any(test, feature = "test-support"), ts(skip))]
-    pub spend_caps: std::collections::BTreeMap<String, f64>,
+    pub cloud_started: bool,
     /// What was wrong in the file and was set right on load rather than
-    /// refusing the whole config (a bad model `price` is dropped, that
-    /// model alone). Runtime-only — never read from or written to the file —
+    /// refusing the whole config. Runtime-only — never read from or written to the file —
     /// so the log and `ling status` can say it.
     #[serde(skip)]
     pub problems: Vec<String>,
@@ -213,35 +210,6 @@ fn default_pet_recall_min_score() -> f32 {
     0.8
 }
 
-/// A model's price in USD per million tokens (`[[models]] price = { … }`).
-/// `cache_read` and `cache_write` default to `input`: a provider that does
-/// not discount or bill its cache costs the plain input price. The price is
-/// flat — it holds for every prompt size.
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-#[cfg_attr(any(test, feature = "test-support"), derive(ts_rs::TS), ts(export))]
-pub struct ModelPrice {
-    pub input: f64,
-    pub output: f64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cache_read: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cache_write: Option<f64>,
-}
-
-/// The site's answer about one custom model's price, and the day it was asked.
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-#[cfg_attr(any(test, feature = "test-support"), derive(ts_rs::TS), ts(export))]
-pub struct PriceLookup {
-    /// Local day (YYYY-MM-DD) of the last ask: not found is asked again the next day.
-    pub checked_on: String,
-    /// The price found; none when the site has none.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub price: Option<ModelPrice>,
-    /// The day the site says the price was true.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub as_of: Option<String>,
-}
-
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[cfg_attr(any(test, feature = "test-support"), derive(ts_rs::TS), ts(export))]
 pub struct ModelConfig {
@@ -282,17 +250,6 @@ pub struct ModelConfig {
     /// (`provider/output_limit.rs`). Other providers ignore it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_output_tokens: Option<u32>,
-    /// What this model's tokens cost, in USD per million tokens, when the
-    /// built-in table (`provider/models/pricing.rs`) has no price for it or
-    /// you pay another one (a gateway, a negotiated rate). Wins over the
-    /// table. Unset and unlisted: the session shows tokens and no dollars.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub price: Option<ModelPrice>,
-    /// What linggen.dev answered when this custom model was added (or on the
-    /// daily re-check): its public price, if it has one. Never typed by the
-    /// person; `price` above wins. Written only by `provider/models/price_lookup.rs`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub price_lookup: Option<PriceLookup>,
     /// Display name of the proxy room owner providing this model.
     /// Only set for proxy models (provider = "proxy").
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -304,15 +261,6 @@ pub struct ModelConfig {
     /// editable entries, regardless of what's in the user's config file.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub is_builtin: bool,
-    /// Set on the one row a ticked family keeps (`provider/models/families`):
-    /// it names the family the row follows or is pinned in, and the last move
-    /// a person has yet to acknowledge. A released 2.6.1 binary reads the
-    /// other fields and drops this one on save; the row then runs as an
-    /// exact row, and nothing infers a family from its id or its model.
-    /// Written only by `families::binding`; read through its accessors.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(any(test, feature = "test-support"), ts(skip))]
-    pub family_binding: Option<crate::provider::models::families::FamilyBinding>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -621,9 +569,9 @@ impl Config {
     /// The config as the engine starts on it (`load_with_path`, the one startup read;
     /// `from_toml` also reads files that are only being checked): Linggen Cloud's starter ticked
     /// once, and a retired Linggen Cloud id moved to the model it became
-    /// (`families::settle_cloud`).
+    /// (`cloud_tick::settle`).
     fn with_cloud_settled(mut self) -> Self {
-        crate::provider::models::families::settle_cloud(&mut self);
+        crate::provider::models::settle_cloud(&mut self);
         self
     }
 
@@ -645,59 +593,7 @@ impl Config {
         if let (Some(model), Some(value)) = (config.routing.default_models.first(), config.uses.legacy_chat_effort.take()) {
             config.uses.model_effort.entry(model.clone()).or_insert(value);
         }
-        config.drop_bad_prices();
         Ok(config)
-    }
-
-    /// What is wrong with a model's `price`, naming the model and the field.
-    /// A price is real money: every number finite and not negative, and only
-    /// on a model paid by the token — one that bills an account (a ChatGPT
-    /// sign-in, Linggen Cloud, a room, a subscription) would never use it.
-    fn price_problem(model: &ModelConfig) -> Option<String> {
-        let price = model.price.as_ref()?;
-        let fields = [
-            ("price.input", Some(price.input)),
-            ("price.output", Some(price.output)),
-            ("price.cache_read", price.cache_read),
-            ("price.cache_write", price.cache_write),
-        ];
-        for (field, value) in fields {
-            if let Some(n) = value.filter(|n| !n.is_finite() || *n < 0.0) {
-                return Some(format!(
-                    "Model '{}': {field} must be a finite number, not negative (got {n}).",
-                    model.id
-                ));
-            }
-        }
-        (crate::provider::models::billing_of(model) == crate::provider::models::Billing::Account)
-            .then(|| {
-                format!(
-                    "Model '{}' has a price, but it bills an account, not by the token: remove its price.",
-                    model.id
-                )
-            })
-    }
-
-    /// Strict, for a config being written (`validate`): the first bad price
-    /// refuses the save.
-    fn check_prices(&self) -> Result<()> {
-        match self.models.iter().find_map(Self::price_problem) {
-            Some(why) => anyhow::bail!("{why}"),
-            None => Ok(()),
-        }
-    }
-
-    /// Lenient, for a config being read: one bad price must never cost the
-    /// person the rest of their file. That model loses its price (it then
-    /// shows tokens and no dollars) and the problem is kept in `problems`
-    /// for the log and `ling status`.
-    fn drop_bad_prices(&mut self) {
-        for model in &mut self.models {
-            if let Some(why) = Self::price_problem(model) {
-                model.price = None;
-                self.problems.push(format!("{why} Its price is ignored."));
-            }
-        }
     }
 
     /// Bring persisted references in line with the ChatGPT catalog in force.
@@ -753,9 +649,8 @@ impl Config {
     /// config's own rows starts here, never from `self.models` (a lock in
     /// `src/server/model_locks.rs` counts the readers of the raw rows).
     pub fn chat_models(&self) -> impl Iterator<Item = &ModelConfig> {
-        use crate::provider::kinds::{kind_in, Kind};
-        let facts = crate::provider::models::curated::current();
-        self.models.iter().filter(move |m| kind_in(m, &facts) == Kind::Chat)
+        use crate::provider::kinds::{kind_of, Kind};
+        self.models.iter().filter(|m| kind_of(m) == Kind::Chat)
     }
 
     /// Whether `id` names a configured live-voice row.
@@ -872,7 +767,6 @@ impl Config {
         // built-in models (Linggen Cloud, ChatGPT) at runtime regardless of
         // what's configured here, so an empty list is a valid "use only the
         // built-ins" config, not a broken one.
-        self.check_prices()?;
         self.check_no_live_voice_model_in_chat_places()?;
         let mut seen_ids = std::collections::HashSet::new();
         for model in &self.models {
@@ -1061,9 +955,7 @@ impl Default for Config {
             pet: PetConfig::default(),
             mcp_servers: Default::default(),
             outside_apps: Vec::new(),
-            family_starts: Default::default(),
-            model_catalog: Default::default(),
-            spend_caps: Default::default(),
+            cloud_started: false,
             problems: Vec::new(),
         }
     }
@@ -1102,39 +994,11 @@ fn is_valid_go_duration(s: &str) -> bool {
 }
 
 // The provider names a model may carry are `providers::known_names()`, a
-// fixed list in `config/providers.rs`; what a page offers is the curated list.
+// fixed list in `config/providers.rs`; what a page offers is `provider::models::presets`.
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// The bug of 2026-11-25: a save left out a value for equalling the
-    /// default, so when a later version moved the default the person's word
-    /// moved with it. A choice is written even when it equals the default;
-    /// what was never chosen stays absent. Through the one writer
-    /// (`save_runtime`) and back through the one reader (`from_toml`).
-    #[test]
-    fn a_saved_config_keeps_what_the_person_chose_even_when_it_equals_the_default() {
-        use crate::provider::models::{EditionChoice, ModelCatalog};
-        let dir = tempfile::tempdir().unwrap();
-        let saved = |config: Config| {
-            let path = config.save_runtime(Some(dir.path())).unwrap();
-            let text = std::fs::read_to_string(path).unwrap();
-            (Config::from_toml(&text).unwrap(), text)
-        };
-        let mut chosen = valid_config();
-        chosen.model_catalog = ModelCatalog::chosen(EditionChoice::Auto);
-        let (back, text) = saved(chosen);
-        assert!(text.contains("[model_catalog]") && text.contains("edition = \"auto\""), "{text}");
-        assert_eq!(back.model_catalog, ModelCatalog::chosen(EditionChoice::Auto));
-        // Chosen once is chosen on the next save too.
-        let (_, again) = saved(back);
-        assert!(again.contains("edition = \"auto\""), "{again}");
-        // Never chosen: nothing is written, so a default that moves can move.
-        let (never, text) = saved(valid_config());
-        assert!(!text.contains("[model_catalog]"), "{text}");
-        assert!(never.model_catalog.is_unset());
-    }
 
     /// The lock: no config type leaves a value out because it equals the
     /// default (`Explicit` is the one way, `config/explicit.rs`). A second
@@ -1211,9 +1075,6 @@ mod tests {
             max_output_tokens: None,
             provided_by: None,
             is_builtin: false,
-            family_binding: None,
-            price: None,
-            price_lookup: None,
         });
         cfg
     }
@@ -1429,79 +1290,85 @@ mod tests {
         assert!(err.to_string().contains("Duplicate model ID"));
     }
 
-    fn priced(input: f64, output: f64) -> Config {
-        let mut cfg = valid_config();
-        cfg.models[0].price = Some(ModelPrice { input, output, cache_read: None, cache_write: None });
-        cfg
-    }
-
-    /// Finding 7: a price is real money — every number finite and not
-    /// negative, and the error names the model and the field.
+    /// A config from before the list was dropped loads: its prices, price
+    /// lookups, family bindings, spending caps and edition choice are
+    /// ignored, never an error, and every model the person had is kept
+    /// with the wire model it ran on.
     #[test]
-    fn a_price_must_be_finite_and_not_negative() {
-        priced(2.0, 10.0).validate().unwrap();
-        priced(0.0, 0.0).validate().unwrap();
-        for (cfg, field) in [
-            (priced(-1.0, 10.0), "price.input"),
-            (priced(2.0, f64::NAN), "price.output"),
-            (priced(f64::INFINITY, 1.0), "price.input"),
-        ] {
-            let said = cfg.validate().unwrap_err().to_string();
-            assert!(said.contains("'test-model'") && said.contains(field), "{said}");
+    fn a_config_from_the_listed_days_loads_and_keeps_every_model() {
+        let old = r#"
+spend_caps = { abc = 200.0 }
+family_starts = ["linggen-cloud", "anthropic"]
+
+[server]
+url = "127.0.0.1:9527"
+
+[agent]
+max_iters = 12
+
+[model_catalog]
+edition = "mainland"
+
+[routing]
+default_models = ["fam-opus", "own-1"]
+
+[[models]]
+id = "fam-opus"
+provider = "anthropic"
+url = "https://api.anthropic.com"
+model = "claude-opus-5-5"
+context_window = 200000
+supports_tools = true
+[models.family_binding]
+family = "claude-opus"
+preset = "anthropic"
+mode = "follow"
+moves = 1
+[models.family_binding.last_move]
+seq = 1
+kind = "followed"
+from = "claude-opus-5-1"
+to = "claude-opus-5-5"
+on = "2026-11-20"
+
+[[models]]
+id = "own-1"
+provider = "openai"
+url = "https://gw.example.com/v1"
+model = "my-model"
+price = { input = 1.0, output = 2.0 }
+[models.price_lookup]
+checked_on = "2026-11-25"
+
+[[models]]
+id = "qwen3.8-flash"
+provider = "openai"
+url = "https://linggen.dev/api/llm"
+model = "qwen3.8-flash"
+auth_mode = "linggen_account"
+[models.family_binding]
+family = "qwen3-8-flash"
+preset = "linggen-cloud"
+mode = "pinned"
+"#;
+        let loaded = Config::from_toml(old).expect("an old config loads");
+        loaded.validate().unwrap();
+        assert!(loaded.problems.is_empty(), "{:?}", loaded.problems);
+        let rows: Vec<(&str, &str)> = loaded.models.iter().map(|m| (m.id.as_str(), m.model.as_str())).collect();
+        assert_eq!(rows, [("fam-opus", "claude-opus-5-5"), ("own-1", "my-model"), ("qwen3.8-flash", "qwen3.8-flash")]);
+        assert_eq!(loaded.routing.default_models, ["fam-opus", "own-1"]);
+        assert!(loaded.cloud_started, "Linggen Cloud's starter was ticked before");
+        // Saved now, none of the dropped fields come back.
+        let text = toml::to_string(&loaded).unwrap();
+        for gone in ["family_binding", "price", "spend_caps", "model_catalog", "family_starts"] {
+            assert!(!text.contains(gone), "{gone}: {text}");
         }
-        let mut cfg = priced(1.0, 1.0);
-        cfg.models[0].price.as_mut().unwrap().cache_write = Some(-0.5);
-        assert!(cfg.validate().unwrap_err().to_string().contains("price.cache_write"));
-    }
-
-    /// Finding 7: a price on a model that bills an account is never used.
-    #[test]
-    fn a_price_on_an_allowance_model_is_an_error() {
-        let mut cfg = priced(1.0, 1.0);
-        cfg.models[0].provider = "chatgpt".into();
-        cfg.models[0].auth_mode = Some("chatgpt_oauth".into());
-        let said = cfg.validate().unwrap_err().to_string();
-        assert!(said.contains("'test-model'") && said.contains("price"), "{said}");
-    }
-
-    /// Strict when writing, lenient when reading: one bad price must never
-    /// cost the person the rest of their config. At load it drops that
-    /// model's price alone and says so.
-    #[test]
-    fn a_bad_price_in_the_file_drops_only_that_models_price() {
-        let mut cfg = priced(-2.0, 10.0);
-        cfg.server.url = Some("127.0.0.1:9999".into());
-        let mut second = cfg.models[0].clone();
-        second.id = "other".into();
-        second.price = Some(ModelPrice { input: 1.0, output: 2.0, cache_read: None, cache_write: None });
-        cfg.models.push(second);
-        let loaded = Config::from_toml(&toml::to_string(&cfg).unwrap()).expect("the file loads");
-        assert_eq!(loaded.server.port(), 9999, "the rest of the config is the person's own");
-        assert_eq!(loaded.models.len(), 2);
-        assert_eq!(loaded.models[0].price, None, "the bad price is dropped");
-        assert_eq!(loaded.models[1].price.as_ref().unwrap().input, 1.0, "a good price is kept");
-        assert_eq!(loaded.problems.len(), 1, "{:?}", loaded.problems);
-        let said = &loaded.problems[0];
-        assert!(said.contains("'test-model'") && said.contains("price.input"), "{said}");
-    }
-
-    /// A price on a model that bills an account is dropped the same way.
-    #[test]
-    fn a_price_on_an_allowance_model_is_dropped_at_load() {
-        let mut cfg = priced(1.0, 1.0);
-        cfg.models[0].provider = "chatgpt".into();
-        cfg.models[0].auth_mode = Some("chatgpt_oauth".into());
-        let loaded = Config::from_toml(&toml::to_string(&cfg).unwrap()).expect("loads");
-        assert_eq!(loaded.models[0].price, None);
-        assert!(loaded.problems[0].contains("'test-model'"), "{:?}", loaded.problems);
-    }
-
-    /// A good file has nothing to say.
-    #[test]
-    fn a_good_price_loads_with_no_problem() {
-        let loaded = Config::from_toml(&toml::to_string(&priced(2.0, 10.0)).unwrap()).unwrap();
-        assert_eq!(loaded.models[0].price.as_ref().unwrap().input, 2.0);
-        assert!(loaded.problems.is_empty());
+        assert!(text.contains("cloud_started = true"), "{text}");
+        let again = Config::from_toml(&text).unwrap();
+        assert_eq!(again.models.len(), 3);
+        // A family_starts list without Linggen Cloud's connection is not started.
+        let fresh = Config::from_toml(&old.replace(r#"["linggen-cloud", "anthropic"]"#, r#"["anthropic"]"#)).unwrap();
+        assert!(!fresh.cloud_started);
     }
 
     /// The older hazard: a file that could not be loaded must never be
@@ -1807,17 +1674,17 @@ mod tests {
         let mut cfg = Config::default();
         cfg.routing.default_models = vec!["deepseek-v4-flash".into(), "deepseek-flash".into()];
         cfg.pet.model = "deepseek-flash".into();
-        assert!(crate::provider::models::families::settle_cloud(&mut cfg));
+        assert!(crate::provider::models::settle_cloud(&mut cfg));
         assert_eq!(cfg.routing.default_models, vec!["deepseek-v4.1-flash".to_string()]);
         assert_eq!(cfg.pet.model, "deepseek-v4.1-flash");
         let ticked: Vec<_> = cfg.models.iter().map(|m| (m.id.as_str(), m.model.as_str(), m.sign_in())).collect();
         assert!(ticked.contains(&("deepseek-v4.1-flash", "deepseek-v4.1-flash", SignIn::LinggenAccount)), "{ticked:?}");
-        assert!(!crate::provider::models::families::settle_cloud(&mut cfg), "settled once");
+        assert!(!crate::provider::models::settle_cloud(&mut cfg), "settled once");
 
         let mut own = valid_config();
         own.models[0].id = "deepseek-v4-flash".into();
         own.routing.default_models = vec!["deepseek-v4-flash".into()];
-        crate::provider::models::families::settle_cloud(&mut own);
+        crate::provider::models::settle_cloud(&mut own);
         assert_eq!(own.routing.default_models, vec!["deepseek-v4-flash".to_string()]);
     }
 

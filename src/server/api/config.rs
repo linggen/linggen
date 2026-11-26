@@ -33,17 +33,13 @@ pub(crate) async fn update_config_api(
     // (`outside_apps::set`): a saved config, from any page, keeps it.
     let current = state.manager.get_config_snapshot().await;
     new_config.outside_apps = current.outside_apps.clone();
-    // Caps are set by `providers::set_spend_cap` alone; a stale page keeps them.
-    new_config.spend_caps = current.spend_caps.clone();
-    // Which edition of the model list is offered is the owner's own route (`providers::set_edition`).
-    new_config.model_catalog = current.model_catalog.clone();
+    // Linggen Cloud's starter is ticked once; a stale page does not tick it again.
+    new_config.cloud_started = current.cloud_started;
     // Only /api/uses edits these choices; a stale settings page keeps them.
     new_config.routing.default_models = current.routing.default_models.clone();
     new_config.keep_model_fallback(&current);
     new_config.uses = current.uses.clone();
     new_config.pet.voice = current.pet.voice.clone();
-    // Nor does it undo a family's move, or set a binding: the writer is `families`.
-    crate::provider::models::families::Families::keep_bindings(&mut new_config, &current);
     if let Err(e) = take_credentials(&mut new_config, &credentials::credentials_file()) {
         return (StatusCode::BAD_REQUEST, e).into_response();
     }

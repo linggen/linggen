@@ -9,8 +9,8 @@ use crate::engine::AgentEngine;
 use crate::provider::models::{spend_of, CallRecord, ModelManager, SessionSpend, TokenUsage};
 
 impl AgentManager {
-    /// What the session's model calls used and, for the models with a price,
-    /// cost. `None` when no call has been noted. Asked only by
+    /// What the session's model calls used (and, in a ledger from when
+    /// prices were kept, what they cost). `None` when no call has been noted. Asked only by
     /// `server::session_cost`, the one answer the chat's top bar and
     /// `agent_status` give.
     pub fn session_spend(&self, session_id: &str) -> Option<SessionSpend> {
@@ -80,9 +80,6 @@ fn record_call(
     // The call's class and cost are worked out now, from the config as it
     // is now, and kept: nothing later re-derives them.
     let rec = CallRecord::of(models.config_of(model_id), spent.usage());
-    if let (Some(cfg), Some(cost)) = (models.config_of(model_id), rec.cost_usd) {
-        crate::provider::models::spend_cap::add(cfg, cost);
-    }
     manager
         .global_sessions
         .record_usage(&Seal(()), session_id, model_id, &rec, spent.usage());
@@ -118,24 +115,6 @@ impl Drop for ForkSpend {
 }
 
 impl AgentEngine {
-    /// One line in the chat when `model_id`'s provider has just come near its
-    /// monthly cap — once a month per provider (`spend_cap::take_warning`).
-    pub(crate) async fn warn_near_cap(&self, model_id: &str) {
-        let line = self
-            .model_manager
-            .config_of(model_id)
-            .and_then(crate::provider::models::spend_cap::take_warning);
-        let Some(line) = line else { return };
-        self.emit(crate::engine::agent::AgentEvent::Message {
-            from: "system".to_string(),
-            to: "user".to_string(),
-            content: line,
-            run_id: None,
-            parent_id: None,
-        })
-        .await;
-    }
-
     /// A model call ended, however it ended: `spent` is what its provider
     /// counted.
     pub(crate) fn note_call(&mut self, model_id: &str, spent: &CallSpend) {

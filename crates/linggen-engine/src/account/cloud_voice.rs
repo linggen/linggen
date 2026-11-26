@@ -17,9 +17,8 @@ use serde_json::{json, Value};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-/// The read-aloud model and voice Linggen Cloud offers: the curated list's
-/// speech entry must name exactly these (`provider::models::curated`), and the
-/// site writes them last on its side (`cloudTts.ts`). Yinyue's voice.
+/// The read-aloud model and voice Linggen Cloud offers (its card's line,
+/// `providers_view::cloud_uses`), and the site writes them last on its side (`cloudTts.ts`). Yinyue's voice.
 pub const SPEECH_MODEL: &str = "qwen3-tts-flash";
 pub const SPEECH_VOICE: &str = "Serena";
 

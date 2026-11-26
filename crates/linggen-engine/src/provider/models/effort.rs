@@ -18,10 +18,15 @@
 //! default's value the model does not offer also means the provider's default
 //! for that call; the choice is kept where it is stored, and the caller is
 //! told ([`Resolved::held_back`]) so the conversation can say so once.
-//! A model's effort choices come from its catalog, cut to what its wire
-//! can carry. ChatGPT sign-in uses its own catalog, not API-key facts.
+//! A key model's effort choices are what its wire carries; no model list is
+//! read. A provider that refuses the field is asked once more without it,
+//! and the model is remembered as having none ([`refused`]): its choices are
+//! then empty, so the next call sends none. ChatGPT sign-in uses its own
+//! catalog.
 
-use super::{chatgpt_catalog, curated, ModelManager};
+use super::{chatgpt_catalog, ModelManager};
+use std::collections::HashSet;
+use std::sync::{LazyLock, Mutex};
 use crate::config::{ModelConfig, ProviderKind, SignIn};
 use crate::provider::anthropic::AnthropicClient;
 use crate::provider::openai::{responses_api, OpenAiClient};
@@ -121,9 +126,37 @@ fn key_choices(row: &ModelConfig) -> Vec<&'static str> {
         ProviderKind::Anthropic => &AnthropicClient::EFFORT_VALUES,
         ProviderKind::OpenAiCompatible | ProviderKind::ChatGpt | ProviderKind::Ollama | ProviderKind::Proxy => return Vec::new(),
     };
-    let catalog = curated::current();
-    let Some(facts) = catalog.exact(row) else { return Vec::new() };
-    wire.iter().copied().filter(|value| facts.effort_values().any(|v| v == *value)).collect()
+    if is_refused(row) {
+        return Vec::new();
+    }
+    wire.to_vec()
+}
+
+/// Key models whose provider refused the effort field, by address and wire
+/// model, for this run of the engine.
+static REFUSED: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(Default::default);
+
+fn refusal_key(row: &ModelConfig) -> String {
+    format!("{}|{}", crate::credentials::endpoint_url(&row.url).to_ascii_lowercase(), row.model)
+}
+
+fn is_refused(row: &ModelConfig) -> bool {
+    REFUSED.lock().unwrap_or_else(|e| e.into_inner()).contains(&refusal_key(row))
+}
+
+/// The provider refused a call that carried `effort`: whether to ask once
+/// more without it. True only for a key row's bad request, with a value
+/// sent, whose words name the field (any other refusal is the call's own);
+/// the row is then remembered as offering no effort.
+pub(super) fn refused(row: &ModelConfig, effort: &Effort, err: &anyhow::Error) -> bool {
+    let bad_request = crate::provider::error::kind_of(err) == crate::provider::error::ProviderErrorKind::BadRequest;
+    let words = format!("{err:#}").to_ascii_lowercase();
+    let names_it = ["effort", "reasoning", "thinking", "output_config"].iter().any(|w| words.contains(w));
+    if effort.wire().is_none() || row.sign_in() != SignIn::Key || !bad_request || !names_it {
+        return false;
+    }
+    REFUSED.lock().unwrap_or_else(|e| e.into_inner()).insert(refusal_key(row));
+    true
 }
 
 /// Preserve the old gate for forced and legacy values outside the choices.
@@ -158,8 +191,14 @@ pub(super) fn resolve(row: &ModelConfig, ask: &EffortAsk<'_>) -> Resolved {
 }
 
 impl ModelManager {
+    /// A model's name on a page: Linggen Cloud's label for its own models, else the id.
     pub fn display_name(&self, row: &ModelConfig) -> String {
-        curated::current().exact(row).map_or_else(|| row.model.clone(), |facts| facts.name().to_string())
+        if row.sign_in() == SignIn::LinggenAccount {
+            if let Some(label) = super::cloud_models::current().label_of(&row.model) {
+                return label.to_string();
+            }
+        }
+        row.model.clone()
     }
 
     /// The values the model `id` offers, in the wire's order: what the chat
@@ -203,25 +242,35 @@ mod tests {
     }
 
     #[test]
-    fn only_the_overlap_of_exact_catalog_values_and_wire_values_is_offered() {
-        let mut row = row("gpt-5.4-pro", "openai", "https://api.openai.com/v1", None, None);
-        assert_eq!(choices(&row), ["medium", "high"]);
-        row.provider = "ollama".into();
-        assert!(choices(&row).is_empty());
-        row.provider = "openai".into();
-        row.url = "https://gateway.invalid/v1".into();
-        assert!(choices(&row).is_empty());
+    fn a_key_model_offers_what_its_wire_carries_with_no_list_read() {
+        let gpt = row("gpt-5.4-pro", "openai", "https://gateway.invalid/v1", None, None);
+        assert_eq!(choices(&gpt), ["low", "medium", "high"]);
+        let mut ollama = gpt.clone();
+        ollama.provider = "ollama".into();
+        assert!(choices(&ollama).is_empty());
+        assert_eq!(choices(&claude("claude-sonnet-5-5")), ["low", "medium", "high", "xhigh", "max"]);
+        assert_eq!(choices(&row("claude-x", "anthropic", "https://gateway.invalid", None, None)).len(), 5);
     }
 
+    /// A provider that refuses the field: asked once more without it, and
+    /// the model offers no effort from then on.
     #[test]
-    fn claude_offers_what_the_catalog_lists_and_the_wire_carries() {
-        assert_eq!(choices(&claude("claude-sonnet-5-5")), ["low", "medium", "high", "xhigh", "max"]);
-        assert_eq!(choices(&claude("claude-opus-4-6")), ["low", "medium", "high", "max"]);
-        assert_eq!(choices(&claude("claude-opus-4-5")), ["low", "medium", "high"]);
-        // Budget-token-only models have no effort field.
-        assert!(choices(&claude("claude-haiku-4-5")).is_empty());
-        // Another host behind the same wire is not Anthropic's catalog.
-        assert!(choices(&row("claude-sonnet-5-5", "anthropic", "https://gateway.invalid", None, None)).is_empty());
+    fn a_refused_effort_is_asked_once_without_and_remembered() {
+        let r = row("claude-refuses", "anthropic", "https://refuses.invalid", None, None);
+        let sent = resolve(&r, &EffortAsk { session: Some("high"), ..EffortAsk::default() }).effort;
+        assert_eq!(sent.wire(), Some("high"));
+        let other = anyhow::anyhow!("network down");
+        assert!(!refused(&r, &sent, &other), "only a bad request is a refusal of the field");
+        let bad_request = |words: &str| -> anyhow::Error {
+            crate::provider::error::ProviderError::new(crate::provider::error::ProviderErrorKind::BadRequest, words.into()).into()
+        };
+        assert!(!refused(&r, &sent, &bad_request("messages: too long")), "a bad request about something else is the call's own");
+        let bad = bad_request("output_config.effort: Extra inputs are not permitted");
+        assert!(!refused(&r, &Effort(None), &bad), "nothing sent, nothing to drop");
+        assert!(refused(&r, &sent, &bad));
+        assert!(choices(&r).is_empty());
+        let after = resolve(&r, &EffortAsk { session: Some("high"), ..EffortAsk::default() });
+        assert_eq!((after.effort.wire(), after.held_back.as_deref()), (None, Some("high")));
     }
 
     #[test]
@@ -278,8 +327,8 @@ mod tests {
 
     #[test]
     fn a_value_the_model_lacks_is_the_provider_default_and_is_kept_and_told() {
-        // Opus 4.5 has no xhigh: the person's choice stays; this call omits it.
-        let r = claude("claude-opus-4-5");
+        // The OpenAI-compatible wire carries no xhigh: the choice stays; this call omits it.
+        let r = row("gpt-5.4", "openai", "https://gateway.invalid/v1", None, None);
         let ask = EffortAsk { session: Some("xhigh"), ..EffortAsk::default() };
         assert_eq!(resolve(&r, &ask), Resolved { effort: Effort(None), held_back: Some("xhigh".into()) });
         // It does not fall through to a lower step.
@@ -289,9 +338,6 @@ mod tests {
         let ask = EffortAsk { session: Some("xhigh"), ..EffortAsk::default() };
         let on_sonnet = resolve(&claude("claude-sonnet-5-5"), &ask);
         assert_eq!((on_sonnet.effort.wire(), on_sonnet.held_back), (Some("xhigh"), None));
-        // A model with no effort at all, and the chat default's value there.
-        let ask = EffortAsk { remembered: Some(&remembered("high")), ..EffortAsk::default() };
-        assert_eq!(resolve(&claude("claude-haiku-4-5"), &ask).held_back.as_deref(), Some("high"));
     }
 
     #[test]
@@ -303,7 +349,6 @@ mod tests {
         // Where no gate exists, a legacy value was never sent and still is not.
         let sol = row("gpt-6.2-sol", "chatgpt", "", Some("chatgpt_oauth"), None);
         assert_eq!(resolve(&sol, &agent).effort.wire(), Some("low"), "the Responses gate is the old one");
-        assert_eq!(sent(&claude("claude-haiku-4-5"), agent), None);
         let ollama = row("llama", "ollama", "http://localhost:11434", None, Some("high"));
         assert_eq!(sent(&ollama, EffortAsk::forced("low")), None);
         assert_eq!(resolve(&ollama, &agent).held_back, None);

@@ -35,7 +35,7 @@ pub(super) async fn for_person(
             let auth_ok = match kind {
                 Kind::Chat => manager.model_auth_ok(&m.id),
                 // Live auth is reported by /api/live, not by a chat client.
-                Kind::LiveVoice | Kind::Speak | Kind::Hear | Kind::Draw | Kind::NoLane => false,
+                Kind::LiveVoice | Kind::Speak | Kind::Hear | Kind::Draw => false,
             };
             let mut config = m.clone();
             config.api_key = None;
