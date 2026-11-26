@@ -7,7 +7,7 @@ import type { StatusResponse } from '../types/generated/StatusResponse';
 import type { AgentFileInfo, AppConfig, BuiltInSkillInfo, SkillInfoFull } from '../types';
 import type { PeopleReply, PersonPatch, PersonSettings } from './people.mts';
 import type { OutsideAppsReply } from './outsideApps.mts';
-import type { EditionChoice, FamilyAction, ProvidersAnswer } from './providers.mts';
+import type { ApiStyle, ProvidersAnswer, Suggestion } from './providers.mts';
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from './api';
 
 const q = (params: Record<string, string | undefined>) => {
@@ -113,8 +113,7 @@ export const modelsApi = {
     apiPost<void>('/api/models/chatgpt/stay', { family, stay }),
 };
 
-/** The owner's provider settings (src/server/api/providers.rs and
- *  provider_families.rs). Every call answers with the fresh list; the page
+/** The owner's provider settings (src/server/api/providers.rs). Every call answers with the fresh list; the page
  *  draws that answer and decides nothing itself (lib/providers.mts). */
 const provider = (id: string) => `/api/providers/${encodeURIComponent(id)}`;
 export const usesApi = {
@@ -126,19 +125,21 @@ export const providersApi = {
   list: () => apiGet<ProvidersAnswer>('/api/providers'),
   /** A provider the person picked from `presets`, by its label. */
   create: (preset: string) => apiPost<ProvidersAnswer>('/api/providers', { preset }),
-  /** The owner's choice of edition: what is offered for new setups only. */
-  setEdition: (choice: EditionChoice) => apiPut<ProvidersAnswer>('/api/providers/edition', { choice }),
-  /** The monthly spending cap in USD; null clears it. */
-  setCap: (id: string, usd: number | null) => apiPut<ProvidersAnswer>(`${provider(id)}/cap`, { usd }),
+  /** 其他…: a provider the person types — a name, an address and an API style. */
+  createTyped: (name: string, url: string, style: ApiStyle) => apiPost<ProvidersAnswer>('/api/providers', { name, url, style }),
+  /** 移除这个服务商: the provider, its key and its models. */
+  remove: (id: string) => apiDelete<ProvidersAnswer>(provider(id)),
   setKey: (id: string, apiKey: string | null) => apiPut<ProvidersAnswer>(`${provider(id)}/key`, { api_key: apiKey }),
   keepModelKey: (id: string) => apiPut<ProvidersAnswer>(`${provider(id)}/key`, { action: 'keep_model_key' }),
   setAddress: (id: string, url: string, keepKey: boolean) => apiPatch<ProvidersAnswer>(provider(id), { url, keep_key: keepKey }),
-  /** A model typed by name; the engine makes the row's id. */
+  /** The ids the provider lists for its key; `null` when the list cannot be read. */
+  suggestions: (id: string) => apiGet<{ models: Suggestion[] | null }>(`${provider(id)}/suggestions`),
+  /** A model by its id; the engine makes the row's id. */
   addModel: (id: string, model: string) => apiPost<ProvidersAnswer>(`${provider(id)}/models`, { model }),
   removeModel: (id: string, modelId: string) => apiDelete<ProvidersAnswer>(`${provider(id)}/models/${encodeURIComponent(modelId)}`),
-  /** Tick, untick, choose, follow, or answer a notice (`move` is its number). */
-  family: (id: string, family: string, action: FamilyAction) =>
-    apiPut<ProvidersAnswer>(`${provider(id)}/families/${encodeURIComponent(family)}`, action),
+  /** Tick or untick one of Linggen Cloud's models; unticking the first default names its replacement. */
+  tickCloud: (model: string, ticked: boolean, replacement?: string) =>
+    apiPut<ProvidersAnswer>('/api/providers/cloud', { model, ticked, ...(replacement ? { replacement } : {}) }),
 };
 
 /** A provider's browser login (codex, claude): start it, poll its status. */

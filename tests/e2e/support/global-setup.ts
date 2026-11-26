@@ -14,10 +14,8 @@ function uiBuild() {
   execFileSync('npm', ['run', 'build'], { cwd: path.join(REPO, 'ui'), stdio: 'inherit' });
 }
 
-/** Build the world in the same scratch environment as the Rust tests. With
- *  `test-support`, as the system tests are: the engine then reads the
- *  providers' model lists from the world's `test-families.json` and calls no
- *  provider. */
+/** Build the world in the same scratch environment as the Rust tests, with
+ *  `test-support`, as the system tests are. */
 function worldBuild(): string {
   const out = execFileSync(
     path.join(REPO, 'scripts/scratch-test.sh'),

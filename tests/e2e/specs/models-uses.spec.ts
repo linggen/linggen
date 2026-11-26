@@ -33,7 +33,6 @@ test('chat fallbacks are chosen by hand and survive reload', async ({ page, worl
   await expectWebRtc(page, httpRequests);
   const summary = page.getByTestId('chat-fallback-summary');
   await expect(summary).toHaveText('无备用');
-  // The fallback's own 改 (the region line has one too).
   await page.locator('[aria-controls="chat-fallback-editor"]').click();
   const add = page.getByRole('combobox', { name: '添加备用' });
   const rows = page.getByTestId('chat-fallback');

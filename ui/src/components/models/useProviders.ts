@@ -32,15 +32,6 @@ export function useProviders(onChanged: () => Promise<void>) {
   }, []);
   useEffect(() => { void load(); }, [load]);
 
-  const checking = answer?.providers.some((p) => p.families?.access === 'checking' || p.families?.families.some((f) => f.hold === 'checking'));
-  const tries = useRef(0);
-  useEffect(() => {
-    if (!checking) { tries.current = 0; return; }
-    if (busy || loadFailed || tries.current >= 16) return;
-    const timer = setTimeout(() => { tries.current++; void load(); }, 750);
-    return () => clearTimeout(timer);
-  }, [answer, busy, checking, load, loadFailed]);
-
   const run: Run = useCallback(async (call) => {
     setBusy(true);
     setProblem(null);

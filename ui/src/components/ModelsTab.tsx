@@ -14,11 +14,10 @@ import { useServerStore } from '../stores/serverStore';
 import { modelsApi, providersApi, usesApi } from '../lib/endpoints';
 import { W, say } from '../lib/modelsWords.mts';
 import { hasProblem, keyProviders, localProviders, readyToUse, sameAddress, type Preset, type ProvidersAnswer } from '../lib/providers.mts';
-import { AddProvider } from './models/AddProvider';
+import { AddProvider, type Typed } from './models/AddProvider';
 import { DefaultCard } from './models/DefaultCard';
 import { KeyRow } from './models/KeyRow';
 import { LocalRow } from './models/LocalRow';
-import { RegionLine } from './models/RegionLine';
 import { ReadyRow } from './models/ReadyRows';
 import { cardCls, headingCls, hintCls, linkBtn } from './models/shell';
 import { useProviders } from './models/useProviders';
@@ -77,6 +76,19 @@ export const ModelsTab: React.FC<{
     setAdding(false);
   };
 
+  /** 其他…: file the typed provider, then its key; the row opens. */
+  const addTyped = async (typed: Typed) => {
+    let made: ProvidersAnswer | void = undefined;
+    const done = await run(async () => {
+      made = await providersApi.createTyped(typed.name, typed.url, typed.style);
+      const row = made.providers.find((p) => p.way === 'key' && sameAddress(p.url, typed.url));
+      return row ? providersApi.setKey(row.id, typed.key) : made;
+    });
+    const row = done && made ? (made as ProvidersAnswer).providers.find((p) => p.way === 'key' && sameAddress(p.url, typed.url)) : undefined;
+    if (row) setOpen(row.id);
+    if (done) setAdding(false);
+  };
+
   if (loadFailed && !answer) {
     return (
       <section className={cardCls}>
@@ -90,6 +102,7 @@ export const ModelsTab: React.FC<{
   if (!answer) return <p className={hintCls}>{W.loading}</p>;
 
   const { providers } = answer;
+  const chain = uses?.chain ?? [];
   const addable = answer.presets.filter((p) => p.way === 'key' && !providers.some((q) => q.way === 'key' && q.provider === p.name && sameAddress(q.url, p.url)));
   const local = localProviders(providers);
   const ownOpen = ownFold ?? providers.some(hasProblem);
@@ -113,19 +126,16 @@ export const ModelsTab: React.FC<{
         {ownOpen && (
           <div className="mt-3">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
-              <div className="min-w-0">
-                <p className={hintCls}>{W.providersHint}</p>
-                <RegionLine edition={answer.edition} run={run} busy={busy} />
-              </div>
+              <p className={`${hintCls} min-w-0`}>{W.providersHint}</p>
               <button type="button" data-testid="add-provider-button" className={`${linkBtn} flex items-center gap-1`} onClick={() => setAdding(!adding)}>
                 <Plus size={12} />{W.addProvider}
               </button>
             </div>
             <div className="mt-4">
-              {adding && <AddProvider presets={addable} busy={busy} onPick={(p) => void pick(p)} onClose={() => setAdding(false)} />}
+              {adding && <AddProvider presets={addable} busy={busy} onPick={(p) => void pick(p)} onTyped={(t) => void addTyped(t)} onClose={() => setAdding(false)} />}
               <div className="space-y-1.5">
                 {keyProviders(providers).map((p) => (
-                  <KeyRow key={p.id} provider={p} open={open === p.id} onToggle={() => setOpen(open === p.id ? null : p.id)} run={run} busy={busy} makeDefault={makeDefault} />
+                  <KeyRow key={p.id} provider={p} open={open === p.id} onToggle={() => setOpen(open === p.id ? null : p.id)} run={run} busy={busy} makeDefault={makeDefault} chain={chain} />
                 ))}
                 {local.length > 0 && <LocalRow providers={local} />}
               </div>

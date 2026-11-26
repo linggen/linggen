@@ -1,8 +1,8 @@
 /**
  * 开箱即用: the Linggen Cloud account and the ChatGPT subscription. A sign-in
  * button and the usage the engine already reports; no key field. ChatGPT lists
- * its built-in models under its name; Linggen Cloud opens to the same tick
- * list a key provider has (`FamilyList`), then its voice uses as words.
+ * its built-in models under its name; Linggen Cloud opens to its models to
+ * tick (`CloudList`), then its voice uses as words.
  */
 import React, { useState } from 'react';
 import { LogIn, LogOut } from 'lucide-react';
@@ -12,7 +12,7 @@ import type { ModelMove } from '../../types';
 import type { Provider } from '../../lib/providers.mts';
 import { CodexUsage } from '../CodexUsage';
 import { UsageLink, useCloudUsage, usageToneCls } from '../UsageMeter';
-import { FamilyList } from './FamilyList';
+import { CloudList } from './CloudList';
 import { Row, hintCls, sectionLabel, sectionRule } from './shell';
 import type { Run } from './useProviders';
 
@@ -54,7 +54,7 @@ export const ReadyRow: React.FC<Props> = (props) => {
   return <Row testId={p.provider} name={p.label} way={p.way} subtitle={subtitle(p, '')} />;
 };
 
-const CloudRow: React.FC<Props> = ({ provider: p, changed, run, busy, makeDefault, open, onToggle }) => {
+const CloudRow: React.FC<Props> = ({ provider: p, changed, run, busy, open, onToggle }) => {
   const [waiting, setWaiting] = useState(false);
   const signedIn = p.fix !== 'sign_in';
   const usage = useCloudUsage(signedIn);
@@ -81,7 +81,7 @@ const CloudRow: React.FC<Props> = ({ provider: p, changed, run, busy, makeDefaul
       <div className={`${sectionRule} grid gap-2 sm:grid-cols-[4rem_minmax(0,1fr)]`}>
         <span className={sectionLabel}>{W.models}</span>
         <div className="min-w-0 flex-1">
-          <FamilyList provider={p} run={run} busy={busy} makeDefault={makeDefault} />
+          <CloudList provider={p} run={run} busy={busy} />
           {uses.length > 0 && <p data-testid="cloud-uses" className={`${hintCls} mt-1`}>{uses.join(' · ')}</p>}
           {usage?.metered && <p className="mt-1"><UsageLink usage={usage} /></p>}
         </div>

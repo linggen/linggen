@@ -1,15 +1,16 @@
 /**
  * One provider the person pays with a key. Under its head: the key (pasted
- * once; the page only ever learns that it is set), the families to tick, models
- * added by name, the live-voice lines, the price date, and a folded
- * 「Advanced」. Every action calls its route (lib/endpoints `providersApi`).
+ * once; the page only ever learns that it is set), the models the person
+ * added — one input that suggests ids from the provider's own list — the
+ * live-voice lines, and the address of a provider the person typed. The ⋯
+ * menu removes the provider. Every action calls its route (lib/endpoints `providersApi`).
  */
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import { X } from 'lucide-react';
 import { providersApi } from '../../lib/endpoints';
 import { confirmDialog } from '../../lib/confirmDialog';
 import { W, say } from '../../lib/modelsWords.mts';
-import { addedByName, capShare, liveModels, spendMeter, type Provider } from '../../lib/providers.mts';
-import { FamilyList, Price } from './FamilyList';
+import { chatModels, heldDefaults, liveModels, suggestionsFor, type Provider, type Suggestion } from '../../lib/providers.mts';
 import { RowMenu, Row, Tag, ghostBtn, hintCls, inputCls, primaryBtn, sectionLabel, sectionRule } from './shell';
 import type { Run } from './useProviders';
 
@@ -20,29 +21,39 @@ type Props = {
   run: Run;
   busy: boolean;
   makeDefault: (modelId: string) => Promise<void>;
+  /** The default chat chain, first model first: what the remove confirm names. */
+  chain: string[];
 };
 
-/** The head's second line: what is ticked, or what is missing. */
+/** The head's second line: the models added, or what is missing. */
 function summary(p: Provider): string {
   if (!p.key?.set) return W.noKeyYet;
-  const names = (p.families?.families ?? []).filter((f) => f.ticked && f.current).map((f) => f.current!.name);
-  return names.length ? names.join(' · ') : W.nothingTicked;
+  const names = chatModels(p).map((m) => m.name);
+  return names.length ? names.join(' · ') : W.noModelsAdded;
 }
 
 export const KeyRow: React.FC<Props> = (props) => {
-  const { provider: p, open, onToggle } = props;
+  const { provider: p, open, onToggle, run, busy, chain } = props;
+  const removeProvider = async () => {
+    const held = heldDefaults(p, chain);
+    const lines = [say(W.removeProviderAsk, { provider: p.label })];
+    if (held.first) lines.push(W.removeHoldsDefault);
+    if (held.fallbacks.length) lines.push(say(W.removeHoldsFallbacks, { n: held.fallbacks.length }));
+    if (await confirmDialog(lines.join(' '))) await run(() => providersApi.remove(p.id));
+  };
   return (
     <Row testId={p.provider} name={p.label} way={p.way} subtitle={summary(p)} open={open} onToggle={onToggle}
-      tags={<>{p.retained && <span title={W.keptNote} data-testid="retained"><Tag tone="amber">{W.kept}</Tag></span>}{p.used_by.includes('chat') && <Tag tone="blue">{W.chat}</Tag>}{p.used_by.includes('live_voice') && <Tag tone="blue">{W.liveVoice}</Tag>}</>}
+      tags={<>{p.used_by.includes('chat') && <Tag tone="blue">{W.chat}</Tag>}{p.used_by.includes('live_voice') && <Tag tone="blue">{W.liveVoice}</Tag>}</>}
+      right={<RowMenu disabled={busy} items={[{ label: W.removeProvider, run: () => void removeProvider() }]} />}
       detail={p.key?.set ? <span>{say(W.billedBy, { provider: p.label })}</span> : <span className="rounded-md border border-slate-200 bg-white px-2 py-0.5 font-semibold dark:border-white/10 dark:bg-white/5">{W.fillKey}</span>}>
       <KeyField {...props} />
       <Models {...props} />
-      <SpendCap {...props} />
       {!p.listed && <Address {...props} />}
     </Row>
   );
 };
 
+/** The key: 已设置密钥 · 更换, or one field to paste it. Removing goes with the provider (⋯). */
 const KeyField: React.FC<Props> = ({ provider: p, run, busy }) => {
   const [text, setText] = useState('');
   const [replacing, setReplacing] = useState(false);
@@ -68,11 +79,11 @@ const KeyField: React.FC<Props> = ({ provider: p, run, busy }) => {
     <div className={`${sectionRule} flex flex-wrap items-center gap-2`}>
       <span className={sectionLabel}>{W.keyLabel}</span>
       {set && !replacing ? (
-        <>
-          <span data-testid="key-set" className={`${inputCls} font-mono`}>{W.keySet}</span>
-          <button type="button" className={ghostBtn} disabled={busy} onClick={() => setReplacing(true)}>{W.replaceKey}</button>
-          <button type="button" className={`${ghostBtn} !text-red-600`} disabled={busy} onClick={() => void run(() => providersApi.setKey(p.id, null))}>{W.removeKey}</button>
-        </>
+        <span className={`${hintCls} flex items-center gap-1.5`}>
+          <span data-testid="key-set">{W.keySet}</span>
+          <span aria-hidden>·</span>
+          <button type="button" className="font-semibold text-blue-600 hover:text-blue-700 dark:text-blue-400" disabled={busy} onClick={() => setReplacing(true)}>{W.replaceKey}</button>
+        </span>
       ) : (
         <>
           <input
@@ -93,20 +104,26 @@ const KeyField: React.FC<Props> = ({ provider: p, run, busy }) => {
   );
 };
 
-/** The models: the families, what was added by name, the live-voice lines, the price date. */
+/** The models: what was added (✕ removes), one input with suggestions, the live-voice lines. */
 const Models: React.FC<Props> = (props) => {
-  const { provider: p } = props;
-  const typed = addedByName(p);
+  const { provider: p, run, busy, makeDefault } = props;
+  const added = chatModels(p);
   const live = liveModels(p);
-  const catalog = p.families?.catalog;
-  const none = !p.families?.families.length && !typed.length && !live.length;
   return (
     <div className={`${sectionRule} grid gap-2 sm:grid-cols-[4rem_minmax(0,1fr)]`}>
       <span className={sectionLabel}>{W.models}</span>
       <div className="min-w-0 flex-1">
-        {none && <p className={hintCls}>{W.noModelsYet}</p>}
-        <FamilyList {...props} />
-
+        {added.map((m) => (
+          <div key={m.id} className="flex items-center gap-2 py-1 text-xs" data-testid="added-model">
+            <span className="min-w-0 flex-1 truncate font-semibold" data-no-i18n title={m.model}>{m.name}</span>
+            <button type="button" className="text-[11px] font-semibold text-blue-600 hover:text-blue-700 disabled:opacity-50 dark:text-blue-400" disabled={busy || !m.ready} onClick={() => void makeDefault(m.id)}>{W.makeDefault}</button>
+            <button type="button" aria-label={say(W.removeModelNamed, { model: m.model })} className="rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-red-600 disabled:opacity-50 dark:hover:bg-white/10" disabled={busy} onClick={() => void run(() => providersApi.removeModel(p.id, m.id))}>
+              <X size={12} />
+            </button>
+          </div>
+        ))}
+        {p.key?.set && <ModelInput {...props} />}
+        {!p.key?.set && !added.length && <p className={hintCls}>{W.keyFirst}</p>}
         {live.map((m) => (
           <div key={m.id} className="mt-1 flex flex-wrap items-center gap-1.5 text-xs" data-testid="live-model">
             <span className="font-semibold" data-no-i18n>{m.model}</span>
@@ -115,61 +132,48 @@ const Models: React.FC<Props> = (props) => {
             <span className={hintCls}>{W.lingyuUses}</span>
           </div>
         ))}
-        <CustomModels {...props} />
-        {catalog && !p.families?.rates_unavailable && p.families!.families.length > 0 && (
-          <p data-testid="price-date" className={`${hintCls} mt-2`}>
-            {say(W.estimatesFrom, { date: catalog.observed_at })}
-            {catalog.stale && <> {say(W.listOld, { n: catalog.age_days })}</>}
-          </p>
-        )}
       </div>
     </div>
   );
 };
 
-const CustomModels: React.FC<Props> = ({ provider: p, run, busy, makeDefault }) => {
-  const [name, setName] = useState('');
-  const add = async () => {
-    if (!name.trim()) return;
-    if (await run(() => providersApi.addModel(p.id, name.trim()))) setName('');
+/** Type a few letters: the provider's own ids that match are listed; a click adds one.
+ *  A full id + Enter adds it even when the list could not be read. The list is
+ *  asked once when the row opens and kept for the page's life. */
+const ModelInput: React.FC<Props> = ({ provider: p, run, busy }) => {
+  const [typed, setTyped] = useState('');
+  const [list, setList] = useState<Suggestion[] | null | undefined>(undefined);
+  useEffect(() => {
+    let live = true;
+    providersApi.suggestions(p.id).then((r) => { if (live) setList(r.models); }).catch(() => { if (live) setList(null); });
+    return () => { live = false; };
+  }, [p.id]);
+  const shown = suggestionsFor(list, typed, p.models.map((m) => m.model));
+  const add = async (id: string) => {
+    if (!id.trim()) return;
+    if (await run(() => providersApi.addModel(p.id, id.trim()))) setTyped('');
   };
   return (
-    <div data-testid="custom-models" className="mt-2">
-          <div className={hintCls}>{W.custom}</div>
-          {addedByName(p).map((m) => (
-            <div key={m.id} className="flex items-center gap-2 py-1 text-xs" data-testid="typed-model">
-              <span className="min-w-0 truncate font-semibold" data-no-i18n>{m.model}</span>
-              <span className={`${hintCls} min-w-0 flex-1`} data-testid="typed-price"><Price price={m.price} none={W.noPriceNoCap} /></span>
-              <RowMenu disabled={busy} items={[
-                { label: W.makeDefault, run: () => void makeDefault(m.id) },
-                { label: W.removeModel, run: () => void run(() => providersApi.removeModel(p.id, m.id)) },
-              ]} />
-            </div>
+    <div className="relative mt-1" data-testid="model-input">
+      <input
+        className={`${inputCls} w-72 max-w-full`}
+        placeholder={W.modelInput}
+        aria-label={W.modelInput}
+        value={typed}
+        disabled={busy}
+        onChange={(e) => setTyped(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter') void add(typed); }}
+      />
+      {shown.length > 0 && (
+        <div role="listbox" className="absolute left-0 top-8 z-10 w-72 max-w-full rounded-lg border border-slate-200 bg-white p-1 shadow-lg dark:border-white/10 dark:bg-[#1c1c1c]" data-testid="model-suggestions">
+          {shown.map((s) => (
+            <button key={s.id} type="button" role="option" aria-selected={false} disabled={busy} onClick={() => void add(s.id)} className="block w-full truncate rounded px-2.5 py-1.5 text-left text-xs hover:bg-slate-100 dark:hover:bg-white/10" data-no-i18n>
+              {s.id}{s.name && s.name !== s.id && <span className="ml-1.5 text-slate-400">{s.name}</span>}
+            </button>
           ))}
-          <div className="mt-1 flex flex-wrap items-center gap-2">
-            <input className={`${inputCls} w-64 max-w-full flex-1`} placeholder={W.modelName} aria-label={W.modelName} value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void add(); }} />
-            <button type="button" className={ghostBtn} disabled={busy || !name.trim()} onClick={() => void add()}>{W.add}</button>
-          </div>
-    </div>
-  );
-};
-
-/** One field 「Monthly cap $」 and the meter, under the models. */
-const SpendCap: React.FC<Props> = ({ provider: p, run, busy }) => {
-  const [text, setText] = useState('');
-  if (!p.spend) return null;
-  const usd = Number(text);
-  const ok = text.trim() !== '' && Number.isFinite(usd) && usd > 0;
-  return (
-    <div data-testid="spend-cap" className={`${sectionRule} sm:pl-[4.5rem]`}>
-      <div className="flex flex-wrap items-center gap-2">
-        <span className={hintCls}>{W.capLabel}</span>
-        <input className={`${inputCls} w-24`} inputMode="decimal" aria-label={W.capLabel} placeholder={p.spend.cap_usd === undefined ? '200' : String(p.spend.cap_usd)} value={text} onChange={(e) => setText(e.target.value)} />
-        <button type="button" className={ghostBtn} disabled={busy || !ok} onClick={() => void run(() => providersApi.setCap(p.id, usd)).then((done) => done && setText(''))}>{W.setCap}</button>
-        {p.spend.cap_usd !== undefined && <button type="button" className={ghostBtn} disabled={busy} onClick={() => void run(() => providersApi.setCap(p.id, null))}>{W.clearCap}</button>}
-      </div>
-      <div className={`${hintCls} mt-1`} data-testid="spend-meter" title={say(W.spendNote, { date: p.spend.prices_as_of })}>{spendMeter(p.spend)}</div>
-      {p.spend.cap_usd !== undefined && <div className="mt-1 h-1 w-48 overflow-hidden rounded bg-slate-200 dark:bg-white/10"><div className={`h-full ${capShare(p.spend) >= 1 ? 'bg-red-500' : capShare(p.spend) >= 0.8 ? 'bg-amber-500' : 'bg-emerald-500'}`} style={{ width: `${capShare(p.spend) * 100}%` }} /></div>}
+        </div>
+      )}
+      {list === null && <p className={`${hintCls} mt-1`}>{W.noSuggestions}</p>}
     </div>
   );
 };

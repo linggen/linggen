@@ -30,7 +30,6 @@ test('a slot of the English is a slot of the Chinese', () => {
 });
 
 test('a sentence with its slots filled is put into Chinese by the page', () => {
-  assert.equal(translateFrom(ZH, say(W.now, { name: 'Claude Opus 5.5' })), '现在是 Claude Opus 5.5');
-  assert.equal(translateFrom(ZH, say(W.priceIn, { input: '4', output: '20' })), '输入 $4 / 输出 $20 每百万');
-  assert.equal(translateFrom(ZH, say(W.moreN, { n: 7 })), '更多（7）');
+  assert.equal(translateFrom(ZH, say(W.removeProviderAsk, { provider: 'DeepSeek' })), '移除 DeepSeek、它的密钥和模型？');
+  assert.equal(translateFrom(ZH, say(W.removeHoldsFallbacks, { n: 2 })), '它有 2 个备用模型。');
 });
