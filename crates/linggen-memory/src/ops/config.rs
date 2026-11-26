@@ -37,7 +37,7 @@ pub struct Config {
 }
 
 fn default_episodic_ttl_days() -> u32 {
-    7
+    crate::memory::expiry::DEFAULT_TTL_DAYS
 }
 
 fn default_recall_min_score() -> f32 {
@@ -96,12 +96,9 @@ pub async fn put_config(
     use crate::error::MemError;
     // The network choice is not this route's to change — see `network.rs`.
     cfg.network = load(&state.data_dir).await.network;
-    // Light range check — the dream pass treats a 0 TTL as "evict
-    // everything," which is rarely what the user wants. Allow it but
-    // pin the lower bound; cap is generous to keep this future-proof.
-    if cfg.episodic_ttl_days > 3650 {
+    if !crate::memory::expiry::TTL_DAYS_RANGE.contains(&cfg.episodic_ttl_days) {
         return Err(MemError::bad_request(
-            "episodic_ttl_days must be <= 3650 (10 years)",
+            "episodic_ttl_days must be from 1 to 365",
         ));
     }
     if !(0.0..=1.0).contains(&cfg.recall_min_score) {

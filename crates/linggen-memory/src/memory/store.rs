@@ -159,9 +159,6 @@ pub struct Filters {
     /// or digest. Implies `include_expired` (the members are archived by
     /// definition).
     pub superseded_by: Option<String>,
-    /// Leave out rows heat has silenced (`heat::silenced`): the automatic
-    /// recall sets it; an agent's own search does not.
-    pub unsilenced_only: bool,
 }
 
 impl Filters {
@@ -188,7 +185,6 @@ impl Filters {
             && self.source_session.is_none()
             && self.scope_root.is_none()
             && self.superseded_by.is_none()
-            && !self.unsilenced_only
     }
 
     /// The rendered WHERE clause, for tests outside this module.
@@ -1469,9 +1465,6 @@ impl MemoryStore {
         }
         let mut facts = self.collect_query(q).await?;
         apply_origin_filter(&mut facts, filters.origin);
-        if filters.unsilenced_only {
-            facts.retain(|f| !super::heat::silenced(f));
-        }
 
         Ok(facts
             .into_iter()
@@ -1597,7 +1590,7 @@ impl MemoryStore {
         Ok(Some(existing))
     }
 
-    /// Add to a row's heat counters (`memory::heat`). Bookkeeping, not an
+    /// Add to a row's heat counters (`memory::expiry`). Bookkeeping, not an
     /// edit: `updated_at` stays, so the row keeps its age and its place.
     /// `None` when the id is not in this table.
     pub async fn bump_heat(&self, id: &str, recalled: u32, used: u32) -> Result<Option<Memory>> {
@@ -1607,6 +1600,19 @@ impl MemoryStore {
         };
         row.recalled = row.recalled.saturating_add(recalled);
         row.used = row.used.saturating_add(used);
+        self.upsert(&row).await?;
+        Ok(Some(row))
+    }
+
+    /// The second chance (`memory::expiry`): heat back to 0, life restarts at
+    /// `now`. `None` when the id is not in this table.
+    pub async fn renew(&self, id: &str, now: DateTime<Utc>) -> Result<Option<Memory>> {
+        let _guard = self.write_lock.lock().await;
+        let Some(mut row) = self.get(id).await? else {
+            return Ok(None);
+        };
+        row.used = 0;
+        row.updated_at = Some(now.trunc_subsecs(6));
         self.upsert(&row).await?;
         Ok(Some(row))
     }
@@ -2141,7 +2147,6 @@ mod tests {
             scope_root: None,
             include_expired: false,
             superseded_by: None,
-            unsilenced_only: false,
             account: AccountScope::Owner,
         };
         let sql = f.to_sql().unwrap();

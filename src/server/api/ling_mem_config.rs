@@ -27,9 +27,10 @@ use crate::memory_host::caller::{self, Caller};
 const PATH: &str = "/api/config";
 const TTL_DAYS: &str = "episodic_ttl_days";
 const MIN_SCORE: &str = "recall_min_score";
-/// Memory accepts up to ten years; a TTL of 0 would let the next sweep evict
-/// every judged row, so this door starts at one day.
-const TTL_RANGE: std::ops::RangeInclusive<u64> = 1..=3650;
+/// The range is memory's (`memory::expiry`), not repeated here.
+fn ttl_ok(days: u64) -> bool {
+    u32::try_from(days).is_ok_and(|d| ling_mem::memory::expiry::TTL_DAYS_RANGE.contains(&d))
+}
 
 /// One request to the hosted memory; `memory_host::local_call` in the engine,
 /// a recorder in the tests.
@@ -106,8 +107,8 @@ fn checked_fields(body: &Value) -> Result<Map<String, Value>, String> {
     let obj = body.as_object().ok_or("Send a JSON object.")?;
     let mut sent = Map::new();
     if let Some(days) = obj.get(TTL_DAYS) {
-        let days = days.as_u64().filter(|d| TTL_RANGE.contains(d));
-        let days = days.ok_or("episodic_ttl_days must be a whole number from 1 to 3650.")?;
+        let days = days.as_u64().filter(|d| ttl_ok(*d));
+        let days = days.ok_or("episodic_ttl_days must be a whole number from 1 to 365.")?;
         sent.insert(TTL_DAYS.into(), json!(days));
     }
     if let Some(score) = obj.get(MIN_SCORE) {
@@ -307,7 +308,7 @@ mod tests {
     async fn a_bad_value_is_a_400_with_one_line_and_memory_is_not_written() {
         let bad = [
             json!({ "episodic_ttl_days": 0 }),
-            json!({ "episodic_ttl_days": 3651 }),
+            json!({ "episodic_ttl_days": 366 }),
             json!({ "episodic_ttl_days": 7.5 }),
             json!({ "episodic_ttl_days": -3 }),
             json!({ "episodic_ttl_days": "7" }),

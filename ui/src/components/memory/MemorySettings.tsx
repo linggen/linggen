@@ -54,7 +54,7 @@ export const MemorySettings: React.FC = () => {
               <label className={labelCls} htmlFor="memory-ttl-days">Keep short-term rows for (days)</label>
               <input id="memory-ttl-days" className={`${inputCls} min-h-11 md:min-h-0 mt-1`} type="number" inputMode="numeric" min={TTL_MIN} max={TTL_MAX} step={1}
                 value={draft.days} onChange={(e) => edit({ days: e.target.value })} />
-              <p className="text-[11px] text-slate-400 mt-1">Short-term rows older than this are forgotten once a dream has judged them.</p>
+              <p className="text-[11px] text-slate-400 mt-1">Short-term rows unused for this long are forgotten once a dream has judged them; a row that was used gets one more period.</p>
             </div>
             <div>
               <label className={labelCls} htmlFor="memory-min-score">Recall threshold (0–1)</label>

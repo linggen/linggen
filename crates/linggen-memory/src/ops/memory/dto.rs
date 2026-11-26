@@ -401,11 +401,6 @@ pub struct SearchRequest {
     /// like `min_score`.
     #[serde(default)]
     pub skip_if_warming: bool,
-    /// The automatic recall of a host that can detect use (Claude Code's
-    /// hooks) sets this: rows heat has silenced are left out. Not in the
-    /// advertised schema; an agent's own search sees every row.
-    #[serde(default)]
-    pub push: bool,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -487,7 +482,7 @@ pub struct CountRequest {
 #[derive(Debug, Deserialize)]
 pub struct UpdateRequest {
     pub id: String,
-    /// Heat bookkeeping (`memory::heat`), from the hooks: add to the row's
+    /// Heat bookkeeping (`memory::expiry`), from the hooks: add to the row's
     /// `recalled` / `used` counters. Alone it changes nothing else — not
     /// even `updated_at`. Not in the advertised schema.
     #[serde(default)]

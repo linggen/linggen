@@ -845,11 +845,11 @@ export const ZH: Record<string, string> = {
   'Memory is not reachable right now.': '暂时无法连接记忆。',
   // ── Memory settings ──
   'Keep short-term rows for (days)': '短期记忆保留天数',
-  'Short-term rows older than this are forgotten once a dream has judged them.': '梦境判断过之后，超过这个天数的短期记忆会被遗忘。',
+  'Short-term rows unused for this long are forgotten once a dream has judged them; a row that was used gets one more period.': '梦境判断过之后，超过这个天数没被用到的短期记忆会被遗忘；用到过的再多留一个周期。',
   'Recall threshold (0–1)': '召回阈值（0–1）',
   'Higher brings back fewer, closer matches. Lower brings back more.': '越高召回越少、越贴近；越低召回越多。',
   "Only this Mac's owner can change these.": '只有这台 Mac 的主人可以修改这些。',
-  'Days must be a whole number from 1 to 3650.': '天数必须是 1 到 3650 的整数。',
+  'Days must be a whole number from 1 to 365.': '天数必须是 1 到 365 的整数。',
   'The threshold must be a number from 0 to 1.': '阈值必须是 0 到 1 之间的数。',
   'Could not save the settings: {why}': '无法保存设置：{why}',
   'Could not read the settings: {why}': '无法读取设置：{why}',

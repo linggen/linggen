@@ -40,7 +40,6 @@ out="$(jq -nc --arg s "$sid" '{prompt:"tell me about the bees please", cwd:"/non
 note="$(cat "$here/../recall-note.txt")"
 case "$out" in *"$note"*) ;; *) fail "recall.sh did not print recall-note.txt" ;; esac
 [ "${#note}" -le 450 ] || fail "the footer is over 450 chars"
-grep -q '"push": true' "$tmp/calls" || fail "recall must send push:true"
 [ -s "$tmp/linggen-pushed-$(id -u)-$sid" ] || fail "no pushed-ids file"
 
 # A transcript whose last reply cites AAA1 only.

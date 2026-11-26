@@ -88,7 +88,7 @@ who they are, how they work, decisions with their reasons, gotchas they re-hit.
   row would change, the user must choose, or the evidence is out of reach.
 - Runs only on the primary's engine, once a day.
 
-## Expiry (episodic) — designed 2026-11-26, not built yet
+## Expiry (episodic) — built 2026-11-26
 
 - An episodic row lives 30 days by default; the user sets it on the settings page.
 - Each row has **heat** (times it was actually *used* — cited in a reply; being
@@ -158,9 +158,6 @@ routing, dedup, reconcile, decay, secrets) against a throwaway store.
 
 ## Open / next
 
-- Build Expiry: 30-day default TTL, a user setting, the new sweep (today: 7
-  days, `ling mem stats`). Remove heat from recall ranking and from promotion
-  at used ≥ 2 (today both exist in `memory/heat.rs`).
 - Scope on Codex is read-side only: its hook cannot stamp the model's writes.
 - Multi-primary sync (when no machine can be primary); the phone's half of
   sync is in `phone-memory-spec.md`.

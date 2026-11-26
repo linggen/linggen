@@ -61,7 +61,7 @@ if [ -n "$cwd" ] && command -v session_root >/dev/null 2>&1; then
   scope="$(session_root "$cwd")"
 fi
 search_args="$(jq -nc --arg q "$prompt" --argjson l "$limit" --arg c "$scope" '
-  {query:$q, limit:$l, skip_if_warming:true, push:true}
+  {query:$q, limit:$l, skip_if_warming:true}
   + (if ($c | length) > 0 then {scope_root: $c} else {} end)
 ')"
 out="$(mcp_call memory_search "$search_args" "$to")"

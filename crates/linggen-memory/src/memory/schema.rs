@@ -92,7 +92,7 @@ pub fn build_schema() -> Arc<Schema> {
         // A v1 store names the first one `hook` (see [`LEGACY_RENAMES`]).
         Field::new("summary", DataType::Utf8, true),
         Field::new("indexed", DataType::Boolean, true),
-        // Heat pair (2026-11-25, `memory::heat`): pushed by recall / cited in
+        // Heat pair (2026-11-25, `memory::expiry`): pushed by recall / cited in
         // a reply. NULL reads as 0.
         Field::new("recalled", DataType::UInt32, true),
         Field::new("used", DataType::UInt32, true),

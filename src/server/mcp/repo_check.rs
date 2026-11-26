@@ -397,7 +397,7 @@ fn the_plugins_hook_calls_are_calls_the_door_takes() {
     // The literal shapes, tied to the line in each hook that builds them.
     let written = [
         ("autostart.sh", "{op: \"session_start\", cwd: $c}"),
-        ("recall.sh", "{query:$q, limit:$l, skip_if_warming:true, push:true}"),
+        ("recall.sh", "{query:$q, limit:$l, skip_if_warming:true}"),
         ("heat-stop.sh", "{id:$i, bump_recalled:1, bump_used:$u}"),
         ("recall.sh", "'{\"op\":\"days\",\"undreamed_only\":true}'"),
         (

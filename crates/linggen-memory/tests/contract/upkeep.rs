@@ -49,7 +49,7 @@ async fn days_reports_each_day_and_the_first_undone_ones() {
         scrub(&data),
         json!({
             "today": today(),
-            "ttl_days": 7,
+            "ttl_days": 30,
             "open_issues": 0,
             "first_unscanned": d2,
             "first_undreamed": d2,
@@ -78,24 +78,24 @@ async fn days_reports_each_day_and_the_first_undone_ones() {
 #[tokio::test]
 async fn sweep_removes_judged_rows_past_the_ttl() {
     let m = Mem::start().await;
-    let old = days_ago(20);
+    let old = days_ago(40);
     let judged = m
         .add(json!({"content": "Alex hiked", "occurred_at": local_noon(&old)}))
         .await;
     m.ok("remember_day", json!({"date": old})).await;
     m.add(json!({"content": "Alex saw a lynx", "occurred_at": local_noon(&old)}))
         .await;
-    m.add(json!({"content": "Alex swam", "occurred_at": local_noon(&days_ago(21))}))
+    m.add(json!({"content": "Alex swam", "occurred_at": local_noon(&days_ago(41))}))
         .await;
     m.add(json!({"content": "Alex kept a diary", "tier": "semantic", "occurred_at": local_noon(&old)})).await;
     assert_eq!(
         m.ok("sweep", json!({"dry_run": true})).await,
-        json!({"removed": 1, "promoted": [], "dry_run": true, "days": {old.clone(): 1}})
+        json!({"removed": 1, "renewed": [], "dry_run": true, "days": {old.clone(): 1}})
     );
     assert_eq!(m.ok("count", json!({})).await["count"], 4);
     assert_eq!(
         m.ok("sweep", json!({})).await,
-        json!({"removed": 1, "promoted": [], "dry_run": false, "days": {old.clone(): 1}})
+        json!({"removed": 1, "renewed": [], "dry_run": false, "days": {old.clone(): 1}})
     );
     assert_refused(
         &m.call("get", json!({"id": id(&judged)})).await,
@@ -114,7 +114,7 @@ async fn sweep_removes_judged_rows_past_the_ttl() {
 #[tokio::test]
 async fn a_row_filed_while_a_day_is_dreamed_stays_unjudged() {
     let m = Mem::start().await;
-    let old = days_ago(20);
+    let old = days_ago(40);
     let seen = m
         .add(json!({"content": "Alex hiked", "occurred_at": local_noon(&old)}))
         .await;
@@ -320,7 +320,7 @@ async fn stats_counts_each_tier() {
             "remembered_days": 0,
             "schema_version": 2,
             "total": 3,
-            "ttl_days": 7,
+            "ttl_days": 30,
         })
     );
 }
@@ -340,7 +340,7 @@ async fn config_reads_and_writes_the_two_knobs() {
     assert_eq!(env.as_object().unwrap().len(), 2);
     assert_eq!(
         knobs(env["data"].clone()),
-        json!({"episodic_ttl_days": 7, "recall_min_score": 0.699999988079071})
+        json!({"episodic_ttl_days": 30, "recall_min_score": 0.699999988079071})
     );
     let (status, env) = m
         .put(
@@ -361,7 +361,7 @@ async fn config_reads_and_writes_the_two_knobs() {
             .await,
         400,
         "BAD_REQUEST",
-        "episodic_ttl_days must be <= 3650 (10 years)",
+        "episodic_ttl_days must be from 1 to 365",
     );
     assert_refused(
         &m.put("/api/config", json!({"recall_min_score": 1.5})).await,

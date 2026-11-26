@@ -5,6 +5,7 @@
 
 use crate::error::MemError;
 use crate::handle::Memory;
+use crate::memory::expiry::{self, Verdict};
 use crate::memory::{Filters, Memory as Row, SortOrder};
 use chrono::{DateTime, Local, NaiveDate, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
@@ -219,9 +220,8 @@ pub(in crate::ops) async fn days(state: &Memory, req: DaysRequest) -> Result<Val
         if !judged {
             bucket.unjudged += 1;
         }
-        // The one TTL clock — `COALESCE(occurred_at, created_at)`, the same
-        // as `list past_ttl` and the sweep.
-        if row.effective_timestamp() < ttl_cutoff {
+        // The life clock of `memory::expiry`, the one the sweep uses.
+        if expiry::life_clock(&row) < ttl_cutoff {
             bucket.past_ttl += 1;
         }
     }
@@ -401,27 +401,32 @@ pub struct SweepRequest {
 }
 
 pub(in crate::ops) async fn sweep(state: &Memory, req: SweepRequest) -> Result<Value, MemError> {
-    // Heat first: a row used twice is kept before the TTL can take it.
-    let promoted = crate::ops::memory::update::promote_used(state, req.dry_run).await?;
     let days_state = load(&state.data_dir).await;
     let cfg = crate::ops::config::load(&state.data_dir).await;
-    let ttl_cutoff = Utc::now() - chrono::Duration::days(cfg.episodic_ttl_days as i64);
+    let now = Utc::now();
 
-    // A row is evictable iff it is past TTL (the one TTL clock,
-    // `occurred_at ?? created_at` — the same as `list past_ttl` and the days
-    // rollup), its day was remembered, AND it was created before the stamp
-    // (i.e. a remember pass judged it). Nothing is ever deleted un-judged.
+    // Only rows of a day a remember pass judged (day remembered AND the row
+    // created before the stamp) are looked at; nothing is ever touched
+    // un-judged. What happens to a judged row is `memory::expiry::verdict`.
     let mut victims: Vec<(String, String)> = Vec::new(); // (id, day)
+    let mut renewed: Vec<String> = Vec::new();
     for row in all_episodic(state).await? {
-        if row.effective_timestamp() >= ttl_cutoff {
-            continue;
-        }
         let day = local_day(row.effective_timestamp());
         let Some(ra) = days_state.days.get(&day).and_then(|r| r.remembered_at) else {
             continue;
         };
-        if row.created_at < ra {
-            victims.push((row.id.clone(), day));
+        if row.created_at >= ra {
+            continue;
+        }
+        match expiry::verdict(&row, now, cfg.episodic_ttl_days) {
+            Verdict::Keep => {}
+            Verdict::Delete => victims.push((row.id.clone(), day)),
+            Verdict::Renew => renewed.push(row.id.clone()),
+        }
+    }
+    if !req.dry_run {
+        for id in &renewed {
+            state.episodic.renew(id, now).await?;
         }
     }
 
@@ -449,7 +454,7 @@ pub(in crate::ops) async fn sweep(state: &Memory, req: SweepRequest) -> Result<V
 
     Ok(json!({
         "removed": removed,
-        "promoted": promoted,
+        "renewed": renewed,
         "dry_run": req.dry_run,
         "days": per_day,
     }))
@@ -616,5 +621,54 @@ mod tests {
         let drained = DayLive::default();
         assert_eq!(day_flags(&drained, Some(&r)), (true, false));
         assert!(!undreamed("2026-06-20", "2026-07-03", &drained));
+    }
+
+    // ── sweep: the second-chance rule (`memory::expiry`) ────────────────────
+
+    async fn staged_aged(state: &Memory, age_days: i64, used: u32) -> Row {
+        let mut row = Row::new(format!("row {age_days} {used}"), crate::memory::MemoryType::Fact, crate::memory::Origin::Derived);
+        row.tier = crate::memory::Tier::Episodic;
+        row.created_at = Utc::now() - chrono::Duration::days(age_days);
+        row.used = used;
+        state.episodic.insert(std::slice::from_ref(&row)).await.unwrap();
+        row
+    }
+
+    async fn judge(state: &Memory, row: &Row) {
+        let date = local_day(row.effective_timestamp());
+        remember_day(state, RememberDayRequest { date, judged: 1, promoted: 0, harvested: false, holder: None })
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn the_sweep_gives_a_used_row_one_more_period_then_deletes_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = crate::hosted::open_quiet_fake(dir.path(), String::new()).await.unwrap();
+        let cold = staged_aged(&state, 40, 0).await;
+        let warm = staged_aged(&state, 41, 2).await;
+        let fresh = staged_aged(&state, 5, 0).await;
+        for r in [&cold, &warm, &fresh] {
+            judge(&state, r).await;
+        }
+        // Unjudged: a row of a day no remember pass has seen.
+        let unjudged = staged_aged(&state, 60, 0).await;
+
+        let out = sweep(&state, SweepRequest { dry_run: false }).await.unwrap();
+        assert_eq!(out["removed"], 1);
+        assert!(state.episodic.get(&cold.id).await.unwrap().is_none(), "cold expired: deleted");
+        let renewed = state.episodic.get(&warm.id).await.unwrap().expect("warm survives");
+        assert_eq!(renewed.used, 0);
+        assert!(Utc::now() - renewed.updated_at.unwrap() < chrono::Duration::minutes(1));
+        assert!(state.episodic.get(&fresh.id).await.unwrap().is_some(), "unexpired untouched");
+        assert!(state.episodic.get(&unjudged.id).await.unwrap().is_some(), "unjudged day untouched");
+
+        // One period later, still unused: gone.
+        let mut later = renewed.clone();
+        later.updated_at = Some(Utc::now() - chrono::Duration::days(31));
+        state.episodic.delete(&warm.id).await.unwrap();
+        state.episodic.insert(std::slice::from_ref(&later)).await.unwrap();
+        sweep(&state, SweepRequest { dry_run: false }).await.unwrap();
+        assert!(state.episodic.get(&warm.id).await.unwrap().is_none());
     }
 }

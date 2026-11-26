@@ -16,7 +16,7 @@ export interface MemorySettings {
 }
 
 export const TTL_MIN = 1;
-export const TTL_MAX = 3650;
+export const TTL_MAX = 365;
 
 const PATH = '/api/ling-mem/config';
 
