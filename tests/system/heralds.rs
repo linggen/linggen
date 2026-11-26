@@ -1,4 +1,4 @@
-//! What Yinyue tells a person about Ling's work (doc/yinyue-companion-spec.md
+//! What Yinyue tells a person about Ling's work (doc/yinyue-spec.md
 //! § Herald): one notice per thing, told by voice only while the person is
 //! away, never a row of its own; the thing it is about carries a folded mark;
 //! one telling per waiting turn; a run another tool started is never told;

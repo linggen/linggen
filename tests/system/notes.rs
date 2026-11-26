@@ -1,4 +1,4 @@
-//! Her own notes and their look-again (doc/yinyue-companion-spec.md § Notes):
+//! Her own notes and their look-again (doc/yinyue-spec.md § Notes):
 //! she writes a note with a time, the time comes, she is woken with the note
 //! in front of her — and says a line, or nothing, or the hour's ceiling holds
 //! the wake.

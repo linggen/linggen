@@ -548,7 +548,7 @@ default responder. A member who isn't the lead uses the tools the skill names
 for it (`place.<agent>.tools`). A page's own ask box sends its text into the
 chat as `@银月 …` through the chat bridge. An app moment for her can carry
 `session` (and `converse`) so her turn runs at this table —
-`doc/yinyue-companion-spec.md` § App moments.
+`doc/yinyue-spec.md` § App moments.
 
 Every app skill receives a built-in `PageUpdate` data tool — the agent calls it whenever state the user should see changes, and the iframe re-renders. Each app defines its own page layout schema in its SKILL.md.
 

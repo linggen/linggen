@@ -1,5 +1,5 @@
 //! Her words are spoken aloud only when the person cannot see them
-//! (doc/yinyue-companion-spec.md § Heard or read): a line shows on the page of
+//! (doc/yinyue-spec.md § Heard or read): a line shows on the page of
 //! the place it was said in — an app's page, or the main page — and while
 //! the person is at that page it goes out as words only (`voice: false`, no
 //! clauses to play). Anywhere else, or with nobody at a screen, it is spoken.

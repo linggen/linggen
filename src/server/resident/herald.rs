@@ -1,6 +1,6 @@
 //! What Yinyue tells a person about Ling's work: one closed set of notices
 //! and one entry, [`tell`], that every notice passes and that alone decides
-//! (doc/yinyue-companion-spec.md § Herald):
+//! (doc/yinyue-spec.md § Herald):
 //!
 //! - **Whose.** A run in a session another tool started (an `agent_run`
 //!   from Claude Code or Codex, `creator: external`) is never told — its

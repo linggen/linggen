@@ -20,7 +20,7 @@ and the rules for speaking up. Yinyue lives in a phone, Ling in a Mac; each
 should answer "what is true here", "what just changed", "who did it" — and
 speak when something is worth a word. Engine: `crates/linggen-engine/src/perception/`;
 phone: `lib/services/perception/`. What she says and does with it:
-[yinyue-companion-spec.md](yinyue-companion-spec.md).
+[yinyue-spec.md](yinyue-spec.md).
 
 ## 1. The parts
 
@@ -376,5 +376,5 @@ info level. The mirror (§ 6) is between the person's own devices.
 | Guardrails | `[pet]` in `config.rs`; gates in `src/server/resident/` |
 
 Related: [memory-spec](memory-spec.md), [yinyue-spec](yinyue-spec.md),
-[yinyue-companion-spec](yinyue-companion-spec.md),
+[yinyue-spec](yinyue-spec.md),
 [app-action-spec](app-action-spec.md), [network-spec](network-spec.md).

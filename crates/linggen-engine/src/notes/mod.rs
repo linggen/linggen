@@ -1,6 +1,6 @@
 //! An agent's own notes: a few short lines it wrote for itself, in front of
 //! it at every turn until it finishes them, each with an optional time to look
-//! again (`doc/yinyue-companion-spec.md` § Notes).
+//! again (`doc/yinyue-spec.md` § Notes).
 //!
 //! The agent decides what is worth a note, what it says and when to look
 //! again; this module only keeps them. A note belongs to the agent that wrote

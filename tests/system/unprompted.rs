@@ -1,6 +1,6 @@
 //! What an app tells her at night: quiet hours hold an unasked moment, except
 //! one from the app the person is using — that one passes them, and the
-//! hourly ceiling still counts and holds it (doc/yinyue-companion-spec.md
+//! hourly ceiling still counts and holds it (doc/yinyue-spec.md
 //! § Guardrails).
 //!
 //! The engine runs on UTC (`support::process`), so quiet hours are a window

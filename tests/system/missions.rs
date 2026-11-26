@@ -1,5 +1,5 @@
 //! A mission run's record, and what reaches her when something in it failed
-//! (doc/mission-spec.md § Run history, doc/yinyue-companion-spec.md § A
+//! (doc/mission-spec.md § Run history, doc/yinyue-spec.md § A
 //! mission run that went wrong).
 
 use crate::notes::{held, wait_for};

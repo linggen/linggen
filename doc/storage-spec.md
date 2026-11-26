@@ -97,7 +97,7 @@ Project path encoding: `/Users/foo/project` → `-Users-foo-project` (same conve
 ├── quests/
 │   └── {app}.json                    # Real-life quests an app publishes; linggen.json = setup milestones
 ├── notes/
-│   └── {agent}.json                  # An agent's own open notes, with their look-again times (yinyue-companion-spec § Notes)
+│   └── {agent}.json                  # An agent's own open notes, with their look-again times (yinyue-spec § Notes)
 ├── met/
 │   └── {agent}.json                  # The one-way "met" latch of an agent that appears only once met (agent-spec.md)
 ├── senses/

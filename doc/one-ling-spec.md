@@ -17,7 +17,7 @@ shape: two agents at one table, Ling answering. Settled with Hanli 2026-10-08.
 
 - `shared-session-spec.md`: the table — one thread, members, context per member.
 - `app-action-spec.md`: tools, tiers, typed cross-device calls.
-- `yinyue-spec.md`, `yinyue-companion-spec.md`: who she is and where she appears (yinyue-spec), what she says and does (companion), what she knows and her speaking budget (perception).
+- `yinyue-spec.md`, `yinyue-spec.md`: who she is and where she appears (yinyue-spec), what she says and does (companion), what she knows and her speaking budget (perception).
 - `webrtc-spec.md`: the phone ↔ Mac transport (WebRTC only).
 
 ## Roles

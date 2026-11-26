@@ -1,5 +1,5 @@
 //! Live voice for an app's page (`GET /api/live`, `POST /api/live/token`,
-//! doc/yinyue-companion-spec.md § Live voice): the engine mints a token for
+//! doc/yinyue-spec.md § Live voice): the engine mints a token for
 //! one live session and hands the page only that. Two providers are listed,
 //! `alibaba` first, `google` second. Each is a loopback stand-in
 //! (`LINGGEN_LIVE_GOOGLE_BASE`, `LINGGEN_LIVE_ALIBABA_BASE`, honoured only by

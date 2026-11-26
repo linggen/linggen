@@ -417,7 +417,7 @@ the cached prefix:
   the last kept block's but for the clock keeps no new one.
 - **The room** (presence, work, the hour) — a session whose tools name `sense`;
   built per request, just before the turn's words, never kept.
-- **The agent's own notes** (`# Your notes`, yinyue-companion-spec § Notes) — a
+- **The agent's own notes** (`# Your notes`, yinyue-spec § Notes) — a
   turn that offers `note_done`; built per request after the room, never kept:
   they are the speaking agent's alone, and a kept row is read by every member
   of a table. Nothing when it has no open notes.

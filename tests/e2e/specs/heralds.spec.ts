@@ -1,5 +1,5 @@
 // What Yinyue tells of Ling's work, on a page that holds her
-// (doc/yinyue-companion-spec.md § Herald): a run waits on the person while
+// (doc/yinyue-spec.md § Herald): a run waits on the person while
 // they are away; she says so, her bubble carries that question's own card,
 // the page's card carries the folded "said while you were away" mark, and an
 // answer from her bubble resolves the question on the page too.

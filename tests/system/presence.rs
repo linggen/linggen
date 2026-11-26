@@ -1,4 +1,4 @@
-//! Presence per surface (doc/yinyue-companion-spec.md): every surface keeps
+//! Presence per surface (doc/yinyue-spec.md): every surface keeps
 //! its own reading, and the person is the most present live one — a focused
 //! but idle tab no longer overwrites the one they are working in.
 

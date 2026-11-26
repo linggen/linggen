@@ -87,7 +87,7 @@ each other and to you.
 
 She's an ordinary Linggen session on the `yinyue` agent — swap her model, edit
 her persona, or build another companion the same way. See
-[`doc/yinyue-companion-spec.md`](doc/yinyue-companion-spec.md).
+[`doc/yinyue-spec.md`](doc/yinyue-spec.md).
 
 ---
 
