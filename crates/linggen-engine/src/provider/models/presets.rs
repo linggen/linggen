@@ -65,11 +65,15 @@ pub fn named(selector: &str) -> Option<&'static Preset> {
     PRESETS.iter().find(|p| p.label == selector || p.name == selector)
 }
 
-/// A provider's label: the preset's at this address, else the preset's of
-/// this name, else the name as written.
+/// A provider's label: the preset's at this address; else the address's
+/// host (a provider the person typed is filed under its API style's name,
+/// which would mislabel it); else the preset's of this name, or the name.
 pub fn label_for(name: &str, url: &str) -> String {
-    if let Some(p) = at(url) {
+    if let Some(p) = PRESETS.iter().find(|p| same_endpoint("", p.url, "", url)) {
         return p.label.to_string();
+    }
+    if let Some(host) = crate::credentials::url_host(url) {
+        return host;
     }
     PRESETS.iter().find(|p| p.name.eq_ignore_ascii_case(name.trim()))
         .map_or_else(|| name.trim().to_string(), |p| p.label.to_string())
@@ -102,8 +106,9 @@ mod tests {
     #[test]
     fn a_label_is_found_by_address_then_name() {
         assert_eq!(label_for("openai", "https://api.deepseek.com/v1/"), "DeepSeek");
-        assert_eq!(label_for("groq", "https://gw.example.com/v1"), "Groq");
-        assert_eq!(label_for("mine", "https://gw.example.com/v1"), "mine");
+        assert_eq!(label_for("openai", "https://gw.example.com/v1"), "gw.example.com");
+        assert_eq!(label_for("groq", ""), "Groq");
+        assert_eq!(label_for("mine", ""), "mine");
         assert_eq!(named("Qwen Cloud").map(|p| p.name), Some("qwen"));
         assert_eq!(ApiStyle::parse("claude"), Some(ApiStyle::Claude));
     }
