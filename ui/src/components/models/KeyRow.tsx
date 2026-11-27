@@ -179,7 +179,8 @@ const ModelInput: React.FC<Props> = ({ provider: p, run, busy, keyEpoch = 0 }) =
       {isOllama(p) && <Download provider={p} list={list} typed={typed} run={run} busy={busy} onDone={() => setTyped('')} />}
       {isOllama(p) && <a href="https://ollama.com/library" target="_blank" rel="noreferrer" className="mt-1 inline-block text-[11px] font-semibold text-blue-600 hover:text-blue-700 dark:text-blue-400" data-testid="browse-ollama">{W.browseOllama}</a>}
       {list === null && <p data-testid="no-suggestions" className={`${hintCls} mt-1`}>{isOllama(p) ? W.ollamaNotRunning : why === 'key_rejected' ? W.keyRejected : W.noSuggestions}</p>}
-      {list && typed.trim() && shown.length === 0 && <p data-testid="no-match" className={`${hintCls} mt-1`}>{W.noMatch}</p>}
+      {/* Ollama offers a download instead of "add as typed". */}
+      {!isOllama(p) && list && typed.trim() && shown.length === 0 && <p data-testid="no-match" className={`${hintCls} mt-1`}>{W.noMatch}</p>}
     </div>
   );
 };
@@ -207,7 +208,7 @@ const Download: React.FC<{ provider: Props['provider']; list: Suggestion[] | nul
   if (pull.state === 'pulling') {
     return (
       <p className={`${hintCls} mt-1 flex items-center gap-2`} data-testid="pulling">
-        <span data-no-i18n>{say(W.downloading, { model: pull.model, progress: pullLine(pull.completed, pull.total) })}</span>
+        <span>{say(W.downloading, { model: pull.model, progress: pullLine(pull.completed, pull.total) })}</span>
         <button type="button" className="font-semibold text-blue-600 hover:text-blue-700 dark:text-blue-400" onClick={() => void providersApi.pullCancel(p.id).then(() => setPull({ state: 'none' }))}>{W.cancelDownload}</button>
       </p>
     );
@@ -238,7 +239,7 @@ const Address: React.FC<Props> = ({ provider: p, run, busy }) => {
             <input className={`${inputCls} w-64 max-w-full flex-1 font-mono`} aria-label={W.address} value={url} onChange={(e) => setUrl(e.target.value)} />
             <button type="button" className={ghostBtn} disabled={busy || !url.trim() || url.trim() === p.url} onClick={() => void run(async () => providersApi.setAddress(p.id, url.trim(), !p.key?.set || (await confirmDialog(W.keepKeyAsk))))}>{W.saveAddress}</button>
           </div>
-          <div className={`${hintCls} mt-1`}>{W.addressNote}</div>
+          <div className={`${hintCls} mt-1`}>{p.key ? W.addressNote : W.addressNoteNoKey}</div>
         </div>
   );
 };

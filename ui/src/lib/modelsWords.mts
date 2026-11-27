@@ -130,6 +130,7 @@ export const W = {
   saveAddress: 'Save address',
   keepKeyAsk: 'Address changed. Keep using the key?',
   addressNote: 'Changing it moves the key and the models with it.',
+  addressNoteNoKey: 'Changing it moves the models with it.',
   // ── Add a provider ──
   addProvider: 'Add provider',
   pickProvider: 'Pick a provider',
