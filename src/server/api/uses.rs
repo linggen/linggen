@@ -133,7 +133,7 @@ async fn table(state: &ServerState, config: &Config) -> Table {
     chat.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.id.cmp(&b.id)));
     let effort = chat.iter().map(|row| {
         let options: Vec<_> = models.effort_choices(&row.id).into_iter().map(|id| OptionRow::new(id, id, row.source.clone(), "ready")).collect();
-        (row.id.clone(), Use::new(config.uses.model_effort.get(&row.id).map(String::as_str), options, None))
+        (row.id.clone(), Use::new(models.effort_shown(&row.id, config.uses.model_effort.get(&row.id).map(String::as_str)).as_deref(), options, None))
     }).collect();
     // The entitlement is asked for here (a cached fetch), so the Cloud voice's readiness,
     // which reads it with no network, is not stale on a freshly started engine.
@@ -197,7 +197,7 @@ impl Edit {
             Self::ChatFallbacks { choices } => set_chat_fallbacks(view, config, choices)?,
             Self::ModelFallback { enabled } => config.set_model_fallback(enabled),
             Self::Effort { model, choice } if view.effort.get(&model).is_some_and(|row|
-                !row.options.is_empty() && (choice == "auto" || row.accepts(&choice, &["ready"]))
+                !row.options.is_empty() && row.accepts(&choice, &["ready"])
             ) => { config.uses.model_effort.insert(model, choice); }
             Self::Speak { choice } if choice.as_ref().is_none_or(|id| view.speak.accepts(id, &["ready", "download"])) => config.uses.speak = choice,
             Self::Voice { choice } if view.voice.accepts(&choice, &["ready"]) => config.pet.voice = choice,

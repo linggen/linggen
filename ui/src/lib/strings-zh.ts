@@ -448,7 +448,6 @@ export const ZH: Record<string, string> = {
   'Max effort': '最高',
   'Ultra effort': '极限',
   'Thinking': '思考',
-  'Use provider default': '恢复自动',
   'Qwen3-TTS speaker': 'Qwen3-TTS 音色',
   'System voice': '系统语音',
   'macOS system voices': 'macOS 系统声音',

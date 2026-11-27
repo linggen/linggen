@@ -53,6 +53,8 @@ api_key = "test-not-a-key"
     let live = w.api.get("/api/live").await;
     assert_eq!(live["providers"].as_array().unwrap().len(), 1);
     assert_eq!(live["providers"][0]["id"], "alibaba");
+    assert_eq!(w.api.get("/api/uses").await["effort"]["reasoning"]["choice"], "medium", "nothing chosen: the model's default level, not auto");
+    assert_eq!(w.api.put_json("/api/uses", json!({"use":"effort","model":"reasoning","choice":"auto"})).await.0, 400, "there is no auto choice");
     for edit in [
         json!({"use":"chat","choice":"reasoning"}),
         json!({"use":"effort","model":"reasoning","choice":"medium"}),

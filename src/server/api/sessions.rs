@@ -492,7 +492,7 @@ async fn model_asked_about_effort(state: &ServerState, req: &RenameSessionReques
 }
 
 /// Refuse an effort the session's model does not offer, before anything is
-/// written. "" (inherit) and "auto" (the provider's default) fit every model.
+/// written. "" (inherit) fits every model; a stored "auto" reads as the model's default.
 async fn effort_refusal(state: &ServerState, req: &RenameSessionRequest) -> Option<axum::response::Response> {
     let effort = req.effort.as_deref().filter(|e| !e.is_empty() && *e != "auto")?;
     let offered = match model_asked_about_effort(state, req).await {

@@ -127,8 +127,8 @@ export const SessionModelSelector: React.FC = () => {
 };
 
 /** The conversation's thinking effort, beside its model: only the values the
- *  model offers (the engine's list), nothing when it offers none. 自动 = the chat
- *  default. A kept value the model lacks reads as 自动 and stays kept. */
+ *  model offers (the engine's list), nothing when it offers none. Always on a level: the session's, else the
+ *  chat default (the model's own default when none is stored). */
 export const SessionEffortChip: React.FC = () => {
   const models = useServerStore((s) => s.models);
   const defaultModels = useServerStore((s) => s.defaultModels);
@@ -150,13 +150,13 @@ export const SessionEffortChip: React.FC = () => {
       useUiStore.getState().addToast({ variant: 'error', message: apiErrorMessage(error) });
     });
   };
-  const choice = session.effort ?? model.remembered_effort;
-  const selected = choice && model.effort.includes(choice) ? choice : 'auto';
+  // The engine's remembered_effort is always a level of this model (its default when none is stored).
+  const own = session.effort && model.effort.includes(session.effort) ? session.effort : null;
+  const selected = own ?? model.remembered_effort ?? model.effort[0];
   return (
     <select data-testid="session-effort" data-choice={selected} value={selected}
       aria-label={W.thinking} title={model.name ?? model.model ?? model.id}
       className={`${control} outline-none`} onChange={(event) => change(event.currentTarget.value)}>
-      <option value="auto">{W.thinking} {W.automatic}</option>
       {model.effort.map((value) => <option key={value} value={value}>{W.thinking} {EFFORT_WORD[value] ?? value}</option>)}
     </select>
   );

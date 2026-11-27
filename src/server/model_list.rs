@@ -39,7 +39,7 @@ pub(super) async fn for_person(
             };
             let mut config = m.clone();
             config.api_key = None;
-            Listed { config, auth_ok, effort: manager.effort_choices(&m.id), remembered_effort: saved.get(&m.id).cloned(), name: manager.display_name(m) }
+            Listed { config, auth_ok, effort: manager.effort_choices(&m.id), remembered_effort: manager.effort_shown(&m.id, saved.get(&m.id).map(String::as_str)), name: manager.display_name(m) }
         })
         .collect()
 }

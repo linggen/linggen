@@ -11,11 +11,11 @@
 //! 3. the agent spec's (legacy)
 //! 4. `[uses] chat_effort`, asked for interactive chat only
 //! 5. the model row's `reasoning_effort` (legacy)
-//! 6. the provider's default: no field on the wire
+//! 6. the model's default level ([`default_level`]), sent like any other
 //!
-//! `"auto"` at any step is the provider's default on purpose: it stops the
-//! walk, so a later step cannot bring a value back. A session's or the chat
-//! default's value the model does not offer also means the provider's default
+//! There is no "auto" choice: a stored `"auto"` (old sessions, defaults)
+//! stops the walk and reads as the model's default level. A session's or the
+//! chat default's value the model does not offer also means the default level
 //! for that call; the choice is kept where it is stored, and the caller is
 //! told ([`Resolved::held_back`]) so the conversation can say so once.
 //! A key model's effort choices are what its wire carries; no model list is
@@ -132,6 +132,22 @@ fn key_choices(row: &ModelConfig) -> Vec<&'static str> {
     wire.to_vec()
 }
 
+/// The level a model sits on when nothing is chosen, and the one a stored
+/// "auto" means. The one place that decides it: a ChatGPT sign-in model's
+/// own default from the Codex catalog, Anthropic high, any other model with
+/// levels medium (the middle level when medium is absent).
+fn default_level(row: &ModelConfig, offered: &[&'static str], catalog: &chatgpt_catalog::Snapshot) -> Option<&'static str> {
+    let preferred = match row.sign_in() {
+        SignIn::ChatGpt => catalog.default_reasoning_level(&row.model).map(str::to_owned),
+        _ if row.provider_kind() == ProviderKind::Anthropic => Some("high".to_string()),
+        _ => None,
+    };
+    let preferred = preferred.and_then(|want| offered.iter().copied().find(|o| *o == want));
+    preferred
+        .or_else(|| offered.iter().copied().find(|o| *o == "medium"))
+        .or_else(|| offered.get(offered.len() / 2).copied())
+}
+
 /// Key models whose provider refused the effort field, by address and wire
 /// model, for this run of the engine.
 static REFUSED: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(Default::default);
@@ -170,19 +186,23 @@ fn passes_legacy_gate(row: &ModelConfig, value: &str) -> bool {
 
 pub(super) fn resolve(row: &ModelConfig, ask: &EffortAsk<'_>) -> Resolved {
     let omit = |held_back| Resolved { effort: Effort(None), held_back };
+    let by_default = |held_back| {
+        let level = default_level(row, &choices(row), &chatgpt_catalog::current());
+        Resolved { effort: Effort(level.map(str::to_string)), held_back }
+    };
     let Some((source, value)) = candidates(ask, row).into_iter()
         .find_map(|(source, value)| value.filter(|v| !v.trim().is_empty()).map(|v| (source, v)))
     else {
-        return omit(None);
+        return by_default(None);
     };
     if value == "auto" {
-        return omit(None);
+        return by_default(None);
     }
     if let Some(offered) = choices(row).into_iter().find(|offered| offered.eq_ignore_ascii_case(value)) {
         return Resolved { effort: Effort(Some(offered.to_string())), held_back: None };
     }
     match source {
-        Source::Choice => omit(Some(value.to_string())),
+        Source::Choice => by_default(Some(value.to_string())),
         Source::Forced | Source::Legacy if passes_legacy_gate(row, value) => {
             Resolved { effort: Effort(Some(value.to_string())), held_back: None }
         }
@@ -205,6 +225,15 @@ impl ModelManager {
     /// menu, the default card and a session's choice are checked against.
     pub fn effort_choices(&self, id: &str) -> Vec<&'static str> {
         self.models.get(self.key(id).as_ref()).map_or_else(Vec::new, |instance| choices(&instance.config))
+    }
+
+    /// The level a slider sits on for `id`: the stored value if the model
+    /// offers it, else the model's default level (a stored "auto" reads so).
+    pub fn effort_shown(&self, id: &str, stored: Option<&str>) -> Option<String> {
+        let offered = self.effort_choices(id);
+        let kept = stored.and_then(|v| offered.iter().find(|o| o.eq_ignore_ascii_case(v)));
+        let row = self.models.get(self.key(id).as_ref())?;
+        kept.copied().or_else(|| default_level(&row.config, &offered, &chatgpt_catalog::current())).map(str::to_string)
     }
 
     /// What a call to `id` carries, and whether a person's value was held
@@ -313,27 +342,51 @@ mod tests {
         assert_eq!(sent(&r, EffortAsk { forced: None, session: None, ..all }).as_deref(), Some("medium"));
         assert_eq!(sent(&r, EffortAsk { agent: None, forced: None, session: None, ..all }).as_deref(), Some("xhigh"));
         assert_eq!(sent(&r, EffortAsk::default()).as_deref(), Some("max"), "the legacy row value");
-        assert_eq!(sent(&claude("claude-sonnet-5-5"), EffortAsk::default()), None, "provider default");
+        assert_eq!(sent(&claude("claude-sonnet-5-5"), EffortAsk::default()).as_deref(), Some("high"), "Anthropic's default");
     }
 
     #[test]
-    fn auto_is_the_provider_default_and_stops_the_walk() {
+    fn auto_reads_as_the_models_default_level_and_stops_the_walk() {
         let r = row("claude-sonnet-5-5", "anthropic", "https://api.anthropic.com", None, Some("max"));
         let chat_auto = EffortAsk { remembered: Some(&remembered("auto")), ..EffortAsk::default() };
-        assert_eq!(resolve(&r, &chat_auto), Resolved { effort: Effort(None), held_back: None });
-        let session_auto = EffortAsk { session: Some("auto"), remembered: Some(&remembered("high")), ..EffortAsk::default() };
-        assert_eq!(sent(&r, session_auto), None);
+        assert_eq!(resolve(&r, &chat_auto), Resolved { effort: Effort(Some("high".into())), held_back: None });
+        let session_auto = EffortAsk { session: Some("auto"), remembered: Some(&remembered("low")), ..EffortAsk::default() };
+        assert_eq!(sent(&r, session_auto).as_deref(), Some("high"));
+    }
+
+    #[test]
+    fn the_default_level_by_kind() {
+        let gpt = row("gpt-5.4", "openai", "https://gateway.invalid/v1", None, None);
+        assert_eq!(sent(&gpt, EffortAsk::default()).as_deref(), Some("medium"), "other models: medium");
+        assert_eq!(default_level(&gpt, &["low", "high"], &chatgpt_catalog::Snapshot::seed()), Some("high"), "no medium: the middle one");
+        assert_eq!(default_level(&gpt, &[], &chatgpt_catalog::Snapshot::seed()), None, "no levels, no effort");
+        let ollama = row("llama", "ollama", "http://localhost:11434", None, None);
+        assert_eq!(sent(&ollama, EffortAsk::default()), None);
+        let sol = row("gpt-6.2-sol", "chatgpt", "", Some("chatgpt_oauth"), None);
+        assert_eq!(sent(&sol, EffortAsk::default()).as_deref(), Some("medium"), "catalog without a default");
+    }
+
+    #[test]
+    fn a_chatgpt_models_default_is_the_catalogs() {
+        let sol = row("gpt-6.2-sol", "chatgpt", "", Some("chatgpt_oauth"), None);
+        let mut catalog = chatgpt_catalog::Snapshot::seed();
+        catalog.listed = chatgpt_catalog::listing::parse_list(&serde_json::json!({"models": [
+            {"slug": "gpt-6.2-sol", "default_reasoning_level": "high",
+             "supported_reasoning_levels": [{"effort": "low"}, {"effort": "high"}]},
+        ]}));
+        assert_eq!(catalog.default_reasoning_level("gpt-6.2-sol"), Some("high"));
+        assert_eq!(default_level(&sol, &chatgpt_choices(&sol, &catalog), &catalog), Some("high"));
     }
 
     #[test]
     fn a_value_the_model_lacks_is_the_provider_default_and_is_kept_and_told() {
-        // The OpenAI-compatible wire carries no xhigh: the choice stays; this call omits it.
+        // The OpenAI-compatible wire carries no xhigh: the choice stays; this call sends the default level.
         let r = row("gpt-5.4", "openai", "https://gateway.invalid/v1", None, None);
         let ask = EffortAsk { session: Some("xhigh"), ..EffortAsk::default() };
-        assert_eq!(resolve(&r, &ask), Resolved { effort: Effort(None), held_back: Some("xhigh".into()) });
+        assert_eq!(resolve(&r, &ask), Resolved { effort: Effort(Some("medium".into())), held_back: Some("xhigh".into()) });
         // It does not fall through to a lower step.
         let ask = EffortAsk { session: Some("xhigh"), remembered: Some(&remembered("low")), ..EffortAsk::default() };
-        assert_eq!(sent(&r, ask), None);
+        assert_eq!(sent(&r, ask).as_deref(), Some("medium"));
         // The same value on a model that has it is sent, with nothing held back.
         let ask = EffortAsk { session: Some("xhigh"), ..EffortAsk::default() };
         let on_sonnet = resolve(&claude("claude-sonnet-5-5"), &ask);
@@ -360,7 +413,7 @@ mod tests {
         let ask = EffortAsk { remembered: Some(&remembered("high")), ..EffortAsk::default() };
         assert_eq!(resolve(&sol, &ask), Resolved { effort: Effort(Some("high".into())), held_back: None });
         let ask = EffortAsk { remembered: Some(&remembered("xhigh")), ..EffortAsk::default() };
-        assert_eq!(resolve(&sol, &ask), Resolved { effort: Effort(None), held_back: Some("xhigh".into()) });
+        assert_eq!(resolve(&sol, &ask), Resolved { effort: Effort(Some("medium".into())), held_back: Some("xhigh".into()) });
         assert_eq!(sent(&sol, EffortAsk::agent(Some("ultra"))), None);
     }
 

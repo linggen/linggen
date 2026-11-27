@@ -310,6 +310,12 @@ impl Snapshot {
             .map_or(&[], |m| m.reasoning_levels.as_slice())
     }
 
+    /// The effort the backend lists as this exact slug's own default.
+    pub(super) fn default_reasoning_level(&self, slug: &str) -> Option<&str> {
+        self.listed.iter().find(|m| m.slug == slug)
+            .and_then(|m| m.default_reasoning_level.as_deref())
+    }
+
     /// The context window the backend listed for [slug].
     pub fn context_window(&self, slug: &str) -> Option<u64> {
         self.listed

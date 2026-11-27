@@ -2,18 +2,15 @@ import { EFFORT_WORD } from '../../lib/effortChip.mts';
 import { translate } from '../../lib/i18n';
 import { W } from '../../lib/modelsWords.mts';
 
-/** The stop that means "let the model decide" — the slider's leftmost. */
-const AUTO = 'auto';
-
 export function EffortSlider({ id, name, values, choice, disabled, onPick }: {
   id: string; name: string; values: readonly string[]; choice?: string | null;
   disabled?: boolean; onPick: (value: string) => void;
 }) {
   if (!values.length) return null;
-  // 自动 is a stop of its own, left of the model's levels, so it can always be reached by sliding back.
-  const stops = [AUTO, ...values];
-  const at = Math.max(stops.indexOf(choice ?? AUTO), 0);
-  const word = (stop: string) => (stop === AUTO ? W.automatic : (EFFORT_WORD[stop] ?? stop));
+  // Always on one of the model's own levels; the engine sends the model's default when none is chosen.
+  const stops = values;
+  const at = Math.max(stops.indexOf(choice ?? ''), 0);
+  const word = (stop: string) => EFFORT_WORD[stop] ?? stop;
   const t = (text: string) => translate(text) ?? text;
   // One row, the height of the model select beside it: 思考 · slider · value.
   // The model's name is the select's job; here it is only the tooltip.

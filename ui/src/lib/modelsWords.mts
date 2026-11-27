@@ -34,7 +34,6 @@ export const W = {
   effortMax: 'Max effort',
   effortUltra: 'Ultra effort',
   thinking: 'Thinking',
-  resetEffort: 'Use provider default',
   speaker: 'Qwen3-TTS speaker',
   defaultsFailed: 'The defaults could not be loaded.',
   chatDefault: 'Default',
