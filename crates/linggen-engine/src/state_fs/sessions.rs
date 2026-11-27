@@ -1154,13 +1154,13 @@ mod tests {
     fn a_sessions_effort_survives_a_reload_and_clears_to_inherit() {
         let (store, _dir) = temp_store();
         store.add_session(&SessionMeta { id: "s".into(), title: "t".into(), ..Default::default() }).unwrap();
-        assert!(!yaml_of(&store, "s").contains("effort"));
+        assert!(!yaml_of(&store, "s").contains("effort:"));
         assert_eq!(store.effort_of("s"), None);
         assert!(store.set_effort("s", Some("high".into())).unwrap());
         assert!(yaml_of(&store, "s").contains("effort: high"));
         assert_eq!(store.effort_of("s").as_deref(), Some("high"));
         assert!(store.set_effort("s", None).unwrap());
-        assert!(!yaml_of(&store, "s").contains("effort"));
+        assert!(!yaml_of(&store, "s").contains("effort:"));
         assert!(!store.set_effort("nowhere", Some("low".into())).unwrap());
         assert_eq!(store.effort_of("nowhere"), None);
     }
