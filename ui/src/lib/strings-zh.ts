@@ -510,6 +510,7 @@ export const ZH: Record<string, string> = {
   'No key yet': '还没有密钥',
   'Nothing ticked': '没有勾选',
   'No models yet.': '还没有模型。',
+  'Included with the subscription; always on.': '订阅自带，不能取消。',
   'Now {name}': '现在是 {name}',
   'Would be {name}': '会是 {name}',
   'input ${input} / output ${output} per million': '输入 ${input} / 输出 ${output} 每百万',

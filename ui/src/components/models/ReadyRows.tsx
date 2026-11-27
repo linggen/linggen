@@ -2,7 +2,7 @@
  * 开箱即用: the Linggen Cloud account and the ChatGPT subscription. A sign-in
  * button and the usage the engine already reports; no key field. ChatGPT lists
  * its built-in models under its name; Linggen Cloud opens to its models to
- * tick (`CloudList`), then its voice uses as words.
+ * tick (`CloudList`), then its live voice and read-aloud, ticked and fixed.
  */
 import React, { useState } from 'react';
 import { LogIn, LogOut } from 'lucide-react';
@@ -13,7 +13,7 @@ import type { Provider } from '../../lib/providers.mts';
 import { CodexUsage } from '../CodexUsage';
 import { UsageLink, useCloudUsage, usageToneCls } from '../UsageMeter';
 import { CloudList } from './CloudList';
-import { Row, hintCls, sectionLabel, sectionRule } from './shell';
+import { Row, sectionLabel, sectionRule } from './shell';
 import type { Run } from './useProviders';
 
 const CODEX = { login: '/api/auth/codex/login', logout: '/api/auth/codex/logout', status: '/api/auth/codex/status' };
@@ -33,8 +33,6 @@ type Props = {
   onToggle: () => void;
 };
 
-/** Linggen Cloud's voice uses, as words: live voice and read-aloud are uses, not models to tick. */
-const cloudUseWords = (p: Provider) => p.models.filter((m) => m.builtin && (m.kind === 'live_voice' || m.kind === 'speak')).map((m) => (m.kind === 'live_voice' ? W.liveVoice : W.readAloud));
 
 /** Where ChatGPT's sign-in stands, then its built-in model ids. */
 const subtitle = (p: Provider, note: string) => (
@@ -75,14 +73,12 @@ const CloudRow: React.FC<Props> = ({ provider: p, changed, run, busy, open, onTo
       {usage && <><span aria-hidden> · </span><span data-testid="cloud-usage" className={usageToneCls(usage.tone)}>{usage.text}</span></>}
     </>
   );
-  const uses = cloudUseWords(p);
   return (
     <Row testId="linggen-cloud" name={p.label} way={p.way} subtitle={line} right={right} open={open} onToggle={onToggle}>
       <div className={`${sectionRule} grid gap-2 sm:grid-cols-[4rem_minmax(0,1fr)]`}>
         <span className={sectionLabel}>{W.models}</span>
         <div className="min-w-0 flex-1">
           <CloudList provider={p} run={run} busy={busy} />
-          {uses.length > 0 && <p data-testid="cloud-uses" className={`${hintCls} mt-1`}>{uses.join(' · ')}</p>}
           {usage?.metered && <p className="mt-1"><UsageLink usage={usage} /></p>}
         </div>
       </div>

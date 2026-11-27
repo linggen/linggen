@@ -104,6 +104,7 @@ export const W = {
   noKeyYet: 'No key yet',
   models: 'Models',
   noModelsYet: 'No models yet.',
+  includedAlways: 'Included with the subscription; always on.',
   noModelsAdded: 'No models added',
   keyFirst: 'Paste a key, then add models.',
   modelInput: 'Type a model, e.g. "te"',
