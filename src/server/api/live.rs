@@ -55,7 +55,7 @@ pub(crate) async fn status_handler(
     }
     let providers: Vec<Value> = live::offered_to_pages().into_iter()
         .map(|p| {
-            let source = owner.then(|| live::find_source(p, &config.models)).flatten();
+            let source = owner.then(|| live::find_source(p, &config.models, &config.live_off)).flatten();
             match why_not_ready(owner, || source.is_some()) {
                 Some(why) => json!({"id": p.id, "ready": false, "why": why}),
                 // `via`: who pays (the person's own key, or Linggen Cloud's subscription).
@@ -102,10 +102,10 @@ pub(crate) async fn token_handler(
     if let Some(refused) = crate::server::person::owners_only(level) {
         return refused;
     }
-    let configured = state.manager.get_config_snapshot().await.models;
+    let config = state.manager.get_config_snapshot().await;
     crate::account::learn_entitlement().await;
     match asked_of(&body) {
-        Ok((provider, setup)) => answer(provider, &setup, &configured, &state.live_rate).await,
+        Ok((provider, setup)) => answer(provider, &setup, &config.models, &config.live_off, &state.live_rate).await,
         Err(why) => refuse(why, "?"),
     }
 }
@@ -116,12 +116,13 @@ async fn answer(
     asked: Option<&'static Provider>,
     setup: &Value,
     configured: &[crate::config::ModelConfig],
+    live_off: &[String],
     rate: &live::TokenRate,
 ) -> Response {
     let Some(p) = asked else {
         return refuse(Refusal::UnknownProvider, "?");
     };
-    let Some(source) = live::find_source(p, configured) else {
+    let Some(source) = live::find_source(p, configured, live_off) else {
         return refuse(Refusal::NoKey, p.id);
     };
     if !rate.allow(Instant::now()) {

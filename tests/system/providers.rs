@@ -118,6 +118,21 @@ fn voice<'a>(body: &'a Value, label: &str, model: &str) -> &'a Value {
 }
 
 #[tokio::test]
+async fn removing_the_live_line_turns_the_own_key_off_and_typing_its_id_turns_it_on() {
+    let w = World::start(Setup::default()).await;
+    let model = "qwen-audio-3.1-realtime-flash";
+    let body = file_key(&w, "Qwen Cloud").await;
+    let id = provider(&body, "Qwen Cloud")["id"].as_str().unwrap().to_string();
+    assert_eq!(w.api.get("/api/live").await["providers"][0], json!({"id": "alibaba", "ready": true, "via": "own_key"}));
+    let body = w.api.delete(&format!("/api/providers/{id}/models/live:alibaba"), json!({})).await;
+    assert!(provider(&body, "Qwen Cloud")["models"].as_array().unwrap().is_empty());
+    assert_eq!(w.api.get("/api/live").await["providers"][0], json!({"id": "alibaba", "ready": false, "why": "no_key"}));
+    let body = w.api.post(&format!("/api/providers/{id}/models"), json!({"model": model})).await;
+    assert_eq!(voice(&body, "Qwen Cloud", model)["id"], "live:alibaba");
+    assert_eq!(w.api.get("/api/live").await["providers"][0], json!({"id": "alibaba", "ready": true, "via": "own_key"}));
+}
+
+#[tokio::test]
 async fn gemini_live_is_not_offered_even_when_google_has_a_key() {
     let w = World::start(Setup::default()).await;
     let model = "gemini-3.8-live";

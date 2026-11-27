@@ -59,3 +59,12 @@ test('only Linggen Cloud stays in the top block; the ChatGPT sign-in is an own p
   assert.equal(isChatgpt(chatgpt), true);
   assert.equal(isChatgpt(key), false);
 });
+
+test('a live line on a key row has the same ✕ as an added model, calling the remove route', async () => {
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(new URL('../src/components/models/KeyRow.tsx', import.meta.url), 'utf8');
+  const line = src.slice(src.indexOf('data-testid="live-model"'));
+  const block = line.slice(0, line.indexOf('</div>'));
+  assert.match(block, /providersApi\.removeModel\(p\.id, m\.id\)/);
+  assert.match(block, /<X size=\{12\} \/>/);
+});

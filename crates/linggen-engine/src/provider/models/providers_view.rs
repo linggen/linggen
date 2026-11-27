@@ -264,7 +264,8 @@ impl ModelManager {
             group.mark_key(set);
             group.connected |= set && group.models.is_empty();
         }
-        for voice in live::offered_to_pages().into_iter() {
+        // A line the person removed from their own key's row is not shown (`Config::live_off`).
+        for voice in live::offered_to_pages().into_iter().filter(|v| !live::is_off(v, &config.live_off)) {
             let ready = live::key_ready(voice, &config.models, creds);
             // The line is shown on the preset at the voice's host; a host with no preset has none.
             let Some(preset) = live_preset(voice) else { continue };

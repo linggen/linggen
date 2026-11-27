@@ -260,7 +260,7 @@ pub fn declares(host: &str, model: &str) -> bool {
     at_model(host, model).is_some()
 }
 
-pub(crate) fn at_model(host: &str, model: &str) -> Option<&'static Provider> {
+pub fn at_model(host: &str, model: &str) -> Option<&'static Provider> {
     PROVIDERS.iter().find(|p| {
         p.key_host.eq_ignore_ascii_case(host.trim()) && p.model.eq_ignore_ascii_case(model.trim())
     })
@@ -380,6 +380,12 @@ pub(crate) fn key_ready(p: &Provider, configured: &[ModelConfig], creds: &Creden
     provider_key(p, || stored_key(p, configured, creds)).is_some()
 }
 
+/// Whether the person removed `p`'s live line from their own key's row
+/// (`Config::live_off`). Only their own key is affected, never Linggen Cloud.
+pub fn is_off(p: &Provider, live_off: &[String]) -> bool {
+    live_off.iter().any(|id| id == p.id)
+}
+
 /// Who pays for a lesson. A closed set: the one `match` that reads it is
 /// [`find_source`], which is also where the order of preference is decided.
 pub enum Source {
@@ -403,8 +409,9 @@ impl Source {
 /// Who pays for a lesson on `p` now — THE order of preference: the person's
 /// own key first, then Linggen Cloud for a subscriber; none when neither.
 /// The page names a service (`alibaba`), never who pays: this decides it.
-pub fn find_source(p: &Provider, configured: &[ModelConfig]) -> Option<Source> {
-    find_key(p, configured).map(Source::OwnKey).or_else(|| {
+pub fn find_source(p: &Provider, configured: &[ModelConfig], live_off: &[String]) -> Option<Source> {
+    let own = (!is_off(p, live_off)).then(|| find_key(p, configured)).flatten();
+    own.map(Source::OwnKey).or_else(|| {
         (p.via_cloud && crate::account::cloud_voice::live_usable()).then_some(Source::LinggenCloud)
     })
 }

@@ -131,6 +131,9 @@ const Models: React.FC<Props> = (props) => {
             <Tag>{W.liveTag}</Tag>
             <span className={hintCls}>{m.ready ? W.liveAvailable : W.liveMissingKey}</span>
             <span className={hintCls}>{W.lingyuUses}</span>
+            <button type="button" aria-label={say(W.removeModelNamed, { model: m.model })} className="rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-red-600 disabled:opacity-50 dark:hover:bg-white/10" disabled={busy} onClick={() => void run(() => providersApi.removeModel(p.id, m.id))}>
+              <X size={12} />
+            </button>
           </div>
         ))}
       </div>
