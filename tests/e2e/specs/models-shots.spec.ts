@@ -32,10 +32,11 @@ for (const [width, theme] of [[1280, 'light'], [420, 'light'], [1280, 'dark'], [
     await shot('page');
 
     await page.getByTestId('add-provider-button').click();
-    await page.getByTestId('add-provider').getByRole('button', { name: 'Anthropic', exact: true }).click();
+    const panel = page.getByTestId('add-provider');
+    await panel.getByRole('button', { name: 'Anthropic', exact: true }).click();
+    await panel.getByLabel('粘贴密钥').fill('test-only-marker');
+    await panel.getByTestId('add-provider-confirm').click();
     const row = page.getByTestId('provider-row').filter({ hasText: 'Anthropic' }).first();
-    await row.getByTestId('key-input').fill('test-only-marker');
-    await row.getByTestId('key-input').press('Enter');
     await expect(row.getByTestId('key-set')).toBeVisible();
     const input = row.getByTestId('model-input').getByRole('textbox');
     await input.fill('claude-sonnet-5-5');

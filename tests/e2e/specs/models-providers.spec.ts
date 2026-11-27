@@ -31,10 +31,13 @@ async function openModels(page: Page, world: { url: string }, httpRequests: stri
 async function addAnthropic(page: Page): Promise<Locator> {
   await openOwnProviders(page);
   await page.getByTestId('add-provider-button').click();
-  await page.getByTestId('add-provider').getByRole('button', { name: 'Anthropic', exact: true }).click();
+  const panel = page.getByTestId('add-provider');
+  await panel.getByRole('button', { name: 'Anthropic', exact: true }).click();
+  // A pick only selects: nothing is in the list until 添加 with a key.
+  await expect(provider(page, 'Anthropic')).toHaveCount(0);
+  await panel.getByLabel('Paste your key').fill(KEY);
+  await panel.getByTestId('add-provider-confirm').click();
   const row = provider(page, 'Anthropic');
-  await row.getByTestId('key-input').fill(KEY);
-  await row.getByRole('button', { name: 'Save key' }).click();
   await expect(row.getByTestId('key-set')).toBeVisible();
   return row;
 }
@@ -108,7 +111,7 @@ test('another provider is typed: a name, an address, its API style and a key', a
   await openModels(page, world, httpRequests);
   await page.getByTestId('add-provider-button').click();
   await page.getByTestId('add-other').click();
-  const form = page.getByTestId('other-provider');
+  const form = page.getByTestId('add-provider-form');
   await form.getByLabel('Name').fill('My gateway');
   await form.getByLabel('Address (https://…)').fill('https://gateway.example.test/v1');
   await form.getByLabel('API style').selectOption('claude');

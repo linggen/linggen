@@ -407,7 +407,8 @@ export const ZH: Record<string, string> = {
   // ── Models page (lib/modelsWords.mts) ──
   'No models added': '还没添加模型',
   'Paste a key, then add models.': '先粘贴密钥，再添加模型。',
-  'Type a model, e.g. "te"': '输入模型，比如 "te"',
+  'Type a model name to search': '输入模型名查找',
+  'No model matches. Press Enter to add it as typed.': '没有匹配的模型，按回车直接添加。',
   'Could not read this provider\u2019s list. Type the full model ID and press Enter.': '读不到这家的模型列表。输入完整模型 ID 后按回车。',
   'Remove this provider': '移除这个服务商',
   'Remove {provider}, its key and its models?': '移除 {provider}、它的密钥和模型？',

@@ -68,12 +68,18 @@ export const ModelsTab: React.FC<{
   }).then(() => undefined);
   const makeDefault = (choice: string) => pickUse({ use: 'chat', choice });
 
-  const pick = async (preset: Preset) => {
+  /** A preset and its key: the provider is filed only now, with the key; the row opens. */
+  const addPreset = async (preset: Preset, key: string) => {
+    const find = (a: ProvidersAnswer) => a.providers.find((p) => p.way === 'key' && p.provider === preset.name && sameAddress(p.url, preset.url));
     let made: ProvidersAnswer | void = undefined;
-    const done = await run(async () => (made = await providersApi.create(preset.label)));
-    const row = done && made ? (made as ProvidersAnswer).providers.find((p) => p.way === 'key' && p.provider === preset.name && sameAddress(p.url, preset.url)) : undefined;
+    const done = await run(async () => {
+      made = await providersApi.create(preset.label);
+      const row = find(made);
+      return row ? (made = await providersApi.setKey(row.id, key)) : made;
+    });
+    const row = done && made ? find(made as ProvidersAnswer) : undefined;
     if (row) setOpen(row.id);
-    setAdding(false);
+    if (done) setAdding(false);
   };
 
   /** 其他…: file the typed provider, then its key; the row opens. */
@@ -132,7 +138,7 @@ export const ModelsTab: React.FC<{
               </button>
             </div>
             <div className="mt-4">
-              {adding && <AddProvider presets={addable} busy={busy} onPick={(p) => void pick(p)} onTyped={(t) => void addTyped(t)} onClose={() => setAdding(false)} />}
+              {adding && <AddProvider presets={addable} busy={busy} onAdd={(p, k) => void addPreset(p, k)} onTyped={(t) => void addTyped(t)} onClose={() => setAdding(false)} />}
               <div className="space-y-1.5">
                 {keyProviders(providers).map((p) => (
                   <KeyRow key={p.id} provider={p} open={open === p.id} onToggle={() => setOpen(open === p.id ? null : p.id)} run={run} busy={busy} makeDefault={makeDefault} chain={chain} />

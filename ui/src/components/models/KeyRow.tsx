@@ -174,6 +174,7 @@ const ModelInput: React.FC<Props> = ({ provider: p, run, busy }) => {
         </div>
       )}
       {list === null && <p className={`${hintCls} mt-1`}>{W.noSuggestions}</p>}
+      {list && typed.trim() && shown.length === 0 && <p data-testid="no-match" className={`${hintCls} mt-1`}>{W.noMatch}</p>}
     </div>
   );
 };
