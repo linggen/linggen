@@ -67,7 +67,7 @@ export const W = {
   providersFailed: 'The providers could not be loaded.',
   retry: 'Retry',
   // ── The two groups ──
-  ownProviders: 'Your own providers',
+  ownProviders: 'Providers',
   nConnected: '{n} connected',
   usageMonth: 'Used this month: {percent}%',
   usageTrial: 'Trial used: {percent}%',

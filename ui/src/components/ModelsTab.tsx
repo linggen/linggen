@@ -1,19 +1,19 @@
 /**
  * Settings → Models: 「Default model」, the Linggen Cloud and ChatGPT rows, then
- * the fold 「Your own providers」. The page draws what
+ * 「Providers」, always open. The page draws what
  * the engine answers (`GET /api/providers`) and decides nothing: every button
  * calls its route and the list is redrawn from the answer (models/useProviders).
  * What a key provider shows, and how, is models/KeyRow; the words are
  * lib/modelsWords.mts; reading the answer is lib/providers.mts.
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { ChevronRight, Plus } from 'lucide-react';
+import { Plus } from 'lucide-react';
 import type { ModelMove } from '../types';
 import type { UseEdit, Uses } from '../lib/modelUses';
 import { useServerStore } from '../stores/serverStore';
 import { modelsApi, providersApi, usesApi } from '../lib/endpoints';
 import { W, say } from '../lib/modelsWords.mts';
-import { hasProblem, isOllama, ownProviders, readyToUse, sameAddress, type Preset, type ProvidersAnswer } from '../lib/providers.mts';
+import { isOllama, ownProviders, readyToUse, sameAddress, type Preset, type ProvidersAnswer } from '../lib/providers.mts';
 import { AddProvider, type Typed } from './models/AddProvider';
 import { DefaultCard } from './models/DefaultCard';
 import { KeyRow } from './models/KeyRow';
@@ -40,7 +40,6 @@ export const ModelsTab: React.FC<{
   const [open, setOpen] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   // The own-providers fold: shut unless a provider has a problem, until the person decides.
-  const [ownFold, setOwnFold] = useState<boolean | null>(null);
   // A sign-in that made another model the default: one line says so.
   const [signInLine, setSignInLine] = useState<string | null>(null);
 
@@ -110,7 +109,6 @@ export const ModelsTab: React.FC<{
   const chain = uses?.chain ?? [];
   // Ollama is offered once, whatever address its row has; a key preset once per address.
   const addable = answer.presets.filter((p) => (p.way === 'key' || p.way === 'local') && !providers.some((q) => q.way === p.way && q.provider === p.name && (p.way === 'local' || sameAddress(q.url, p.url))));
-  const ownOpen = ownFold ?? providers.some(hasProblem);
   const connected = ownProviders(providers).filter((p) => p.connected).length;
   return (
     <div className="space-y-6" data-testid="models-page">
@@ -123,12 +121,11 @@ export const ModelsTab: React.FC<{
         </div>
       </section>
       <section className={cardCls} data-testid="own-providers">
-        <button type="button" data-testid="own-providers-toggle" aria-expanded={ownOpen} onClick={() => setOwnFold(!ownOpen)} className="flex w-full items-center gap-2 text-left">
-          <ChevronRight aria-hidden size={12} className={`shrink-0 text-slate-400 transition-transform ${ownOpen ? 'rotate-90' : ''}`} />
+        <div className="flex items-center gap-2">
           <h2 className={headingCls}>{W.ownProviders}</h2>
           <span className={hintCls}>{say(W.nConnected, { n: connected })}</span>
-        </button>
-        {ownOpen && (
+        </div>
+        {(
           <div className="mt-3">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
               <p className={`${hintCls} min-w-0`}>{W.providersHint}</p>

@@ -6,10 +6,9 @@ import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { test, expect, expectWebRtc } from '../support/world';
 
-/** The own-providers section is folded until opened (or a provider has a problem). */
+/** The providers section is always open: wait for it. */
 async function openOwnProviders(page: Page) {
-  const toggle = page.getByTestId('own-providers-toggle');
-  if ((await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click();
+  await page.getByTestId('own-providers').waitFor();
 }
 
 const DIR = process.env.MODELS_SHOTS_DIR;
