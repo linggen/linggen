@@ -11,7 +11,7 @@ import { X } from 'lucide-react';
 import { providersApi } from '../../lib/endpoints';
 import { confirmDialog } from '../../lib/confirmDialog';
 import { W, say } from '../../lib/modelsWords.mts';
-import { chatModels, heldDefaults, isChatgpt, isOllama, liveModels, suggestionsFor, type Provider, type Suggestion } from '../../lib/providers.mts';
+import { chatModels, heldDefaults, isChatgpt, isOllama, liveModels, suggestionsAsk, suggestionsFor, type Provider, type Suggestion } from '../../lib/providers.mts';
 import { RowMenu, Row, Tag, ghostBtn, hintCls, inputCls, primaryBtn, sectionLabel, sectionRule } from './shell';
 import type { Run } from './useProviders';
 
@@ -24,6 +24,8 @@ type Props = {
   makeDefault: (modelId: string) => Promise<void>;
   /** The default chat chain, first model first: what the remove confirm names. */
   chain: string[];
+  /** Counts the keys saved on this row: a new key is a new question to the provider (ModelInput). */
+  keyEpoch?: number;
 };
 
 /** The head's second line: the models added, or what is missing. */
@@ -35,6 +37,7 @@ function summary(p: Provider): string {
 
 export const KeyRow: React.FC<Props> = (props) => {
   const { provider: p, open, onToggle, run, busy, chain } = props;
+  const [keyEpoch, setKeyEpoch] = useState(0);
   const removeProvider = async () => {
     const held = heldDefaults(p, chain);
     const lines = [say(W.removeProviderAsk, { provider: p.label })];
@@ -47,15 +50,15 @@ export const KeyRow: React.FC<Props> = (props) => {
       tags={<>{p.used_by.includes('chat') && <Tag tone="blue">{W.chat}</Tag>}{p.used_by.includes('live_voice') && <Tag tone="blue">{W.liveVoice}</Tag>}</>}
       right={<RowMenu disabled={busy} items={[{ label: W.removeProvider, run: () => void removeProvider() }]} />}
       detail={isOllama(p) ? <span>{W.free}</span> : p.key?.set ? <span>{say(W.billedBy, { provider: p.label })}</span> : <span className="rounded-md border border-slate-200 bg-white px-2 py-0.5 font-semibold dark:border-white/10 dark:bg-white/5">{W.fillKey}</span>}>
-      {!isOllama(p) && <KeyField {...props} />}
-      <Models {...props} />
+      {!isOllama(p) && <KeyField {...props} onSaved={() => setKeyEpoch((n) => n + 1)} />}
+      <Models {...props} keyEpoch={keyEpoch} />
       {!p.listed && <Address {...props} />}
     </Row>
   );
 };
 
 /** The key: 已设置密钥 · 更换, or one field to paste it. Removing goes with the provider (⋯). */
-const KeyField: React.FC<Props> = ({ provider: p, run, busy }) => {
+const KeyField: React.FC<Props & { onSaved: () => void }> = ({ provider: p, run, busy, onSaved }) => {
   const [text, setText] = useState('');
   const [replacing, setReplacing] = useState(false);
   const save = async () => {
@@ -63,6 +66,7 @@ const KeyField: React.FC<Props> = ({ provider: p, run, busy }) => {
     if (await run(() => providersApi.setKey(p.id, text.trim()))) {
       setText('');
       setReplacing(false);
+      onSaved();
     }
   };
   if (p.key?.conflict) {
@@ -144,15 +148,21 @@ export const Models: React.FC<Props> = (props) => {
 
 /** Type a few letters: the provider's own ids that match are listed; a click adds one.
  *  A full id + Enter adds it even when the list could not be read. The list is
- *  asked once when the row opens and kept for the page's life. */
-const ModelInput: React.FC<Props> = ({ provider: p, run, busy }) => {
+ *  asked again whenever the row opens with another address or key
+ *  (`keyEpoch`) — the one place that decides when to ask. */
+const ModelInput: React.FC<Props> = ({ provider: p, run, busy, keyEpoch = 0 }) => {
   const [typed, setTyped] = useState('');
   const [list, setList] = useState<Suggestion[] | null | undefined>(undefined);
+  const [why, setWhy] = useState<string | undefined>(undefined);
   useEffect(() => {
     let live = true;
-    providersApi.suggestions(p.id).then((r) => { if (live) setList(r.models); }).catch(() => { if (live) setList(null); });
+    setList(undefined);
+    setWhy(undefined);
+    providersApi.suggestions(p.id)
+      .then((r) => { if (live) { setList(r.models); setWhy(r.why); } })
+      .catch(() => { if (live) setList(null); });
     return () => { live = false; };
-  }, [p.id]);
+  }, [suggestionsAsk(p, keyEpoch)]);
   const shown = suggestionsFor(list, typed, p.models.map((m) => m.model));
   const add = async (id: string) => {
     if (!id.trim()) return;
@@ -178,7 +188,7 @@ const ModelInput: React.FC<Props> = ({ provider: p, run, busy }) => {
           ))}
         </div>
       )}
-      {list === null && <p data-testid="no-suggestions" className={`${hintCls} mt-1`}>{isOllama(p) ? W.ollamaNotRunning : W.noSuggestions}</p>}
+      {list === null && <p data-testid="no-suggestions" className={`${hintCls} mt-1`}>{isOllama(p) ? W.ollamaNotRunning : why === 'key_rejected' ? W.keyRejected : W.noSuggestions}</p>}
       {list && typed.trim() && shown.length === 0 && <p data-testid="no-match" className={`${hintCls} mt-1`}>{W.noMatch}</p>}
     </div>
   );

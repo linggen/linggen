@@ -368,6 +368,26 @@ async fn a_key_providers_suggestions_are_its_own_list_and_a_typed_id_is_added_ei
     assert!(body.to_string().contains("some-full-id"));
 }
 
+/// A provider that answers 401 to every list request tells a rejected key from an unreachable one.
+#[tokio::test]
+async fn a_rejected_key_is_told_apart_from_an_unreachable_list() {
+    use axum::{http::StatusCode, routing::get, Router};
+    let app = Router::new().route("/v1/models", get(|| async { StatusCode::UNAUTHORIZED }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let url = format!("http://{}/v1", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, app).await });
+    let w = World::start(Setup::default()).await;
+    let made = w.api.post("/api/providers", json!({"name":"Rejecting","url":url,"style":"openai"})).await;
+    let id = made["providers"].as_array().unwrap().iter().find(|p| p["url"].as_str().unwrap().starts_with(&url)).unwrap()["id"].as_str().unwrap().to_string();
+    assert_eq!(w.api.put_json(&format!("/api/providers/{id}/key"), json!({"api_key":"wrong-key"})).await.0, 200);
+    let answer = w.api.get(&format!("/api/providers/{id}/suggestions")).await;
+    assert_eq!((answer["models"].clone(), answer["why"].as_str()), (Value::Null, Some("key_rejected")));
+    let dead = w.api.post("/api/providers", json!({"name":"Dead","url":"http://127.0.0.1:9/v1","style":"openai"})).await;
+    let dead_id = dead["providers"].as_array().unwrap().iter().find(|p| p["url"] == "http://127.0.0.1:9/v1").unwrap()["id"].as_str().unwrap().to_string();
+    assert_eq!(w.api.put_json(&format!("/api/providers/{dead_id}/key"), json!({"api_key":"k"})).await.0, 200);
+    assert_eq!(w.api.get(&format!("/api/providers/{dead_id}/suggestions")).await["why"], "unreachable");
+}
+
 /// A stand-in Ollama: `GET /api/tags` lists two models.
 async fn stand_in_ollama() -> String {
     use axum::{routing::get, Json, Router};

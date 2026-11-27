@@ -133,7 +133,7 @@ export const providersApi = {
   keepModelKey: (id: string) => apiPut<ProvidersAnswer>(`${provider(id)}/key`, { action: 'keep_model_key' }),
   setAddress: (id: string, url: string, keepKey: boolean) => apiPatch<ProvidersAnswer>(provider(id), { url, keep_key: keepKey }),
   /** The ids the provider lists for its key; `null` when the list cannot be read. */
-  suggestions: (id: string) => apiGet<{ models: Suggestion[] | null }>(`${provider(id)}/suggestions`),
+  suggestions: (id: string) => apiGet<{ models: Suggestion[] | null; why?: 'key_rejected' | 'unreachable' }>(`${provider(id)}/suggestions`),
   /** A model by its id; the engine makes the row's id. */
   addModel: (id: string, model: string) => apiPost<ProvidersAnswer>(`${provider(id)}/models`, { model }),
   removeModel: (id: string, modelId: string) => apiDelete<ProvidersAnswer>(`${provider(id)}/models/${encodeURIComponent(modelId)}`),

@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { W } from '../src/lib/modelsWords.mts';
-import { chatChoices, chatModels, failureLabel, hasProblem, heldDefaults, isChatgpt, liveModels, ownProviders, readyToUse, suggestionsFor, type Provider, type ProviderModel } from '../src/lib/providers.mts';
+import { chatChoices, chatModels, failureLabel, hasProblem, heldDefaults, isChatgpt, liveModels, ownProviders, readyToUse, suggestionsAsk, suggestionsFor, type Provider, type ProviderModel } from '../src/lib/providers.mts';
 
 const provider = (over: Partial<Provider>): Provider => ({ id: 'p', label: 'Anthropic', way: 'key', provider: 'anthropic', url: '', connected: true, models: [], used_by: [], ...over });
 const model = (id: string, over: Partial<ProviderModel> = {}): ProviderModel => ({ id, model: id, name: id, kind: 'chat', ready: true, builtin: false, ...over });
@@ -76,4 +76,11 @@ test('the ChatGPT row shows the shared model list and input, with no key field',
   assert.doesNotMatch(row, /KeyField|ModelInput|tickChatgpt/);
   const keys = readFileSync(new URL('../src/components/models/KeyRow.tsx', import.meta.url), 'utf8');
   assert.match(keys, /isChatgpt\(p\)\) && <ModelInput/);
+});
+
+test('the list is asked again when the key or the address changes, and not otherwise', () => {
+  const p = { id: 'k1', url: 'https://a.example/v1' } as Provider;
+  assert.equal(suggestionsAsk(p, 0), suggestionsAsk({ ...p }, 0));
+  assert.notEqual(suggestionsAsk(p, 0), suggestionsAsk(p, 1));
+  assert.notEqual(suggestionsAsk(p, 0), suggestionsAsk({ ...p, url: 'https://b.example/v1' }, 0));
 });

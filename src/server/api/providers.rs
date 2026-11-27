@@ -141,7 +141,7 @@ async fn put_key(state: Arc<ServerState>, headers: HeaderMap, id: String, body: 
 
 /// `GET /api/providers/{id}/suggestions`: the ids this provider lists for its
 /// key, to suggest under the model input. Asked outside the write lock; a
-/// list that cannot be read answers `{"models": null}` and the person types.
+/// list that cannot be read answers `{"models": null, "why": "key_rejected" | "unreachable"}` and the person types.
 pub(crate) async fn suggestions(State(state): State<Arc<ServerState>>, headers: HeaderMap, Path(id): Path<String>) -> Response {
     if let Some(refused) = owner_refusal(&headers) { return refused; }
     // ChatGPT lists its own models for the signed-in account: no key, no address.
@@ -162,7 +162,10 @@ pub(crate) async fn suggestions(State(state): State<Arc<ServerState>>, headers: 
     };
     let key = credentials::resolve_api_key(&probe, &creds);
     let base = if url.trim().is_empty() && wire == suggest::Wire::Anthropic { crate::provider::claude_auth::ANTHROPIC_API_BASE.to_string() } else { url };
-    Json(json!({"models": suggest::list(wire, &base, key.as_deref()).await})).into_response()
+    match suggest::list(wire, &base, key.as_deref()).await {
+        Ok(models) => Json(json!({"models": models})),
+        Err(why) => Json(json!({"models": null, "why": why.as_str()})),
+    }.into_response()
 }
 
 #[derive(Deserialize)]

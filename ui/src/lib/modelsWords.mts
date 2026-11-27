@@ -104,6 +104,7 @@ export const W = {
   modelInput: 'Type a model name to search',
   noMatch: 'No model matches. Press Enter to add it as typed.',
   noSuggestions: 'Could not read this provider\u2019s list. Type the full model ID and press Enter.',
+  keyRejected: 'The key is wrong (the provider rejected it).',
   ollamaNotRunning: 'Ollama is not running. Start it, or type a model name and press Enter.',
   removeModelNamed: 'Remove {model}',
   removeProvider: 'Remove this provider',

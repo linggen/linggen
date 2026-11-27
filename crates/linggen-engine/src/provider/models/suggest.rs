@@ -31,8 +31,30 @@ pub enum Wire {
     Ollama,
 }
 
-/// The ids `base` lists for `key`; `None` when the list cannot be read.
-pub async fn list(wire: Wire, base: &str, key: Option<&str>) -> Option<Vec<Suggestion>> {
+/// Why a list could not be read: the provider answered 401/403 to the key, or anything else.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Unread {
+    KeyRejected,
+    Unreachable,
+}
+
+impl Unread {
+    /// The word `GET /api/providers/{id}/suggestions` tells a page.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Unread::KeyRejected => "key_rejected",
+            Unread::Unreachable => "unreachable",
+        }
+    }
+}
+
+/// The ids `base` lists for `key`, or why the list cannot be read.
+pub async fn list(wire: Wire, base: &str, key: Option<&str>) -> Result<Vec<Suggestion>, Unread> {
+    read_all(wire, base, key).await.ok_or(Unread::Unreachable).and_then(|r| r)
+}
+
+/// `None`: unreachable or unreadable; `Some(Err(KeyRejected))`: the provider refused the key.
+async fn read_all(wire: Wire, base: &str, key: Option<&str>) -> Option<Result<Vec<Suggestion>, Unread>> {
     // No redirect: a key header must not follow a provider's answer elsewhere.
     let client = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).timeout(TIMEOUT).build().ok()?;
     let base = base.trim_end_matches('/');
@@ -51,6 +73,9 @@ pub async fn list(wire: Wire, base: &str, key: Option<&str>) -> Option<Vec<Sugge
             Wire::Ollama => client.get(format!("{base}/api/tags")),
         };
         let response = request.send().await.ok()?;
+        if matches!(response.status().as_u16(), 401 | 403) {
+            return Some(Err(Unread::KeyRejected));
+        }
         if !response.status().is_success() {
             return None;
         }
@@ -62,7 +87,7 @@ pub async fn list(wire: Wire, base: &str, key: Option<&str>) -> Option<Vec<Sugge
         }
         match next {
             Some(cursor) => after = Some(cursor),
-            None => return Some(out),
+            None => return Some(Ok(out)),
         }
     }
     None

@@ -104,6 +104,10 @@ export function suggestionsFor(list: Suggestion[] | null | undefined, typed: str
   return list.filter((s) => !have.has(s.id) && (s.id.toLowerCase().includes(q) || !!s.name?.toLowerCase().includes(q))).slice(0, max);
 }
 
+/** When the model input asks the provider for its list: once per row, and again when the
+ *  address or the key changes (`keyEpoch` counts the keys saved). The one place that decides it. */
+export const suggestionsAsk = (provider: Provider, keyEpoch: number): string => `${provider.id}|${provider.url}|${keyEpoch}`;
+
 /** Where a provider's models are used in the default chain: what the remove confirm names. */
 export function heldDefaults(provider: Provider, chain: string[]): { first: boolean; fallbacks: string[] } {
   const mine = new Set(provider.models.map((m) => m.id));
