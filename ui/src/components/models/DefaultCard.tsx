@@ -6,7 +6,7 @@ import type { UseEdit, UseOption, UseRow, Uses } from '../../lib/modelUses';
 import { EffortSlider } from './EffortSlider';
 import { translate } from '../../lib/i18n';
 import { ModelSourceTag, modelName, nativeModelLabel, sourceText } from './UseOptionLabel';
-import { cardCls, headingCls, hintCls, inputCls } from './shell';
+import { cardCls, headingCls, hintCls } from './shell';
 
 const status = (option: UseOption) => ({
   ready: W.ready, no_key: W.liveMissingKey, signed_out: W.notSignedIn,
@@ -98,14 +98,7 @@ export function DefaultCard({ view, busy, failed, retry, pick }: {
           inline={<Effort view={view} busy={busy} pick={pick} />}
           note={<ChatFallbacks view={view} busy={busy} pick={pick} />} />
         <UseLine busy={busy} id="speak" label={W.readAloud} purpose={W.speakPurpose} row={view.speak} automatic={W.automatic} downloadable onPick={(choice) => pick({ use: 'speak', choice: choice || null })}
-          note={view.voice.options.length >= 2 && view.speak.effective !== 'linggen-cloud' && <label className={`${hintCls} mt-1 flex flex-wrap items-center gap-1.5`}>
-            <span>{W.speaker}</span>
-            <select data-testid="default-voice" className={`${inputCls} px-2 py-1 dark:[color-scheme:dark]`} value={view.voice.choice ?? ''} disabled={busy} onChange={(e) => pick({ use: 'voice', choice: e.target.value })}>
-              {!view.voice.choice && <option value="" disabled>{W.notSet}</option>}
-              {view.voice.choice && !view.voice.options.some((o) => o.id === view.voice.choice) && <option value={view.voice.choice} disabled>{view.voice.choice}</option>}
-              {view.voice.options.map((o) => <option key={o.id} value={o.id}>{nativeModelLabel(o)}</option>)}
-            </select>
-          </label>} />
+        />
         <UseLine busy={busy} id="hear" label={W.dictation} purpose={W.hearPurpose} row={view.hear} onPick={() => {}} />
         <UseLine busy={busy} id="draw" label={W.drawing} purpose={W.drawPurpose} row={view.draw} automatic={W.automatic} onPick={(choice) => pick({ use: 'draw', choice: choice || null })} downloadable />
 

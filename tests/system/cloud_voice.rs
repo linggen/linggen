@@ -286,7 +286,7 @@ async fn a_subscribers_default_voice_is_linggen_clouds_serena() {
         .iter()
         .find(|o| o["id"] == "linggen-cloud")
         .expect("the picker lists it");
-    assert_eq!(cloud["name"], "Serena");
+    assert_eq!(cloud["name"], "qwen3-tts-flash", "named by its model; the voice is ours to choose");
     assert_eq!(
         cloud["source"],
         json!({"way": "account", "provider": "Linggen Cloud"})

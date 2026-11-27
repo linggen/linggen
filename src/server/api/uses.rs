@@ -116,12 +116,13 @@ fn hear_use(state: &ServerState) -> Use {
     Use::new(None, vec![apple], Some("apple-speech"))
 }
 
-/// Linggen Cloud's read-aloud: Yinyue's voice, Serena, paid by the subscription.
+/// Linggen Cloud's read-aloud, named by its model (the voice is chosen for
+/// Yinyue, not by the person: `cloud_voice::SPEECH_VOICE`), paid by the subscription.
 fn cloud_voice_row(id: &str, ready: bool) -> OptionRow {
     let source = Source { provider: Some("Linggen Cloud".into()), ..Source::new(Way::Account, None) };
     let signed_in = crate::account::resolve_token().is_some();
     let state = match (ready, signed_in) { (true, _) => "ready", (false, false) => "signed_out", (false, true) => "unavailable" };
-    OptionRow::new(id, "Serena", source, state)
+    OptionRow::new(id, crate::account::cloud_voice::SPEECH_MODEL, source, state)
 }
 
 async fn table(state: &ServerState, config: &Config) -> Table {
