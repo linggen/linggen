@@ -14,7 +14,6 @@ export const W = {
   chatPurpose: 'New chats start here; you can switch models in a chat.',
   speakPurpose: 'Yinyue’s voice',
   hearPurpose: 'Turn speech into text',
-  drawPurpose: 'Illustrations for Lingjing and more',
   billedBy: 'Billed by {provider}',
   downloaded: 'Downloaded',
   free: 'Free to run',

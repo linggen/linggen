@@ -28,7 +28,7 @@ for (const [width, theme] of [[1280, 'light'], [420, 'light'], [1280, 'dark'], [
     await page.goto(`${world.url}/settings/models?lang=zh`);
     await expectWebRtc(page, httpRequests);
     await openOwnProviders(page);
-    await expect(page.getByTestId('default-card').getByText('灵境插图等', { exact: true })).toBeVisible();
+    await expect(page.getByTestId('default-card').getByText('说话转成文字', { exact: true })).toBeVisible();
     await shot('page');
 
     await page.getByTestId('add-provider-button').click();

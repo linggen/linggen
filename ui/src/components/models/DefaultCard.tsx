@@ -100,7 +100,7 @@ export function DefaultCard({ view, busy, failed, retry, pick }: {
         <UseLine busy={busy} id="speak" label={W.readAloud} purpose={W.speakPurpose} row={view.speak} automatic={W.automatic} downloadable onPick={(choice) => pick({ use: 'speak', choice: choice || null })}
         />
         <UseLine busy={busy} id="hear" label={W.dictation} purpose={W.hearPurpose} row={view.hear} onPick={() => {}} />
-        <UseLine busy={busy} id="draw" label={W.drawing} purpose={W.drawPurpose} row={view.draw} automatic={W.automatic} onPick={(choice) => pick({ use: 'draw', choice: choice || null })} downloadable />
+        {/* 画图 is hidden from people (Hanli 2026-11-25/27): only 灵境 building uses it, on its own default. */}
 
       </div>}
     </section>

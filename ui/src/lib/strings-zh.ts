@@ -430,7 +430,6 @@ export const ZH: Record<string, string> = {
   'New chats start here; you can switch models in a chat.': '新会话默认用它，会话里可以换',
   'Yinyue’s voice': '银月的声音',
   'Turn speech into text': '说话转成文字',
-  'Illustrations for Lingjing and more': '灵境插图等',
   'Billed by {provider}': '你的 {provider} 账单',
   'Downloaded': '已下载',
   'Free to run': '免费',
