@@ -5,7 +5,7 @@ use crate::config::providers::Way;
 use crate::config::{Config, ModelConfig, SignIn};
 use crate::credentials::{self, Credentials};
 use crate::provider::kinds::{kind_of, Kind};
-use crate::{live, runtime};
+use crate::live;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -154,8 +154,9 @@ pub fn provider_source(sign_in: SignIn, provider: &str, url: &str) -> (String, W
         SignIn::ChatGpt => ("ChatGPT 订阅".into(), Way::Subscription),
         SignIn::Claude => ("Claude 订阅".into(), Way::Subscription),
         SignIn::Key | SignIn::Unknown => {
-            let way = if provider.eq_ignore_ascii_case("ollama") { Way::Local } else { Way::Key };
-            (presets::label_for(provider, url), way)
+            // Ollama is one provider whatever its address: its label never becomes the host.
+            if provider.eq_ignore_ascii_case("ollama") { return ("Ollama".into(), Way::Local); }
+            (presets::label_for(provider, url), Way::Key)
         }
     }
 }
@@ -278,7 +279,6 @@ impl ModelManager {
                 _ => None,
             };
         }
-        providers.extend(local_lanes());
         providers.sort_by(|a, b| a.label.cmp(&b.label).then_with(|| a.id.cmp(&b.id)));
         providers
     }
@@ -330,26 +330,4 @@ pub fn live_card_at(id: &str) -> Option<(String, String)> {
 pub fn linggen_cloud_card_at(id: &str) -> Option<(String, String)> {
     let (name, url) = (super::catalog::LINGGEN_CLOUD_PROVIDER, super::catalog::linggen_cloud_url());
     (provider_id(SignIn::LinggenAccount, name, &url) == id).then(|| (name.to_string(), url))
-}
-
-fn local_lanes() -> impl Iterator<Item = ProviderView> {
-    use runtime::{HUB_MODELS, PICTURES_LANE, PICTURE_MODEL, STT_MODEL, TTS_MODEL, VOICE_LANE};
-    [
-        (Kind::Speak, TTS_MODEL, VOICE_LANE, runtime::voice_ready()),
-        (Kind::Hear, STT_MODEL, VOICE_LANE, runtime::hearing_ready()),
-        (Kind::Draw, PICTURE_MODEL, PICTURES_LANE, runtime::pictures_ready()),
-    ].into_iter()
-    // A Mac hears with Apple's own recognition: no model of ours to show (`runtime::hearing_by_apple`).
-    .filter(|(kind, ..)| !(*kind == Kind::Hear && runtime::hearing_by_apple()))
-    .map(|(kind, model, lane, on_disk)| {
-        let ready = on_disk && runtime::lane_verdict(&lane).is_ok();
-        let hub = HUB_MODELS.iter().find(|m| m.repo == model).expect("local model is declared");
-        let mut group = ProviderView::new(SignIn::Key, "ollama", "");
-        group.id = provider_id(SignIn::Key, "ollama", kind.as_str());
-        group.label = "This Mac".into();
-        group.fix = (!ready).then(|| if runtime::env_bin(hub.venv, "python3").exists() { "download" } else { "install" });
-        group.disk_gb = Some(hub.need_gb);
-        group.add(ProviderModel { id: kind.as_str().into(), model: model.into(), kind: kind.as_str(), ready, why: None, builtin: true, name: model.into(), first: false });
-        group
-    })
 }

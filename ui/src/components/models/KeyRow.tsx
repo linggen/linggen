@@ -2,7 +2,8 @@
  * One provider the person pays with a key. Under its head: the key (pasted
  * once; the page only ever learns that it is set), the models the person
  * added — one input that suggests ids from the provider's own list — the
- * live-voice lines, and the address of a provider the person typed. The ⋯
+ * live-voice lines, and the address of a provider the person typed. Ollama is
+ * the same row with an address and no key. The ⋯
  * menu removes the provider. Every action calls its route (lib/endpoints `providersApi`).
  */
 import React, { useEffect, useState } from 'react';
@@ -10,7 +11,7 @@ import { X } from 'lucide-react';
 import { providersApi } from '../../lib/endpoints';
 import { confirmDialog } from '../../lib/confirmDialog';
 import { W, say } from '../../lib/modelsWords.mts';
-import { chatModels, heldDefaults, liveModels, suggestionsFor, type Provider, type Suggestion } from '../../lib/providers.mts';
+import { chatModels, heldDefaults, isOllama, liveModels, suggestionsFor, type Provider, type Suggestion } from '../../lib/providers.mts';
 import { RowMenu, Row, Tag, ghostBtn, hintCls, inputCls, primaryBtn, sectionLabel, sectionRule } from './shell';
 import type { Run } from './useProviders';
 
@@ -27,7 +28,7 @@ type Props = {
 
 /** The head's second line: the models added, or what is missing. */
 function summary(p: Provider): string {
-  if (!p.key?.set) return W.noKeyYet;
+  if (!isOllama(p) && !p.key?.set) return W.noKeyYet;
   const names = chatModels(p).map((m) => m.name);
   return names.length ? names.join(' · ') : W.noModelsAdded;
 }
@@ -45,8 +46,8 @@ export const KeyRow: React.FC<Props> = (props) => {
     <Row testId={p.provider} name={p.label} way={p.way} subtitle={summary(p)} open={open} onToggle={onToggle}
       tags={<>{p.used_by.includes('chat') && <Tag tone="blue">{W.chat}</Tag>}{p.used_by.includes('live_voice') && <Tag tone="blue">{W.liveVoice}</Tag>}</>}
       right={<RowMenu disabled={busy} items={[{ label: W.removeProvider, run: () => void removeProvider() }]} />}
-      detail={p.key?.set ? <span>{say(W.billedBy, { provider: p.label })}</span> : <span className="rounded-md border border-slate-200 bg-white px-2 py-0.5 font-semibold dark:border-white/10 dark:bg-white/5">{W.fillKey}</span>}>
-      <KeyField {...props} />
+      detail={isOllama(p) ? <span>{W.free}</span> : p.key?.set ? <span>{say(W.billedBy, { provider: p.label })}</span> : <span className="rounded-md border border-slate-200 bg-white px-2 py-0.5 font-semibold dark:border-white/10 dark:bg-white/5">{W.fillKey}</span>}>
+      {!isOllama(p) && <KeyField {...props} />}
       <Models {...props} />
       {!p.listed && <Address {...props} />}
     </Row>
@@ -122,8 +123,8 @@ const Models: React.FC<Props> = (props) => {
             </button>
           </div>
         ))}
-        {p.key?.set && <ModelInput {...props} />}
-        {!p.key?.set && !added.length && <p className={hintCls}>{W.keyFirst}</p>}
+        {(p.key?.set || isOllama(p)) && <ModelInput {...props} />}
+        {!p.key?.set && !isOllama(p) && !added.length && <p className={hintCls}>{W.keyFirst}</p>}
         {live.map((m) => (
           <div key={m.id} className="mt-1 flex flex-wrap items-center gap-1.5 text-xs" data-testid="live-model">
             <span className="font-semibold" data-no-i18n>{m.model}</span>
@@ -173,7 +174,7 @@ const ModelInput: React.FC<Props> = ({ provider: p, run, busy }) => {
           ))}
         </div>
       )}
-      {list === null && <p className={`${hintCls} mt-1`}>{W.noSuggestions}</p>}
+      {list === null && <p data-testid="no-suggestions" className={`${hintCls} mt-1`}>{isOllama(p) ? W.ollamaNotRunning : W.noSuggestions}</p>}
       {list && typed.trim() && shown.length === 0 && <p data-testid="no-match" className={`${hintCls} mt-1`}>{W.noMatch}</p>}
     </div>
   );

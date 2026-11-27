@@ -13,11 +13,10 @@ import type { UseEdit, Uses } from '../lib/modelUses';
 import { useServerStore } from '../stores/serverStore';
 import { modelsApi, providersApi, usesApi } from '../lib/endpoints';
 import { W, say } from '../lib/modelsWords.mts';
-import { hasProblem, keyProviders, localProviders, readyToUse, sameAddress, type Preset, type ProvidersAnswer } from '../lib/providers.mts';
+import { hasProblem, isOllama, ownProviders, readyToUse, sameAddress, type Preset, type ProvidersAnswer } from '../lib/providers.mts';
 import { AddProvider, type Typed } from './models/AddProvider';
 import { DefaultCard } from './models/DefaultCard';
 import { KeyRow } from './models/KeyRow';
-import { LocalRow } from './models/LocalRow';
 import { ReadyRow } from './models/ReadyRows';
 import { cardCls, headingCls, hintCls, linkBtn } from './models/shell';
 import { useProviders } from './models/useProviders';
@@ -70,12 +69,12 @@ export const ModelsTab: React.FC<{
 
   /** A preset and its key: the provider is filed only now, with the key; the row opens. */
   const addPreset = async (preset: Preset, key: string) => {
-    const find = (a: ProvidersAnswer) => a.providers.find((p) => p.way === 'key' && p.provider === preset.name && sameAddress(p.url, preset.url));
+    const find = (a: ProvidersAnswer) => a.providers.find((p) => (p.way === 'key' || isOllama(p)) && p.provider === preset.name && sameAddress(p.url, preset.url));
     let made: ProvidersAnswer | void = undefined;
     const done = await run(async () => {
       made = await providersApi.create(preset.label);
       const row = find(made);
-      return row ? (made = await providersApi.setKey(row.id, key)) : made;
+      return row && key ? (made = await providersApi.setKey(row.id, key)) : made;
     });
     const row = done && made ? find(made as ProvidersAnswer) : undefined;
     if (row) setOpen(row.id);
@@ -109,10 +108,10 @@ export const ModelsTab: React.FC<{
 
   const { providers } = answer;
   const chain = uses?.chain ?? [];
-  const addable = answer.presets.filter((p) => p.way === 'key' && !providers.some((q) => q.way === 'key' && q.provider === p.name && sameAddress(q.url, p.url)));
-  const local = localProviders(providers);
+  // Ollama is offered once, whatever address its row has; a key preset once per address.
+  const addable = answer.presets.filter((p) => (p.way === 'key' || p.way === 'local') && !providers.some((q) => q.way === p.way && q.provider === p.name && (p.way === 'local' || sameAddress(q.url, p.url))));
   const ownOpen = ownFold ?? providers.some(hasProblem);
-  const connected = [...keyProviders(providers), ...local].filter((p) => p.connected).length;
+  const connected = ownProviders(providers).filter((p) => p.connected).length;
   return (
     <div className="space-y-6" data-testid="models-page">
       <DefaultCard view={uses} busy={busy} failed={usesFailed} retry={() => void loadUses()} pick={(edit) => void pickUse(edit)} />
@@ -140,10 +139,9 @@ export const ModelsTab: React.FC<{
             <div className="mt-4">
               {adding && <AddProvider presets={addable} busy={busy} onAdd={(p, k) => void addPreset(p, k)} onTyped={(t) => void addTyped(t)} onClose={() => setAdding(false)} />}
               <div className="space-y-1.5">
-                {keyProviders(providers).map((p) => (
+                {ownProviders(providers).map((p) => (
                   <KeyRow key={p.id} provider={p} open={open === p.id} onToggle={() => setOpen(open === p.id ? null : p.id)} run={run} busy={busy} makeDefault={makeDefault} chain={chain} />
                 ))}
-                {local.length > 0 && <LocalRow providers={local} />}
               </div>
             </div>
           </div>

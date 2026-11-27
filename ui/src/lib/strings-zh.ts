@@ -433,6 +433,7 @@ export const ZH: Record<string, string> = {
   'Billed by {provider}': '你的 {provider} 账单',
   'Downloaded': '已下载',
   'Free to run': '免费',
+  'Ollama is not running. Start it, or type a model name and press Enter.': 'Ollama 没有运行。请先启动，或输入模型名后按回车。',
   '{n} downloaded': '{n} 个已下载',
   'Nothing downloaded': '没有下载',
   'Enter key': '填密钥',

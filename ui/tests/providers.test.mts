@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { W } from '../src/lib/modelsWords.mts';
-import { chatChoices, chatModels, failureLabel, hasProblem, heldDefaults, liveModels, suggestionsFor, useLines, type Provider, type ProviderModel } from '../src/lib/providers.mts';
+import { chatChoices, chatModels, failureLabel, hasProblem, heldDefaults, liveModels, suggestionsFor, type Provider, type ProviderModel } from '../src/lib/providers.mts';
 
 const provider = (over: Partial<Provider>): Provider => ({ id: 'p', label: 'Anthropic', way: 'key', provider: 'anthropic', url: '', connected: true, models: [], used_by: [], ...over });
 const model = (id: string, over: Partial<ProviderModel> = {}): ProviderModel => ({ id, model: id, name: id, kind: 'chat', ready: true, builtin: false, ...over });
@@ -14,15 +14,9 @@ test('a chat choice is named as the engine names it, ready ones only', () => {
   assert.deepEqual(chatModels(p).map((m) => m.id), ['cloud-1', 'own-1', 'off']);
 });
 
-test('the other uses are the engine rows of each kind, ready or not', () => {
-  const lanes = provider({ way: 'local', models: [model('speak', { model: 'voice-x', kind: 'speak', ready: false, builtin: true }), model('draw', { model: 'pic-y', kind: 'draw', builtin: true })] });
-  assert.deepEqual(useLines([lanes]).map((u) => [u.word, u.model, u.ready]), [[W.readAloud, 'voice-x', false], [W.drawing, 'pic-y', true]]);
-});
-
 test('a live voice is a reference on its provider, never a default to pick', () => {
   const p = provider({ models: [model('live:alibaba', { model: 'qwen-audio-3.1-realtime-flash', kind: 'live_voice', builtin: true })], used_by: ['live_voice'] });
   assert.deepEqual(chatChoices([p]), []);
-  assert.deepEqual(useLines([p]), []);
   assert.equal(liveModels(p).length, 1);
 });
 

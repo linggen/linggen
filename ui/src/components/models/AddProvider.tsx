@@ -22,7 +22,7 @@ export const AddProvider: React.FC<{ presets: Preset[]; busy: boolean; onAdd: (p
   const set = (field: keyof Typed) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setTyped({ ...typed, [field]: e.target.value });
   const key = typed.key.trim();
   const preset = typeof picked === 'number' ? presets[picked] : undefined;
-  const ready = picked === 'other' ? !!(typed.name.trim() && typed.url.trim() && key) : !!(preset && key);
+  const ready = picked === 'other' ? !!(typed.name.trim() && typed.url.trim() && key) : !!(preset && (key || preset.way === 'local'));
   const add = () => {
     if (!ready) return;
     if (preset) onAdd(preset, key);
@@ -56,7 +56,7 @@ export const AddProvider: React.FC<{ presets: Preset[]; busy: boolean; onAdd: (p
               </select>
             </>
           )}
-          <input type="password" autoComplete="off" className={inputCls} placeholder={W.pasteKey} aria-label={W.pasteKey} value={typed.key} onChange={set('key')} onKeyDown={(e) => { if (e.key === 'Enter') add(); }} />
+          {preset?.way !== 'local' && <input type="password" autoComplete="off" className={inputCls} placeholder={W.pasteKey} aria-label={W.pasteKey} value={typed.key} onChange={set('key')} onKeyDown={(e) => { if (e.key === 'Enter') add(); }} />}
           <div className="sm:col-span-2">
             <button type="button" data-testid="add-provider-confirm" className={primaryBtn} disabled={busy || !ready} onClick={add}>{W.add}</button>
           </div>

@@ -346,6 +346,42 @@ async fn a_key_providers_suggestions_are_its_own_list_and_a_typed_id_is_added_ei
     assert!(body.to_string().contains("some-full-id"));
 }
 
+/// A stand-in Ollama: `GET /api/tags` lists two models.
+async fn stand_in_ollama() -> String {
+    use axum::{routing::get, Json, Router};
+    let app = Router::new().route("/api/tags", get(|| async { Json(json!({"models": [{"name": "stand-in:7b"}, {"name": "other:1b"}]})) }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, app).await });
+    url
+}
+
+/// Ollama is an ordinary row: no key, an address the person edits, models
+/// added by name and suggested from Ollama's own tags; no This Mac row.
+#[tokio::test]
+async fn ollama_is_a_row_with_an_address_and_no_key() {
+    let w = World::start(Setup::default()).await;
+    let body = w.api.get("/api/providers").await;
+    assert!(body["providers"].as_array().unwrap().iter().all(|p| p["label"] != "This Mac"), "no This Mac row");
+    let made = w.api.post("/api/providers", json!({"preset":"Ollama"})).await;
+    let row = provider(&made, "Ollama");
+    assert_eq!((row["way"].as_str(), row["listed"].as_bool()), (Some("local"), Some(false)));
+    assert!(row.get("key").is_none(), "no key field");
+    let id = row["id"].as_str().unwrap().to_string();
+    let url = stand_in_ollama().await;
+    let moved = w.api.patch_status(&format!("/api/providers/{id}"), json!({"url": url})).await;
+    assert_eq!(moved, 200);
+    let body = w.api.get("/api/providers").await;
+    let row = provider(&body, "Ollama");
+    assert_eq!(row["url"].as_str().unwrap().trim_end_matches('/'), url);
+    let id = row["id"].as_str().unwrap().to_string();
+    let suggested = w.api.get(&format!("/api/providers/{id}/suggestions")).await;
+    let ids: Vec<&str> = suggested["models"].as_array().unwrap().iter().map(|m| m["id"].as_str().unwrap()).collect();
+    assert_eq!(ids, ["stand-in:7b", "other:1b"]);
+    let body = w.api.post(&format!("/api/providers/{id}/models"), json!({"model":"stand-in:7b"})).await;
+    assert_eq!(provider(&body, "Ollama")["models"][0]["model"], "stand-in:7b");
+}
+
 /// Linggen Cloud's models are the site's last good answer, kept on disk;
 /// a tick files an ordinary row, an untick of the first default needs a
 /// replacement, and an id the site does not list is not ticked.

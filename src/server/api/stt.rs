@@ -934,14 +934,13 @@ mod tests {
         assert_eq!(seen, 3, "the hearing modules moved: update this lock");
     }
 
-    /// Which recognizer hears is `runtime::hearing_by_apple`, read by the switch, the Dictation row and the
-    /// local lanes: none of them asks the platform itself.
+    /// Which recognizer hears is `runtime::hearing_by_apple`, read by the switch and the Dictation row:
+    /// none of them asks the platform itself.
     #[test]
     fn hearing_by_apple_is_the_one_switch() {
         for (name, code) in [
             ("stt.rs", include_str!("stt.rs")),
             ("uses.rs", include_str!("uses.rs")),
-            ("providers_view.rs", include_str!("../../../crates/linggen-engine/src/provider/models/providers_view.rs")),
         ] {
             assert!(code.contains("hearing_by_apple()"), "{name} does not ask `hearing_by_apple`");
         }

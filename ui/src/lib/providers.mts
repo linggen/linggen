@@ -4,7 +4,8 @@
  * the answer to draw and gives a route's failure its fixed label. No model
  * list, no price. Pure, so node tests can hold it.
  */
-import { W, type Word } from './modelsWords.mts';
+import type { Word } from './modelsWords.mts';
+import { W } from './modelsWords.mts';
 
 export type Way = 'key' | 'local' | 'account' | 'subscription';
 export type Kind = 'chat' | 'live_voice' | 'speak' | 'hear' | 'draw';
@@ -73,15 +74,15 @@ export interface Suggestion {
 export const readyToUse = (providers: Provider[]): Provider[] =>
   providers.filter((p) => p.way === 'account' || p.way === 'subscription');
 
-/** 自己的密钥: the key providers, in the order the engine lists them. */
-export const keyProviders = (providers: Provider[]): Provider[] => providers.filter((p) => p.way === 'key');
+/** 自己的服务商: the key providers and Ollama (an address, no key), in the order the engine lists them. */
+export const ownProviders = (providers: Provider[]): Provider[] => providers.filter((p) => p.way === 'key' || p.way === 'local');
+
+/** Ollama: a provider with an address and no key. */
+export const isOllama = (p: Provider): boolean => p.way === 'local';
 
 /** A provider the person must look at: a key clash, or a key set but not working. */
 export const hasProblem = (p: Provider): boolean =>
   p.way === 'key' && (!!p.key?.conflict || (!!p.key?.set && !p.connected));
-
-/** This Mac's lanes and servers, which the page shows as one group. */
-export const localProviders = (providers: Provider[]): Provider[] => providers.filter((p) => p.way === 'local');
 
 // ── What a key row draws ──
 
@@ -117,25 +118,6 @@ export interface ChatChoice {
 /** The ready chat models, by provider, by the name the engine gives each. */
 export function chatChoices(providers: Provider[]): ChatChoice[] {
   return providers.flatMap((p) => p.models.filter((m) => m.kind === 'chat' && m.ready).map((m) => ({ id: m.id, group: p.label, text: m.name || m.model })));
-}
-
-const USES: { kind: Exclude<Kind, 'chat'>; word: Word }[] = [
-  { kind: 'speak', word: W.readAloud },
-  { kind: 'hear', word: W.dictation },
-  { kind: 'draw', word: W.drawing },
-];
-
-/** The other uses as facts: which model each has and whether it is ready. */
-export interface UseLine {
-  word: Word;
-  model: string;
-  ready: boolean;
-}
-
-export function useLines(providers: Provider[]): UseLine[] {
-  return USES.flatMap(({ kind, word }) =>
-    providers.flatMap((p) => p.models.filter((m) => m.kind === kind).map((m) => ({ word, model: m.model, ready: m.ready }))),
-  );
 }
 
 // ── A route's failure, as a fixed label ──
