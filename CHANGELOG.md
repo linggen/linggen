@@ -2,6 +2,56 @@
 
 ## [Unreleased]
 
+## [2.8.0] — models without a list; Linggen Cloud in dollars; one engine per Mac
+
+### Models
+
+- **Settings → Models has no model list to keep up with.** Linggen Cloud is the
+  one fixed block: tick its chat models (Qwen3.8 Flash, Qwen4 Max, DeepSeek
+  V4.1 Flash, GLM-5.3 Prime, Kimi K3.1 Pro); live voice and read-aloud come
+  with it. Its usage reads as a percentage of your plan.
+- **Providers (服务商) is one list you add to.** Pick Anthropic, OpenAI,
+  Gemini, DeepSeek, Qwen Cloud, OpenRouter, Groq, Ollama or ChatGPT, or type
+  any other OpenAI- or Claude-compatible address. Paste the key, then add
+  models by typing — the provider's own list is suggested as you type.
+- **ChatGPT subscription is a provider you add**: sign in, and Sol / Terra /
+  Luna are there and follow their newest version; a version you add yourself
+  stays put. Removing it signs you out.
+- **Ollama can download a model it does not have**, with progress and cancel.
+- **A rejected key says so** ("the key is wrong"), and changing a key or an
+  address reads the provider's list again.
+- **Thinking effort has no 自动**: a model always sits on a level, its own
+  default until you choose (as in Codex and Claude Code). This replaces 2.7's
+  first stop.
+- **Removed**: the model list on linggen.dev for your own keys, families that
+  follow a newest version for key providers, prices and monthly spending caps
+  for your own keys (tokens are still shown), the region switch, Kokoro.
+  Settings from 2.7 load and keep every model you used.
+- **Reading aloud** is Linggen Cloud, then Qwen3-TTS on this Mac, then the
+  system voice. Drawing is no longer offered as a choice.
+
+### Linggen Cloud
+
+- **Chat runs on Qwen Cloud through linggen.dev and is metered in dollars**,
+  by each model's own price (DeepSeek at its day and night rates). Thinking
+  is off unless a request asks for it.
+- **Live voice for 灵语 is Linggen Cloud's alone** — your own key no longer
+  carries a lesson.
+
+### Install
+
+- **One `ling` per Mac**, whatever was installed first (the app, install.sh or
+  the Claude Code / Codex plugin). The Mac app or install.sh are the two ways
+  in.
+
+### Memory
+
+- **What can change stays short-lived.** Long-term memory holds lasting
+  preferences, rules and decisions; progress, go-aheads, state and prices stay
+  episodic, kept 30 days (settable) with a second chance at expiry.
+- **A wrong memory is fixed when it is read**, and every agent is told so.
+- **The day's chat recalls from every project**, and what a session started
+  with is shown, folded.
 - Shell memory (Memory V2, opt-in in 2.7) is withdrawn; Linggen memory stays.
 
 ## [2.7.0] - 2026-11-25 — share your Mac with your household; you can talk to Yinyue
