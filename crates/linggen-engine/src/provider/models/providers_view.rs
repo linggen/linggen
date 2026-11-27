@@ -270,7 +270,8 @@ impl ModelManager {
             // The line is shown on the preset at the voice's host; a host with no preset has none.
             let Some(preset) = live_preset(voice) else { continue };
             let id = provider_id(SignIn::Key, preset.name, preset.url);
-            let group = groups.entry(id).or_insert_with(|| ProviderView::new(SignIn::Key, preset.name, preset.url));
+            // A live voice alone never makes a row: only a provider the person already has (a key or a model).
+            let Some(group) = groups.get_mut(&id) else { continue };
             // A legacy live row can supply its key, but only the preset owns the line.
             group.mark_key(ready);
             group.add(ProviderModel {

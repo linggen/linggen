@@ -82,6 +82,8 @@ async fn deleting_the_last_voice_row_files_its_override_as_the_endpoint_key() {
     let w = World::start(Setup::default()).await;
     let body = w.api.post("/api/providers", json!({"preset":"Qwen Cloud"})).await;
     let id = provider(&body, "Qwen Cloud")["id"].as_str().unwrap();
+    // The live line shows on a row the person has: give it a key first.
+    assert_eq!(w.api.put_json(&format!("/api/providers/{id}/key"), json!({"api_key":"other-marker"})).await.0, 200);
     let base = format!("/api/providers/{id}/models");
     let body = w.api.post(&base, json!({"id":"voice","model":"qwen-audio-3.1-realtime-flash"})).await;
     assert_eq!(provider(&body, "Qwen Cloud")["models"][0]["kind"], "live_voice");
@@ -102,7 +104,8 @@ async fn file_key(w: &World, label: &str) -> Value {
         assert_eq!(status, 200);
         return w.api.get("/api/providers").await;
     }
-    let body = w.api.get("/api/providers").await;
+    // A preset is a row only once the person has added it.
+    let body = w.api.post("/api/providers", json!({"preset": label})).await;
     let id = provider(&body, label)["id"].as_str().unwrap();
     let (status, body) = w.api.put_json(&format!("/api/providers/{id}/key"), json!({"api_key":"test-only-marker"})).await;
     assert_eq!(status, 200);
@@ -146,7 +149,8 @@ async fn gemini_live_is_not_offered_even_when_google_has_a_key() {
 async fn qwen_live_is_first_when_both_are_ready() {
     let w = World::start(Setup::default()).await;
     let model = "qwen-audio-3.1-realtime-flash";
-    assert_eq!(voice(&w.api.get("/api/providers").await, "Qwen Cloud", model)["ready"], false);
+    // No key and no model: no Qwen row, so no live line.
+    assert!(!w.api.get("/api/providers").await["providers"].as_array().unwrap().iter().any(|p| p["label"] == "Qwen Cloud"));
     file_key(&w, "Google Gemini").await;
     let body = file_key(&w, "Qwen Cloud").await;
     assert!(voice(&body, "Qwen Cloud", model).get("first").is_none());
@@ -171,6 +175,9 @@ url = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v
 model = "gemini-3.8-live"
 "#;
     let w = World::start(Setup { config_append: Some(ROWS), ..Setup::default() }).await;
+    // The Qwen row is there because the person has a key at that preset.
+    let key = json!({"endpoints": [{"provider": "qwen", "url": "https://ap-southeast-1.maas.qwencloudapi.com/compatible-mode/v1", "api_key": "test-only-marker"}]});
+    assert_eq!(w.api.put_json("/api/credentials", key).await.0, 200);
     let body = w.api.get("/api/providers").await;
     for (host, label, model) in [
         ("ap-southeast-1.maas.qwencloudapi.com", "Qwen Cloud", "qwen-audio-3.1-realtime-flash"),
