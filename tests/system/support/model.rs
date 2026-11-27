@@ -49,6 +49,7 @@ impl Agent {
 pub enum Reply {
     Text(String),
     Tool(String, Value),
+    ParallelTools(Vec<ToolCall>),
     /// The provider refuses the call: an HTTP status and its message.
     Error(u16, String),
     /// The inner reply, streamed slowly: the turn stays running meanwhile.
@@ -171,6 +172,7 @@ fn respond(fixture: Fixture, reply: &Reply) -> Fixture {
             name: name.clone(),
             arguments: args.clone(),
         }]),
+        Reply::ParallelTools(calls) => fixture.respond_with_tool_calls(calls.clone()),
         Reply::Error(status, message) => fixture.with_error(*status, message),
         Reply::Slow(inner) => respond(fixture, inner).with_streaming(Some(150), Some(1)),
     }

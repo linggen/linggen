@@ -65,6 +65,62 @@ fn png(w: u32, h: u32) -> Vec<u8> {
     out.into_inner()
 }
 
+/// Anthropic needs both results in the first user message after the calls.
+#[tokio::test]
+async fn anthropic_pairs_parallel_picture_and_bash_results() {
+    use crate::support::{model::Reply, Setup};
+    use llmposter::ToolCall;
+
+    let w = World::start(Setup {
+        config_append: Some(r#"
+[[models]]
+id = "fake-anthropic"
+provider = "anthropic"
+url = "{{MODEL_URL}}"
+model = "claude-sonnet-5-5"
+api_key = "test-not-a-key"
+context_window = 200000
+supports_tools = true
+tags = ["vision"]
+"#),
+        ..Setup::default()
+    }.script(Agent::Ling, vec![
+        Reply::ParallelTools(vec![
+            ToolCall { name: "Read".into(), arguments: json!({"path": "shot.png"}) },
+            ToolCall { name: "Bash".into(), arguments: json!({"cmd": "printf bash-paired"}) },
+        ]),
+        text("Both tools finished."),
+    ])).await;
+    let root = w.work();
+    std::fs::write(std::path::Path::new(&root).join("shot.png"), png(20, 10)).unwrap();
+    let sid = w.api.create_session(json!({"title": "shot", "project_root": root})).await;
+    w.api.patch("/api/sessions", json!({
+        "session_id": sid, "agent_id": "ling", "model_id": "fake-anthropic"
+    })).await;
+    w.turn(&sid, &root, "Read shot.png and run the command.", Agent::Ling).await;
+
+    let calls = w.model.calls_of(Agent::Ling);
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[1].path, "/v1/messages");
+    let messages = calls[1].body["messages"].as_array().unwrap();
+    let pair = messages.windows(2).find(|pair| pair[0]["content"].as_array()
+        .is_some_and(|blocks| blocks.iter().any(|b| b["type"] == "tool_use"))).unwrap();
+    let uses: Vec<_> = pair[0]["content"].as_array().unwrap().iter()
+        .filter(|b| b["type"] == "tool_use").collect();
+    assert_eq!(uses.len(), 2);
+    assert_eq!(pair[1]["role"], "user");
+    let results = pair[1]["content"].as_array().unwrap();
+    for (i, call) in uses.iter().enumerate() {
+        assert_eq!(results.get(i).map(|b| &b["tool_use_id"]), Some(&call["id"]));
+        assert_eq!(results[i]["type"], "tool_result");
+    }
+    assert!(results[0].to_string().contains("20×10"));
+    assert!(results[1].to_string().contains("bash-paired"));
+    assert!(messages.iter().any(|m| m.to_string().contains("\"type\":\"image\"")));
+    assert!(w.api.history(&sid, &root).await["messages"].to_string().contains("Both tools finished."));
+    w.assert_all_scripted();
+}
+
 /// A session reading `shot.png` (2000×1200) on `model`, answering with
 /// its number, then a second turn.
 async fn read_and_answer(model: &str) -> (World, String) {

@@ -16,9 +16,9 @@
 //! - Assistant messages with `tool_calls` become `assistant` messages whose
 //!   `content` is a content-block array (text, then one `tool_use` block
 //!   per call).
-//! - Tool-result messages (`role=tool`) become `user` messages carrying a
-//!   single `tool_result` content block, keyed by `tool_use_id`. Anthropic
-//!   requires tool results in `user`, not a dedicated `tool` role.
+//! - All results of a tool batch become `tool_result` blocks in the next
+//!   `user` message, keyed by `tool_use_id`. Standalone attachments and
+//!   nudges follow the results.
 //!
 //! SSE event handling:
 //! - `content_block_start` with `type=tool_use` → `ToolCallChunk { id, name }`.
@@ -27,7 +27,7 @@
 //!   { arguments_delta }`, keyed by the same `chunk_index` as the opener.
 //! - `message_start` / `message_delta` usage → `StreamChunk::Usage`.
 
-use crate::message::ChatMessage;
+use crate::message::{ChatMessage, ToolCallMessage};
 use crate::provider::claude_auth::{self, ANTHROPIC_OAUTH_BETA, ANTHROPIC_VERSION};
 use crate::provider::models::{StreamChunk, TokenUsage, ToolCallChunk};
 use anyhow::{Context, Result};
@@ -416,13 +416,65 @@ fn text_block_with_cache(
     obj
 }
 
+fn image_block(base64: &str) -> serde_json::Value {
+    serde_json::json!({
+        "type": "image",
+        "source": {
+            "type": "base64",
+            "media_type": crate::pictures::kind::media_type_of_base64(base64),
+            "data": base64,
+        },
+    })
+}
+
+/// Anthropic requires every result in the first user message after a tool batch.
+/// The engine can interleave picture attachments and nudges with the results.
+fn tool_results(calls: &[ToolCallMessage], after: &[ChatMessage]) -> serde_json::Value {
+    let mut results = HashMap::new();
+    for msg in after.iter().take_while(|msg| msg.role != "assistant") {
+        if let ("tool", Some(id)) = (msg.role.as_str(), msg.tool_call_id.as_deref()) {
+            results.entry(id).or_insert(msg);
+        }
+    }
+    let content: Vec<_> = calls
+        .iter()
+        .map(|call| {
+            let Some(msg) = results.remove(call.id.as_str()) else {
+                // An interrupted round may have no recorded outcome for this call.
+                return serde_json::json!({
+                    "type": "tool_result", "tool_use_id": call.id,
+                    "content": "No tool result was recorded.", "is_error": true,
+                });
+            };
+            let content = if msg.images.is_empty() {
+                serde_json::json!(msg.content)
+            } else {
+                let mut parts = Vec::new();
+                if !msg.content.is_empty() {
+                    parts.push(text_block_with_cache(&msg.content, None));
+                }
+                parts.extend(msg.images.iter().map(|img| image_block(img)));
+                serde_json::Value::Array(parts)
+            };
+            let mut result = serde_json::json!({
+                "type": "tool_result", "tool_use_id": call.id, "content": content,
+            });
+            if let Some(cc) = &msg.cache_control {
+                result["cache_control"] = cc.clone();
+            }
+            result
+        })
+        .collect();
+    serde_json::json!({"role": "user", "content": content})
+}
+
 fn translate_messages(messages: &[ChatMessage]) -> Translated {
     // System collection: keep per-part cache_control so a single cache
     // breakpoint on (e.g.) the tail of a big preamble is preserved.
     let mut system_parts: Vec<(String, Option<serde_json::Value>)> = Vec::new();
     let mut out: Vec<serde_json::Value> = Vec::new();
 
-    for msg in messages {
+    for (index, msg) in messages.iter().enumerate() {
         match msg.role.as_str() {
             // The request's opening system messages are the `system` field.
             // One inside the conversation (a turn's memory recall) stays in
@@ -442,24 +494,8 @@ fn translate_messages(messages: &[ChatMessage]) -> Translated {
                     }));
                 }
             }
-            "tool" => {
-                let tool_use_id = msg
-                    .tool_call_id
-                    .clone()
-                    .unwrap_or_else(|| "toolu_unknown".to_string());
-                let mut tr = serde_json::json!({
-                    "type": "tool_result",
-                    "tool_use_id": tool_use_id,
-                    "content": msg.content,
-                });
-                if let Some(cc) = &msg.cache_control {
-                    tr["cache_control"] = cc.clone();
-                }
-                out.push(serde_json::json!({
-                    "role": "user",
-                    "content": [tr],
-                }));
-            }
+            // Results are emitted with their owning call batch, never alone.
+            "tool" => {}
             "assistant" if !msg.tool_calls.is_empty() => {
                 let mut content: Vec<serde_json::Value> = Vec::new();
                 if !msg.content.is_empty() {
@@ -496,6 +532,7 @@ fn translate_messages(messages: &[ChatMessage]) -> Translated {
                     "role": "assistant",
                     "content": content,
                 }));
+                out.push(tool_results(&msg.tool_calls, &messages[index + 1..]));
             }
             "user" | "assistant" => {
                 // Text-only messages: use the bare-string content form when
@@ -512,16 +549,7 @@ fn translate_messages(messages: &[ChatMessage]) -> Translated {
                     if !msg.content.is_empty() {
                         parts.push(serde_json::json!({ "type": "text", "text": msg.content }));
                     }
-                    for img in &msg.images {
-                        parts.push(serde_json::json!({
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": crate::pictures::kind::media_type_of_base64(img),
-                                "data": img,
-                            },
-                        }));
-                    }
+                    parts.extend(msg.images.iter().map(|img| image_block(img)));
                     // Attach cache_control to the final block when present,
                     // matching Anthropic's "cache up through this block" rule.
                     if let Some(cc) = &msg.cache_control {
@@ -792,6 +820,61 @@ mod tests {
         assert!(!takes_top_level_cache_control(
             "https://api.anthropic.com.evil.test"
         ));
+    }
+
+    #[test]
+    fn a_request_pairs_every_call_before_attachments_and_nudges() {
+        use crate::message::ToolCallFunction;
+        use serde_json::json;
+
+        let ids = ["read", "bash", "refused", "failed", "cancelled", "missing", "inline"];
+        let calls = ids.iter().map(|id| ToolCallMessage {
+            id: (*id).into(),
+            call_type: "function".into(),
+            function: ToolCallFunction { name: "Read".into(), arguments: json!({}) },
+            thought_signature: None,
+        }).collect();
+        let result = |id, text| ChatMessage::tool_result_named(id, "Read", text);
+        let history = [
+            ChatMessage::new("user", "Inspect the files."),
+            ChatMessage::assistant_with_tool_calls(calls),
+            result("read", "Read shot.png."),
+            ChatMessage::new("user", "Screenshot").with_images(vec!["iVBORw0KGgo=".into()]),
+            result("bash", "Command output."),
+            ChatMessage::new("user", "A nudge."),
+            result("refused", "Permission denied."),
+            result("failed", "File not found."),
+            result("cancelled", "Cancelled."),
+            result("inline", "Image result.").with_images(vec!["iVBORw0KGgo=".into()]),
+            result("orphan", "Unmatched result."),
+            ChatMessage::new("assistant", "The next reply."),
+            result("missing", "Not part of the earlier batch."),
+        ];
+        let client = AnthropicClient::new("https://api.anthropic.com".into(), Some("k".into()));
+        let request = client.request_body("claude-sonnet-5-5", translate_messages(&history), vec![], 4096, None);
+        let messages = request["messages"].as_array().unwrap();
+        let uses = messages[1]["content"].as_array().unwrap();
+        let results = messages[2]["content"].as_array().unwrap();
+        assert_eq!(messages[2]["role"], "user");
+        assert_eq!(uses.len(), ids.len());
+        assert_eq!(results.len(), uses.len());
+        for (call, result) in uses.iter().zip(results) {
+            assert_eq!(result["type"], "tool_result");
+            assert_eq!(result["tool_use_id"], call["id"]);
+        }
+        for (result, text) in results.iter().zip([
+            "Read shot.png.", "Command output.", "Permission denied.",
+            "File not found.", "Cancelled.", "No tool result was recorded.",
+        ]) {
+            assert_eq!(result["content"], text);
+        }
+        assert_eq!(results[5]["is_error"], true);
+        assert_eq!(results[6]["content"][0]["text"], "Image result.");
+        assert_eq!(results[6]["content"][1]["type"], "image");
+        assert_eq!(messages[3]["content"][1]["type"], "image");
+        assert_eq!(messages[4]["content"], "A nudge.");
+        assert_eq!(messages[5]["content"], "The next reply.");
+        assert_eq!(messages.len(), 6);
     }
 
     #[test]
