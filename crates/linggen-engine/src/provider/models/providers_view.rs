@@ -92,7 +92,10 @@ pub fn provider_id(sign_in: SignIn, name: &str, url: &str) -> String {
     } else {
         name.trim().to_ascii_lowercase()
     };
-    let parts = (class, name, credentials::endpoint_url(url).to_ascii_lowercase());
+    // The ChatGPT sign-in is one card, whatever address a row of it records.
+    let url = if sign_in == SignIn::ChatGpt { String::new() } else { credentials::endpoint_url(url).to_ascii_lowercase() };
+    let name = if sign_in == SignIn::ChatGpt { String::new() } else { name };
+    let parts = (class, name, url);
     format!("{:x}", Sha256::digest(serde_json::to_vec(&parts).expect("strings serialize")))
 }
 
