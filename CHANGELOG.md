@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-## [2.8.0] — models without a list; Linggen Cloud in dollars; one engine per Mac
+## [2.8.0] - 2026-11-27 — models without a list; Linggen Cloud in dollars; one engine per Mac
 
 ### Models
 
