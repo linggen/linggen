@@ -1,6 +1,6 @@
 // The chat's thinking-effort chip (doc/models.md § effort): it lists only what
 // the session's model offers, a choice is the conversation's and survives a
-// reload, and 自动 gives it back to the chat default.
+// reload. There is no 自动: the chip always sits on a level, the model's default when none is chosen.
 import { test, expect, expectWebRtc } from '../support/world';
 
 const FERRY = 'sess-1790000002-c0ac7ed2';
@@ -27,9 +27,9 @@ test('the chip appears for a model that offers effort, keeps its choice over a r
 
   await model.selectOption('reasoning');
   await expect(chip).toBeVisible();
-  // 自动 is the leftmost stop, before the model's three levels.
-  await expect(chip.locator('option')).toHaveCount(4);
-  await expect(chip).toHaveAttribute('data-choice', 'auto');
+  // Only the model's three levels, on its default (medium) until one is chosen.
+  await expect(chip.locator('option')).toHaveCount(3);
+  await expect(chip).toHaveAttribute('data-choice', 'medium');
   await chip.selectOption('low');
   await expect(chip).toHaveAttribute('data-choice', 'low');
   await page.reload();
@@ -41,11 +41,9 @@ test('the chip appears for a model that offers effort, keeps its choice over a r
   await model.selectOption('fake-ling');
   await expect(chip).toHaveCount(0);
   await model.selectOption('reasoning');
-  await expect(chip).toHaveAttribute('data-choice', 'auto');
+  await expect(chip).toHaveAttribute('data-choice', 'medium');
   await chip.selectOption('high');
   await expect(chip).toHaveAttribute('data-choice', 'high');
-  await chip.selectOption('auto');
-  await expect(chip).toHaveAttribute('data-choice', 'auto');
 });
 
 test('a ChatGPT sign-in row offers low, medium and high before catalog metadata arrives', async ({ page, world, httpRequests }) => {
@@ -54,7 +52,8 @@ test('a ChatGPT sign-in row offers low, medium and high before catalog metadata 
   await page.getByTestId('session-model').selectOption('fake-sol');
   const chip = page.getByTestId('session-effort');
   await expect(chip).toBeVisible();
-  await expect(chip.locator('option')).toHaveCount(4);
+  await expect(chip.locator('option')).toHaveCount(3);
+  await expect(chip).toHaveAttribute('data-choice', 'medium');
   await chip.selectOption('high');
   await expect(chip).toHaveAttribute('data-choice', 'high');
 });
@@ -76,8 +75,9 @@ test.describe('the default model is a Claude model', () => {
     await expectWebRtc(page, httpRequests);
     const pick = page.getByTestId('default-effort');
     await expect(pick).toBeVisible();
+    await expect(pick).toHaveAttribute('data-choice', 'high');
     const slider = pick.getByRole('slider');
-    await expect(slider).toHaveAttribute('max', '5');
+    await expect(slider).toHaveAttribute('max', '4');
     await slider.press('End');
     await expect(pick).toHaveAttribute('data-choice', 'max');
     await expect(slider).toBeEnabled();
@@ -88,7 +88,7 @@ test.describe('the default model is a Claude model', () => {
     await expect(pick).toHaveAttribute('data-choice', 'xhigh');
     const model = page.getByTestId('default-chat');
     await model.selectOption('fake-sol');
-    await expect(pick).toHaveAttribute('data-choice', 'auto');
+    await expect(pick).toHaveAttribute('data-choice', 'medium');
     await slider.press('End');
     await expect(pick).toHaveAttribute('data-choice', 'high');
     await expect(slider).toBeEnabled();

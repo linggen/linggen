@@ -108,6 +108,11 @@ pub struct Config {
     #[serde(default, alias = "family_starts", deserialize_with = "started_once", skip_serializing_if = "std::ops::Not::not")]
     #[cfg_attr(any(test, feature = "test-support"), ts(skip))]
     pub cloud_started: bool,
+    /// The ChatGPT families (sol, terra, luna) the person unticked on the
+    /// ChatGPT provider's row. Empty: all are ticked, as before the row existed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[cfg_attr(any(test, feature = "test-support"), ts(skip))]
+    pub chatgpt_unticked: Vec<String>,
     /// What was wrong in the file and was set right on load rather than
     /// refusing the whole config. Runtime-only — never read from or written to the file —
     /// so the log and `ling status` can say it.
@@ -956,6 +961,7 @@ impl Default for Config {
             mcp_servers: Default::default(),
             outside_apps: Vec::new(),
             cloud_started: false,
+            chatgpt_unticked: Vec::new(),
             problems: Vec::new(),
         }
     }

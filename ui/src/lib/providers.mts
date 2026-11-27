@@ -47,6 +47,8 @@ export interface Provider {
   style?: ApiStyle;
   /** Linggen Cloud's models to tick. */
   cloud?: CloudLine[];
+  /** The ChatGPT sign-in's models to tick (`model` is the family, `label` its model now). */
+  chatgpt?: CloudLine[];
 }
 
 export interface Preset {
@@ -70,12 +72,14 @@ export interface Suggestion {
 
 // ── The two groups of the provider list ──
 
-/** 开箱即用: a sign-in, no key. */
-export const readyToUse = (providers: Provider[]): Provider[] =>
-  providers.filter((p) => p.way === 'account' || p.way === 'subscription');
+/** The fixed top block: Linggen Cloud, the one account that is always there. */
+export const readyToUse = (providers: Provider[]): Provider[] => providers.filter((p) => p.way === 'account');
 
-/** 自己的服务商: the key providers and Ollama (an address, no key), in the order the engine lists them. */
-export const ownProviders = (providers: Provider[]): Provider[] => providers.filter((p) => p.way === 'key' || p.way === 'local');
+/** 自己的服务商: the key providers, Ollama (an address, no key) and the ChatGPT sign-in once added, in the order the engine lists them. */
+export const ownProviders = (providers: Provider[]): Provider[] => providers.filter((p) => p.way === 'key' || p.way === 'local' || p.way === 'subscription');
+
+/** The ChatGPT sign-in's row: a subscription provider with models to tick. */
+export const isChatgpt = (p: Provider): boolean => p.way === 'subscription' && !!p.chatgpt;
 
 /** Ollama: a provider with an address and no key. */
 export const isOllama = (p: Provider): boolean => p.way === 'local';

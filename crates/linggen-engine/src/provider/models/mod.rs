@@ -103,6 +103,8 @@ pub struct ModelManager {
     /// Registered for exact pins only (older ChatGPT models the backend still
     /// lists): reachable by id, never listed.
     hidden: std::collections::HashSet<String>,
+    /// The ChatGPT families the person unticked (`Config::chatgpt_unticked`).
+    chatgpt_unticked: Vec<String>,
     /// Live-voice rows (`provider::kinds::Kind::LiveVoice`): kept, never
     /// registered as a chat model.
     live_rows: Vec<ModelConfig>,
@@ -119,9 +121,23 @@ struct ModelInstance {
 }
 
 impl ModelManager {
-    pub fn new(configs: Vec<ModelConfig>) -> Self {
+    /// The engine's models: the rows, and the ChatGPT built-ins the person
+    /// signed in for and left ticked (`unticked`: the families they did not).
+    pub fn new(configs: Vec<ModelConfig>, unticked: &[String]) -> Self {
         let creds = Credentials::load_for(&credentials::credentials_file(), &configs);
-        Self::new_with_credentials(configs, &creds)
+        let catalog = chatgpt_catalog::current();
+        let mut manager = Self::build(configs, &creds, &catalog, unticked.to_vec());
+        manager.hide(catalog::not_offered(&catalog, unticked, codex_auth::chatgpt_signed_in()));
+        manager
+    }
+
+    /// The families unticked in the config this was built from.
+    pub fn chatgpt_unticked(&self) -> &[String] {
+        &self.chatgpt_unticked
+    }
+
+    fn hide(&mut self, ids: Vec<String>) {
+        self.hidden.extend(ids);
     }
 
     /// Verify the model's auth is usable right now. Errors carry an
@@ -198,6 +214,15 @@ impl ModelManager {
         creds: &Credentials,
         catalog: &chatgpt_catalog::Snapshot,
     ) -> Self {
+        Self::build(configs, creds, catalog, Vec::new())
+    }
+
+    fn build(
+        configs: Vec<ModelConfig>,
+        creds: &Credentials,
+        catalog: &chatgpt_catalog::Snapshot,
+        chatgpt_unticked: Vec<String>,
+    ) -> Self {
         let mut configs = configs;
         let hidden = inject_chatgpt_builtin(&mut configs, catalog).into_iter().collect();
         let mut models = HashMap::new();
@@ -266,6 +291,7 @@ impl ModelManager {
         Self {
             models,
             hidden,
+            chatgpt_unticked,
             live_rows,
         }
     }

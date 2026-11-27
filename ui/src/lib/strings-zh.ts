@@ -411,6 +411,7 @@ export const ZH: Record<string, string> = {
   'No model matches. Press Enter to add it as typed.': '没有匹配的模型，按回车直接添加。',
   'Could not read this provider\u2019s list. Type the full model ID and press Enter.': '读不到这家的模型列表。输入完整模型 ID 后按回车。',
   'Remove this provider': '移除这个服务商',
+  'Remove {provider}? This signs you out of ChatGPT and unticks its models.': '移除 {provider}？这会退出 ChatGPT 登录，并取消勾选它的模型。',
   'Remove {provider}, its key and its models?': '移除 {provider}、它的密钥和模型？',
   'It holds your default chat model.': '它是你的默认聊天模型。',
   'It holds {n} fallback models.': '它有 {n} 个备用模型。',

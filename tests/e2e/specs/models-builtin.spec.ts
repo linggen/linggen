@@ -1,5 +1,5 @@
-// Settings → Models shows the engine's built-in models (ChatGPT, Linggen Cloud)
-// in the block under the default model. `GET /api/models` answers by who asks; over the
+// Settings → Models shows Linggen Cloud's built-in models in the block under the
+// default model (the ChatGPT sign-in is a provider added below it). `GET /api/models` answers by who asks; over the
 // channel the owner's own page was taken for no one, the list came back empty
 // and the group vanished while the chat's picker (page_state) still listed
 // them. The page now draws `GET /api/providers`: the test asks the engine for
@@ -12,10 +12,11 @@ import { test, expect, expectWebRtc } from '../support/world';
 /** The ids of the built-in rows the engine answers on loopback. */
 async function builtinIds(world: { url: string }, request: APIRequestContext): Promise<string[]> {
   const rows: { id: string; is_builtin?: boolean }[] = await (await request.get(`${world.url}/api/models`)).json();
-  return rows.filter((m) => m.is_builtin).map((m) => m.id);
+  // The ChatGPT built-ins sit on the ChatGPT provider's row, not in the top block.
+  return rows.filter((m) => m.is_builtin && m.provider !== 'chatgpt').map((m) => m.id);
 }
 
-/** Every built-in id is on the page, in the Linggen Cloud / ChatGPT block. */
+/** Every built-in id is on the page, in the Linggen Cloud block. */
 async function expectBuiltinGroup(page: Page, ids: string[]) {
   const group = page.getByTestId('ready-to-use');
   await expect(group).toBeVisible();

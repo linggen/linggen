@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { W } from '../src/lib/modelsWords.mts';
-import { chatChoices, chatModels, failureLabel, hasProblem, heldDefaults, liveModels, suggestionsFor, type Provider, type ProviderModel } from '../src/lib/providers.mts';
+import { chatChoices, chatModels, failureLabel, hasProblem, heldDefaults, isChatgpt, liveModels, ownProviders, readyToUse, suggestionsFor, type Provider, type ProviderModel } from '../src/lib/providers.mts';
 
 const provider = (over: Partial<Provider>): Provider => ({ id: 'p', label: 'Anthropic', way: 'key', provider: 'anthropic', url: '', connected: true, models: [], used_by: [], ...over });
 const model = (id: string, over: Partial<ProviderModel> = {}): ProviderModel => ({ id, model: id, name: id, kind: 'chat', ready: true, builtin: false, ...over });
@@ -47,4 +47,15 @@ test('a provider has a problem when its key clashes or is set but not working', 
   assert.equal(hasProblem(provider({ key: { set: true }, connected: false })), true);
   assert.equal(hasProblem(provider({ key: { set: true, conflict: true } })), true);
   assert.equal(hasProblem(provider({ key: { set: true } })), false);
+});
+
+test('only Linggen Cloud stays in the top block; the ChatGPT sign-in is an own provider with ticks', () => {
+  const base = { url: '', connected: true, models: [], used_by: [] };
+  const cloud = { ...base, id: 'c', label: 'Linggen Cloud', way: 'account', provider: 'openai' } as Provider;
+  const chatgpt = { ...base, id: 'g', label: 'ChatGPT 订阅', way: 'subscription', provider: 'chatgpt', chatgpt: [{ model: 'sol', label: 'gpt-6.2-sol', row: 'gpt-6.2-sol' }] } as Provider;
+  const key = { ...base, id: 'k', label: 'DeepSeek', way: 'key', provider: 'deepseek' } as Provider;
+  assert.deepEqual(readyToUse([cloud, chatgpt, key]).map((p) => p.id), ['c']);
+  assert.deepEqual(ownProviders([cloud, chatgpt, key]).map((p) => p.id), ['g', 'k']);
+  assert.equal(isChatgpt(chatgpt), true);
+  assert.equal(isChatgpt(key), false);
 });

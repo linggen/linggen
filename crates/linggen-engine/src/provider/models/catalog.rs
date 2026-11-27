@@ -82,6 +82,15 @@ pub(super) fn inject_chatgpt_builtin(configs: &mut Vec<ModelConfig>, snap: &Snap
     kept
 }
 
+/// The built-in ids a page does not offer: every one while signed out (the
+/// provider has not been added), else the models of the families the person
+/// unticked. They stay registered, so a pin to one still runs.
+pub(super) fn not_offered(snap: &Snapshot, unticked: &[String], signed_in: bool) -> Vec<String> {
+    snap.builtin_ids().into_iter()
+        .filter(|id| !signed_in || snap.family_of(id).is_some_and(|f| unticked.contains(&f.name)))
+        .collect()
+}
+
 fn chatgpt_config(id: &str, snap: &Snapshot) -> ModelConfig {
     ModelConfig {
         id: id.to_string(),

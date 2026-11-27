@@ -108,6 +108,7 @@ export const W = {
   removeModelNamed: 'Remove {model}',
   removeProvider: 'Remove this provider',
   removeProviderAsk: 'Remove {provider}, its key and its models?',
+  removeChatgptAsk: 'Remove {provider}? This signs you out of ChatGPT and unticks its models.',
   removeHoldsDefault: 'It holds your default chat model.',
   removeHoldsFallbacks: 'It holds {n} fallback models.',
   // ── A model line ──

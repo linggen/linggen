@@ -8,7 +8,7 @@ use serde_json::json;
 
 use crate::config::{providers::{known_names, Way}, Config, SignIn};
 use crate::provider::models::presets::{self as preset_table, ApiStyle};
-use crate::provider::models::providers_view::{editable_row, is_listed_address, linggen_cloud_card_at, live_card_at, presets, filed_endpoint, group_keys, keep_model_key, provider_id, ProviderView};
+use crate::provider::models::providers_view::{editable_row, is_listed_address, chatgpt_card_id, linggen_cloud_card_at, live_card_at, presets, filed_endpoint, group_keys, keep_model_key, provider_id, ProviderView};
 use crate::provider::models::{cloud_tick, suggest};
 use crate::credentials::{self, Credentials};
 use crate::server::{person, ServerState};
@@ -173,6 +173,19 @@ pub(crate) async fn tick_cloud(State(state): State<Arc<ServerState>>, headers: H
     }
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ChatgptTick { family: String, ticked: bool, #[serde(default)] replacement: Option<String> }
+
+/// `PUT /api/providers/chatgpt`: tick or untick one of the ChatGPT sign-in's models
+/// (by family). Unticking the first default needs the model that takes its place.
+pub(crate) async fn tick_chatgpt(State(state): State<Arc<ServerState>>, headers: HeaderMap, body: Bytes) -> Response {
+    match parse::<ChatgptTick>(&body) {
+        Ok(tick) => mutate(state, headers, Edit::Chatgpt(tick)).await,
+        Err(failure) => failure.into_response(),
+    }
+}
+
 /// `DELETE /api/providers/{id}`: the provider, its key and every model row
 /// filed under it. The page confirms first, naming any default it holds.
 pub(crate) async fn remove(State(state): State<Arc<ServerState>>, headers: HeaderMap, Path(id): Path<String>) -> Response {
@@ -186,6 +199,7 @@ pub(crate) async fn remove_model(State(state): State<Arc<ServerState>>, headers:
 enum Edit {
     Create(Bytes),
     Cloud(CloudTick),
+    Chatgpt(ChatgptTick),
     Remove(String),
     Key(String, KeyEdit),
     Address(String, Bytes),
@@ -234,6 +248,18 @@ async fn apply(state: &Arc<ServerState>, edit: Edit) -> Result<(Config, Credenti
         if changed { save_config(state, &config).await?; }
         return Ok((config, creds));
     }
+    if let Edit::Chatgpt(tick) = edit {
+        let creds = Credentials::load_with(&path, &config.models);
+        tick_chatgpt_family(state, &mut config, tick).await?;
+        return Ok((config, creds));
+    }
+    if let Edit::Remove(id) = &edit {
+        if *id == chatgpt_card_id() {
+            let creds = Credentials::load_with(&path, &config.models);
+            sign_out_chatgpt(state, &mut config).await?;
+            return Ok((config, creds));
+        }
+    }
     if let Edit::Create(body) = edit {
         let creds = Credentials::load_with(&path, &config.models);
         let (name, url) = new_endpoint(parse(&body)?)?;
@@ -245,7 +271,7 @@ async fn apply(state: &Arc<ServerState>, edit: Edit) -> Result<(Config, Credenti
     let mut creds = Credentials::load_with(&path, &config.models);
     let id = match &edit {
         Edit::Key(id, _) | Edit::Address(id, _) | Edit::AddModel(id, _) | Edit::RemoveModel(id, _) | Edit::Remove(id) => id,
-        Edit::Create(_) | Edit::Cloud(_) => unreachable!(),
+        Edit::Create(_) | Edit::Cloud(_) | Edit::Chatgpt(_) => unreachable!(),
     };
     let (name, url) = endpoint(state, &config, &creds, id).await?;
     match edit {
@@ -355,9 +381,47 @@ async fn apply(state: &Arc<ServerState>, edit: Edit) -> Result<(Config, Credenti
             super::config::reload_models(state).await;
             state.provider_drafts.lock().await.remove(&id);
         }
-        Edit::Create(_) | Edit::Cloud(_) => unreachable!(),
+        Edit::Create(_) | Edit::Cloud(_) | Edit::Chatgpt(_) => unreachable!(),
     }
     Ok((config, creds))
+}
+
+/// The ids of the ChatGPT models a family stands for now.
+fn chatgpt_ids_of(family: &str) -> Vec<String> {
+    let catalog = crate::provider::models::chatgpt_catalog::current();
+    catalog.family(family).map(|f| vec![catalog.effective(f).to_string()]).unwrap_or_default()
+}
+
+/// Tick or untick a ChatGPT family. Unticking the first default's family needs a `replacement`.
+async fn tick_chatgpt_family(state: &Arc<ServerState>, config: &mut Config, tick: ChatgptTick) -> Result<(), Failure> {
+    let ids = chatgpt_ids_of(&tick.family);
+    if ids.is_empty() || !crate::provider::codex_auth::chatgpt_signed_in() { return Err(MISSING); }
+    let was = config.chatgpt_unticked.contains(&tick.family);
+    if tick.ticked {
+        config.chatgpt_unticked.retain(|f| *f != tick.family);
+    } else if !was {
+        let first = config.routing.default_models.first().is_some_and(|d| ids.contains(d));
+        if first {
+            let replacement = tick.replacement.filter(|r| !r.is_empty() && !ids.contains(r)).ok_or((StatusCode::CONFLICT, "first_default"))?;
+            config.make_default(&replacement);
+        }
+        config.routing.default_models.retain(|m| !ids.contains(m));
+        config.chatgpt_unticked.push(tick.family);
+    }
+    // Saved only when the tick changed something.
+    if tick.ticked == was { save_config(state, config).await?; }
+    Ok(())
+}
+
+/// 移除这个服务商 for the ChatGPT sign-in: sign out, forget the unticks, and let the
+/// defaults go on without its models. The page confirmed, naming any default it holds.
+async fn sign_out_chatgpt(state: &Arc<ServerState>, config: &mut Config) -> Result<(), Failure> {
+    let catalog = crate::provider::models::chatgpt_catalog::current();
+    let mine = catalog.builtin_ids();
+    config.routing.default_models.retain(|m| !mine.contains(m));
+    config.chatgpt_unticked.clear();
+    crate::provider::codex_auth::CodexAuthManager::new().logout().await.map_err(|_| SAVE)?;
+    save_config(state, config).await
 }
 
 /// Untick rows. The first default chat model may go only with a

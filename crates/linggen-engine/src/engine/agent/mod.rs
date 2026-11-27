@@ -385,7 +385,7 @@ impl AgentManager {
         mpsc::UnboundedReceiver<(AgentEvent, Option<String>)>,
     ) {
         let (tx, rx) = mpsc::unbounded_channel();
-        let models = Arc::new(ModelManager::new(config.models.clone()));
+        let models = Arc::new(ModelManager::new(config.models.clone(), &config.chatgpt_unticked));
         let pet_muted = AtomicBool::new(config.pet.muted);
         let daily_session = AtomicBool::new(config.agent.daily_session_enabled());
         crate::language::set_setting(config.language.clone());
@@ -1015,7 +1015,7 @@ impl AgentManager {
         new_config.validate()?;
         // Write to disk first — if this fails, in-memory state remains unchanged.
         new_config.save_runtime(self.config_dir.as_deref())?;
-        let new_models = Arc::new(ModelManager::new(new_config.models.clone()));
+        let new_models = Arc::new(ModelManager::new(new_config.models.clone(), &new_config.chatgpt_unticked));
         *self.models.write().await = new_models;
         crate::language::set_setting(new_config.language.clone());
         crate::provider::set_first_event_timeout(new_config.routing.first_event_timeout_secs);

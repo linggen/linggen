@@ -296,7 +296,7 @@ async fn presets_are_the_engines_table_and_any_other_provider_is_typed() {
     let w = World::start(Setup::default()).await;
     let body = w.api.get("/api/providers").await;
     let labels: Vec<&str> = body["presets"].as_array().unwrap().iter().map(|p| p["label"].as_str().unwrap()).collect();
-    assert_eq!(labels, ["Anthropic", "OpenAI", "Google Gemini", "DeepSeek", "Qwen Cloud", "OpenRouter", "Groq", "Ollama"]);
+    assert_eq!(labels, ["Anthropic", "OpenAI", "Google Gemini", "DeepSeek", "Qwen Cloud", "OpenRouter", "Groq", "Ollama", "ChatGPT 订阅"]);
     assert!(body.get("edition").is_none(), "no region choice");
     let made = w.api.post("/api/providers", json!({"name":"My Claude gateway","url":"https://claude-gw.example.test","style":"claude"})).await;
     let row = made["providers"].as_array().unwrap().iter().find(|p| p["url"] == "https://claude-gw.example.test/").expect("the typed provider");
@@ -442,3 +442,67 @@ provider = "qwen"
 url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 model = "qwen-plus"
 "#;
+
+// ── the ChatGPT sign-in is a provider the person adds ──
+
+/// Signed in (the upgrade case: no unticks stored): the row is there with
+/// the three built-ins ticked, and nothing the person used disappears.
+#[tokio::test]
+async fn a_signed_in_chatgpt_row_has_its_three_models_ticked() {
+    let w = World::start(Setup::default()).await;
+    let body = w.api.get("/api/providers").await;
+    let chatgpt = provider(&body, "ChatGPT 订阅");
+    let lines = chatgpt["chatgpt"].as_array().unwrap();
+    assert_eq!(lines.len(), 3);
+    assert!(lines.iter().all(|l| l["row"].is_string()), "{lines:?}");
+    let models = w.api.get("/api/models").await;
+    for id in lines.iter().map(|l| l["label"].as_str().unwrap()) {
+        assert!(models.as_array().unwrap().iter().any(|m| m["id"] == id), "{id} stays offered");
+    }
+}
+
+/// Not signed in: no ChatGPT row at all, and its models are not offered.
+#[tokio::test]
+async fn a_signed_out_chatgpt_has_no_row_and_no_models() {
+    let w = World::start(Setup { signed_out: true, ..Setup::default() }).await;
+    let body = w.api.get("/api/providers").await;
+    // (The fixture's own stand-in row sits at another address: it is its own card, with no ticks.)
+    assert!(!body["providers"].as_array().unwrap().iter().any(|p| p.get("chatgpt").is_some()));
+    assert!(body["presets"].as_array().unwrap().iter().any(|p| p["label"] == "ChatGPT 订阅"), "it can be added");
+    let models = w.api.get("/api/models").await;
+    assert!(!models.as_array().unwrap().iter().any(|m| m["provider"] == "chatgpt" && m["id"] != "fake-sol"));
+}
+
+/// Unticking a family takes its model out of the lists and survives a save;
+/// ticking it back returns it; an unknown family is refused.
+#[tokio::test]
+async fn a_chatgpt_family_is_ticked_and_unticked() {
+    let w = World::start(Setup::default()).await;
+    let body = w.api.get("/api/providers").await;
+    let luna = provider(&body, "ChatGPT 订阅")["chatgpt"].as_array().unwrap().iter().find(|l| l["model"] == "luna").unwrap().clone();
+    let id = luna["label"].as_str().unwrap();
+    let (status, body) = w.api.put_json("/api/providers/chatgpt", json!({"family":"luna","ticked":false})).await;
+    assert_eq!(status, 200, "{body}");
+    let line = provider(&body, "ChatGPT 订阅")["chatgpt"].as_array().unwrap().iter().find(|l| l["model"] == "luna").unwrap().clone();
+    assert!(line.get("row").is_none());
+    let models = w.api.get("/api/models").await;
+    assert!(!models.as_array().unwrap().iter().any(|m| m["id"] == id));
+    assert_eq!(w.api.get("/api/config").await["chatgpt_unticked"], json!(["luna"]));
+    let (_, body) = w.api.put_json("/api/providers/chatgpt", json!({"family":"luna","ticked":true})).await;
+    assert!(provider(&body, "ChatGPT 订阅")["chatgpt"].as_array().unwrap().iter().all(|l| l["row"].is_string()));
+    assert_eq!(w.api.put_json("/api/providers/chatgpt", json!({"family":"nope","ticked":true})).await.0, 404);
+}
+
+/// 移除这个服务商 on the ChatGPT row signs out: the row and its models go.
+#[tokio::test]
+async fn removing_the_chatgpt_provider_signs_out() {
+    let w = World::start(Setup::default()).await;
+    let body = w.api.get("/api/providers").await;
+    let card = |body: &Value| body["providers"].as_array().unwrap().iter().find(|p| p.get("chatgpt").is_some()).cloned();
+    let id = card(&body).expect("the ticked card")["id"].as_str().unwrap().to_string();
+    let after = w.api.delete(&format!("/api/providers/{id}"), json!({})).await;
+    assert!(card(&after).is_none());
+    assert!(!w.home.linggen_home().join("codex_auth.json").exists());
+    let models = w.api.get("/api/models").await;
+    assert!(!models.as_array().unwrap().iter().any(|m| m["provider"] == "chatgpt" && m["id"] != "fake-sol"));
+}

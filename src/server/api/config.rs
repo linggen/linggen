@@ -304,7 +304,7 @@ pub(crate) async fn set_chatgpt_stay(
 pub(crate) async fn reload_models(state: &std::sync::Arc<crate::server::ServerState>) {
     let config = state.manager.get_config_snapshot().await;
     let new_models = std::sync::Arc::new(crate::provider::models::ModelManager::new(
-        config.models.clone(),
+        config.models.clone(), &config.chatgpt_unticked,
     ));
     *state.manager.models.write().await = new_models;
     crate::server::rtc::proxy_room::reapply_proxy_models(state).await;
@@ -448,7 +448,11 @@ pub(crate) async fn codex_auth_logout(
 
     let manager = codex_auth::CodexAuthManager::new();
     match manager.logout().await {
-        Ok(()) => Json(serde_json::json!({ "status": "ok" })).into_response(),
+        Ok(()) => {
+            // The ChatGPT models leave the lists with the sign-in.
+            reload_models(&state).await;
+            Json(serde_json::json!({ "status": "ok" })).into_response()
+        }
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }

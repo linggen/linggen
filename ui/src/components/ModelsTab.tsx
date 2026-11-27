@@ -1,6 +1,6 @@
 /**
- * Settings → Models: 「Default model」, the Linggen Cloud and ChatGPT rows, then
- * 「Providers」, always open. The page draws what
+ * Settings → Models: 「Default model」, the Linggen Cloud row, then
+ * 「Providers」, always open (key providers, Ollama, the ChatGPT sign-in once added). The page draws what
  * the engine answers (`GET /api/providers`) and decides nothing: every button
  * calls its route and the list is redrawn from the answer (models/useProviders).
  * What a key provider shows, and how, is models/KeyRow; the words are
@@ -13,10 +13,11 @@ import type { UseEdit, Uses } from '../lib/modelUses';
 import { useServerStore } from '../stores/serverStore';
 import { modelsApi, providersApi, usesApi } from '../lib/endpoints';
 import { W, say } from '../lib/modelsWords.mts';
-import { isOllama, ownProviders, readyToUse, sameAddress, type Preset, type ProvidersAnswer } from '../lib/providers.mts';
+import { isChatgpt, isOllama, ownProviders, readyToUse, sameAddress, type Preset, type ProvidersAnswer } from '../lib/providers.mts';
 import { AddProvider, type Typed } from './models/AddProvider';
 import { DefaultCard } from './models/DefaultCard';
 import { KeyRow } from './models/KeyRow';
+import { ChatgptRow, signInChatgpt } from './models/ChatgptRow';
 import { ReadyRow } from './models/ReadyRows';
 import { cardCls, headingCls, hintCls, linkBtn } from './models/shell';
 import { useProviders } from './models/useProviders';
@@ -66,6 +67,16 @@ export const ModelsTab: React.FC<{
   }).then(() => undefined);
   const makeDefault = (choice: string) => pickUse({ use: 'chat', choice });
 
+  /** 用 ChatGPT 登录: the existing browser sign-in; on success the provider row appears, opened. */
+  const addChatgpt = async () => {
+    if (!(await signInChatgpt().catch(() => false))) return;
+    const made = await providersApi.list();
+    await signedInChanged();
+    const row = made.providers.find(isChatgpt);
+    if (row) setOpen(row.id);
+    setAdding(false);
+  };
+
   /** A preset and its key: the provider is filed only now, with the key; the row opens. */
   const addPreset = async (preset: Preset, key: string) => {
     const find = (a: ProvidersAnswer) => a.providers.find((p) => (p.way === 'key' || isOllama(p)) && p.provider === preset.name && sameAddress(p.url, preset.url));
@@ -108,7 +119,7 @@ export const ModelsTab: React.FC<{
   const { providers } = answer;
   const chain = uses?.chain ?? [];
   // Ollama is offered once, whatever address its row has; a key preset once per address.
-  const addable = answer.presets.filter((p) => (p.way === 'key' || p.way === 'local') && !providers.some((q) => q.way === p.way && q.provider === p.name && (p.way === 'local' || sameAddress(q.url, p.url))));
+  const addable = answer.presets.filter((p) => (p.way === 'key' || p.way === 'local' || p.way === 'subscription') && !providers.some((q) => q.way === p.way && q.provider === p.name && (p.way !== 'key' || sameAddress(q.url, p.url))));
   const connected = ownProviders(providers).filter((p) => p.connected).length;
   return (
     <div className="space-y-6" data-testid="models-page">
@@ -117,7 +128,7 @@ export const ModelsTab: React.FC<{
       {signInLine && <p data-testid="signed-in-default" className="text-xs text-green-700 dark:text-green-400">{signInLine}</p>}
       <section className={cardCls} data-testid="ready-to-use">
         <div className="space-y-1.5">
-          {readyToUse(providers).map((p) => <ReadyRow key={p.id} provider={p} moved={moved} changed={signedInChanged} run={run} busy={busy} makeDefault={makeDefault} open={open === p.id} onToggle={() => setOpen(open === p.id ? null : p.id)} />)}
+          {readyToUse(providers).map((p) => <ReadyRow key={p.id} provider={p} changed={signedInChanged} run={run} busy={busy} makeDefault={makeDefault} open={open === p.id} onToggle={() => setOpen(open === p.id ? null : p.id)} />)}
         </div>
       </section>
       <section className={cardCls} data-testid="own-providers">
@@ -134,9 +145,11 @@ export const ModelsTab: React.FC<{
               </button>
             </div>
             <div className="mt-4">
-              {adding && <AddProvider presets={addable} busy={busy} onAdd={(p, k) => void addPreset(p, k)} onTyped={(t) => void addTyped(t)} onClose={() => setAdding(false)} />}
+              {adding && <AddProvider presets={addable} busy={busy} onAdd={(p, k) => void addPreset(p, k)} onTyped={(t) => void addTyped(t)} onSignIn={addChatgpt} onClose={() => setAdding(false)} />}
               <div className="space-y-1.5">
-                {ownProviders(providers).map((p) => (
+                {ownProviders(providers).map((p) => isChatgpt(p) ? (
+                  <ChatgptRow key={p.id} provider={p} moved={moved} changed={signedInChanged} run={run} busy={busy} open={open === p.id} onToggle={() => setOpen(open === p.id ? null : p.id)} chain={chain} />
+                ) : (
                   <KeyRow key={p.id} provider={p} open={open === p.id} onToggle={() => setOpen(open === p.id ? null : p.id)} run={run} busy={busy} makeDefault={makeDefault} chain={chain} />
                 ))}
               </div>

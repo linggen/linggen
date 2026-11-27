@@ -34,9 +34,13 @@ pub struct ProviderView {
     /// Linggen Cloud's chat models to tick (`cloud_models`); absent elsewhere.
     #[serde(skip_serializing_if = "Option::is_none")]
     cloud: Option<Vec<CloudLine>>,
+    /// The ChatGPT sign-in's models to tick (`chatgpt_catalog` families); absent elsewhere.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    chatgpt: Option<Vec<CloudLine>>,
 }
 
-/// One Linggen Cloud model as its row shows it: a checkbox.
+/// One model to tick as its row shows it: a checkbox. Linggen Cloud's, or a ChatGPT
+/// family's (`model` is then the family's name, `label` its model now).
 #[derive(Serialize)]
 struct CloudLine {
     model: String,
@@ -190,7 +194,7 @@ impl ProviderView {
             id: provider_id(sign_in, provider, url), label, way: way.as_str(),
             provider: provider.into(), url: shown_url(url), listed, style, connected: false, fix: None,
             key: (way == Way::Key).then_some(KeyState { set: false, conflict: false, can_keep_model_key: false }),
-            models: Vec::new(), used_by: Vec::new(), disk_gb: None, cloud: None,
+            models: Vec::new(), used_by: Vec::new(), disk_gb: None, cloud: None, chatgpt: None,
         }
     }
 
@@ -223,6 +227,12 @@ impl ModelManager {
         }
         cloud.cloud = Some(cloud_lines(config));
         groups.insert(cloud.id.clone(), cloud);
+        if crate::provider::codex_auth::chatgpt_signed_in() {
+            // Signed in: the row is there even when every model is unticked.
+            let mut chatgpt = ProviderView::new(SignIn::ChatGpt, "chatgpt", crate::provider::codex_auth::CHATGPT_API_BASE);
+            chatgpt.chatgpt = Some(chatgpt_lines(config));
+            groups.insert(chatgpt.id.clone(), chatgpt);
+        }
         let rows = self.list_models();
         for row in rows.iter().copied().filter(|row| row.is_builtin).chain(config.chat_models()) {
             let kind = kind_of(row);
@@ -308,6 +318,16 @@ fn cloud_lines(config: &Config) -> Vec<CloudLine> {
     }).collect()
 }
 
+/// The ChatGPT sign-in's models, one per family, ticked unless the person unticked it.
+fn chatgpt_lines(config: &Config) -> Vec<CloudLine> {
+    let catalog = super::chatgpt_catalog::current();
+    catalog.families.iter().map(|f| CloudLine {
+        row: (!config.chatgpt_unticked.contains(&f.name)).then(|| catalog.effective(f).to_string()),
+        model: f.name.clone(),
+        label: catalog.effective(f).to_string(),
+    }).collect()
+}
+
 /// The preset a live voice's key is filed at: the one at its host.
 fn live_preset(voice: &crate::live::Provider) -> Option<&'static presets::Preset> {
     presets::PRESETS.iter().find(|p| p.way == Way::Key && crate::credentials::url_host(p.url).is_some_and(|h| h.eq_ignore_ascii_case(voice.key_host())))
@@ -315,9 +335,19 @@ fn live_preset(voice: &crate::live::Provider) -> Option<&'static presets::Preset
 
 /// What the page offers to add, in the table's order (`presets::PRESETS`).
 pub fn presets() -> Vec<serde_json::Value> {
-    presets::PRESETS.iter().map(|p| serde_json::json!({
+    let keyed = presets::PRESETS.iter().map(|p| serde_json::json!({
         "name": p.name, "label": p.label, "url": p.url, "way": p.way.as_str(), "style": p.style.as_str(),
-    })).collect()
+    }));
+    // The ChatGPT sign-in is added like a provider but has no address or key.
+    let chatgpt = serde_json::json!({
+        "name": "chatgpt", "label": "ChatGPT 订阅", "url": "", "way": Way::Subscription.as_str(), "style": "openai",
+    });
+    keyed.chain([chatgpt]).collect()
+}
+
+/// The ChatGPT sign-in's card has no row or key to find it by: its id is the sign-in's.
+pub fn chatgpt_card_id() -> String {
+    provider_id(SignIn::ChatGpt, "chatgpt", crate::provider::codex_auth::CHATGPT_API_BASE)
 }
 
 /// Where a live voice's card sits when it has no row or key yet: the preset at its host.

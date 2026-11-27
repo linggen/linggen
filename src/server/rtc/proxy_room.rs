@@ -130,7 +130,7 @@ fn without_proxy_models(models: &crate::provider::models::ModelManager) -> crate
         .filter(|c| c.provider_kind() != crate::config::ProviderKind::Proxy)
         .cloned()
         .collect();
-    crate::provider::models::ModelManager::new(configs)
+    crate::provider::models::ModelManager::new(configs, models.chatgpt_unticked())
 }
 
 async fn rebuild_model_manager(state: &ServerState) {

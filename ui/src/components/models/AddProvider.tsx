@@ -15,13 +15,19 @@ const chip = 'flex min-w-0 items-center justify-between gap-1.5 rounded-lg borde
 const chipOff = 'border-slate-200 bg-white text-slate-700 hover:border-blue-300 dark:border-white/10 dark:bg-white/5 dark:text-slate-200 dark:hover:border-blue-700';
 const chipOn = 'border-blue-500 bg-blue-50 text-blue-700 dark:border-blue-500 dark:bg-blue-500/10 dark:text-blue-300';
 
-export const AddProvider: React.FC<{ presets: Preset[]; busy: boolean; onAdd: (preset: Preset, key: string) => void; onTyped: (typed: Typed) => void; onClose: () => void }> = ({ presets, busy, onAdd, onTyped, onClose }) => {
+export const AddProvider: React.FC<{ presets: Preset[]; busy: boolean; onAdd: (preset: Preset, key: string) => void; onTyped: (typed: Typed) => void; onSignIn: () => Promise<void>; onClose: () => void }> = ({ presets, busy, onAdd, onTyped, onSignIn, onClose }) => {
+  const [waiting, setWaiting] = useState(false);
   // The chip picked: a preset's index, 'other', or nothing yet.
   const [picked, setPicked] = useState<number | 'other' | null>(null);
   const [typed, setTyped] = useState<Typed>({ name: '', url: '', style: 'openai', key: '' });
   const set = (field: keyof Typed) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setTyped({ ...typed, [field]: e.target.value });
   const key = typed.key.trim();
   const preset = typeof picked === 'number' ? presets[picked] : undefined;
+  const signIn = preset?.way === 'subscription';
+  const signInNow = async () => {
+    setWaiting(true);
+    try { await onSignIn(); } finally { setWaiting(false); }
+  };
   const ready = picked === 'other' ? !!(typed.name.trim() && typed.url.trim() && key) : !!(preset && (key || preset.way === 'local'));
   const add = () => {
     if (!ready) return;
@@ -56,10 +62,11 @@ export const AddProvider: React.FC<{ presets: Preset[]; busy: boolean; onAdd: (p
               </select>
             </>
           )}
-          {preset?.way !== 'local' && <input type="password" autoComplete="off" className={inputCls} placeholder={W.pasteKey} aria-label={W.pasteKey} value={typed.key} onChange={set('key')} onKeyDown={(e) => { if (e.key === 'Enter') add(); }} />}
-          <div className="sm:col-span-2">
+          {signIn && <button type="button" data-testid="add-chatgpt-signin" className={primaryBtn} disabled={busy || waiting} onClick={() => void signInNow()}>{waiting ? W.waitingBrowser : W.signInChatgpt}</button>}
+          {!signIn && preset?.way !== 'local' && <input type="password" autoComplete="off" className={inputCls} placeholder={W.pasteKey} aria-label={W.pasteKey} value={typed.key} onChange={set('key')} onKeyDown={(e) => { if (e.key === 'Enter') add(); }} />}
+          {!signIn && <div className="sm:col-span-2">
             <button type="button" data-testid="add-provider-confirm" className={primaryBtn} disabled={busy || !ready} onClick={add}>{W.add}</button>
-          </div>
+          </div>}
         </div>
       )}
     </div>

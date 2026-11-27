@@ -22,7 +22,7 @@ test('a model that offers none, or no model, has no chip', () => {
   for (const id of ['local', 'old', 'missing', null, undefined]) assert.equal(effortChip(models, id, 'high'), null);
 });
 
-test('automatic is selected until the model offers the kept value', () => {
+test('no value is selected until the model offers the kept one (the engine then names the default level)', () => {
   assert.equal(effortChip(models, 'sonnet', null)?.selected, '');
   assert.equal(effortChip(models, 'sonnet', 'xhigh')?.selected, 'xhigh');
   // The choice is kept by the session, only not shown where it does not apply.

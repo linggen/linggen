@@ -69,8 +69,8 @@ const LISTED: &[(&str, usize, &str)] = &[
     ),
     (
         "src/server/api/providers.rs",
-        2,
-        "RoutingConfig::default_models, without a provider or model the person removed",
+        4,
+        "RoutingConfig::default_models, without a provider, model or ChatGPT family the person removed",
     ),
     (
         "crates/linggen-engine/src/provider/models/cloud_tick.rs",
