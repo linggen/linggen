@@ -39,7 +39,6 @@ export const CloudList: React.FC<{ provider: Provider; run: Run; busy: boolean }
           <span className={hintCls} data-no-i18n>{m.model}</span>
         </label>
       ))}
-      {fixed.length > 0 && <p className={`${hintCls} mt-0.5`}>{W.includedAlways}</p>}
     </div>
   );
 };
