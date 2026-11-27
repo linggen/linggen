@@ -7,10 +7,10 @@
  */
 import React, { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
-import { providersApi } from '../../lib/endpoints';
+import { providersApi, type PullStatus } from '../../lib/endpoints';
 import { confirmDialog } from '../../lib/confirmDialog';
 import { W, say } from '../../lib/modelsWords.mts';
-import { chatModels, heldDefaults, isChatgpt, isOllama, suggestionsAsk, suggestionsFor, type Provider, type Suggestion } from '../../lib/providers.mts';
+import { chatModels, heldDefaults, isChatgpt, isOllama, offersDownload, pullLine, suggestionsAsk, suggestionsFor, type Provider, type Suggestion } from '../../lib/providers.mts';
 import { RowMenu, Row, Tag, ghostBtn, hintCls, inputCls, primaryBtn, sectionLabel, sectionRule } from './shell';
 import type { Run } from './useProviders';
 
@@ -176,9 +176,56 @@ const ModelInput: React.FC<Props> = ({ provider: p, run, busy, keyEpoch = 0 }) =
           ))}
         </div>
       )}
+      {isOllama(p) && <Download provider={p} list={list} typed={typed} run={run} busy={busy} onDone={() => setTyped('')} />}
+      {isOllama(p) && <a href="https://ollama.com/library" target="_blank" rel="noreferrer" className="mt-1 inline-block text-[11px] font-semibold text-blue-600 hover:text-blue-700 dark:text-blue-400" data-testid="browse-ollama">{W.browseOllama}</a>}
       {list === null && <p data-testid="no-suggestions" className={`${hintCls} mt-1`}>{isOllama(p) ? W.ollamaNotRunning : why === 'key_rejected' ? W.keyRejected : W.noSuggestions}</p>}
       {list && typed.trim() && shown.length === 0 && <p data-testid="no-match" className={`${hintCls} mt-1`}>{W.noMatch}</p>}
     </div>
+  );
+};
+
+/** Ollama: a name typed that is not downloaded gets one line and a button; the engine downloads it
+ *  (`providersApi.pullStart`), progress is read while it runs, and the model is added when whole. */
+const Download: React.FC<{ provider: Props['provider']; list: Suggestion[] | null | undefined; typed: string; run: Run; busy: boolean; onDone: () => void }> = ({ provider: p, list, typed, run, busy, onDone }) => {
+  const [pull, setPull] = useState<PullStatus>({ state: 'none' });
+  const [error, setError] = useState<'not_running' | 'failed' | null>(null);
+  const pulling = pull.state === 'pulling';
+  // One read when the row opens (a download may already run), then every second while one does.
+  useEffect(() => {
+    let live = true;
+    const read = () => providersApi.pullStatus(p.id).then((r) => {
+      if (!live) return;
+      if (r.state === 'failed') setError(r.why);
+      if (r.state === 'done') { setError(null); onDone(); void run(async () => providersApi.list()); }
+      setPull(r.state === 'pulling' ? r : { state: 'none' });
+    }).catch(() => {});
+    void read();
+    if (!pulling) return () => { live = false; };
+    const timer = setInterval(read, 1000);
+    return () => { live = false; clearInterval(timer); };
+  }, [p.id, pulling]);
+  if (pull.state === 'pulling') {
+    return (
+      <p className={`${hintCls} mt-1 flex items-center gap-2`} data-testid="pulling">
+        <span data-no-i18n>{say(W.downloading, { model: pull.model, progress: pullLine(pull.completed, pull.total) })}</span>
+        <button type="button" className="font-semibold text-blue-600 hover:text-blue-700 dark:text-blue-400" onClick={() => void providersApi.pullCancel(p.id).then(() => setPull({ state: 'none' }))}>{W.cancelDownload}</button>
+      </p>
+    );
+  }
+  const start = async () => {
+    setError(null);
+    try { setPull(await providersApi.pullStart(p.id, typed.trim()).then(() => ({ state: 'pulling', model: typed.trim(), completed: 0, total: 0 }) as PullStatus)); } catch { setError('failed'); }
+  };
+  return (
+    <>
+      {offersDownload(p, list, typed) && (
+        <p className={`${hintCls} mt-1 flex items-center gap-2`} data-testid="not-downloaded">
+          <span>{W.notOnThisMac}</span>
+          <button type="button" className={ghostBtn} disabled={busy} onClick={() => void start()}>{W.download}</button>
+        </p>
+      )}
+      {error && <p className={`${hintCls} mt-1 text-red-600`} data-testid="download-failed">{error === 'not_running' ? W.downloadNotRunning : W.downloadFailed}</p>}
+    </>
   );
 };
 

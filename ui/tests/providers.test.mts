@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { W } from '../src/lib/modelsWords.mts';
-import { chatChoices, chatModels, failureLabel, hasProblem, heldDefaults, isChatgpt, ownProviders, readyToUse, suggestionsAsk, suggestionsFor, type Provider, type ProviderModel } from '../src/lib/providers.mts';
+import { chatChoices, chatModels, failureLabel, hasProblem, heldDefaults, isChatgpt, ownProviders, readyToUse, offersDownload, pullLine, suggestionsAsk, suggestionsFor, type Provider, type ProviderModel } from '../src/lib/providers.mts';
 
 const provider = (over: Partial<Provider>): Provider => ({ id: 'p', label: 'Anthropic', way: 'key', provider: 'anthropic', url: '', connected: true, models: [], used_by: [], ...over });
 const model = (id: string, over: Partial<ProviderModel> = {}): ProviderModel => ({ id, model: id, name: id, kind: 'chat', ready: true, builtin: false, ...over });
@@ -80,4 +80,27 @@ test('the list is asked again when the key or the address changes, and not other
   assert.equal(suggestionsAsk(p, 0), suggestionsAsk({ ...p }, 0));
   assert.notEqual(suggestionsAsk(p, 0), suggestionsAsk(p, 1));
   assert.notEqual(suggestionsAsk(p, 0), suggestionsAsk({ ...p, url: 'https://b.example/v1' }, 0));
+});
+
+test('Ollama offers a download for a typed name it does not hold; no other provider does', () => {
+  const ollama = provider({ way: 'local', provider: 'ollama' });
+  const tags = [{ id: 'have:1b' }, { id: 'llama3:latest' }];
+  assert.equal(offersDownload(ollama, tags, 'qwen3:8b'), true);
+  assert.equal(offersDownload(ollama, tags, 'have:1b'), false);
+  assert.equal(offersDownload(ollama, tags, 'llama3'), false);
+  assert.equal(offersDownload(ollama, tags, '  '), false);
+  assert.equal(offersDownload(ollama, null, 'qwen3:8b'), false, 'Ollama not running: nothing to offer');
+  assert.equal(offersDownload(provider({}), tags, 'qwen3:8b'), false);
+  assert.equal(pullLine(2_300_000_000, 4_600_000_000), '50% · 2.3 GB / 4.6 GB');
+});
+
+test('the download line has its button, progress, cancel and failure, and the ollama.com link opens in the browser', async () => {
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(new URL('../src/components/models/KeyRow.tsx', import.meta.url), 'utf8');
+  assert.match(src, /data-testid="not-downloaded"[\s\S]*W\.notOnThisMac[\s\S]*W\.download/);
+  assert.match(src, /providersApi\.pullStart\(p\.id/);
+  assert.match(src, /providersApi\.pullCancel\(p\.id\)/);
+  assert.match(src, /data-testid="download-failed"/);
+  assert.match(src, /href="https:\/\/ollama\.com\/library" target="_blank"/);
+  assert.match(src, /\{isOllama\(p\) && <Download /);
 });

@@ -190,6 +190,13 @@ pub(crate) async fn remove_model(State(state): State<Arc<ServerState>>, headers:
     mutate(state, headers, Edit::RemoveModel(id, model)).await
 }
 
+/// File a model under a provider as if the person had typed it (a finished Ollama download).
+pub(super) async fn add_model(state: &Arc<ServerState>, id: &str, model: &str) -> Result<(), Failure> {
+    let _write = state.settings_write.lock().await;
+    let body = serde_json::to_vec(&json!({"model": model})).map_err(|_| BAD)?;
+    apply(state, Edit::AddModel(id.to_string(), body.into())).await.map(|_| ())
+}
+
 enum Edit {
     Create(Bytes),
     Cloud(CloudTick),

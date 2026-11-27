@@ -121,6 +121,12 @@ export const usesApi = {
   put: (edit: import('./modelUses').UseEdit) => apiPut<import('./modelUses').Uses>('/api/uses', edit),
 };
 
+export type PullStatus =
+  | { state: 'none' }
+  | { state: 'pulling'; model: string; completed: number; total: number }
+  | { state: 'done'; model: string }
+  | { state: 'failed'; model: string; why: 'not_running' | 'failed' };
+
 export const providersApi = {
   list: () => apiGet<ProvidersAnswer>('/api/providers'),
   /** A provider the person picked from `presets`, by its label. */
@@ -134,6 +140,11 @@ export const providersApi = {
   setAddress: (id: string, url: string, keepKey: boolean) => apiPatch<ProvidersAnswer>(provider(id), { url, keep_key: keepKey }),
   /** The ids the provider lists for its key; `null` when the list cannot be read. */
   suggestions: (id: string) => apiGet<{ models: Suggestion[] | null; why?: 'key_rejected' | 'unreachable' }>(`${provider(id)}/suggestions`),
+  /** Ollama only: download a model that is not on this Mac yet; the engine does it and files the model when whole. */
+  pullStart: (id: string, model: string) => apiPost<{ state: 'pulling' }>(`${provider(id)}/pull`, { model }),
+  /** The download's progress; `done` and `failed` are answered once. */
+  pullStatus: (id: string) => apiGet<PullStatus>(`${provider(id)}/pull`),
+  pullCancel: (id: string) => apiDelete<{ state: 'none' }>(`${provider(id)}/pull`),
   /** A model by its id; the engine makes the row's id. */
   addModel: (id: string, model: string) => apiPost<ProvidersAnswer>(`${provider(id)}/models`, { model }),
   removeModel: (id: string, modelId: string) => apiDelete<ProvidersAnswer>(`${provider(id)}/models/${encodeURIComponent(modelId)}`),

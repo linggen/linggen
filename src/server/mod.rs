@@ -116,6 +116,7 @@ async fn prepare_server(
         live_rate: Default::default(),
         settings_write: Default::default(),
         provider_drafts: Default::default(),
+        pulls: Default::default(),
         bridge: Arc::new(bridge::BridgeHub::new()),
         current_view: Arc::new(std::sync::Mutex::new(None)),
         yinyue_presenters: Arc::new(std::sync::Mutex::new(Vec::new())),

@@ -92,6 +92,8 @@ pub struct ServerState {
     pub settings_write: tokio::sync::Mutex<()>,
     /// Providers proposed by the page but not yet filed with a key or model.
     pub(super) provider_drafts: tokio::sync::Mutex<std::collections::BTreeMap<String, (String, String)>>,
+    /// Ollama downloads started from Settings → Models, by provider id (`api::ollama_pull`).
+    pub(super) pulls: tokio::sync::Mutex<std::collections::BTreeMap<String, crate::server::api::ollama_pull::Pull>>,
     /// Browser bridge hub — the connected `linggen-browser` extension (if any)
     /// plus in-flight request correlation. See `server/bridge.rs`.
     pub bridge: Arc<BridgeHub>,

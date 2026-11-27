@@ -53,6 +53,7 @@ pub(super) fn routes() -> Routes {
         .route("/api/providers/{id}", axum::routing::patch(api::providers::edit).delete(api::providers::remove))
         .route("/api/providers/{id}/key", put(api::providers::edit))
         .route("/api/providers/{id}/suggestions", get(api::providers::suggestions))
+        .route("/api/providers/{id}/pull", get(api::ollama_pull::status).post(api::ollama_pull::start).delete(api::ollama_pull::cancel))
         .route("/api/providers/{id}/models", post(api::providers::edit))
         .route("/api/providers/{id}/models/{model_id}", delete(api::providers::remove_model))
         .route("/api/mcp", get(api::config::list_mcp_api))

@@ -101,6 +101,21 @@ export function suggestionsFor(list: Suggestion[] | null | undefined, typed: str
   return list.filter((s) => !have.has(s.id) && (s.id.toLowerCase().includes(q) || !!s.name?.toLowerCase().includes(q))).slice(0, max);
 }
 
+/** Ollama: what is typed is a model name that is not on this Mac yet (the tags did not list it) — offer to download it. */
+export function offersDownload(p: Provider, list: Suggestion[] | null | undefined, typed: string): boolean {
+  const name = typed.trim();
+  if (!isOllama(p) || !list || !name || /\s/.test(name)) return false;
+  const have = new Set([...list.map((s) => s.id), ...p.models.map((m) => m.model)]);
+  return !have.has(name) && !have.has(`${name}:latest`);
+}
+
+/** The download's share and sizes as one short line: `42% · 1.9 / 4.6 GB`; just a percent until the size is known. */
+export function pullLine(completed: number, total: number): string {
+  if (total <= 0) return '…';
+  const gb = (n: number) => (n / 1e9 >= 0.1 ? `${(n / 1e9).toFixed(1)} GB` : `${Math.round(n / 1e6)} MB`);
+  return `${Math.floor((completed / total) * 100)}% · ${gb(completed)} / ${gb(total)}`;
+}
+
 /** When the model input asks the provider for its list: once per row, and again when the
  *  address or the key changes (`keyEpoch` counts the keys saved). The one place that decides it. */
 export const suggestionsAsk = (provider: Provider, keyEpoch: number): string => `${provider.id}|${provider.url}|${keyEpoch}`;

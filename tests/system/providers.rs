@@ -552,3 +552,84 @@ async fn removing_the_chatgpt_provider_signs_out() {
     let models = w.api.get("/api/models").await;
     assert!(!models.as_array().unwrap().iter().any(|m| m["provider"] == "chatgpt" && m["id"] != "fake-sol"));
 }
+
+/// A stand-in Ollama that can pull: `qwen3:8b` streams progress and succeeds; any other name is refused.
+async fn stand_in_pulling_ollama() -> String {
+    use axum::{body::Body, http::StatusCode, response::IntoResponse, routing::{get, post}, Json, Router};
+    let app = Router::new()
+        .route("/api/tags", get(|| async { Json(json!({"models": [{"name": "have:1b"}]})) }))
+        .route("/api/pull", post(|Json(ask): Json<Value>| async move {
+            let line = |v: Value| format!("{v}\n");
+            if ask["model"] != "qwen3:8b" {
+                return (StatusCode::OK, Body::from(line(json!({"error": "pull model manifest: file does not exist"})))).into_response();
+            }
+            let lines = [
+                json!({"status": "pulling manifest"}),
+                json!({"status": "pulling abc", "digest": "abc", "total": 1000, "completed": 400}),
+                json!({"status": "pulling abc", "digest": "abc", "total": 1000, "completed": 1000}),
+                json!({"status": "success"}),
+            ];
+            (StatusCode::OK, Body::from(lines.map(line).concat())).into_response()
+        }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, app).await });
+    url
+}
+
+async fn ollama_row(w: &World, url: &str) -> String {
+    let made = w.api.post("/api/providers", json!({"preset":"Ollama"})).await;
+    let id = provider(&made, "Ollama")["id"].as_str().unwrap().to_string();
+    assert_eq!(w.api.patch_status(&format!("/api/providers/{id}"), json!({"url": url})).await, 200);
+    provider(&w.api.get("/api/providers").await, "Ollama")["id"].as_str().unwrap().to_string()
+}
+
+/// Suggestions are the downloaded tags; a pull of a name that is not downloaded shows progress,
+/// then files the model; a refused pull says so once and adds nothing.
+#[tokio::test]
+async fn an_ollama_model_not_downloaded_is_pulled_then_added_and_a_failed_pull_adds_nothing() {
+    let w = World::start(Setup::default()).await;
+    let url = stand_in_pulling_ollama().await;
+    let id = ollama_row(&w, &url).await;
+    let tags = w.api.get(&format!("/api/providers/{id}/suggestions")).await;
+    assert_eq!(tags["models"], json!([{"id": "have:1b"}]));
+    let route = format!("/api/providers/{id}/pull");
+    assert_eq!(w.api.get(&route).await["state"], "none");
+
+    // An unknown name: failed, one word, nothing added; read once.
+    assert_eq!(w.api.post_status(&route, json!({"model": "nope:1b"})).await, 200);
+    let failed = wait_for_end(&w, &route).await;
+    assert_eq!((failed["state"].as_str(), failed["why"].as_str()), (Some("failed"), Some("failed")), "{failed}");
+    assert_eq!(w.api.get(&route).await["state"], "none");
+    assert!(provider(&w.api.get("/api/providers").await, "Ollama")["models"].as_array().unwrap().is_empty());
+
+    // A known name: pulled, then added like any model.
+    assert_eq!(w.api.post_status(&route, json!({"model": "qwen3:8b"})).await, 200);
+    let done = wait_for_end(&w, &route).await;
+    assert_eq!(done["state"], "done", "{done}");
+    let row = provider(&w.api.get("/api/providers").await, "Ollama").clone();
+    assert_eq!(row["models"][0]["model"], "qwen3:8b");
+
+    // Only Ollama pulls; Ollama not running is its own word.
+    let key_provider = w.api.post("/api/providers", json!({"preset":"DeepSeek"})).await;
+    let other = provider(&key_provider, "DeepSeek")["id"].as_str().unwrap().to_string();
+    assert_eq!(w.api.post_status(&format!("/api/providers/{other}/pull"), json!({"model": "x:1"})).await, 400);
+    let dead = ollama_row_at(&w, "http://127.0.0.1:9").await;
+    assert_eq!(w.api.post_status(&format!("/api/providers/{dead}/pull"), json!({"model": "qwen3:8b"})).await, 200);
+    assert_eq!(wait_for_end(&w, &format!("/api/providers/{dead}/pull")).await["why"], "not_running");
+}
+
+async fn ollama_row_at(w: &World, url: &str) -> String {
+    let id = provider(&w.api.get("/api/providers").await, "Ollama")["id"].as_str().unwrap().to_string();
+    assert_eq!(w.api.patch_status(&format!("/api/providers/{id}"), json!({"url": url})).await, 200);
+    provider(&w.api.get("/api/providers").await, "Ollama")["id"].as_str().unwrap().to_string()
+}
+
+async fn wait_for_end(w: &World, route: &str) -> Value {
+    for _ in 0..100 {
+        let answer = w.api.get(route).await;
+        if answer["state"] != "pulling" { return answer; }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    panic!("the pull never ended");
+}

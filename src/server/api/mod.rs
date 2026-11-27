@@ -23,6 +23,8 @@ pub(super) mod outside_apps;
 pub(crate) mod pair;
 pub(super) mod people;
 pub(super) mod permissions;
+/// `pub(crate)`: `ServerState` holds its `Pull` records.
+pub(crate) mod ollama_pull;
 pub(super) mod providers;
 pub(super) mod quests;
 pub(super) mod rooms;
