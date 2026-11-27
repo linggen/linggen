@@ -16,11 +16,15 @@ upgrade_28_seed() {
 upgrade_28_get() { curl -fsS -m 20 "http://127.0.0.1:$EP/api/$1" -o "$2"; }
 
 upgrade_28_before() {
+  # Published 2.7.0 reads the edition and price. The later 2.7-line keys
+  # (price_lookup and spend_caps) are only present in the input TOML here.
+  local config="$LG/config/linggen.runtime.toml"
   upgrade_28_get config "$OUT/config-2.7.json" &&
-    jq -e '.model_catalog.edition == "mainland" and .spend_caps["gate-legacy"] == 1 and
-      any(.models[]; .id == "gate-legacy-price" and .price.input == 1 and .price_lookup != null)' \
-      "$OUT/config-2.7.json" >/dev/null
-  check "2.8 upgrade: 2.7 reads the retired settings" $? "missing seeded edition, price, lookup or cap in /api/config"
+    jq -e '.model_catalog.edition == "mainland" and
+      any(.models[]; .id == "gate-legacy-price" and .price.input == 1)' \
+      "$OUT/config-2.7.json" >/dev/null &&
+    grep -Fqx '[spend_caps]' "$config" && grep -q '^price_lookup = ' "$config"
+  check "2.8 upgrade: legacy settings present in baseline" $? "edition/price missing from 2.7 API or lookup/cap missing from input TOML"
 }
 
 upgrade_28_models() {
