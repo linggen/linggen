@@ -375,15 +375,11 @@ pub(crate) fn stored_key(p: &Provider, configured: &[ModelConfig], creds: &Crede
     }
 }
 
-/// Same key sources as the live route, using the providers view's snapshot.
-pub(crate) fn key_ready(p: &Provider, configured: &[ModelConfig], creds: &Credentials) -> bool {
-    provider_key(p, || stored_key(p, configured, creds)).is_some()
-}
-
-/// Whether the person removed `p`'s live line from their own key's row
-/// (`Config::live_off`). Only their own key is affected, never Linggen Cloud.
-pub fn is_off(p: &Provider, live_off: &[String]) -> bool {
-    live_off.iter().any(|id| id == p.id)
+/// The development switch (`LINGGEN_LIVE_DEV` set and not blank): a lesson may then be paid
+/// by an own key — Gemini Live and the scratch-engine key knobs. Off for people: live voice
+/// is Linggen Cloud's alone, and no page offers an own-key line.
+fn dev_switch() -> bool {
+    std::env::var("LINGGEN_LIVE_DEV").is_ok_and(|v| !v.trim().is_empty())
 }
 
 /// Who pays for a lesson. A closed set: the one `match` that reads it is
@@ -406,26 +402,20 @@ impl Source {
     }
 }
 
-/// Who pays for a lesson on `p` now — THE order of preference: the person's
-/// own key first, then Linggen Cloud for a subscriber; none when neither.
+/// Who pays for a lesson on `p` now: Linggen Cloud for a subscriber, and nothing else —
+/// except under the development switch, where an own key comes first.
 /// The page names a service (`alibaba`), never who pays: this decides it.
-pub fn find_source(p: &Provider, configured: &[ModelConfig], live_off: &[String]) -> Option<Source> {
-    let own = (!is_off(p, live_off)).then(|| find_key(p, configured)).flatten();
+pub fn find_source(p: &Provider, configured: &[ModelConfig]) -> Option<Source> {
+    let own = dev_switch().then(|| find_key(p, configured)).flatten();
     own.map(Source::OwnKey).or_else(|| {
         (p.via_cloud && crate::account::cloud_voice::live_usable()).then_some(Source::LinggenCloud)
     })
 }
 
-/// Move the preferred service to the front, keeping the declared fallback order.
-pub fn in_order(pref: Option<&str>) -> impl Iterator<Item = &'static Provider> {
-    let preferred = pref.and_then(provider_named);
-    preferred.into_iter().chain(PROVIDERS.iter().filter(move |p| Some(p.id) != preferred.map(|p| p.id)))
-}
-
-/// The one provider a page is offered: the first declared. Explicit token requests
-/// can still name a development provider.
+/// The one provider a page is offered: the first Linggen Cloud gives keys for. A
+/// development provider (Gemini) is reachable only by an explicit token request under the switch.
 pub fn offered_to_pages() -> Option<&'static Provider> {
-    PROVIDERS.first()
+    PROVIDERS.iter().find(|p| p.via_cloud)
 }
 
 /// The knob wins when set and not blank; otherwise what is stored.
@@ -582,11 +572,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_live_preference_moves_only_its_provider() {
-        let ids = |pref| in_order(pref).map(|p| p.id).collect::<Vec<_>>();
-        assert_eq!(ids(None), ["alibaba", "google"]);
-        assert_eq!(ids(Some("google")), ["google", "alibaba"]);
-        assert_eq!(ids(Some("unknown")), ids(None));
+    fn only_a_cloud_service_is_offered_to_pages() {
+        assert_eq!(offered_to_pages().map(|p| p.id), Some("alibaba"));
     }
 
     fn google() -> &'static Provider {

@@ -1,8 +1,7 @@
 /**
  * One provider the person pays with a key. Under its head: the key (pasted
  * once; the page only ever learns that it is set), the models the person
- * added — one input that suggests ids from the provider's own list — the
- * live-voice lines, and the address of a provider the person typed. Ollama is
+ * added — one input that suggests ids from the provider's own list — and the address of a provider the person typed. Ollama is
  * the same row with an address and no key. The ⋯
  * menu removes the provider. Every action calls its route (lib/endpoints `providersApi`).
  */
@@ -11,7 +10,7 @@ import { X } from 'lucide-react';
 import { providersApi } from '../../lib/endpoints';
 import { confirmDialog } from '../../lib/confirmDialog';
 import { W, say } from '../../lib/modelsWords.mts';
-import { chatModels, heldDefaults, isChatgpt, isOllama, liveModels, suggestionsAsk, suggestionsFor, type Provider, type Suggestion } from '../../lib/providers.mts';
+import { chatModels, heldDefaults, isChatgpt, isOllama, suggestionsAsk, suggestionsFor, type Provider, type Suggestion } from '../../lib/providers.mts';
 import { RowMenu, Row, Tag, ghostBtn, hintCls, inputCls, primaryBtn, sectionLabel, sectionRule } from './shell';
 import type { Run } from './useProviders';
 
@@ -109,12 +108,11 @@ const KeyField: React.FC<Props & { onSaved: () => void }> = ({ provider: p, run,
   );
 };
 
-/** The models: what was added (✕ removes), one input with suggestions, the live-voice lines. */
+/** The models: what was added (✕ removes), one input with suggestions, and for a key provider the note that these are chat models. */
 export const Models: React.FC<Props> = (props) => {
   // The ChatGPT card has no key: its list of models is the same, its input suggests ChatGPT's own ids.
   const { provider: p, run, busy, makeDefault } = props;
   const added = chatModels(p);
-  const live = liveModels(p);
   return (
     <div className={`${sectionRule} grid gap-2 sm:grid-cols-[4rem_minmax(0,1fr)]`}>
       <span className={sectionLabel}>{W.models}</span>
@@ -130,17 +128,7 @@ export const Models: React.FC<Props> = (props) => {
         ))}
         {(p.key?.set || isOllama(p) || isChatgpt(p)) && <ModelInput {...props} />}
         {!p.key?.set && !isOllama(p) && !isChatgpt(p) && !added.length && <p className={hintCls}>{W.keyFirst}</p>}
-        {live.map((m) => (
-          <div key={m.id} className="mt-1 flex flex-wrap items-center gap-1.5 text-xs" data-testid="live-model">
-            <span className="font-semibold" data-no-i18n>{m.model}</span>
-            <Tag>{W.liveTag}</Tag>
-            <span className={hintCls}>{m.ready ? W.liveAvailable : W.liveMissingKey}</span>
-            <span className={hintCls}>{W.lingyuUses}</span>
-            <button type="button" aria-label={say(W.removeModelNamed, { model: m.model })} className="rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-red-600 disabled:opacity-50 dark:hover:bg-white/10" disabled={busy} onClick={() => void run(() => providersApi.removeModel(p.id, m.id))}>
-              <X size={12} />
-            </button>
-          </div>
-        ))}
+        {!isOllama(p) && !isChatgpt(p) && <p className={`${hintCls} mt-1`} data-testid="chat-models-note">{W.chatModelsNote}</p>}
       </div>
     </div>
   );

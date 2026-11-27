@@ -142,6 +142,8 @@ impl QwenApi {
 async fn world_env(mut env: Vec<(&'static str, String)>, lan: bool) -> World {
     // Nothing stored on this machine may stand in for a knob.
     env.push(("LINGGEN_API_KEY_GEMINI", String::new()));
+    // The development switch: own keys and Gemini Live are for development testing only.
+    env.push(("LINGGEN_LIVE_DEV", "1".to_string()));
     World::start(Setup {
         env,
         lan,
@@ -456,7 +458,7 @@ model = "deepseek-v4.1-flash"
     let api = QwenApi::start(Answer::Token).await;
     let w = World::start(Setup {
         config_append: Some(ROW),
-        env: vec![("LINGGEN_LIVE_ALIBABA_BASE", api.url.clone()), ("LINGGEN_LIVE_ALIBABA_KEY", String::new())],
+        env: vec![("LINGGEN_LIVE_ALIBABA_BASE", api.url.clone()), ("LINGGEN_LIVE_ALIBABA_KEY", String::new()), ("LINGGEN_LIVE_DEV", "1".into())],
         ..Setup::default()
     }).await;
     assert_eq!(w.api.put_json("/api/credentials", json!({"endpoints":[
@@ -473,7 +475,7 @@ model = "deepseek-v4.1-flash"
     let groups: Vec<_> = result["providers"].as_array().unwrap().iter().filter(|p| p["label"] == "Qwen Cloud").collect();
     assert_eq!(groups.len(), 1);
     assert_eq!(groups[0]["key"], json!({"set":true,"conflict":true,"can_keep_model_key":true}));
-    assert_eq!(groups[0]["models"].as_array().unwrap().len(), 2);
+    assert_eq!(groups[0]["models"].as_array().unwrap().len(), 1);
     let id = groups[0]["id"].as_str().unwrap();
     let key_route = format!("/api/providers/{id}/key");
     let action = json!({"action":"keep_model_key"});
@@ -652,4 +654,23 @@ async fn a_phone_that_is_not_the_owner_cannot_ask_for_a_qwen_short_key() {
         "a request went out for a caller that is not the owner"
     );
     assert_eq!(post_token(&w, json!({"provider": "alibaba"})).await.0, 200);
+}
+
+/// Live voice is Linggen Cloud's alone: without the development switch an own key pays for nothing.
+#[tokio::test]
+async fn a_persons_own_key_never_pays_for_live_voice() {
+    let api = QwenApi::start(Answer::Token).await;
+    let w = World::start(Setup {
+        env: vec![
+            ("LINGGEN_LIVE_ALIBABA_BASE", api.url.clone()),
+            ("LINGGEN_LIVE_ALIBABA_KEY", QWEN_KEY.to_string()),
+        ],
+        ..Setup::default()
+    })
+    .await;
+    let listed = w.api.get("/api/live").await;
+    assert_eq!(listed["providers"][0]["ready"], false, "{listed}");
+    assert_ne!(listed["providers"][0]["via"], "own_key", "{listed}");
+    let (status, _) = post_token(&w, json!({"provider": "alibaba"})).await;
+    assert_ne!(status, 200);
 }

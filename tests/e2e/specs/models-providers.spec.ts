@@ -53,7 +53,7 @@ model = "deepseek-v4.1-flash"
 `,
   } });
 
-  test('one card shows the model and live voice, and can remove only the unused key', async ({ page, world, httpRequests, request }) => {
+  test('one card shows the model, and can remove only the unused key', async ({ page, world, httpRequests, request }) => {
     const other = 'unused-test-key-marker';
     const filed = await request.put(`${world.url}/api/credentials`, { data: { endpoints: [
       { provider: 'openai', url, api_key: KEY },
@@ -67,7 +67,8 @@ model = "deepseek-v4.1-flash"
     await expect(row).toHaveCount(1);
     await row.getByRole('button', { name: /Qwen Cloud/ }).click();
     await expect(row.getByTestId('added-model')).toHaveText(/deepseek-v4.1-flash/);
-    await expect(row.getByTestId('live-model')).toHaveCount(1);
+    await expect(row.getByTestId('live-model')).toHaveCount(0);
+    await expect(row.getByTestId('chat-models-note')).toContainText('用于聊天');
     await expect(row.getByTestId('key-conflict')).toContainText('这个地址存了两把不同的密钥');
     await row.getByRole('button', { name: '保留模型使用的密钥' }).click();
     await expect(row.getByTestId('key-set')).toHaveText('已设置密钥');
@@ -136,31 +137,14 @@ test("Linggen Cloud's models are ticked like rows and offered on the default car
   await expect(page.getByTestId('cloud-model').filter({ hasText: 'Stand-in Max' }).getByRole('checkbox')).toBeChecked();
 });
 
-for (const [label, model] of [['Google Gemini', 'gemini-3.8-live'], ['Qwen Cloud', 'qwen-audio-3.1-realtime-flash']]) {
-  test(`${label} shows its declared live model without a chat row`, async ({ page, world, httpRequests }) => {
-    await page.goto(`${world.url}/settings/models?lang=zh`);
-    await expectWebRtc(page, httpRequests);
-    await openOwnProviders(page);
-    if (label === 'Google Gemini') {
-      await expect(page.getByTestId('models-page')).toBeVisible();
-      await expect(page.getByText(model, { exact: true })).toHaveCount(0);
-      return;
-    }
-    const row = provider(page, label);
-    await row.getByRole('button').first().click();
-    const line = row.getByTestId('live-model');
-    await expect(line).toHaveCount(1);
-    await expect(line).toContainText(model);
-    await expect(line).toContainText('实时语音');
-    await expect(line).toContainText('缺密钥');
-    await row.getByTestId('key-input').fill(KEY);
-    await row.getByTestId('key-input').press('Enter');
-    await expect(line).toContainText('可用');
-    await expect(line).toContainText('灵语使用');
-    await expect(line.getByRole('checkbox')).toHaveCount(0);
-    await expect(page.getByTestId('default-chat').locator('option').filter({hasText: model})).toHaveCount(0);
-  });
-}
+test('a key row has no live-voice line and says its models are for chat', async ({ page, world, httpRequests }) => {
+  await page.goto(`${world.url}/settings/models?lang=zh`);
+  await expectWebRtc(page, httpRequests);
+  await openOwnProviders(page);
+  const row = await addAnthropic(page);
+  await expect(row.getByTestId('live-model')).toHaveCount(0);
+  await expect(row.getByTestId('chat-models-note')).toContainText('这里添加的模型用于聊天，请选文字模型。实时语音和朗读由 Linggen Cloud 提供。');
+});
 
 test.describe('a narrow window', () => {
   test.use({ viewport: { width: 420, height: 900 } });

@@ -311,7 +311,7 @@ is ready.
   (this month; absent for the developer account). Cloud adds refusals
   `not_subscribed` 402, `lessons_used` 429, `daily_cap` 429.
 - **`GET /api/live`** → `{providers: [{id, ready, via?, why?}]}`; `via` =
-  `own_key` or `linggen_cloud` when ready, `why` = `no_key` or `not_owner`. A
+  `linggen_cloud` when ready (`own_key` only under `LINGGEN_LIVE_DEV`), `why` = `no_key` or `not_owner`. A
   subscriber with no own key reads ready `via: linggen_cloud`. Calls no provider
   (may read the account's entitlement, 2 s at most).
 - **Owner only**: below the owner, 403 `beyond_level`.

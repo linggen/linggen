@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { W } from '../src/lib/modelsWords.mts';
-import { chatChoices, chatModels, failureLabel, hasProblem, heldDefaults, isChatgpt, liveModels, ownProviders, readyToUse, suggestionsAsk, suggestionsFor, type Provider, type ProviderModel } from '../src/lib/providers.mts';
+import { chatChoices, chatModels, failureLabel, hasProblem, heldDefaults, isChatgpt, ownProviders, readyToUse, suggestionsAsk, suggestionsFor, type Provider, type ProviderModel } from '../src/lib/providers.mts';
 
 const provider = (over: Partial<Provider>): Provider => ({ id: 'p', label: 'Anthropic', way: 'key', provider: 'anthropic', url: '', connected: true, models: [], used_by: [], ...over });
 const model = (id: string, over: Partial<ProviderModel> = {}): ProviderModel => ({ id, model: id, name: id, kind: 'chat', ready: true, builtin: false, ...over });
@@ -17,7 +17,6 @@ test('a chat choice is named as the engine names it, ready ones only', () => {
 test('a live voice is a reference on its provider, never a default to pick', () => {
   const p = provider({ models: [model('live:alibaba', { model: 'qwen-audio-3.1-realtime-flash', kind: 'live_voice', builtin: true })], used_by: ['live_voice'] });
   assert.deepEqual(chatChoices([p]), []);
-  assert.equal(liveModels(p).length, 1);
 });
 
 test('typing suggests the provider\'s own ids that match, hides nothing else, and leaves out what is added', () => {
@@ -60,13 +59,11 @@ test('only Linggen Cloud stays in the top block; the ChatGPT sign-in is an own p
   assert.equal(isChatgpt(key), false);
 });
 
-test('a live line on a key row has the same ✕ as an added model, calling the remove route', async () => {
+test('a key row says its models are for chat and has no live-voice line; Ollama and ChatGPT carry no such note', async () => {
   const { readFileSync } = await import('node:fs');
   const src = readFileSync(new URL('../src/components/models/KeyRow.tsx', import.meta.url), 'utf8');
-  const line = src.slice(src.indexOf('data-testid="live-model"'));
-  const block = line.slice(0, line.indexOf('</div>'));
-  assert.match(block, /providersApi\.removeModel\(p\.id, m\.id\)/);
-  assert.match(block, /<X size=\{12\} \/>/);
+  assert.doesNotMatch(src, /live-model|liveModels/);
+  assert.match(src, /!isOllama\(p\) && !isChatgpt\(p\) && <p[^>]*chat-models-note[^>]*>\{W\.chatModelsNote\}/);
 });
 
 test('the ChatGPT row shows the shared model list and input, with no key field', async () => {

@@ -8,10 +8,9 @@ use serde_json::json;
 
 use crate::config::{providers::{known_names, Way}, Config, SignIn};
 use crate::provider::models::presets::{self as preset_table, ApiStyle};
-use crate::provider::models::providers_view::{chatgpt_add, chatgpt_suggestions, ChatgptAdd, editable_row, is_listed_address, chatgpt_card_id, linggen_cloud_card_at, live_card_at, presets, filed_endpoint, group_keys, keep_model_key, provider_id, ProviderView};
+use crate::provider::models::providers_view::{chatgpt_add, chatgpt_suggestions, ChatgptAdd, editable_row, is_listed_address, chatgpt_card_id, linggen_cloud_card_at, presets, filed_endpoint, group_keys, keep_model_key, provider_id, ProviderView};
 use crate::provider::models::{cloud_tick, suggest};
 use crate::credentials::{self, Credentials};
-use crate::live;
 use crate::server::{person, ServerState};
 
 pub(crate) async fn list(State(state): State<Arc<ServerState>>, headers: HeaderMap) -> Response {
@@ -216,10 +215,7 @@ pub(super) async fn endpoint(state: &ServerState, config: &Config, creds: &Crede
     let pair = match filed {
         Some(pair) => pair,
         None => {
-            let draft = state.provider_drafts.lock().await.get(id).cloned();
-            // A live voice's card has no row or key yet: the list names where it is shown.
-            let live = live_card_at(id);
-            draft.or(live).ok_or(MISSING)?
+            state.provider_drafts.lock().await.get(id).cloned().ok_or(MISSING)?
         },
     };
     if !known_names().contains(&pair.0.as_str()) || pair.0 == "chatgpt" { return Err(BAD); }
@@ -345,15 +341,6 @@ async fn apply(state: &Arc<ServerState>, edit: Edit) -> Result<(Config, Credenti
         Edit::AddModel(id, body) => {
             let model = parse::<NewModel>(&body)?;
             address(&url)?;
-            // Typing the id of a live voice that is off turns its line back on: no model row is filed.
-            let off_voice = live::at_model(&credentials::url_host(&url).unwrap_or_default(), &model.model)
-                .filter(|voice| live::is_off(voice, &config.live_off));
-            if let Some(voice) = off_voice {
-                config.live_off.retain(|off| off != voice.id);
-                save_config(state, &config).await?;
-                state.provider_drafts.lock().await.remove(&id);
-                return Ok((config, creds));
-            }
             let row_id = model.id.unwrap_or_else(|| config.fresh_model_id("own"));
             let row = serde_json::from_value(json!({"id": row_id, "model": model.model, "provider": name, "url": url})).map_err(|_| BAD)?;
             config.models.push(row);
@@ -361,13 +348,6 @@ async fn apply(state: &Arc<ServerState>, edit: Edit) -> Result<(Config, Credenti
             state.provider_drafts.lock().await.remove(&id);
         }
         Edit::RemoveModel(id, model) => {
-            // A live voice's line (`live:<provider>`) is not a row: removing it files it as off.
-            if let Some(voice) = model.strip_prefix("live:").and_then(live::provider_named) {
-                if live_card_at(&id).is_none() { return Err(MISSING); }
-                if !live::is_off(voice, &config.live_off) { config.live_off.push(voice.id.to_string()); }
-                save_config(state, &config).await?;
-                return Ok((config, creds));
-            }
             let index = config.models.iter().position(|row| row.id == model && editable_row(row, &id)).ok_or(MISSING)?;
             let row = config.models.remove(index);
             validate_config(&config)?;

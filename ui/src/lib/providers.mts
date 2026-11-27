@@ -93,9 +93,6 @@ export const hasProblem = (p: Provider): boolean =>
 /** The provider's chat models, as the person added them. */
 export const chatModels = (provider: Provider): ProviderModel[] => provider.models.filter((m) => m.kind === 'chat');
 
-/** The live-voice lines of a provider: tagged, never a chat default. */
-export const liveModels = (provider: Provider): ProviderModel[] => provider.models.filter((m) => m.kind === 'live_voice');
-
 /** The suggestions that match what is typed, leaving out what is added: no id is hidden otherwise. */
 export function suggestionsFor(list: Suggestion[] | null | undefined, typed: string, added: string[], max = 8): Suggestion[] {
   const q = typed.trim().toLowerCase();

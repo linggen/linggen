@@ -82,20 +82,17 @@ async fn deleting_the_last_voice_row_files_its_override_as_the_endpoint_key() {
     let w = World::start(Setup::default()).await;
     let body = w.api.post("/api/providers", json!({"preset":"Qwen Cloud"})).await;
     let id = provider(&body, "Qwen Cloud")["id"].as_str().unwrap();
-    // The live line shows on a row the person has: give it a key first.
     assert_eq!(w.api.put_json(&format!("/api/providers/{id}/key"), json!({"api_key":"other-marker"})).await.0, 200);
     let base = format!("/api/providers/{id}/models");
-    let body = w.api.post(&base, json!({"id":"voice","model":"qwen-audio-3.1-realtime-flash"})).await;
-    assert_eq!(provider(&body, "Qwen Cloud")["models"][0]["kind"], "live_voice");
+    // A typed id is not refused; a live-voice row is in no chat list and shows no line.
+    w.api.post(&base, json!({"id":"voice","model":"qwen-audio-3.1-realtime-flash"})).await;
     assert_eq!(w.api.put_json("/api/credentials", json!({"models":{"voice":{"api_key":"test-only-marker"}}})).await.0, 200);
     let body = w.api.delete(&format!("{base}/voice"), json!({})).await;
     let qwen = provider(&body, "Qwen Cloud");
-    assert_eq!(qwen["models"].as_array().unwrap().len(), 1);
-    assert_eq!(qwen["models"][0]["id"], "live:alibaba");
+    assert!(qwen["models"].as_array().unwrap().is_empty(), "no live line is shown on a key row");
     assert_eq!(qwen["key"]["set"], true);
     assert!(!body.to_string().contains("test-only-marker"));
     assert_eq!(w.api.get("/api/credentials").await["models"], json!({}));
-    assert_eq!(w.api.get("/api/live").await["providers"][0]["ready"], true);
 }
 
 async fn file_key(w: &World, label: &str) -> Value {
@@ -112,27 +109,15 @@ async fn file_key(w: &World, label: &str) -> Value {
     body
 }
 
-fn voice<'a>(body: &'a Value, label: &str, model: &str) -> &'a Value {
-    let rows: Vec<_> = provider(body, label)["models"].as_array().unwrap().iter()
-        .filter(|row| row["kind"] == "live_voice").collect();
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0]["model"], model);
-    rows[0]
-}
-
+/// Live voice is Linggen Cloud's: an own key adds no live line to its row, and the stored
+/// `live_off` of an older file is ignored.
 #[tokio::test]
-async fn removing_the_live_line_turns_the_own_key_off_and_typing_its_id_turns_it_on() {
-    let w = World::start(Setup::default()).await;
-    let model = "qwen-audio-3.1-realtime-flash";
+async fn a_key_row_has_no_live_line_and_an_old_live_off_is_ignored() {
+    let w = World::start(Setup { config_append: Some("live_off = [\"alibaba\"]\n"), ..Setup::default() }).await;
     let body = file_key(&w, "Qwen Cloud").await;
-    let id = provider(&body, "Qwen Cloud")["id"].as_str().unwrap().to_string();
-    assert_eq!(w.api.get("/api/live").await["providers"][0], json!({"id": "alibaba", "ready": true, "via": "own_key"}));
-    let body = w.api.delete(&format!("/api/providers/{id}/models/live:alibaba"), json!({})).await;
-    assert!(provider(&body, "Qwen Cloud")["models"].as_array().unwrap().is_empty());
-    assert_eq!(w.api.get("/api/live").await["providers"][0], json!({"id": "alibaba", "ready": false, "why": "no_key"}));
-    let body = w.api.post(&format!("/api/providers/{id}/models"), json!({"model": model})).await;
-    assert_eq!(voice(&body, "Qwen Cloud", model)["id"], "live:alibaba");
-    assert_eq!(w.api.get("/api/live").await["providers"][0], json!({"id": "alibaba", "ready": true, "via": "own_key"}));
+    let qwen = provider(&body, "Qwen Cloud");
+    assert!(qwen["models"].as_array().unwrap().iter().all(|m| m["kind"] != "live_voice"), "{qwen}");
+    assert_ne!(w.api.get("/api/live").await["providers"][0]["via"], "own_key");
 }
 
 #[tokio::test]
@@ -146,17 +131,13 @@ async fn gemini_live_is_not_offered_even_when_google_has_a_key() {
 }
 
 #[tokio::test]
-async fn qwen_live_is_first_when_both_are_ready() {
+async fn no_provider_row_shows_a_live_line_or_a_live_model_in_the_model_lists() {
     let w = World::start(Setup::default()).await;
-    let model = "qwen-audio-3.1-realtime-flash";
-    // No key and no model: no Qwen row, so no live line.
-    assert!(!w.api.get("/api/providers").await["providers"].as_array().unwrap().iter().any(|p| p["label"] == "Qwen Cloud"));
     file_key(&w, "Google Gemini").await;
     let body = file_key(&w, "Qwen Cloud").await;
-    assert!(voice(&body, "Qwen Cloud", model).get("first").is_none());
-    assert_eq!(voice(&body, "Qwen Cloud", model)["ready"], w.api.get("/api/live").await["providers"][0]["ready"]);
+    assert!(!body.to_string().contains("live:alibaba"));
     assert!(!body.to_string().contains("gemini-3.8-live"));
-    assert!(!w.api.get("/api/models").await.to_string().contains(model));
+    assert!(!w.api.get("/api/models").await.to_string().contains("qwen-audio-3.1-realtime-flash"));
 }
 
 #[tokio::test]
@@ -179,7 +160,7 @@ model = "gemini-3.8-live"
     let key = json!({"endpoints": [{"provider": "qwen", "url": "https://ap-southeast-1.maas.qwencloudapi.com/compatible-mode/v1", "api_key": "test-only-marker"}]});
     assert_eq!(w.api.put_json("/api/credentials", key).await.0, 200);
     let body = w.api.get("/api/providers").await;
-    for (host, label, model) in [
+    for (host, label, _model) in [
         ("ap-southeast-1.maas.qwencloudapi.com", "Qwen Cloud", "qwen-audio-3.1-realtime-flash"),
         ("generativelanguage.googleapis.com", "Google Gemini", "gemini-3.8-live"),
     ] {
@@ -191,7 +172,7 @@ model = "gemini-3.8-live"
         }
         assert_eq!(groups.len(), 1, "{label}: {groups:?}");
         assert_eq!(groups[0]["label"], label);
-        voice(&body, label, model);
+        assert!(groups[0]["models"].as_array().unwrap().iter().all(|m| m["kind"] != "live_voice"), "{label}");
     }
 }
 
@@ -217,7 +198,6 @@ async fn qwen_aliases_with_the_same_key_share_one_card() {
     assert_eq!(qwen["key"], json!({"set":true}));
     assert_eq!(qwen["provider"], "qwen");
     assert!(qwen["models"].as_array().unwrap().iter().any(|m| m["id"] == "own-flash" && m["ready"] == true));
-    assert_eq!(voice(&body, "Qwen Cloud", "qwen-audio-3.1-realtime-flash")["ready"], true);
     assert!(!body.to_string().contains("model-key-marker"));
 }
 

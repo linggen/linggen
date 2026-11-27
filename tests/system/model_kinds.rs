@@ -18,7 +18,7 @@ model = "qwen-audio-3.1-realtime-flash"
 async fn world() -> World {
     World::start(Setup {
         config_append: Some(LIVE_ROW),
-        env: vec![("LINGGEN_LIVE_ALIBABA_KEY", "test-not-a-key".into())],
+        env: vec![("LINGGEN_LIVE_ALIBABA_KEY", "test-not-a-key".into()), ("LINGGEN_LIVE_DEV", "1".into())],
         ..Setup::default()
     })
     .await

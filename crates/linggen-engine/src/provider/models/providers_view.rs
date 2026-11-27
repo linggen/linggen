@@ -5,7 +5,6 @@ use crate::config::providers::Way;
 use crate::config::{Config, ModelConfig, SignIn};
 use crate::credentials::{self, Credentials};
 use crate::provider::kinds::{kind_of, Kind};
-use crate::live;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -124,7 +123,7 @@ fn uses_endpoint_key(row: &ModelConfig, creds: &Credentials) -> bool {
 }
 
 /// Compute the cleanup on a copy. Refuse if no model uses an endpoint key,
-/// or if removing any different key would change a model's or live voice's key.
+/// or if removing any different key would change a model's key.
 /// The view and the owner-only write use this same check; no keys leave it.
 pub fn keep_model_key(config: &Config, creds: &Credentials, id: &str) -> Option<Credentials> {
     let row = config.models.iter().find(|r| editable_row(r, id) && uses_endpoint_key(r, creds))?;
@@ -134,7 +133,6 @@ pub fn keep_model_key(config: &Config, creds: &Credentials, id: &str) -> Option<
         || e.api_key.as_deref().is_none_or(|k| k.is_empty() || k == key));
     if next.endpoints.len() == creds.endpoints.len()
         || config.models.iter().any(|row| credentials::resolve_api_key(row, creds) != credentials::resolve_api_key(row, &next))
-        || live::PROVIDERS.iter().any(|p| live::stored_key(p, &config.models, creds) != live::stored_key(p, &config.models, &next))
     {
         return None;
     }
@@ -268,21 +266,6 @@ impl ModelManager {
             group.mark_key(set);
             group.connected |= set && group.models.is_empty();
         }
-        // A line the person removed from their own key's row is not shown (`Config::live_off`).
-        for voice in live::offered_to_pages().into_iter().filter(|v| !live::is_off(v, &config.live_off)) {
-            let ready = live::key_ready(voice, &config.models, creds);
-            // The line is shown on the preset at the voice's host; a host with no preset has none.
-            let Some(preset) = live_preset(voice) else { continue };
-            let id = provider_id(SignIn::Key, preset.name, preset.url);
-            // A live voice alone never makes a row: only a provider the person already has (a key or a model).
-            let Some(group) = groups.get_mut(&id) else { continue };
-            // A legacy live row can supply its key, but only the preset owns the line.
-            group.mark_key(ready);
-            group.add(ProviderModel {
-                id: format!("live:{}", voice.id), model: voice.model.into(), kind: Kind::LiveVoice.as_str(),
-                ready, why: (!ready).then_some(NotReady::NoKey), builtin: true, name: voice.model.into(), first: false,
-            });
-        }
         let mut providers: Vec<_> = groups.into_values().collect();
         for group in &mut providers {
             if let Some(key) = &mut group.key {
@@ -357,11 +340,6 @@ pub fn chatgpt_suggestions() -> Option<Vec<super::suggest::Suggestion>> {
     })
 }
 
-/// The preset a live voice's key is filed at: the one at its host.
-fn live_preset(voice: &crate::live::Provider) -> Option<&'static presets::Preset> {
-    presets::PRESETS.iter().find(|p| p.way == Way::Key && crate::credentials::url_host(p.url).is_some_and(|h| h.eq_ignore_ascii_case(voice.key_host())))
-}
-
 /// What the page offers to add, in the table's order (`presets::PRESETS`).
 pub fn presets() -> Vec<serde_json::Value> {
     let keyed = presets::PRESETS.iter().map(|p| serde_json::json!({
@@ -377,12 +355,6 @@ pub fn presets() -> Vec<serde_json::Value> {
 /// The ChatGPT sign-in's card has no row or key to find it by: its id is the sign-in's.
 pub fn chatgpt_card_id() -> String {
     provider_id(SignIn::ChatGpt, "chatgpt", crate::provider::codex_auth::CHATGPT_API_BASE)
-}
-
-/// Where a live voice's card sits when it has no row or key yet: the preset at its host.
-pub fn live_card_at(id: &str) -> Option<(String, String)> {
-    let preset = live::offered_to_pages().and_then(live_preset)?;
-    (provider_id(SignIn::Key, preset.name, preset.url) == id).then(|| (preset.name.to_string(), preset.url.to_string()))
 }
 
 /// Linggen Cloud's card has no row or key to find it by: its id is the account's.

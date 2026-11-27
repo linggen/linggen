@@ -104,6 +104,7 @@ export const W = {
   modelInput: 'Type a model name to search',
   noMatch: 'No model matches. Press Enter to add it as typed.',
   noSuggestions: 'Could not read this provider\u2019s list. Type the full model ID and press Enter.',
+  chatModelsNote: 'Models added here are for chat — pick text models. Live voice and read-aloud come from Linggen Cloud.',
   keyRejected: 'The key is wrong (the provider rejected it).',
   ollamaNotRunning: 'Ollama is not running. Start it, or type a model name and press Enter.',
   removeModelNamed: 'Remove {model}',
@@ -113,10 +114,7 @@ export const W = {
   removeHoldsDefault: 'It holds your default chat model.',
   removeHoldsFallbacks: 'It holds {n} fallback models.',
   // ── A model line ──
-  liveTag: 'Live voice',
-  liveAvailable: 'Available',
   liveMissingKey: 'Missing key',
-  lingyuUses: 'Used by Lingyu',
   options: 'Options',
   makeDefault: 'Make default',
   // ── A typed provider's address ──

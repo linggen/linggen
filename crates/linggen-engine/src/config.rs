@@ -113,12 +113,10 @@ pub struct Config {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[cfg_attr(any(test, feature = "test-support"), ts(skip))]
     pub chatgpt_unticked: Vec<String>,
-    /// Live-voice providers (`live::PROVIDERS` ids) the person removed from
-    /// their own key's row. Empty: all on. Linggen Cloud's live voice is not
-    /// affected; `live::find_source` reads it.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    /// Old files hold `live_off` (a removed live line); it is read and ignored, never written.
+    #[serde(default, skip_serializing)]
     #[cfg_attr(any(test, feature = "test-support"), ts(skip))]
-    pub live_off: Vec<String>,
+    live_off: Option<serde_json::Value>,
     /// What was wrong in the file and was set right on load rather than
     /// refusing the whole config. Runtime-only — never read from or written to the file —
     /// so the log and `ling status` can say it.
@@ -968,7 +966,7 @@ impl Default for Config {
             outside_apps: Vec::new(),
             cloud_started: false,
             chatgpt_unticked: Vec::new(),
-            live_off: Vec::new(),
+            live_off: None,
             problems: Vec::new(),
         }
     }

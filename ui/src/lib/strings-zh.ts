@@ -434,6 +434,7 @@ export const ZH: Record<string, string> = {
   'Billed by {provider}': '你的 {provider} 账单',
   'Downloaded': '已下载',
   'Free to run': '免费',
+  'Models added here are for chat — pick text models. Live voice and read-aloud come from Linggen Cloud.': '这里添加的模型用于聊天，请选文字模型。实时语音和朗读由 Linggen Cloud 提供。',
   'The key is wrong (the provider rejected it).': '密钥不对（服务商拒绝了）',
   'Ollama is not running. Start it, or type a model name and press Enter.': 'Ollama 没有运行。请先启动，或输入模型名后按回车。',
   '{n} downloaded': '{n} 个已下载',

@@ -52,9 +52,7 @@ Linggen Cloud means who pays (Linggen's keys, the subscription), not the path th
 takes, and offers exactly three uses, each one the engine has a wire for:
 
 1. **Chat** — the models the site lists, through linggen.dev.
-2. **Live voice** — Qwen audio realtime, for Lingyu lessons. The person's own key is asked
-   first; with none, a subscriber is given a short-lived key per lesson by linggen.dev and the
-   device connects straight to the provider (`live::find_source`, `account::cloud_voice`).
+2. **Live voice** — Qwen audio realtime, for Lingyu lessons. Linggen Cloud only: a subscriber is given a short-lived key per lesson by linggen.dev and the device connects straight to the provider (`live::find_source`, `account::cloud_voice`). The person's own key never pays for it; no key provider row shows a live line, and each says under its model input that models added there are for chat. Gemini Live stays for development behind `LINGGEN_LIVE_DEV`.
    Metered per lesson, with a length cap the page keeps.
 3. **Read-aloud** — Yinyue's voice (Serena) through linggen.dev, the default for subscribers
    (`tts::Source::Cloud`, first in the order); the local voice stays the free and offline choice,
@@ -109,7 +107,7 @@ Optional fields:
 
 ### Web UI setup
 
-Nobody at Linggen maintains a model or provider list. Open **Settings → Models**, click **Add provider**, pick a preset — one table in the engine (`provider/models/presets.rs`: Anthropic, OpenAI, Gemini, DeepSeek, Qwen Cloud, OpenRouter, Groq, Ollama) — or **其他…** (a name, an address, the API style: OpenAI-compatible or Claude, and the key). Paste the key once. Nothing is ticked for you: under the provider is one model input; typing suggests ids from the provider's own list (`GET {base}/models`, Anthropic's `/v1/models` with `display_name`, Ollama's tags; asked when the row opens, kept for the page's life, nothing hidden — `provider/models/suggest.rs`). A click adds one; a full id + Enter adds it even when the list cannot be read. Added models show with ✕ to remove. A wrong pick (a tts or embedding id) fails on its first use with the provider's error. A preset's address is not editable (`PATCH` is refused); a typed provider's is, and changing it asks once "地址改了，密钥还用吗？". The key line says only 已设置密钥 · 更换; the row's ⋯ menu has 移除这个服务商, confirmed with the default and fallbacks it holds named (`DELETE /api/providers/{id}` takes its rows and key; the chain goes on without them).
+Nobody at Linggen maintains a model or provider list. Open **Settings → Models**, click **Add provider**, pick a preset — one table in the engine (`provider/models/presets.rs`: Anthropic, OpenAI, Gemini, DeepSeek, Qwen Cloud, OpenRouter, Groq, Ollama) — or **其他…** (a name, an address, the API style: OpenAI-compatible or Claude, and the key). Paste the key once. Nothing is ticked for you: under the provider is one model input; typing suggests ids from the provider's own list (`GET {base}/models`, Anthropic's `/v1/models` with `display_name`, Ollama's tags; asked when the row opens and again when its key or address changes; a provider that answers 401/403 gives `why: key_rejected`; nothing hidden — `provider/models/suggest.rs`). A click adds one; a full id + Enter adds it even when the list cannot be read. Added models show with ✕ to remove. A wrong pick (a tts or embedding id) fails on its first use with the provider's error. A preset's address is not editable (`PATCH` is refused); a typed provider's is, and changing it asks once "地址改了，密钥还用吗？". The key line says only 已设置密钥 · 更换; the row's ⋯ menu has 移除这个服务商, confirmed with the default and fallbacks it holds named (`DELETE /api/providers/{id}` takes its rows and key; the chain goes on without them).
 
 **Kind.** A row is live voice when the engine declares its model at its host (`live::PROVIDERS`) or its id contains `realtime`; every other row is chat (`provider/kinds.rs`).
 
@@ -119,7 +117,7 @@ The page draws what `GET /api/providers` answers and decides nothing; each butto
 
 ### Defaults by use
 
-Settings → Models owns the chat chain, effort, reading voice, and drawing. Dictation is Apple's on-device speech recognition on a Mac (no choice, nothing to download but a language's model, free); anywhere else, local Whisper. Apps follow the chat default unless an existing override applies, including a model declared in skill frontmatter. Lingyu offers the first declared live provider (Qwen); Gemini remains available to explicit development token requests.
+Settings → Models owns the chat chain, effort, reading voice, and drawing. Dictation is Apple's on-device speech recognition on a Mac (no choice, nothing to download but a language's model, free); anywhere else, local Whisper. Apps follow the chat default unless an existing override applies, including a model declared in skill frontmatter. Lingyu offers only the Cloud-backed live provider (Qwen); Gemini and own-key lessons are reachable only under `LINGGEN_LIVE_DEV`.
 
 The `/api/uses` snapshot supplies each option's readable `name` and `source`, and the `effective` choice used for Automatic. Repository IDs are tooltip metadata, not option labels.
 

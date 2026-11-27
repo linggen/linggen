@@ -354,6 +354,7 @@ These flags can be used with any command:
 |:-----|:-----------|
 | `LINGGEN_CONFIG` | Config file to load first (see `doc/storage-spec.md`) |
 | `LINGGEN_PORT` | Server port, as `--port` |
+| `LINGGEN_LIVE_DEV` | Development switch: live voice may then be paid by an own key (`LINGGEN_LIVE_*_KEY` or a stored key) and Gemini Live is reachable. Unset for people: live voice is Linggen Cloud's alone |
 | `LINGGEN_LIVE_GOOGLE_KEY` | For scratch engines, which hold no credentials: the Google key `POST /api/live/token` uses. Read by that route alone (`live::find_key`), before the key stored for the `gemini` provider |
 | `LINGGEN_LIVE_ALIBABA_KEY` | The same for Qwen's live voice (`alibaba`): the key `POST /api/live/token` uses for it. Read by that route alone (`live::find_key`), before the key stored for a model at host `ap-southeast-1.maas.qwencloudapi.com` |
 
