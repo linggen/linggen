@@ -373,6 +373,9 @@ async fn a_fault_in_quiet_hours_waits_and_comes_when_they_end() {
         "{}",
         facts[0]
     );
+    // The turn ends before the speech cue is emitted and logged.
+    w.events_when(|events| events.iter().any(|e| e["kind"] == "pet_speak"))
+        .await;
     assert_eq!(pet_lines(&w), [HER_LINE]);
     assert_eq!(held(&w).len(), 1, "the wait is not recorded again");
     w.assert_all_scripted();
