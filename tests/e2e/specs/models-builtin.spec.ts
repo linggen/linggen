@@ -1,50 +1,36 @@
-// Settings → Models shows Linggen Cloud's built-in models in the block under the
-// default model (the ChatGPT sign-in is a provider added below it). `GET /api/models` answers by who asks; over the
-// channel the owner's own page was taken for no one, the list came back empty
-// and the group vanished while the chat's picker (page_state) still listed
-// them. The page now draws `GET /api/providers`: the test asks the engine for
-// the built-in list the way the owner's machine does and holds the page to it,
-// for both ways into the page — and holds a failed provider list to its
-// failure line and Retry.
-import type { APIRequestContext, Page } from '@playwright/test';
+// Settings → Models shows Linggen Cloud's models in the block under the default
+// card: the ids the site's price table holds (the scenario's `cloudModels`, the
+// kept answer), each one to tick. The page draws `GET /api/providers`, for both
+// ways into the page — and a failed provider list says so and offers Retry.
+import type { Page } from '@playwright/test';
 import { test, expect, expectWebRtc } from '../support/world';
 
-/** The ids of the built-in rows the engine answers on loopback. */
-async function builtinIds(world: { url: string }, request: APIRequestContext): Promise<string[]> {
-  const rows: { id: string; is_builtin?: boolean }[] = await (await request.get(`${world.url}/api/models`)).json();
-  // The ChatGPT built-ins sit on the ChatGPT provider's row, not in the top block.
-  return rows.filter((m) => m.is_builtin && m.provider !== 'chatgpt').map((m) => m.id);
-}
+const CLOUD = { updated: '2026-11-26', starter: 'stand-in-flash', models: [{ id: 'stand-in-flash', label: 'Stand-in Flash' }, { id: 'stand-in-max', label: 'Stand-in Max' }] };
+test.use({ scenario: { cloudModels: CLOUD } });
 
-/** Every built-in id is on the page, in the Linggen Cloud block. */
-async function expectBuiltinGroup(page: Page, ids: string[]) {
+/** Open the Linggen Cloud row: every model the site lists is there to tick. */
+async function expectCloudModels(page: Page) {
   const group = page.getByTestId('ready-to-use');
   await expect(group).toBeVisible();
-  for (const id of ids) await expect(group.getByText(id).first()).toBeVisible();
+  await group.getByTestId('provider-row').filter({ hasText: 'Linggen Cloud' }).getByRole('button', { name: /Linggen Cloud/ }).click();
+  for (const m of CLOUD.models) await expect(group.getByTestId('cloud-model').filter({ hasText: m.label })).toBeVisible();
 }
 
-test('the engine answers built-in models for the world', async ({ world, request }) => {
-  expect((await builtinIds(world, request)).length, 'no built-in model in the engine answer: the lock below would hold nothing').toBeGreaterThan(0);
-});
-
-test('opening /settings/models directly shows every built-in model the engine lists', async ({ page, world, request, httpRequests }) => {
-  const ids = await builtinIds(world, request);
+test('opening /settings/models directly shows every model the site lists for Linggen Cloud', async ({ page, world, httpRequests }) => {
   await page.goto(`${world.url}/settings/models`);
   await expectWebRtc(page, httpRequests);
-  await expectBuiltinGroup(page, ids);
+  await expectCloudModels(page);
 });
 
-test('going to Models from the settings home shows every built-in model the engine lists', async ({ page, world, request, httpRequests }) => {
-  const ids = await builtinIds(world, request);
+test('going to Models from the settings home shows every model the site lists for Linggen Cloud', async ({ page, world, httpRequests }) => {
   await page.goto(`${world.url}/`);
   await page.getByTitle('Settings', { exact: true }).click();
   await expectWebRtc(page, httpRequests);
   await page.getByRole('button', { name: 'Models', exact: true }).click();
-  await expectBuiltinGroup(page, ids);
+  await expectCloudModels(page);
 });
 
-test('a provider list that cannot be loaded says so and offers a retry', async ({ page, world, request, httpRequests }) => {
-  const ids = await builtinIds(world, request);
+test('a provider list that cannot be loaded says so and offers a retry', async ({ page, world, httpRequests }) => {
   await page.goto(`${world.url}/settings`);
   await expectWebRtc(page, httpRequests);
   await page.evaluate(() => {
@@ -64,5 +50,5 @@ test('a provider list that cannot be loaded says so and offers a retry', async (
   await expect(page.getByTestId('providers-load-failed')).toBeVisible();
   await page.getByTestId('providers-load-failed').getByRole('button', { name: 'Retry' }).click();
   await expect(page.getByTestId('providers-load-failed')).toBeHidden();
-  await expectBuiltinGroup(page, ids);
+  await expectCloudModels(page);
 });

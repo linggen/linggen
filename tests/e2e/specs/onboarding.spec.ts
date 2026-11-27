@@ -20,8 +20,8 @@ test('a new install shows an empty chat and asks to sign in on the first message
   await expectWebRtc(page, httpRequests);
   await expect(page.getByTestId('session-list-empty')).toBeVisible();
   await expect(page.getByTestId('account-sign-in')).toBeVisible();
-  // The built-in Linggen Cloud model is offered.
-  await expect(page.getByText('deepseek-flash').first()).toBeVisible();
+  // The first-run Linggen Cloud model (the starter, before any list is read) is offered.
+  await expect(page.getByText('qwen3.8-flash').first()).toBeVisible();
 
   await send(page, 'Hello?');
   const c = chat(page);

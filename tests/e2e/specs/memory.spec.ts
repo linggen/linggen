@@ -69,7 +69,7 @@ test('the Memory settings show the store\'s two values and keep a change after a
 
   const days = page.getByLabel('Keep short-term rows for (days)');
   const score = page.getByLabel('Recall threshold (0–1)');
-  await expect(days).toHaveValue('7');
+  await expect(days).toHaveValue('30');
   await expect(score).toHaveValue('0.7');
   await expect(page.getByRole('heading', { name: 'Other machines' })).toBeVisible();
 
