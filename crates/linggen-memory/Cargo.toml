@@ -62,9 +62,7 @@ fastembed = { version = "5", features = ["qwen3"] }
 # candle-core provides the Device + DType types Qwen3TextEmbedding::from_hf needs.
 # Version must align with the candle-core pulled in by fastembed's qwen3 feature.
 # The lock holds candle 0.11.0, not 0.11.1: 0.11.1 needs tokenizers 0.23 while
-# fastembed 5.17 builds on 0.22, which would put two tokenizers in the tree. The
-# Kokoro voice (any-tts, root Cargo.toml) still needs candle 0.10, so both
-# candle lines are in the binary until any-tts moves to 0.11.
+# fastembed 5.17 builds on 0.22, which would put two tokenizers in the tree.
 candle-core = "0.11"
 
 # Storage — keep arrow aligned with the lance version lancedb pins internally.

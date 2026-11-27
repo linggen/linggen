@@ -151,9 +151,10 @@ Spoken line, in order of preference — the first whose files are on disk, with
    and take over when it is refused or unreachable (`tts::Source::Cloud`).
 1. **Qwen3-TTS** on the GPU (MLX, in the shared voice sidecar), speaker from
    `[pet] voice`. "Natural" is exactly this voice being on disk.
-2. **Kokoro-82M** (candle, `any-tts`; the `kokoro` build feature, default on).
-   Its voice id carries the language: Han characters pick Mandarin, else English.
-3. **macOS `say`**, the system voice.
+2. **macOS `say`**, the system voice (Han characters pick a Mandarin voice).
+   It speaks when Qwen3-TTS is not ready — a line never waits for the GPU voice
+   to load — or fails. `tts::default_provider` is the one place that decides;
+   a stored `[uses] speak = "kokoro"` (a removed voice) reads as no choice.
 
 `GET /api/tts` says whether she can speak and whether naturally, starting
 nothing; `POST /api/tts {text, voice?}` returns a WAV and fetches no model in

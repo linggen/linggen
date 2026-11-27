@@ -12,7 +12,7 @@
 //!
 //! Any failure — dead child, malformed reply, timeout — kills the child and
 //! starts a replacement in the background; what a caller does about it
-//! (Kokoro for her voice, a spoken "try again" for her hearing) is theirs.
+//! (the system voice for her voice, a spoken "try again" for her hearing) is theirs.
 //! A request is never logged: it may be a person's voice.
 
 use std::process::Stdio;
@@ -28,7 +28,7 @@ const SIDECAR_SRC: &str = include_str!("../../runtime_py/mlx_voice.py");
 const READY_TIMEOUT: Duration = Duration::from_secs(120);
 /// How long a request waits for the slot: mid-spawn (boot prewarm holds the
 /// lock for up to [`READY_TIMEOUT`]) or another request is on it. Give up
-/// fast — warm Kokoro beats a silent queue.
+/// fast — the system voice beats a silent queue.
 const SLOT_WAIT: Duration = Duration::from_secs(5);
 /// How long a request waits for a sidecar to be started in front of it.
 const SPAWN_WAIT: Duration = Duration::from_secs(15);

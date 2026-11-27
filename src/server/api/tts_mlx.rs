@@ -6,8 +6,10 @@
 //! (too slow for its length) is made once more.
 //!
 //! Every failure — venv missing (Intel Mac, prewarm not done), sidecar
-//! dead, malformed reply, timeout — falls back to [`KokoroProvider`], so
-//! the pet always has a voice.
+//! dead, malformed reply, timeout — falls back to the system voice
+//! ([`SystemSayProvider`]), so the pet always has a voice. While the sidecar
+//! is still loading, a line waits for it a bounded few seconds (the sidecar's
+//! slot wait) and then goes to the system voice.
 
 use std::sync::Arc;
 
@@ -15,11 +17,11 @@ use async_trait::async_trait;
 use base64::Engine as _;
 
 use super::mlx_sidecar::VoiceSidecar;
-use super::tts::TtsProvider;
+use super::tts::{SystemSayProvider, TtsProvider};
 use super::tts_text::{self, Take};
 use super::tts_wav;
 
-/// Multilingual (zh + en in one timbre), so unlike Kokoro no script→voice
+/// Multilingual (zh + en in one timbre), so no script→voice
 /// mapping is needed. Names must match the model's speaker roster.
 const DEFAULT_VOICE: &str = "vivian";
 pub(super) const SPEAKERS: [&str; 9] = [
@@ -29,7 +31,7 @@ pub(super) const SPEAKERS: [&str; 9] = [
 /// Per-clip budget, scaled to the text: healthy synthesis runs ~0.3×
 /// realtime, but the GPU can degrade machine-wide (thermal / competing
 /// Metal work — seen live 2026-08-19 at ~3× realtime), and a fixed 60s
-/// bound meant a minute of silence before Kokoro spoke. Scaling by length
+/// bound meant a minute of silence before the system voice spoke. Scaling by length
 /// keeps the wait proportional: give up early on a short line, allow a
 /// long one its honest time.
 fn synth_timeout(text: &str) -> std::time::Duration {
@@ -39,12 +41,11 @@ fn synth_timeout(text: &str) -> std::time::Duration {
 
 pub struct MlxTtsProvider {
     sidecar: Arc<VoiceSidecar>,
-    pub(super) fallback: Arc<dyn TtsProvider>,
 }
 
 impl MlxTtsProvider {
     pub fn new(sidecar: Arc<VoiceSidecar>) -> Self {
-        Self { sidecar, fallback: super::tts::fallback_provider() }
+        Self { sidecar }
     }
 
     /// Venv and model both on disk: a sidecar spawned before the model
@@ -73,9 +74,8 @@ impl MlxTtsProvider {
 impl MlxTtsProvider {
     /// One clause, checked for drift: a take outside the healthy speech
     /// rate is made once more, and the closer of the two ships. Never
-    /// Kokoro on rate grounds — a slow Qwen take still says the right words
-    /// (the clip Hanli heard as garbled transcribed at 3.8% CER), Kokoro
-    /// misreads about one character in five (18% CER, 2026-10-22).
+    /// the system voice on rate grounds — a slow Qwen take still says the
+    /// right words (the clip Hanli heard as garbled transcribed at 3.8% CER).
     async fn checked(&self, text: &str, voice: &str) -> anyhow::Result<Vec<u8>> {
         let first = self.request(text, voice).await?;
         let verdict = judge_take(text, &first);
@@ -108,9 +108,9 @@ impl TtsProvider for MlxTtsProvider {
     async fn synthesize(&self, text: &str, voice: Option<&str>) -> anyhow::Result<Vec<u8>> {
         if !Self::available() {
             // Intel Mac, or the runtime prewarm hasn't landed yet.
-            return self.fallback.synthesize(text, voice).await;
+            return SystemSayProvider.synthesize(text, None).await;
         }
-        // Kokoro voice ids (af_*/zf_*) mean the caller wasn't talking to us.
+        // A voice that is not one of the speakers means the caller wasn't talking to us.
         let voice = match voice {
             Some(v) if SPEAKERS.contains(&v) => v,
             _ => DEFAULT_VOICE,
@@ -118,32 +118,19 @@ impl TtsProvider for MlxTtsProvider {
         match self.checked(text, voice).await {
             Ok(wav) => Ok(wav),
             Err(e) => {
-                tracing::warn!("[tts-mlx] {e:#}; falling back to Kokoro for this clip");
-                self.fallback.synthesize(text, None).await
+                tracing::warn!("[tts-mlx] {e:#}; falling back to the system voice for this clip");
+                SystemSayProvider.synthesize(text, None).await
             }
         }
     }
 
-    /// The sidecar's own venv + model are the runtime's lane stages; what is
-    /// left to fetch here is the fallback's (Kokoro) weights.
-    fn needs_fetch(&self) -> bool {
-        self.fallback.needs_fetch()
-    }
-
-    async fn fetch(&self) -> anyhow::Result<()> {
-        self.fallback.fetch().await
-    }
-
     async fn prewarm(&self) {
-        // The fallback first: Kokoro is what speaks while the sidecar (or
-        // the whole runtime download) is still coming up.
-        self.fallback.prewarm().await;
         if !Self::available() {
-            tracing::info!("[tts-mlx] tts venv not ready; Kokoro remains the voice");
+            tracing::info!("[tts-mlx] tts venv not ready; the system voice remains");
             return;
         }
         if let Err(e) = self.sidecar.warm().await {
-            tracing::warn!("[tts-mlx] pre-warm failed ({e:#}); Kokoro remains");
+            tracing::warn!("[tts-mlx] pre-warm failed ({e:#}); the system voice remains");
         }
     }
 

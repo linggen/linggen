@@ -139,13 +139,10 @@ async fn table(state: &ServerState, config: &Config) -> Table {
     // which reads it with no network, is not stale on a freshly started engine.
     crate::account::learn_entitlement().await;
     let speech = tts::Source::readiness(true); // the route is the owner's (`owner_refusal`)
-    let speak = tts::Source::ALL.into_iter().zip(speech).filter(|(s, _)| s.exists()).map(|(source, ready)| {
+    let speak = tts::Source::ALL.into_iter().zip(speech).map(|(source, ready)| {
         match source {
             tts::Source::Cloud => cloud_voice_row(source.id(), ready),
             tts::Source::Qwen => OptionRow::local(source.id(), runtime::TTS_MODEL, ready, runtime::lane_verdict(&runtime::VOICE_LANE).is_ok()),
-            tts::Source::Kokoro => {
-                OptionRow::new(source.id(), "Kokoro", Source::new(Way::Local, None), if ready { "ready" } else { "download" })
-            }
             tts::Source::System => OptionRow::new(source.id(), "macOS system voices", Source::new(Way::Local, None), if ready { "ready" } else { "unavailable" }),
         }
     }).collect();

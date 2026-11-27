@@ -2,8 +2,8 @@
 //!
 //! Voice synthesis sits behind the [`TtsProvider`] trait so the engine that
 //! produces the audio is a swap, not a rewrite. The daemon's voice is
-//! [`KokoroProvider`] (see [`default_provider`]); [`SystemSayProvider`] is no
-//! longer a stand-in for it but its offline fallback.
+//! Qwen3-TTS ([`super::tts_mlx`]); [`SystemSayProvider`] is the one fallback
+//! (see [`default_provider`]).
 //!
 //! A model-holding provider lives in
 //! [`ServerState`](crate::server::ServerState) so it loads once, not per
@@ -18,16 +18,12 @@
 
 use std::sync::Arc;
 
-#[cfg(feature = "kokoro")]
-use any_tts::{ModelType, SynthesisRequest, TtsConfig, TtsModel};
 use async_trait::async_trait;
 use axum::extract::State;
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::Json;
 use serde::Deserialize;
-#[cfg(feature = "kokoro")]
-use tokio::sync::OnceCell;
 
 use crate::server::ServerState;
 
@@ -67,7 +63,7 @@ pub trait TtsProvider: Send + Sync {
     }
 
     /// Whether to pre-warm this provider's model at daemon boot. A light model
-    /// (Kokoro, ~300 MB) says `true` for a fast first utterance; a heavier one
+    /// says `true` for a fast first utterance; a heavier one
     /// can say `false` to keep its download/load lazy. The boot caller also gates
     /// this on the pet being enabled.
     fn prewarm_on_boot(&self) -> bool {
@@ -76,11 +72,10 @@ pub trait TtsProvider: Send + Sync {
 }
 
 /// The daemon's voice — the single switch point for the daemon's TTS.
-/// Qwen3-TTS on the GPU via the managed runtime's sidecar, with Kokoro
-/// (and behind it `say`) as the automatic fallback chain, so the voice
-/// upgrade can never cost the pet her speech.
+/// Linggen Cloud, Qwen3-TTS on the GPU via the managed runtime's sidecar, or
+/// `say`: the chain ends at the system voice, so the pet always has speech.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Source { Cloud, Qwen, Kokoro, System }
+pub(super) enum Source { Cloud, Qwen, System }
 
 impl Source {
     /// The order of preference when the person has chosen nothing: Linggen
@@ -88,10 +83,10 @@ impl Source {
     /// subscriber, then the Mac's own voices. Its readiness is a fact read
     /// with no network ([`Source::readiness`]), so a person who is not a
     /// subscriber, or is offline, is simply on the next one.
-    pub(super) const ALL: [Self; 4] = [Self::Cloud, Self::Qwen, Self::Kokoro, Self::System];
+    pub(super) const ALL: [Self; 3] = [Self::Cloud, Self::Qwen, Self::System];
 
     pub(super) fn id(self) -> &'static str {
-        match self { Self::Cloud => "linggen-cloud", Self::Qwen => "qwen", Self::Kokoro => "kokoro", Self::System => "system" }
+        match self { Self::Cloud => "linggen-cloud", Self::Qwen => "qwen", Self::System => "system" }
     }
 
     /// Whether the voice sounds like Yinyue herself (the GPU voice, or Linggen Cloud's Serena).
@@ -101,67 +96,39 @@ impl Source {
     /// spends the owner's subscription and sends the text out, so a caller who
     /// is not the owner (`person::owners_only`, as `/api/live` asks) is never
     /// given it.
-    pub(super) fn readiness(owner: bool) -> [bool; 4] {
-        #[cfg(feature = "kokoro")]
-        let kokoro = KokoroProvider::weights_on_disk();
-        #[cfg(not(feature = "kokoro"))]
-        let kokoro = false;
+    pub(super) fn readiness(owner: bool) -> [bool; 3] {
         let system = std::env::var_os("PATH").is_some_and(|path| {
             std::env::split_paths(&path).any(|dir| dir.join("say").is_file())
         });
         let cloud = owner && crate::account::cloud_voice::speech_usable();
-        [cloud, crate::runtime::voice_ready(), kokoro, system]
-    }
-
-    pub(super) fn exists(self) -> bool {
-        match self {
-            Self::Kokoro => cfg!(feature = "kokoro"),
-            Self::Cloud | Self::Qwen | Self::System => true,
-        }
+        [cloud, crate::runtime::voice_ready(), system]
     }
 }
 
-pub(super) fn default_provider(preference: Option<&str>, ready: [bool; 4]) -> Option<Source> {
+/// The one place the fallback chain is decided: the person's pick when it is
+/// ready, else the first ready voice in [`Source::ALL`] order (so a stored
+/// pick that is no longer a voice, e.g. "kokoro", reads as no choice).
+pub(super) fn default_provider(preference: Option<&str>, ready: [bool; 3]) -> Option<Source> {
     let usable = || Source::ALL.into_iter().zip(ready).filter_map(|(source, ready)| ready.then_some(source));
     usable().find(|source| Some(source.id()) == preference).or_else(|| usable().next())
 }
 
-/// Kokoro's own voice packs carry the LANGUAGE, not just the timbre: its
-/// phonemizer reads the language off the voice id's first letter ('a' =
-/// American English, 'z' = Mandarin). So picking the voice IS picking the
-/// language, and an English voice handed Chinese text does not error — it
-/// emits about half a second of noise. Hence [`voice_for`].
-const VOICE_EN: &str = "af_heart"; // warm American female
-const VOICE_ZH: &str = "zf_xiaoxiao"; // Mandarin female
-
-/// The voice this text needs. Any Han character means Mandarin: Kokoro cannot
-/// mix scripts inside one utterance, so a mixed line follows its Han content
-/// (she is likelier to be answering in Chinese than naming one English word).
-fn voice_for(text: &str) -> &'static str {
-    if super::tts_text::han_count(text) > 0 {
-        VOICE_ZH
-    } else {
-        VOICE_EN
-    }
+/// The system voice this text needs: `say` does not switch language by
+/// script, so any Han character means a Mandarin voice. "Tingting" is the
+/// unambiguous zh_CN name (several others, e.g. "Eddy", exist under both
+/// zh_CN and zh_TW). `None` leaves the system's default voice.
+fn say_voice_for(text: &str) -> Option<&'static str> {
+    (super::tts_text::han_count(text) > 0).then_some("Tingting")
 }
 
-/// macOS `say` — neural system voices, no dependencies. Kokoro's fallback:
-/// reached when the weights can't be loaded (offline, download failed), so the
-/// pet always has a voice. Not the daemon's default provider.
+/// macOS `say` — neural system voices, no dependencies. The fallback:
+/// reached when Qwen3-TTS isn't ready or fails, so the pet always has a voice.
 pub struct SystemSayProvider;
 
 #[async_trait]
 impl TtsProvider for SystemSayProvider {
     async fn synthesize(&self, text: &str, voice: Option<&str>) -> anyhow::Result<Vec<u8>> {
-        // `say` does not switch language by script either: its default English
-        // voice reads Han characters as gibberish. Same rule as Kokoro — the
-        // script picks the voice. "Tingting" is the unambiguous zh_CN name
-        // (several others, e.g. "Eddy", exist under both zh_CN and zh_TW).
-        let voice = match voice {
-            Some(v) => Some(v),
-            None if voice_for(text) == VOICE_ZH => Some("Tingting"),
-            None => None,
-        };
+        let voice = voice.or_else(|| say_voice_for(text));
         // Write the text to a temp file and feed it via `-f` so the spoken
         // string can't be mis-parsed as flags and isn't length-limited.
         let dir = tempfile::tempdir()?;
@@ -189,230 +156,9 @@ impl TtsProvider for SystemSayProvider {
     }
 }
 
-/// What speaks when the GPU voice can't: Kokoro when the build carries it
-/// (the `kokoro` feature, on by default), else `say` directly.
-pub fn fallback_provider() -> Arc<dyn TtsProvider> {
-    #[cfg(feature = "kokoro")]
-    {
-        Arc::new(KokoroProvider::new())
-    }
-    #[cfg(not(feature = "kokoro"))]
-    {
-        Arc::new(SystemSayProvider)
-    }
-}
-
-/// Kokoro-82M (StyleTTS2) running locally via candle (the `any-tts` crate) —
-/// the production voice. Pure-Rust phonemizer (no espeak-ng) and a candle
-/// backend (no ONNX Runtime), so there's nothing native to bundle.
-///
-/// The ~300 MB weights come from HuggingFace (`hexgrad/Kokoro-82M`) into the
-/// shared cache (`runtime::hf_home`), fetched by [`fetch`](TtsProvider::fetch)
-/// when the machine is quiet after install — never by a first utterance:
-/// until they are on disk, synthesis is `say`. Loading is lazy (a
-/// `OnceCell`), but [`prewarm_on_boot`](TtsProvider::prewarm_on_boot) returns
-/// `true`, so with the pet enabled the daemon loads the model at boot; with
-/// the pet disabled nothing loads until she actually speaks. If it can't load,
-/// synthesis falls back to `say` so the pet always has a voice.
-#[cfg(feature = "kokoro")]
-pub struct KokoroProvider {
-    model: OnceCell<Arc<dyn TtsModel>>,
-    fallback: SystemSayProvider,
-}
-
-#[cfg(feature = "kokoro")]
-impl KokoroProvider {
-    pub fn new() -> Self {
-        Self {
-            model: OnceCell::new(),
-            fallback: SystemSayProvider,
-        }
-    }
-
-    /// Voice packs live in a directory we own, not wherever the HuggingFace
-    /// cache happens to put them: the crate only auto-discovers voices already
-    /// on disk and has no per-voice download, so owning the path is what lets
-    /// us guarantee a voice is there before asking for it.
-    fn voices_dir() -> std::path::PathBuf {
-        crate::paths::linggen_home().join("models/kokoro-voices")
-    }
-
-    /// The hub cache any-tts reads. It honours `HUGGINGFACE_HUB_CACHE` (not
-    /// `HF_HUB_CACHE`), so [`use_shared_cache`](Self::use_shared_cache) sets
-    /// both; this is where the weights land and where [`weights_on_disk`]
-    /// looks.
-    fn hub_cache() -> std::path::PathBuf {
-        std::env::var_os("HUGGINGFACE_HUB_CACHE")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| crate::runtime::hf_home().join("hub"))
-    }
-
-    /// Point any-tts at the one shared cache and the reachable Hub. This sets
-    /// the engine's own env, which every model process inherits: HF_HUB_CACHE
-    /// beats HF_HOME (pointing it at hf-hub itself instead of hf-hub/hub made
-    /// a second copy of each model). The mirror is set here because any-tts'
-    /// in-process loader reads only the process env.
-    async fn use_shared_cache() {
-        let endpoint = crate::hf_mirror::endpoint().await;
-        if std::env::var_os("HF_ENDPOINT").is_none() && endpoint != crate::hf_mirror::HF {
-            std::env::set_var("HF_ENDPOINT", &endpoint);
-        }
-        let hub = crate::runtime::hf_home().join("hub");
-        for key in ["HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE"] {
-            if std::env::var_os(key).is_none() {
-                std::env::set_var(key, &hub);
-            }
-        }
-    }
-
-    /// The files a Kokoro load reads, in any-tts' cache layout, plus the
-    /// two voice packs [`prewarm`](TtsProvider::prewarm) speaks with.
-    fn weights_on_disk() -> bool {
-        let voices = [VOICE_EN, VOICE_ZH]
-            .iter()
-            .all(|v| Self::voices_dir().join(format!("{v}.pt")).exists());
-        Self::model_files_on_disk() && voices
-    }
-
-    /// The model's own files, without the voice packs.
-    fn model_files_on_disk() -> bool {
-        let snapshot = Self::hub_cache().join("models--hexgrad--Kokoro-82M/snapshots/main");
-        ["config.json", "kokoro-v1_0.pth"]
-            .iter()
-            .all(|f| snapshot.join(f).exists())
-    }
-
-    fn config() -> TtsConfig {
-        TtsConfig::new(ModelType::Kokoro).with_voices_dir(Self::voices_dir())
-    }
-
-    /// Make sure one voice pack (~500 KB) is on disk, fetching it if not.
-    /// Best-effort by design — the caller falls back to `say` if this fails,
-    /// so a missing voice costs timbre, never speech.
-    async fn ensure_voice(name: &str) -> anyhow::Result<()> {
-        let dir = Self::voices_dir();
-        let path = dir.join(format!("{name}.pt"));
-        if path.exists() {
-            return Ok(());
-        }
-        tokio::fs::create_dir_all(&dir).await?;
-        tracing::info!("[tts] fetching voice pack {name}");
-        // huggingface.co first, hf-mirror.com when it is unreachable.
-        let bytes = crate::hf_mirror::get_bytes(&format!(
-            "hexgrad/Kokoro-82M/resolve/main/voices/{name}.pt"
-        ))
-        .await?;
-        // Write via a temp file and rename: a half-written .pt would be
-        // indistinguishable from a good one on the next boot.
-        let tmp = dir.join(format!(".{name}.pt.part"));
-        tokio::fs::write(&tmp, &bytes).await?;
-        tokio::fs::rename(&tmp, &path).await?;
-        Ok(())
-    }
-
-    /// Load the model once, on first use — from disk only: a missing weight
-    /// file is an error here (the caller speaks with `say`), never a
-    /// download in front of a person. candle init is blocking, so it runs on
-    /// a blocking thread; `OnceCell` serializes concurrent first-callers
-    /// behind a single init and stays empty on error, so a later call
-    /// retries once [`fetch`](TtsProvider::fetch) has landed the weights.
-    async fn model(&self) -> anyhow::Result<Arc<dyn TtsModel>> {
-        self.model
-            .get_or_try_init(|| async {
-                Self::use_shared_cache().await;
-                if !Self::weights_on_disk() {
-                    anyhow::bail!("Kokoro weights are not downloaded yet");
-                }
-                let model =
-                    tokio::task::spawn_blocking(move || -> anyhow::Result<Arc<dyn TtsModel>> {
-                        Ok(Arc::from(any_tts::load_model(Self::config())?))
-                    })
-                    .await??;
-                Ok::<_, anyhow::Error>(model)
-            })
-            .await
-            .cloned()
-    }
-}
-
-#[cfg(feature = "kokoro")]
-#[async_trait]
-impl TtsProvider for KokoroProvider {
-    async fn synthesize(&self, text: &str, voice: Option<&str>) -> anyhow::Result<Vec<u8>> {
-        // The caller may name a voice; otherwise the script chooses one, which
-        // is also how the language gets chosen.
-        let voice = voice.unwrap_or_else(|| voice_for(text)).to_string();
-
-        // The crate reads the pack from `voices_dir` on every synthesis, so a
-        // voice fetched now is usable now — no restart, no model reload.
-        // A line never starts a download in front of a person: with the model
-        // itself missing the line is `say` and the ~500 KB voice pack is left
-        // for the quiet-moment fetch (`fetch`), which brings both.
-        let voice_ready = match Self::model_files_on_disk() {
-            true => Self::ensure_voice(&voice).await,
-            false => Err(anyhow::anyhow!("Kokoro weights are not downloaded yet")),
-        };
-        let model = match (&voice_ready, self.model().await) {
-            (Ok(()), Ok(m)) => m,
-            (voice_err, model_res) => {
-                if let Err(e) = voice_err {
-                    tracing::warn!("[tts] voice {voice} unavailable ({e}); using `say`");
-                }
-                if let Err(e) = model_res {
-                    tracing::warn!("[tts] Kokoro unavailable ({e}); using `say` for this clip");
-                }
-                // `say` doesn't share Kokoro's voice ids — let it pick by script.
-                return self.fallback.synthesize(text, None).await;
-            }
-        };
-
-        let text = text.to_string();
-        // candle inference is blocking and CPU/Metal-bound → off the async pool.
-        let wav = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<u8>> {
-            let req = SynthesisRequest::new(text).with_voice(voice);
-            Ok(model.synthesize(&req)?.get_wav())
-        })
-        .await??;
-        Ok(wav)
-    }
-
-    fn needs_fetch(&self) -> bool {
-        !Self::weights_on_disk()
-    }
-
-    /// Both voices (~500 KB each) and the ~300 MB weights, to disk only.
-    /// `resolve_files` is the loader's own file resolution, so exactly what
-    /// a load reads is fetched; a file already there costs nothing.
-    async fn fetch(&self) -> anyhow::Result<()> {
-        crate::runtime::check_disk_headroom(&crate::runtime::hf_home(), 1)?;
-        for v in [VOICE_EN, VOICE_ZH] {
-            Self::ensure_voice(v).await?;
-        }
-        Self::use_shared_cache().await;
-        tokio::task::spawn_blocking(|| Self::config().resolve_files().map(|_| ())).await??;
-        tracing::info!("[tts] Kokoro weights on disk");
-        Ok(())
-    }
-
-    async fn prewarm(&self) {
-        // Loading the ~300 MB weights onto the GPU takes several seconds; do it
-        // now so Yinyue's first utterance is as fast as the rest. The boot task
-        // has run `fetch` first, so this reads only what is on disk.
-        match self.model().await {
-            Ok(_) => tracing::info!("[tts] Kokoro model pre-warmed"),
-            Err(e) => tracing::warn!("[tts] Kokoro pre-warm failed ({e}); will fall back to `say`"),
-        }
-    }
-
-    /// Light (~300 MB) — safe to load at boot for a snappy first utterance.
-    fn prewarm_on_boot(&self) -> bool {
-        true
-    }
-}
-
-/// The voices a line may name: the GPU voice's speakers and Kokoro's packs.
+/// The voices a line may name: the GPU voice's speakers.
 fn is_listed_voice(name: &str) -> bool {
-    super::tts_mlx::SPEAKERS.contains(&name) || [VOICE_EN, VOICE_ZH].contains(&name)
+    super::tts_mlx::SPEAKERS.contains(&name)
 }
 
 /// The whole line as one clip: its spoken copy, clause by clause, each
@@ -460,9 +206,8 @@ const CLOUD_LINE_MAX_CHARS: usize = 600;
 /// Whether a clip made now is made without fetching anything, and in which
 /// voice: the one judgement behind `GET /api/tts`. What a page asks before it
 /// turns "read her replies aloud" on. `natural`: the GPU voice (Qwen3-TTS) is on
-/// disk, so lines are spoken in her own voice; without it a line is Kokoro (once
-/// its weights are on disk) or the system's `say`. `speaks` is false only on a
-/// machine with none of the three.
+/// disk, so lines are spoken in her own voice; without it a line is the system's
+/// `say`. `speaks` is false only on a machine with none of the voices.
 #[derive(Debug, PartialEq)]
 pub(crate) struct Speech {
     pub speaks: bool,
@@ -540,7 +285,6 @@ pub(crate) async fn tts_handler(
         let (tts, voice): (&dyn TtsProvider, Option<&str>) = match source {
             Some(Source::Cloud) => (&CloudProvider, None),
             Some(Source::Qwen) => (state.tts.as_ref(), req.voice.as_deref().or(Some(&config.pet.voice))),
-            Some(Source::Kokoro) => (state.tts.fallback.as_ref(), req.voice.as_deref().filter(|v| [VOICE_EN, VOICE_ZH].contains(v))),
             Some(Source::System) => (&SystemSayProvider, None),
             None => return (StatusCode::SERVICE_UNAVAILABLE, "No voice is ready.").into_response(),
         };
@@ -587,7 +331,7 @@ mod tests {
             let _ = speak_line(&heard, "Hello.", Some(voice)).await;
         }
         let heard = heard.0.into_inner().unwrap();
-        let want = [None, Some("vivian".to_string()), Some("af_heart".to_string()), None];
+        let want = [None, Some("vivian".to_string()), None, None];
         assert_eq!(heard, want);
     }
 
@@ -596,19 +340,21 @@ mod tests {
     /// three facts read from disk.
     #[test]
     fn speech_prefers_a_ready_choice_then_the_builtin_order() {
-        let ready = [true; 4];
+        let ready = [true; 3];
         // Cloud (Yinyue's own voice for a subscriber) is the default; a person's pick wins.
         assert_eq!(default_provider(None, ready), Some(Source::Cloud));
         assert_eq!(default_provider(Some("qwen"), ready), Some(Source::Qwen));
-        assert_eq!(default_provider(Some("kokoro"), ready), Some(Source::Kokoro));
+        // A stored "kokoro" (a removed voice) reads as no choice.
+        assert_eq!(default_provider(Some("kokoro"), ready), Some(Source::Cloud));
+        assert_eq!(default_provider(Some("kokoro"), [false, true, true]), Some(Source::Qwen));
         assert_eq!(default_provider(Some("system"), ready), Some(Source::System));
         // Not a subscriber, offline, or cooling off: the Mac's own voices, as before.
-        assert_eq!(default_provider(None, [false, true, true, true]), Some(Source::Qwen));
-        assert_eq!(default_provider(Some("linggen-cloud"), [false, true, true, true]), Some(Source::Qwen));
-        assert_eq!(default_provider(Some("kokoro"), [true, true, false, true]), Some(Source::Cloud));
-        assert_eq!(default_provider(Some("qwen"), [false, false, true, true]), Some(Source::Kokoro));
-        assert_eq!(default_provider(None, [false; 4]), None);
-        assert!(Source::Cloud.is_natural() && Source::Qwen.is_natural() && !Source::Kokoro.is_natural());
+        assert_eq!(default_provider(None, [false, true, true]), Some(Source::Qwen));
+        assert_eq!(default_provider(Some("linggen-cloud"), [false, true, true]), Some(Source::Qwen));
+        // Qwen3-TTS not ready: the system voice.
+        assert_eq!(default_provider(Some("qwen"), [false, false, true]), Some(Source::System));
+        assert_eq!(default_provider(None, [false; 3]), None);
+        assert!(Source::Cloud.is_natural() && Source::Qwen.is_natural() && !Source::System.is_natural());
     }
 
     /// Linggen Cloud's voice is the owner's alone: it spends the owner's subscription and sends the text out.
@@ -627,39 +373,47 @@ mod tests {
         let from = production.find("fn speech_now").unwrap();
         let to = production.find("/// POST /api/tts").unwrap();
         let status = &production[from..to];
-        for starts in [".synthesize(", ".fetch(", ".prewarm(", "ensure_voice", "speak_line", "get_bytes", ".model()"] {
+        for starts in [".synthesize(", ".fetch(", ".prewarm(", "speak_line", "get_bytes"] {
             assert!(!status.contains(starts), "the status route calls `{starts}`");
         }
     }
 
+    /// Lock: the removed voice is named nowhere in the code but here, where a
+    /// stored "kokoro" is read as no choice (`default_provider`, its test).
     #[test]
-    fn english_text_takes_the_english_voice() {
-        assert_eq!(voice_for("Master, I am here."), VOICE_EN);
-        assert_eq!(voice_for(""), VOICE_EN);
-        // Latin text with CJK punctuation only is still English.
-        assert_eq!(voice_for("Hello ——"), VOICE_EN);
+    fn the_removed_voice_is_named_nowhere_else() {
+        fn scan(dir: &std::path::Path, hits: &mut Vec<String>) {
+            for entry in std::fs::read_dir(dir).unwrap().flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    scan(&path, hits);
+                    continue;
+                }
+                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+                if !["rs", "ts", "tsx", "js", "css", "toml", "json"].contains(&ext) || path.ends_with("api/tts.rs") {
+                    continue;
+                }
+                let text = std::fs::read_to_string(&path).unwrap_or_default();
+                if text.to_lowercase().contains("kokoro") {
+                    hits.push(path.display().to_string());
+                }
+            }
+        }
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut hits = Vec::new();
+        for dir in ["crates", "src", "ui/src"] {
+            scan(&root.join(dir), &mut hits);
+        }
+        assert!(hits.is_empty(), "Kokoro was removed, yet named in: {hits:?}");
     }
 
     #[test]
-    fn han_text_takes_the_mandarin_voice() {
-        // The bug this guards: an English voice on Han text does not error, it
-        // emits ~0.5s of noise, so nothing downstream notices.
-        assert_eq!(voice_for("师父，我在这里。"), VOICE_ZH);
-        assert_eq!(voice_for("你好"), VOICE_ZH);
-    }
-
-    #[test]
-    fn a_mixed_line_follows_its_han_content() {
-        // Kokoro cannot switch script mid-utterance; one Han word means the
-        // line is likelier Chinese than an English sentence naming a词.
-        assert_eq!(voice_for("Master，我在这里"), VOICE_ZH);
-    }
-
-    #[test]
-    fn the_voice_prefix_is_what_selects_the_language() {
-        // Guards the invariant the whole fix rests on: any-tts reads the
-        // language off the first letter ('a' = en-US, 'z' = zh).
-        assert!(VOICE_EN.starts_with('a'));
-        assert!(VOICE_ZH.starts_with('z'));
+    fn say_speaks_han_text_in_a_mandarin_voice() {
+        // `say`'s default English voice reads Han characters as gibberish.
+        assert_eq!(say_voice_for("师父，我在这里。"), Some("Tingting"));
+        // One Han word makes the line Chinese.
+        assert_eq!(say_voice_for("Master，我在这里"), Some("Tingting"));
+        assert_eq!(say_voice_for("Master, I am here."), None);
+        assert_eq!(say_voice_for("Hello ——"), None);
     }
 }

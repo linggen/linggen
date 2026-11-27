@@ -192,7 +192,7 @@ pub(crate) async fn follow_chatgpt_catalog(
     }
 }
 
-/// The voice providers' own weights (Kokoro, ~300 MB, the fallback voice)
+/// The voice providers' own weights
 /// download when the machine is quiet, pet on or off. Loading stays with
 /// the pet: when it is enabled, the provider is warmed once the weights
 /// are on disk (the TTS sidecar too, if the runtime has delivered it).

@@ -109,7 +109,7 @@ fn bases_of(r: &Resolved) -> Vec<String> {
     }
 }
 
-/// Where to fetch `path` (e.g. `hexgrad/Kokoro-82M/resolve/main/x.pt`)
+/// Where to fetch `path` (e.g. `org/model/resolve/main/x.pt`)
 /// from `bases`, in order.
 fn urls_at(bases: &[String], path: &str) -> Vec<String> {
     let path = path.trim_start_matches('/');
@@ -129,13 +129,8 @@ pub async fn endpoint_is_users() -> bool {
     resolved().await.user_set
 }
 
-/// GET a Hub file by its path, huggingface.co first and hf-mirror.com
-/// second (or the user's endpoint alone).
-pub async fn get_bytes(path: &str) -> Result<Vec<u8>> {
-    get_bytes_at(&bases().await, path).await
-}
-
-/// [`get_bytes`] against `bases` (from [`bases`]).
+/// GET a Hub file by its path from `bases` (from [`bases`]): huggingface.co
+/// first and hf-mirror.com second (or the user's endpoint alone).
 pub async fn get_bytes_at(bases: &[String], path: &str) -> Result<Vec<u8>> {
     let client = reqwest::Client::builder()
         .connect_timeout(crate::mirror::CONNECT_TIMEOUT)
@@ -144,7 +139,7 @@ pub async fn get_bytes_at(bases: &[String], path: &str) -> Result<Vec<u8>> {
 }
 
 /// GET a Hub file into `part`, resuming what is already there (a file too
-/// big to hold in memory), with the same rule as [`get_bytes`]: a source that
+/// big to hold in memory), with the same rule as [`get_bytes_at`]: a source that
 /// is unreachable or unwell hands over to the next, a definite refusal (a
 /// 4xx other than 408/429) is final. `part` holds a whole file only when
 /// this returns Ok; the caller verifies it before it is used.

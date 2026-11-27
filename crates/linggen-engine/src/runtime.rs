@@ -381,7 +381,7 @@ pub async fn wait_for_quiet(quiet: &Quiet, poll: std::time::Duration) {
 }
 
 /// One large download at a time, engine-wide: every stage here and every
-/// other managed download (Kokoro's weights) holds this while it runs.
+/// other managed download (a voice's weights) holds this while it runs.
 /// Held per stage, not per prewarm, so an on-demand install can run
 /// between boot stages that are waiting for quiet.
 pub async fn download_slot() -> tokio::sync::MutexGuard<'static, ()> {

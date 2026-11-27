@@ -26,14 +26,8 @@ version = "2.7.0"
 # exact field list.
 # Disable at runtime: env LINGGEN_NO_TELEMETRY=1 OR file ~/.linggen/no-telemetry.
 # Disable at compile time: cargo build --no-default-features.
-default = ["telemetry", "kokoro"]
+default = ["telemetry"]
 telemetry = ["linggen-engine/telemetry"]
-# Kokoro-82M on candle — the local voice Yinyue falls back to when the GPU
-# voice (Qwen3-TTS in the managed runtime's MLX sidecar) isn't there: Intel
-# Macs, Linux, a first run before the runtime has downloaded, or a sidecar
-# failure. Shipped builds keep it. `--no-default-features --features telemetry`
-# drops candle and any-tts entirely; the fallback is then `say`.
-kokoro = ["dep:any-tts"]
 # Enables the system-test binary's explicit loopback fixture argument.
 test-support = ["linggen-engine/test-support"]
 
@@ -86,16 +80,9 @@ linggen-memory = { path = "crates/linggen-memory", default-features = false }
 # § 2). Its telemetry follows this package's `telemetry` feature.
 linggen-engine = { path = "crates/linggen-engine", default-features = false }
 
-# any-tts (Kokoro voice). `metal` + `accelerate` are Apple-only candle backends
-# — they pull in objc2*, which `compile_error!`s on non-Apple targets — so enable
-# them only on macOS. Other platforms build the portable CPU candle backend.
-[target.'cfg(target_os = "macos")'.dependencies]
-any-tts = { version = "0.1.2", optional = true, default-features = false, features = ["kokoro", "download", "metal", "accelerate"] }
-
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 # Bonjour: macOS registers through mDNSResponder (server/api/pair/bonjour).
 mdns-sd = "0.21"
-any-tts = { version = "0.1.2", optional = true, default-features = false, features = ["kokoro", "download"] }
 
 [[test]]
 name = "system"
@@ -130,8 +117,7 @@ insta = { version = "1", features = ["filters"] }
 
 # Optimize dependencies even in dev builds. The engine crate itself stays at
 # opt-level 0 (fast incremental compiles), but numerical deps like candle
-# (Kokoro TTS) run 20-50x faster optimized — unoptimized candle makes synthesis
-# unusably slow (~47s/utterance vs ~1s).
+# (the memory embedder) run 20-50x faster optimized.
 [profile.dev.package."*"]
 opt-level = 3
 # `"*"` is every package but the workspace's own; memory's store code

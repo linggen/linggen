@@ -64,8 +64,8 @@ Project path encoding: `/Users/foo/project` → `-Users-foo-project` (same conve
 │   ├── bin/ling-hear-<hash>          # A Mac's hearing helper, carried inside `ling` and put here at start (stt_apple.rs)
 │   └── pictures-model.stamp          # Picture model warmed into models/hf-hub (the lane is ready)
 ├── models/
-│   ├── hf-hub/hub/                   # The one Hugging Face cache: Qwen3-TTS, Whisper large-v3 turbo (hearing, first use), FLUX.2 klein, Kokoro-82M
-│   └── kokoro-voices/{voice}.pt      # Kokoro voice packs (af_heart, zf_xiaoxiao)
+│   ├── hf-hub/hub/                   # The one Hugging Face cache: Qwen3-TTS, Whisper large-v3 turbo (hearing, first use), FLUX.2 klein
+│   └── kokoro-voices/                # no longer used (Kokoro was removed); safe to delete
 ├── workspace/                        # Where a new chat works until another folder is chosen for it (made on demand)
 ├── sessions/                         # All sessions (user, skill, mission — flat)
 │   └── {session_id}/
@@ -122,8 +122,7 @@ install, never on first use: a person never waits on one.
   snapshot is already in the cache (it only verifies and stamps).
 - **One at a time.** Every download holds the runtime's download slot.
 - **What.** Python + `tools`; the voice lane (`tts` venv + Qwen3-TTS, ~2.1 GB; its hearing model, Whisper, ~1.6 GB, is fetched on first use, not at boot);
-  the pictures lane (`pictures` venv + FLUX.2 klein 4B, ~4.3 GB); Kokoro's
-  weights (~300 MB, the fallback voice, every platform). Voice and pictures
+  the pictures lane (`pictures` venv + FLUX.2 klein 4B, ~4.3 GB). Voice and pictures
   run where the lane gate admits them, pet on or off.
 - **A model fetch is one function.** The voice, hearing and picture models
   are fetched from the Hub by `hf_fetch::fetch` (rows of `runtime::HUB_MODELS`,
@@ -137,11 +136,11 @@ install, never on first use: a person never waits on one.
   library's metadata step, seen failing 2026-11-22). What failed, and whether
   trying again helps, is told in one line (`hf_fetch::Note`).
 - **Loading stays with use.** A download never loads a model: the voice
-  sidecar and Kokoro load only when the pet is on, a picture per render.
-  Until a model is on disk its user falls back (Kokoro, then `say`; a picture
+  sidecar loads only when the pet is on, a picture per render.
+  Until a model is on disk its user falls back (`say`; a picture
   call answers "installing" and starts that lane at once).
 - **Failure.** Low disk stops until next boot; other failures retry (the
-  runtime three times with backoff, Kokoro next boot). Hugging Face pulls
+  runtime three times with backoff). Hugging Face pulls
   resume; release assets resume from `.part` and are SHA-256 verified.
 - **Progress** rides the retained `tasks`/`runtime` topic; `waiting_for_quiet`
   marks a stage queued for a quiet moment.
