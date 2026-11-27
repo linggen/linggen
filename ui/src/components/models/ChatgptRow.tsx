@@ -1,7 +1,7 @@
 /**
  * The ChatGPT sign-in as a provider the person adds (添加服务商 → ChatGPT 订阅).
- * Its row lists the models of the Codex catalog to tick (`ModelTicks`, the one
- * tick component), the usage windows, and ⋯ 移除这个服务商 = sign out. It
+ * Its row is a key row without the key (`Models`: added models with ✕, one input
+ * suggesting ChatGPT's own list), the usage windows, and ⋯ 移除这个服务商 = sign out. It
  * exists only while signed in.
  */
 import React, { useState } from 'react';
@@ -11,8 +11,8 @@ import { W, say } from '../../lib/modelsWords.mts';
 import { heldDefaults, type Provider } from '../../lib/providers.mts';
 import type { ModelMove } from '../../types';
 import { CodexUsage } from '../CodexUsage';
-import { ModelTicks } from './CloudList';
-import { Row, RowMenu, sectionLabel, sectionRule } from './shell';
+import { Models } from './KeyRow';
+import { Row, RowMenu } from './shell';
 import type { Run } from './useProviders';
 
 const CODEX = { login: '/api/auth/codex/login', status: '/api/auth/codex/status' };
@@ -40,7 +40,8 @@ export const ChatgptRow: React.FC<{
   onToggle: () => void;
   /** The default chat chain, first model first: what the remove confirm names. */
   chain: string[];
-}> = ({ provider: p, moved, changed, run, busy, open, onToggle, chain }) => {
+  makeDefault: (modelId: string) => Promise<void>;
+}> = ({ provider: p, moved, changed, run, busy, open, onToggle, chain, makeDefault }) => {
   const removeProvider = async () => {
     const held = heldDefaults(p, chain);
     const lines = [say(W.removeChatgptAsk, { provider: p.label })];
@@ -49,7 +50,7 @@ export const ChatgptRow: React.FC<{
     if (await confirmDialog(lines.join(' '))) await run(() => providersApi.remove(p.id));
   };
   const moves = p.models.filter((m) => moved[m.id]);
-  const names = (p.chatgpt ?? []).filter((l) => l.row).map((l) => l.label).join(' · ');
+  const names = p.models.map((m) => m.name).join(' · ');
   const subtitle = (
     <>
       <span>{W.signedIn}</span>
@@ -62,12 +63,7 @@ export const ChatgptRow: React.FC<{
     <div>
       <Row testId="chatgpt" name={p.label} way={p.way} subtitle={subtitle} open={open} onToggle={onToggle}
         right={<><CodexUsage /><RowMenu disabled={busy} items={[{ label: W.removeProvider, run: () => void removeProvider() }]} /></>}>
-        <div className={`${sectionRule} grid gap-2 sm:grid-cols-[4rem_minmax(0,1fr)]`}>
-          <span className={sectionLabel}>{W.models}</span>
-          <div className="min-w-0 flex-1" data-testid="chatgpt-list">
-            <ModelTicks lines={p.chatgpt ?? []} busy={busy} onTick={(l) => void run(() => providersApi.tickChatgpt(l.model, !l.row))} />
-          </div>
-        </div>
+        <Models provider={p} open={open} onToggle={onToggle} run={run} busy={busy} makeDefault={makeDefault} chain={chain} />
       </Row>
       {moves.map((m) => <FamilyMoved key={m.id} move={moved[m.id]!} onChanged={changed} />)}
     </div>

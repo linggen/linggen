@@ -34,9 +34,9 @@ pub struct ProviderView {
     /// Linggen Cloud's chat models to tick (`cloud_models`); absent elsewhere.
     #[serde(skip_serializing_if = "Option::is_none")]
     cloud: Option<Vec<CloudLine>>,
-    /// The ChatGPT sign-in's models to tick (`chatgpt_catalog` families); absent elsewhere.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    chatgpt: Option<Vec<CloudLine>>,
+    /// This is the ChatGPT sign-in's card: its `models` are the ticked families and the exact versions added.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    chatgpt: bool,
 }
 
 /// One model to tick as its row shows it: a checkbox. Linggen Cloud's, or a ChatGPT
@@ -197,7 +197,7 @@ impl ProviderView {
             id: provider_id(sign_in, provider, url), label, way: way.as_str(),
             provider: provider.into(), url: shown_url(url), listed, style, connected: false, fix: None,
             key: (way == Way::Key).then_some(KeyState { set: false, conflict: false, can_keep_model_key: false }),
-            models: Vec::new(), used_by: Vec::new(), disk_gb: None, cloud: None, chatgpt: None,
+            models: Vec::new(), used_by: Vec::new(), disk_gb: None, cloud: None, chatgpt: false,
         }
     }
 
@@ -233,7 +233,7 @@ impl ModelManager {
         if crate::provider::codex_auth::chatgpt_signed_in() {
             // Signed in: the row is there even when every model is unticked.
             let mut chatgpt = ProviderView::new(SignIn::ChatGpt, "chatgpt", crate::provider::codex_auth::CHATGPT_API_BASE);
-            chatgpt.chatgpt = Some(chatgpt_lines(config));
+            chatgpt.chatgpt = true;
             groups.insert(chatgpt.id.clone(), chatgpt);
         }
         let rows = self.list_models();
@@ -244,6 +244,10 @@ impl ModelManager {
             }
             let sign_in = row.sign_in();
             let id = provider_id(sign_in, row.provider_name(), &row.url);
+            // Signed out there is no ChatGPT card: a pinned row waits for the sign-in.
+            if sign_in == SignIn::ChatGpt && !groups.contains_key(&id) {
+                continue;
+            }
             let group = groups.entry(id).or_insert_with(|| ProviderView::new(sign_in, row.provider_name(), &row.url));
             if group.models.iter().any(|m| m.id == row.id) {
                 continue;
@@ -323,14 +327,34 @@ fn cloud_lines(config: &Config) -> Vec<CloudLine> {
     }).collect()
 }
 
-/// The ChatGPT sign-in's models, one per family, ticked unless the person unticked it.
-fn chatgpt_lines(config: &Config) -> Vec<CloudLine> {
+/// What typing a model into the ChatGPT row does: the one place that decides it.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ChatgptAdd {
+    /// A family's name or its model now: the family is ticked again, and keeps following.
+    Tick(String),
+    /// Any other id: an exact row that stays on that version.
+    Pin(String),
+}
+
+pub fn chatgpt_add(catalog: &super::chatgpt_catalog::Snapshot, typed: &str) -> Option<ChatgptAdd> {
+    let typed = typed.trim();
+    if typed.is_empty() || typed.contains(char::is_whitespace) {
+        return None;
+    }
+    let family = catalog.families.iter()
+        .find(|f| f.name.eq_ignore_ascii_case(typed) || catalog.effective(f) == typed);
+    Some(match family {
+        Some(f) => ChatgptAdd::Tick(f.name.clone()),
+        None => ChatgptAdd::Pin(typed.to_string()),
+    })
+}
+
+/// The ids ChatGPT lists for this account, as suggestions; `None` until a list was read.
+pub fn chatgpt_suggestions() -> Option<Vec<super::suggest::Suggestion>> {
     let catalog = super::chatgpt_catalog::current();
-    catalog.families.iter().map(|f| CloudLine {
-        row: (!config.chatgpt_unticked.contains(&f.name)).then(|| catalog.effective(f).to_string()),
-        model: f.name.clone(),
-        label: catalog.effective(f).to_string(),
-    }).collect()
+    (!catalog.listed.is_empty()).then(|| {
+        catalog.listed.iter().map(|m| super::suggest::Suggestion { id: m.slug.clone(), name: None }).collect()
+    })
 }
 
 /// The preset a live voice's key is filed at: the one at its host.
@@ -365,4 +389,23 @@ pub fn live_card_at(id: &str) -> Option<(String, String)> {
 pub fn linggen_cloud_card_at(id: &str) -> Option<(String, String)> {
     let (name, url) = (super::catalog::LINGGEN_CLOUD_PROVIDER, super::catalog::linggen_cloud_url());
     (provider_id(SignIn::LinggenAccount, name, &url) == id).then(|| (name.to_string(), url))
+}
+
+#[cfg(test)]
+mod chatgpt_add_tests {
+    use super::*;
+
+    #[test]
+    fn a_family_name_or_its_model_ticks_and_any_other_id_pins() {
+        let snap = super::super::chatgpt_catalog::Snapshot::seed();
+        assert_eq!(chatgpt_add(&snap, "Sol"), Some(ChatgptAdd::Tick("sol".into())));
+        assert_eq!(chatgpt_add(&snap, "gpt-6.1-terra"), Some(ChatgptAdd::Tick("terra".into())));
+        assert_eq!(chatgpt_add(&snap, "gpt-5.6-sol"), Some(ChatgptAdd::Pin("gpt-5.6-sol".into())));
+        assert_eq!(chatgpt_add(&snap, "  "), None);
+    }
+}
+
+/// The row filed for a ChatGPT model typed by exact version.
+pub fn pinned_chatgpt_row(row_id: &str, model: &str) -> ModelConfig {
+    super::catalog::pinned_chatgpt_row(row_id, model)
 }

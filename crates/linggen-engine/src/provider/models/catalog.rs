@@ -91,6 +91,15 @@ pub(super) fn not_offered(snap: &Snapshot, unticked: &[String], signed_in: bool)
         .collect()
 }
 
+/// The row for a ChatGPT model the person typed by exact version: its own row id,
+/// so the catalog never folds it into its family.
+pub(super) fn pinned_chatgpt_row(row_id: &str, model: &str) -> ModelConfig {
+    let mut row = chatgpt_config(model, &chatgpt_catalog::current());
+    row.id = row_id.to_string();
+    row.is_builtin = false;
+    row
+}
+
 fn chatgpt_config(id: &str, snap: &Snapshot) -> ModelConfig {
     ModelConfig {
         id: id.to_string(),

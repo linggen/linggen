@@ -11,7 +11,7 @@ import { X } from 'lucide-react';
 import { providersApi } from '../../lib/endpoints';
 import { confirmDialog } from '../../lib/confirmDialog';
 import { W, say } from '../../lib/modelsWords.mts';
-import { chatModels, heldDefaults, isOllama, liveModels, suggestionsFor, type Provider, type Suggestion } from '../../lib/providers.mts';
+import { chatModels, heldDefaults, isChatgpt, isOllama, liveModels, suggestionsFor, type Provider, type Suggestion } from '../../lib/providers.mts';
 import { RowMenu, Row, Tag, ghostBtn, hintCls, inputCls, primaryBtn, sectionLabel, sectionRule } from './shell';
 import type { Run } from './useProviders';
 
@@ -106,7 +106,8 @@ const KeyField: React.FC<Props> = ({ provider: p, run, busy }) => {
 };
 
 /** The models: what was added (✕ removes), one input with suggestions, the live-voice lines. */
-const Models: React.FC<Props> = (props) => {
+export const Models: React.FC<Props> = (props) => {
+  // The ChatGPT card has no key: its list of models is the same, its input suggests ChatGPT's own ids.
   const { provider: p, run, busy, makeDefault } = props;
   const added = chatModels(p);
   const live = liveModels(p);
@@ -123,8 +124,8 @@ const Models: React.FC<Props> = (props) => {
             </button>
           </div>
         ))}
-        {(p.key?.set || isOllama(p)) && <ModelInput {...props} />}
-        {!p.key?.set && !isOllama(p) && !added.length && <p className={hintCls}>{W.keyFirst}</p>}
+        {(p.key?.set || isOllama(p) || isChatgpt(p)) && <ModelInput {...props} />}
+        {!p.key?.set && !isOllama(p) && !isChatgpt(p) && !added.length && <p className={hintCls}>{W.keyFirst}</p>}
         {live.map((m) => (
           <div key={m.id} className="mt-1 flex flex-wrap items-center gap-1.5 text-xs" data-testid="live-model">
             <span className="font-semibold" data-no-i18n>{m.model}</span>

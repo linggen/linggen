@@ -47,8 +47,8 @@ export interface Provider {
   style?: ApiStyle;
   /** Linggen Cloud's models to tick. */
   cloud?: CloudLine[];
-  /** The ChatGPT sign-in's models to tick (`model` is the family, `label` its model now). */
-  chatgpt?: CloudLine[];
+  /** The ChatGPT sign-in's card: its models are the ticked families and the exact versions added. */
+  chatgpt?: boolean;
 }
 
 export interface Preset {

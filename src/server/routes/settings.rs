@@ -50,7 +50,6 @@ pub(super) fn routes() -> Routes {
         .route("/api/uses", get(api::uses::list).put(api::uses::put))
         .route("/api/providers", get(api::providers::list).post(api::providers::create))
         .route("/api/providers/cloud", put(api::providers::tick_cloud))
-        .route("/api/providers/chatgpt", put(api::providers::tick_chatgpt))
         .route("/api/providers/{id}", axum::routing::patch(api::providers::edit).delete(api::providers::remove))
         .route("/api/providers/{id}/key", put(api::providers::edit))
         .route("/api/providers/{id}/suggestions", get(api::providers::suggestions))

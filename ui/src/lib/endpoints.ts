@@ -140,9 +140,6 @@ export const providersApi = {
   /** Tick or untick one of Linggen Cloud's models; unticking the first default names its replacement. */
   tickCloud: (model: string, ticked: boolean, replacement?: string) =>
     apiPut<ProvidersAnswer>('/api/providers/cloud', { model, ticked, ...(replacement ? { replacement } : {}) }),
-  /** Tick or untick one of the ChatGPT sign-in's models, by family. */
-  tickChatgpt: (family: string, ticked: boolean, replacement?: string) =>
-    apiPut<ProvidersAnswer>('/api/providers/chatgpt', { family, ticked, ...(replacement ? { replacement } : {}) }),
 };
 
 /** A provider's browser login (codex, claude): start it, poll its status. */

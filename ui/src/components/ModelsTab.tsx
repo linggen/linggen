@@ -148,7 +148,7 @@ export const ModelsTab: React.FC<{
               {adding && <AddProvider presets={addable} busy={busy} onAdd={(p, k) => void addPreset(p, k)} onTyped={(t) => void addTyped(t)} onSignIn={addChatgpt} onClose={() => setAdding(false)} />}
               <div className="space-y-1.5">
                 {ownProviders(providers).map((p) => isChatgpt(p) ? (
-                  <ChatgptRow key={p.id} provider={p} moved={moved} changed={signedInChanged} run={run} busy={busy} open={open === p.id} onToggle={() => setOpen(open === p.id ? null : p.id)} chain={chain} />
+                  <ChatgptRow key={p.id} provider={p} moved={moved} changed={signedInChanged} run={run} busy={busy} open={open === p.id} onToggle={() => setOpen(open === p.id ? null : p.id)} chain={chain} makeDefault={makeDefault} />
                 ) : (
                   <KeyRow key={p.id} provider={p} open={open === p.id} onToggle={() => setOpen(open === p.id ? null : p.id)} run={run} busy={busy} makeDefault={makeDefault} chain={chain} />
                 ))}

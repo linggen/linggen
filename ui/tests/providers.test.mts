@@ -52,7 +52,7 @@ test('a provider has a problem when its key clashes or is set but not working', 
 test('only Linggen Cloud stays in the top block; the ChatGPT sign-in is an own provider with ticks', () => {
   const base = { url: '', connected: true, models: [], used_by: [] };
   const cloud = { ...base, id: 'c', label: 'Linggen Cloud', way: 'account', provider: 'openai' } as Provider;
-  const chatgpt = { ...base, id: 'g', label: 'ChatGPT 订阅', way: 'subscription', provider: 'chatgpt', chatgpt: [{ model: 'sol', label: 'gpt-6.2-sol', row: 'gpt-6.2-sol' }] } as Provider;
+  const chatgpt = { ...base, id: 'g', label: 'ChatGPT 订阅', way: 'subscription', provider: 'chatgpt', chatgpt: true } as Provider;
   const key = { ...base, id: 'k', label: 'DeepSeek', way: 'key', provider: 'deepseek' } as Provider;
   assert.deepEqual(readyToUse([cloud, chatgpt, key]).map((p) => p.id), ['c']);
   assert.deepEqual(ownProviders([cloud, chatgpt, key]).map((p) => p.id), ['g', 'k']);
@@ -67,4 +67,13 @@ test('a live line on a key row has the same ✕ as an added model, calling the r
   const block = line.slice(0, line.indexOf('</div>'));
   assert.match(block, /providersApi\.removeModel\(p\.id, m\.id\)/);
   assert.match(block, /<X size=\{12\} \/>/);
+});
+
+test('the ChatGPT row shows the shared model list and input, with no key field', async () => {
+  const { readFileSync } = await import('node:fs');
+  const row = readFileSync(new URL('../src/components/models/ChatgptRow.tsx', import.meta.url), 'utf8');
+  assert.match(row, /<Models provider=\{p\}/);
+  assert.doesNotMatch(row, /KeyField|ModelInput|tickChatgpt/);
+  const keys = readFileSync(new URL('../src/components/models/KeyRow.tsx', import.meta.url), 'utf8');
+  assert.match(keys, /isChatgpt\(p\)\) && <ModelInput/);
 });
