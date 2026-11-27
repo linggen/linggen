@@ -123,7 +123,7 @@
               "semantic",
               "episodic"
             ],
-            "description": "Destination tier: episodic = per-turn staging (the default when omitted, no search-first); semantic = curated durable facts (search-first); core = tiny always-injected universals (search-first). Doctrine in the server instructions."
+            "description": "Destination tier: episodic = per-turn staging (the default when omitted, no search-first); semantic = only what lasts: the user's words, standing rules, product decisions, never anything time-bound (search-first); core = tiny always-injected universals (search-first). Doctrine in the server instructions."
           },
           "scope": {
             "type": "string",

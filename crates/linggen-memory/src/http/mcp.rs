@@ -587,7 +587,7 @@ mod tests {
             .collect();
         let expected: &[(&str, &str)] = &[
             ("memory_search", "3961fa2c6c739601"),
-            ("memory_add", "c838c5498ec20588"),
+            ("memory_add", "ad689a3aa77ac9e4"),
             ("memory_update", "21da0a4313b7b843"),
             ("memory_delete", "bbc85f7c3b3268e1"),
             ("memory_upkeep", "f000f2d114882a39"),

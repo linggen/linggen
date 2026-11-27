@@ -22,6 +22,8 @@ who they are, how they work, decisions with their reasons, gotchas they re-hit.
 
 ## Tiers
 
+Rule for every host: semantic/core hold only what lasts; anything time-bound (go-ahead, progress, state, price) is written with no tier (episodic), and `replace_ids` keeps the losers' highest tier, so moving down needs `tier: "episodic"`.
+
 - **Core** — a few high-confidence universals about the person (name, role,
   place, family). Always loaded; never scoped, never a work rule. ≤ 600 chars.
 - **Semantic** — durable state and lessons, never events: the user's own words

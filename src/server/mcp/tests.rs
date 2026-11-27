@@ -346,7 +346,7 @@ async fn the_published_surface_is_locked() {
     let local = shown(View::Local);
     let expected_local: &[(&str, &str)] = &[
         ("memory_search", "3961fa2c6c739601"),
-        ("memory_add", "c838c5498ec20588"),
+        ("memory_add", "ad689a3aa77ac9e4"),
         ("memory_update", "21da0a4313b7b843"),
         ("memory_delete", "bbc85f7c3b3268e1"),
         ("memory_upkeep", "641714d169511379"),
@@ -363,7 +363,7 @@ async fn the_published_surface_is_locked() {
     let remote = shown(View::Remote);
     let expected_remote: &[(&str, &str)] = &[
         ("memory_search", "3961fa2c6c739601"),
-        ("memory_add", "c838c5498ec20588"),
+        ("memory_add", "ad689a3aa77ac9e4"),
         ("memory_update", "21da0a4313b7b843"),
         ("memory_delete", "bbc85f7c3b3268e1"),
         ("memory_upkeep", "e9ff93db14123772"),
@@ -376,8 +376,8 @@ async fn the_published_surface_is_locked() {
     assert_eq!(
         texts,
         (
-            "2fd3b890e69e4630".to_string(),
-            "c018af3021faaa2a".to_string()
+            "3fdc94b1cf038fb9".to_string(),
+            "01ce9d83962526fe".to_string()
         ),
         "server texts changed: {texts:?}"
     );
