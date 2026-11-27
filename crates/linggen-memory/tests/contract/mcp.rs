@@ -123,6 +123,24 @@ async fn an_episodic_add_lands_in_the_staging_table() {
     assert_eq!(curated, json!([]));
 }
 
+/// `memory_update {id, tier: "episodic"}` finds a semantic row wherever it
+/// was written and moves it down, keeping its id (the tier is the
+/// destination there, not a routing filter).
+#[tokio::test]
+async fn an_update_to_episodic_finds_a_semantic_row_and_moves_it() {
+    let m = Mem::start().await;
+    let added = call(
+        &m,
+        "memory_add",
+        json!({"content": "Alex keeps bees", "tier": "semantic", "scope": "/opt/alex/bees"}),
+    )
+    .await;
+    let id = added["fact"]["id"].clone();
+    let moved = call(&m, "memory_update", json!({"id": id, "tier": "episodic"})).await;
+    assert_eq!(moved["tier"], "episodic", "{moved}");
+    assert_eq!(m.ok("count", json!({"episodic": true})).await["count"], 1);
+}
+
 /// Fields a model fills with "" or [] are dropped before the verb sees
 /// them (a bare `until: ""` would otherwise be a date error).
 #[tokio::test]

@@ -607,9 +607,13 @@ pub fn prepare(args: &mut Value) {
 
     // 2. `tier=episodic` → `episodic=true` on the wire (the daemon splits
     //    the episodic store into a separate table). Other tier values stay
-    //    as filters within the semantic store.
+    //    as filters within the semantic store. A call that names a row by
+    //    `id` (update, get, delete) keeps its tier: there it is the patch's
+    //    destination, and `episodic=true` would narrow the lookup to one
+    //    table so a semantic row "has no fact with id". Same rule in the
+    //    engine's `memory_http::episodic_as_flag`.
     if let Some(tier) = obj.get("tier").and_then(|v| v.as_str()) {
-        if tier == "episodic" {
+        if tier == "episodic" && !obj.contains_key("id") {
             obj.insert("episodic".to_string(), Value::Bool(true));
             obj.remove("tier");
         }

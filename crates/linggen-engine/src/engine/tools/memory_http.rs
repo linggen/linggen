@@ -90,9 +90,10 @@ fn drop_soft_empty(obj: &mut serde_json::Map<String, Value>) {
 
 /// tier="episodic" → episodic=true (memory splits the episodic store into a
 /// separate table). Other tier values are kept as filters within the
-/// semantic store.
+/// semantic store. A call naming a row by `id` keeps its tier (the patch's
+/// destination); see `ling_mem::catalog::memory::prepare`.
 fn episodic_as_flag(obj: &mut serde_json::Map<String, Value>) {
-    if obj.get("tier").and_then(|v| v.as_str()) == Some("episodic") {
+    if obj.get("tier").and_then(|v| v.as_str()) == Some("episodic") && !obj.contains_key("id") {
         obj.insert("episodic".to_string(), Value::Bool(true));
         obj.remove("tier");
     }
