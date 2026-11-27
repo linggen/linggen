@@ -5042,7 +5042,7 @@ dependencies = [
 
 [[package]]
 name = "linggen"
-version = "2.7.0"
+version = "2.8.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5090,7 +5090,7 @@ dependencies = [
 
 [[package]]
 name = "linggen-engine"
-version = "2.7.0"
+version = "2.8.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5140,7 +5140,7 @@ dependencies = [
 
 [[package]]
 name = "linggen-memory"
-version = "2.7.0"
+version = "2.8.0"
 dependencies = [
  "anyhow",
  "arrow",
