@@ -214,11 +214,25 @@ check_standin() { # label want-version want-prev-sha
 
 # The installed binary is the one the release carries (versions can match a
 # published release in --local runs, so compare bytes).
-check_installed() { # label bin want-version want-sha
-  local v s
+# The app build signs its own copy of ling; standalone updaters do not use it.
+release_ling_sha() { # install kind
+  case "$1" in
+    app) printf '%s\n' "$APP_LING_SHA" ;;
+    standalone) printf '%s\n' "$LING_SHA" ;;
+    *) return 1 ;;
+  esac
+}
+
+check_installed() { # label bin install-kind
+  local v s want version="$LING_VERSION"
+  want="$(release_ling_sha "$3")"
+  if [ "$3" = app ] && [ "${APP_IN_TRAIN:-1}" != 1 ]; then
+    # A published fallback app may bundle a different engine version.
+    version="$(ver_of "$APP_LING")"
+  fi
   v="$(ver_of "$2")"; s="$(sha "$2")"
-  if [ "$v" = "$3" ] && [ "$s" = "$4" ]; then pass "$1" "$v at $2"
-  else fail "$1" "got $v (sha ${s:0:12}) at $2, want $3 (sha ${4:0:12})"; fi
+  if [ -n "$version" ] && [ "$v" = "$version" ] && [ -n "$want" ] && [ "$s" = "$want" ]; then pass "$1" "$v at $2 ($3 sha ${want:0:12})"
+  else fail "$1" "got $v (sha ${s:0:12}) at $2, want $version ($3 sha ${want:0:12})"; fi
 }
 
 start_engine() { # bare `ling` — the daemon plus the browser, as a person runs it

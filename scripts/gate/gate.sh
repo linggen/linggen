@@ -108,6 +108,9 @@ if [ "$SOURCE" = draft ]; then
     fi
     if [ -z "$at" ]; then record WARN "host: tested commit is the draft's" "can't tell what $tag is cut from (target '${target:-?}')"
     elif [ "$at" = "$ENGINE_HEAD" ]; then record PASS "host: tested commit is the draft's" "$how = HEAD ${ENGINE_HEAD:0:12}"
+    elif git -C "$REPO" merge-base --is-ancestor "$at" "$ENGINE_HEAD" &&
+         git -C "$REPO" diff --quiet "$at" "$ENGINE_HEAD" -- . ':(exclude)scripts/gate/**'; then
+      record PASS "host: tested engine matches draft" "$how ${at:0:12}; HEAD ${ENGINE_HEAD:0:12} changes only gate scripts"
     elif [ "$how" = "draft target" ]; then record FAIL "host: tested commit is the draft's" "$how ${at:0:12} ≠ HEAD ${ENGINE_HEAD:0:12}"
     else record WARN "host: tested commit is the draft's" "$how ${at:0:12} ≠ HEAD ${ENGINE_HEAD:0:12}"; fi
   fi

@@ -14,7 +14,7 @@ check "install.sh exits 0" $? "$(tail -3 "$OUT/install.log")"
 one_ling "script → app: script"
 [ "$(app_version)" = "$APP_VERSION" ]
 check "install.sh: Linggen.app is the release" $? "got '$(app_version)', want $APP_VERSION" "$APP_VERSION"
-check_installed "install.sh: ling is the release" "$(ling_bin)" "$LING_VERSION" "$LING_SHA"
+check_installed "install.sh: ling is the release" "$(ling_bin)" app
 "$LG/bin/bun" --version >/dev/null 2>&1
 check "install.sh: bun in ~/.linggen/bin" $? "no runnable $LG/bin/bun"
 # install.sh lays down no ling-mem (the engine writes its stand-in there when

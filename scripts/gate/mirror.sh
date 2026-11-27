@@ -110,9 +110,12 @@ draft_repo() { # good repo tag patterns…
 }
 
 tar_member_sha() { # tarball member
-  local d; d="$(mktemp -d "$RUN/unpack.XXXX")"
-  tar -xzf "$1" -C "$d" "$2" && sha "$d/$2"
+  local d rc
+  d="$(mktemp -d "$RUN/unpack.XXXX")" || return 1
+  (set -o pipefail; tar -xzf "$1" -C "$d" "$2" && [ -s "$d/$2" ] && sha "$d/$2")
+  rc=$?
   rm -rf "$d"
+  return "$rc"
 }
 
 mirror_draft() { # good specs
@@ -191,9 +194,16 @@ build_mirror() { # local | draft "<specs>"
   record INFO "mirror: installers" "$pub ($(git -C "$pub" rev-parse --abbrev-ref HEAD 2>/dev/null) $(git -C "$pub" rev-parse --short HEAD 2>/dev/null))"
   derive_tree "$good" "$root/relabel" "-gate" 0
   derive_tree "$good" "$root/bad" "-gate" 1
+  local app_ling_sha=""
+  [ -n "$LING_SHA" ] || die "mirror: standalone ling" "engine archive has no hashable ling"
+  if [ -n "$APP_VERSION" ]; then
+    app_ling_sha="$(tar_member_sha "$good/$APP_REPO/linggen-$APP_VERSION-darwin-arm64.tar.gz" Linggen.app/Contents/MacOS/ling)" \
+      || die "mirror: app ling" "app archive has no hashable bundled ling"
+  fi
   cat >"$root/expect.env" <<EOF
 LING_VERSION=$LING_VERSION
 LING_SHA=$LING_SHA
+APP_LING_SHA=$app_ling_sha
 APP_VERSION=$APP_VERSION
 APP_IN_TRAIN=${APP_IN_TRAIN:-1}
 EOF

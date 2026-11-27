@@ -9,6 +9,7 @@
 . ./expect.env
 . ./takeover.sh
 . ./inplace.sh
+. ./upgrade-2.8.sh
 
 # Exercise the standalone updater and memory rollback on a VM-local copy,
 # never on a bundle or a global link. Then separately migrate the actual install.
@@ -63,7 +64,9 @@ swap_back() { # bin
 info "upgrade: from" "ling $PREV_LING, ling-mem $PREV_MEM, app ${PREV_APP:-none}"
 
 # The old user, running: engine (fixtures config → the fake model) + ling-mem.
+if upgrade_28_applies; then stop_engine; upgrade_28_seed; fi
 start_engine 90 || fail "upgrade: old engine runs" "no health"
+if upgrade_28_applies; then upgrade_28_before; fi
 # A baseline that hosts memory has the stand-in and nothing on 9528 to wait for.
 is_standin "$MEM" || mem_health 30 || start_mem 60
 if [ -n "$(listener_pid "$LP")" ]; then MEM_KIND=takeover; takeover_seed
@@ -113,13 +116,13 @@ if [ "$INSTALL_STANDALONE" = 1 ]; then
   check "upgrade: stage standalone engine for legacy checks" $? "could not extract the engine artifact"
   start_engine 90
 fi
-check_installed "upgrade: ling is the release" "$LING" "$LING_VERSION" "$LING_SHA"
+check_installed "upgrade: ling is the release" "$LING" standalone
 
 # The engine that was serving must now run the new binary: a new process on
 # 9527, started after the swap, answering health. The updater that ran is the
 # OLD binary; one from before `ling update` restarted the engine says so in
 # its --help — the release's own `ling update` is checked under § Restart.
-if [ "$(sha "$OUT/ling.old")" = "$LING_SHA" ]; then
+if [ "$(sha "$OUT/ling.old")" = "$(release_ling_sha standalone)" ]; then
   gap "upgrade: 9527 restarted on the new ling" "the baseline already runs these bytes (v$PREV_LING) — nothing to swap"
 elif [ "$INSTALL_STANDALONE" = 1 ] || $OLD_RESTARTS; then
   engine_restarted "upgrade: 9527 restarted on the new ling" "$engine_pid" "$LING_VERSION"
@@ -161,6 +164,7 @@ check "upgrade: old sessions kept" $? "$sessions_after now, $sessions_before bef
 for f in "$LG"/sessions/sess-17900000*/messages.jsonl; do jq -e . "$f" >/dev/null 2>&1 || { fail "upgrade: old session rows parse" "$f"; break; }; done
 chat_turn 90
 check "upgrade: a chat turn on the old config" $? "$CHAT_DETAIL" "$CHAT_DETAIL"
+if upgrade_28_applies; then upgrade_28_removed; fi
 
 [ -f "$LG/missions/table-check/mission.md" ]
 check "upgrade: user mission kept" $? "missions/table-check gone"
@@ -367,6 +371,7 @@ if [ -n "$APP_VERSION" ]; then
   check "app: install.sh over ${PREV_APP:-nothing}" $? "$(tail -3 "$OUT/app-upgrade.log")"
   one_ling "upgrade: script"
   LING="$(ling_bin)"
+  check_installed "app: upgraded ling is the release" "$LING" app
   [ "$(app_version)" = "$APP_VERSION" ]; check "app: Linggen.app is the release" $? "got $(app_version)"
   launchctl setenv LINGGEN_RELEASE_BASE "$GOOD"
   t_open=$SECONDS
